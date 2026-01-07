@@ -90,10 +90,10 @@
   }
 </script>
 
-<div class="audio-upload">
-  <div class="upload-header">
-    <h3>Upload Audio Recording</h3>
-    <p class="subtitle">Voice notes, meetings, lectures - automatically transcribed and organized</p>
+<div class="flex flex-col gap-4 p-6 bg-white/50 dark:bg-white/5 rounded-xl border border-black/10 dark:border-white/10">
+  <div class="text-center">
+    <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100 m-0 mb-2">Upload Audio Recording</h3>
+    <p class="text-sm text-gray-500 dark:text-gray-400 m-0">Voice notes, meetings, lectures - automatically transcribed and organized</p>
   </div>
 
   <input
@@ -101,35 +101,35 @@
     bind:this={fileInput}
     on:change={handleFileSelect}
     accept="audio/mp3,audio/wav,audio/m4a,audio/ogg,audio/webm,audio/flac"
-    class="file-input"
+    class="hidden"
   />
 
   {#if !uploadedFile}
     <button class="select-btn" on:click={triggerFileInput}>
-      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
         <polyline points="17 8 12 3 7 8" />
         <line x1="12" y1="3" x2="12" y2="15" />
       </svg>
       Select Audio File
     </button>
-    <p class="formats">Supported: MP3, WAV, M4A, OGG, WebM, FLAC (max 100MB)</p>
+    <p class="text-center text-xs text-gray-500 dark:text-gray-400 m-0">Supported: MP3, WAV, M4A, OGG, WebM, FLAC (max 100MB)</p>
   {:else}
-    <div class="file-preview">
-      <div class="file-info">
-        <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="flex flex-col gap-4 p-4 bg-black/[0.03] dark:bg-white/[0.03] rounded-lg">
+      <div class="flex items-center gap-4">
+        <svg class="w-10 h-10 text-violet-600 dark:text-violet-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M9 18V5l12-2v13" />
           <circle cx="6" cy="18" r="3" />
           <circle cx="18" cy="16" r="3" />
         </svg>
-        <div class="file-details">
-          <div class="file-name">{uploadedFile.name}</div>
-          <div class="file-size">{formatFileSize(uploadedFile.size)}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-gray-900 dark:text-gray-100 truncate">{uploadedFile.name}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">{formatFileSize(uploadedFile.size)}</div>
         </div>
       </div>
 
-      <div class="action-buttons">
-        <button class="clear-btn" on:click={clearSelection} disabled={uploading}>
+      <div class="flex gap-3 justify-end">
+        <button class="btn-secondary py-2 px-6 text-sm" on:click={clearSelection} disabled={uploading}>
           Clear
         </button>
         <button class="upload-btn" on:click={uploadAudio} disabled={uploading}>
@@ -140,28 +140,28 @@
   {/if}
 
   {#if uploading}
-    <div class="progress-bar">
-      <div class="progress-fill" style="width: {uploadProgress}%"></div>
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" style="width: {uploadProgress}%"></div>
     </div>
   {/if}
 
   {#if uploadStatus}
-    <div class="status success">
-      <svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="banner banner-success flex items-start gap-3">
+      <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="20 6 9 17 4 12" />
       </svg>
-      <div class="status-text">
+      <div class="flex-1">
         <div>{uploadStatus}</div>
         {#if audioId}
-          <div class="audio-id">Audio ID: {audioId}</div>
+          <div class="mt-1 text-xs font-mono opacity-80">Audio ID: {audioId}</div>
         {/if}
       </div>
     </div>
   {/if}
 
   {#if error}
-    <div class="status error">
-      <svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="banner banner-error flex items-start gap-3">
+      <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="10" />
         <line x1="15" y1="9" x2="9" y2="15" />
         <line x1="9" y1="9" x2="15" y2="15" />
@@ -172,281 +172,41 @@
 </div>
 
 <style>
-  .audio-upload {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1.5rem;
-    background: rgba(255, 255, 255, 0.5);
-    border-radius: 0.75rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .audio-upload {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .upload-header {
-    text-align: center;
-  }
-
-  .upload-header h3 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: rgb(17 24 39);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .upload-header h3 {
-    color: rgb(243 244 246);
-  }
-
-  .subtitle {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .subtitle {
-    color: rgb(156 163 175);
-  }
-
-  .file-input {
-    display: none;
-  }
-
+  /* Select file button - dashed border style */
   .select-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    padding: 1.25rem 2rem;
+    @apply flex items-center justify-center gap-3 py-5 px-8 rounded-lg text-base font-semibold cursor-pointer transition-all;
     border: 2px dashed rgba(124, 58, 237, 0.3);
-    border-radius: 0.5rem;
     background: rgba(124, 58, 237, 0.05);
     color: rgb(124 58 237);
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
   }
-
   .select-btn:hover {
     border-color: rgba(124, 58, 237, 0.5);
     background: rgba(124, 58, 237, 0.1);
   }
-
   :global(.dark) .select-btn {
     border-color: rgba(167, 139, 250, 0.3);
     background: rgba(167, 139, 250, 0.05);
     color: rgb(167 139 250);
   }
-
   :global(.dark) .select-btn:hover {
     border-color: rgba(167, 139, 250, 0.5);
     background: rgba(167, 139, 250, 0.1);
   }
 
-  .icon {
-    width: 1.5rem;
-    height: 1.5rem;
-  }
-
-  .formats {
-    text-align: center;
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .formats {
-    color: rgb(156 163 175);
-  }
-
-  .file-preview {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .file-preview {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .file-info {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .file-icon {
-    width: 2.5rem;
-    height: 2.5rem;
-    color: rgb(124 58 237);
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .file-icon {
-    color: rgb(167 139 250);
-  }
-
-  .file-details {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .file-name {
-    font-weight: 600;
-    color: rgb(17 24 39);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global(.dark) .file-name {
-    color: rgb(243 244 246);
-  }
-
-  .file-size {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .file-size {
-    color: rgb(156 163 175);
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-  }
-
-  .clear-btn,
+  /* Upload button - solid violet */
   .upload-btn {
-    padding: 0.5rem 1.5rem;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
+    @apply py-2 px-6 border-0 rounded-md text-sm font-semibold cursor-pointer transition-all bg-violet-600 text-white;
   }
-
-  .clear-btn {
-    background: rgba(0, 0, 0, 0.05);
-    color: rgb(107 114 128);
-  }
-
-  .clear-btn:hover:not(:disabled) {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .clear-btn {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgb(156 163 175);
-  }
-
-  :global(.dark) .clear-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .upload-btn {
-    background: rgb(124 58 237);
-    color: white;
-  }
-
   .upload-btn:hover:not(:disabled) {
-    background: rgb(109 40 217);
+    @apply bg-violet-700;
   }
-
   .upload-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    @apply opacity-50 cursor-not-allowed;
   }
-
   :global(.dark) .upload-btn {
-    background: rgb(167 139 250);
-    color: rgb(17 24 39);
+    @apply bg-violet-400 text-gray-900;
   }
-
   :global(.dark) .upload-btn:hover:not(:disabled) {
-    background: rgb(196 181 253);
-  }
-
-  .progress-bar {
-    height: 0.5rem;
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: rgb(124 58 237);
-    transition: width 0.3s;
-  }
-
-  :global(.dark) .progress-fill {
-    background: rgb(167 139 250);
-  }
-
-  .status {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .status.success {
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-    color: rgb(22 163 74);
-  }
-
-  :global(.dark) .status.success {
-    background: rgba(134, 239, 172, 0.1);
-    border-color: rgba(134, 239, 172, 0.3);
-    color: rgb(134 239 172);
-  }
-
-  .status.error {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .status.error {
-    background: rgba(252, 165, 165, 0.1);
-    border-color: rgba(252, 165, 165, 0.3);
-    color: rgb(252 165 165);
-  }
-
-  .status-icon {
-    width: 1.25rem;
-    height: 1.25rem;
-    flex-shrink: 0;
-  }
-
-  .status-text {
-    flex: 1;
-  }
-
-  .audio-id {
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    font-family: monospace;
-    opacity: 0.8;
+    @apply bg-violet-300;
   }
 </style>

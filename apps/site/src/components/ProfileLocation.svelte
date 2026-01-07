@@ -71,10 +71,8 @@
     platform: string;
   }
 
-  // Encryption types
   type EncryptionType = 'none' | 'aes256' | 'luks' | 'veracrypt';
 
-  // Container size presets
   const CONTAINER_SIZES = [
     { value: 2 * 1024 * 1024 * 1024, label: '2 GB', description: 'Basic profile' },
     { value: 10 * 1024 * 1024 * 1024, label: '10 GB', description: 'Standard profile' },
@@ -91,13 +89,11 @@
   let error = '';
   let success = '';
 
-  // Custom path input
   let showCustomPath = false;
   let customPath = '';
   let validating = false;
   let validation: ValidationResult | null = null;
 
-  // Migration state
   let showMigrationModal = false;
   let migrating = false;
   let migrationProgress: MigrationProgress[] = [];
@@ -105,23 +101,19 @@
   let keepSourceFiles = true;
   let overwriteExisting = false;
 
-  // Encryption state
   let encryptionType: EncryptionType = 'none';
   let encryptionPassword = '';
   let encryptionPasswordConfirm = '';
   let veracryptStatus: VeraCryptStatus | null = null;
-  let containerSize = CONTAINER_SIZES[1].value; // Default 2GB
+  let containerSize = CONTAINER_SIZES[1].value;
   let checkingVeraCrypt = false;
-  let useMigrationLoginPassword = false; // Use login password for migration encryption
+  let useMigrationLoginPassword = false;
 
-  // Confirmation dialog
   let showConfirmDialog = false;
   let pendingPath = '';
 
-  // Editable device paths (keyed by device.id)
   let devicePaths: Record<string, string> = {};
 
-  // In-place encryption/decryption state
   let showEncryptModal = false;
   let showDecryptModal = false;
   let encryptInPlacePassword = '';
@@ -129,33 +121,29 @@
   let decryptPassword = '';
   let encryptingInPlace = false;
   let decryptingInPlace = false;
-  let encryptInPlaceType: 'aes256' = 'aes256'; // Only AES-256 supported for in-place
+  let encryptInPlaceType: 'aes256' = 'aes256';
   let encryptInPlaceProgress: MigrationProgress[] = [];
   let editingDeviceId: string | null = null;
-  let useLoginPassword = false; // Use login password for encryption
+  let useLoginPassword = false;
 
-  // Migration success state - for showing switch prompt
   let migrationSuccess = false;
   let switchingLocation = false;
 
-  // Change location modal state
   let showChangeLocationModal = false;
   let changeLocationPath = '';
 
-  // Password validation
   $: passwordsMatch = encryptionPassword === encryptionPasswordConfirm;
   $: passwordValid = encryptionPassword.length >= 8;
   $: encryptionReady = encryptionType === 'none' ||
-    ((encryptionType === 'aes256' || encryptionType === 'luks') && useMigrationLoginPassword && passwordValid) ||  // Login password: just valid password
+    ((encryptionType === 'aes256' || encryptionType === 'luks') && useMigrationLoginPassword && passwordValid) ||
     (passwordValid && passwordsMatch &&
       (encryptionType === 'aes256' || encryptionType === 'luks' || (encryptionType === 'veracrypt' && veracryptStatus?.installed)));
 
-  // In-place encryption validation
   $: encryptInPlacePasswordsMatch = encryptInPlacePassword === encryptInPlacePasswordConfirm;
   $: encryptInPlacePasswordValid = encryptInPlacePassword.length >= 8;
   $: encryptInPlaceReady = useLoginPassword
-    ? encryptInPlacePasswordValid  // Login password mode: just need valid password (no confirm)
-    : (encryptInPlacePasswordValid && encryptInPlacePasswordsMatch);  // Custom password: need match
+    ? encryptInPlacePasswordValid
+    : (encryptInPlacePasswordValid && encryptInPlacePasswordsMatch);
 
   onMount(async () => {
     await Promise.all([loadProfileConfig(), loadDevices(), checkVeraCryptStatus()]);
@@ -180,7 +168,6 @@
   async function loadProfileConfig() {
     loading = true;
     error = '';
-
     try {
       const response = await apiFetch('/api/profile-path');
       if (response.ok) {
@@ -199,13 +186,11 @@
 
   async function loadDevices() {
     devicesLoading = true;
-
     try {
       const response = await apiFetch('/api/profile-path/devices');
       if (response.ok) {
         const data = await response.json();
         devices = data.devices || [];
-        // Initialize editable paths for each device
         for (const device of devices) {
           if (!devicePaths[device.id]) {
             devicePaths[device.id] = device.suggestedPath;
@@ -245,7 +230,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-
       if (response.ok) {
         return await response.json();
       } else {
@@ -269,10 +253,8 @@
 
   async function handleValidateCustomPath() {
     if (!customPath.trim()) return;
-
     validating = true;
     validation = null;
-
     validation = await validatePath(customPath.trim());
     validating = false;
   }
@@ -295,7 +277,6 @@
     error = '';
     success = '';
 
-    // Build encryption options
     const encryptionOptions = encryptionType !== 'none' ? {
       type: encryptionType,
       password: encryptionPassword,
@@ -315,7 +296,6 @@
         }),
       });
 
-      // Check for error responses first
       if (!response.ok && !response.headers.get('content-type')?.includes('text/event-stream')) {
         const data = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         error = data.error || data.details?.join(', ') || `Migration failed (${response.status})`;
@@ -328,7 +308,6 @@
         return;
       }
 
-      // Handle SSE streaming response
       if (response.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
@@ -349,7 +328,6 @@
                   const data = JSON.parse(line.slice(6));
                   if (data.progress) {
                     migrationProgress = [...migrationProgress, data.progress];
-                    // Auto-scroll to bottom
                     if (data.progress.status === 'completed' && data.progress.step === 'complete') {
                       success = 'Profile migration completed successfully!';
                       migrationSuccess = true;
@@ -379,7 +357,6 @@
           }
         }
       } else {
-        // Non-streaming response
         const data = await response.json();
         if (data.error) {
           error = data.error;
@@ -401,7 +378,6 @@
       console.error(err);
     } finally {
       migrating = false;
-      // Reset encryption fields
       encryptionPassword = '';
       encryptionPasswordConfirm = '';
       useMigrationLoginPassword = false;
@@ -412,12 +388,8 @@
     if (!confirm('Reset profile location to default? This will only update the configuration, not move any files.')) {
       return;
     }
-
     try {
-      const response = await apiFetch('/api/profile-path', {
-        method: 'DELETE',
-      });
-
+      const response = await apiFetch('/api/profile-path', { method: 'DELETE' });
       const data = await response.json();
       if (data.success) {
         success = 'Profile location reset to default';
@@ -434,12 +406,8 @@
     }
   }
 
-  /**
-   * Encrypt existing profile data in-place with AES-256
-   */
   async function encryptProfileInPlace() {
     if (!encryptInPlaceReady) return;
-
     encryptingInPlace = true;
     encryptInPlaceProgress = [];
     error = '';
@@ -456,7 +424,6 @@
         }),
       });
 
-      // Handle SSE streaming response
       if (response.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
@@ -521,12 +488,8 @@
     }
   }
 
-  /**
-   * Decrypt existing encrypted profile data in-place
-   */
   async function decryptProfileInPlace() {
     if (!decryptPassword) return;
-
     decryptingInPlace = true;
     encryptInPlaceProgress = [];
     error = '';
@@ -536,12 +499,9 @@
       const response = await apiFetch('/api/profile-path/decrypt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          password: decryptPassword,
-        }),
+        body: JSON.stringify({ password: decryptPassword }),
       });
 
-      // Handle SSE streaming response
       if (response.headers.get('content-type')?.includes('text/event-stream')) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
@@ -604,25 +564,16 @@
     }
   }
 
-  /**
-   * Switch to a different profile location (without migration)
-   * Used after migration completes or to switch to existing profile
-   */
   async function switchToLocation(targetPath: string) {
     switchingLocation = true;
     error = '';
     success = '';
-
     try {
       const response = await apiFetch('/api/profile-path', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          path: targetPath,
-          type: 'external',
-        }),
+        body: JSON.stringify({ path: targetPath, type: 'external' }),
       });
-
       const data = await response.json();
       if (data.success) {
         success = `Switched to ${targetPath}`;
@@ -645,150 +596,140 @@
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let value = bytes;
     let unitIndex = 0;
-
     while (value >= 1024 && unitIndex < units.length - 1) {
       value /= 1024;
       unitIndex++;
     }
-
     return `${value.toFixed(1)} ${units[unitIndex]}`;
   }
 
   function getStorageTypeIcon(type: string): string {
     switch (type) {
-      case 'usb':
-        return '🔌';
-      case 'network':
-        return '🌐';
-      case 'encrypted':
-        return '🔒';
-      default:
-        return '💾';
+      case 'usb': return '🔌';
+      case 'network': return '🌐';
+      case 'encrypted': return '🔒';
+      default: return '💾';
     }
   }
 
   function getStatusIcon(status: string): string {
     switch (status) {
-      case 'completed':
-        return '✓';
-      case 'failed':
-        return '✗';
-      case 'skipped':
-        return '○';
-      case 'running':
-        return '→';
-      default:
-        return '•';
+      case 'completed': return '✓';
+      case 'failed': return '✗';
+      case 'skipped': return '○';
+      case 'running': return '→';
+      default: return '•';
     }
   }
 </script>
 
-<div class="profile-location-container">
-  <div class="section-header">
-    <h1>📁 Profile Storage Location</h1>
-    <p>Configure where your profile data is stored</p>
+<div class="p-8 max-w-[900px] mx-auto h-full overflow-y-auto">
+  <!-- Header -->
+  <div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">📁 Profile Storage Location</h1>
+    <p class="text-gray-500 dark:text-gray-400">Configure where your profile data is stored</p>
   </div>
 
   {#if loading}
-    <div class="loading-state">
+    <div class="flex flex-col items-center justify-center py-16">
       <div class="spinner"></div>
-      <p>Loading profile configuration...</p>
+      <p class="mt-4 text-gray-500 dark:text-gray-400 italic">Loading profile configuration...</p>
     </div>
   {:else}
     {#if error}
-      <div class="alert alert-error">
+      <div class="banner banner-error mb-4">
         <span>{error}</span>
-        <button on:click={() => error = ''} class="alert-close">×</button>
+        <button class="ml-auto text-2xl opacity-60 hover:opacity-100" on:click={() => error = ''}>×</button>
       </div>
     {/if}
 
     {#if success}
-      <div class="alert alert-success">
+      <div class="banner banner-success mb-4">
         <span>{success}</span>
-        <button on:click={() => success = ''} class="alert-close">×</button>
+        <button class="ml-auto text-2xl opacity-60 hover:opacity-100" on:click={() => success = ''}>×</button>
       </div>
     {/if}
 
     <!-- Current Configuration -->
     {#if profileConfig}
-      <div class="card">
-        <h2>Current Location</h2>
-        <div class="current-config">
-          <div class="config-row">
-            <span class="label">Path:</span>
-            <code class="path-value">{profileConfig.currentPath}</code>
+      <div class="panel mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Current Location</h2>
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center gap-4">
+            <span class="font-medium text-gray-500 dark:text-gray-400 min-w-[120px]">Path:</span>
+            <code class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-violet-600 dark:text-violet-400 rounded font-mono text-sm break-all">{profileConfig.currentPath}</code>
           </div>
-          <div class="config-row">
-            <span class="label">Storage Type:</span>
-            <span class="storage-badge storage-{profileConfig.storageType}">
+          <div class="flex items-center gap-4">
+            <span class="font-medium text-gray-500 dark:text-gray-400 min-w-[120px]">Storage Type:</span>
+            <span class="px-3 py-1 rounded-full text-sm font-medium
+                        {profileConfig.storageType === 'internal' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : ''}
+                        {profileConfig.storageType === 'external' || profileConfig.storageType === 'usb' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' : ''}
+                        {profileConfig.storageType === 'network' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : ''}
+                        {profileConfig.storageType === 'encrypted' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : ''}">
               {getStorageTypeIcon(profileConfig.storageType)} {profileConfig.storageType}
             </span>
           </div>
-          <div class="config-row">
-            <span class="label">Custom Location:</span>
-            <span class="value">{profileConfig.isCustom ? 'Yes' : 'No (Default)'}</span>
+          <div class="flex items-center gap-4">
+            <span class="font-medium text-gray-500 dark:text-gray-400 min-w-[120px]">Custom Location:</span>
+            <span class="text-gray-900 dark:text-gray-100">{profileConfig.isCustom ? 'Yes' : 'No (Default)'}</span>
           </div>
 
           {#if profileConfig.usingFallback}
-            <div class="warning-box drive-unavailable">
-              <strong>⚠️ External Drive Unavailable</strong>
-              <p>{profileConfig.fallbackReason || 'Custom location unavailable'}</p>
-              <div class="fallback-info">
-                <p class="fallback-tip">
-                  <strong>To reconnect:</strong>
-                </p>
-                <ol>
-                  <li>Ensure your external drive is connected and mounted</li>
-                  <li>Click the <strong>Refresh</strong> button in "Available Storage Devices" below</li>
-                  <li>Use <strong>Change Location</strong> to switch back to your external profile</li>
-                </ol>
-                <p class="fallback-note">
-                  Currently using fallback location. Changes will be saved locally until you reconnect.
-                </p>
+            <div class="banner banner-warning mt-3">
+              <div>
+                <strong>⚠️ External Drive Unavailable</strong>
+                <p class="text-sm mt-1">{profileConfig.fallbackReason || 'Custom location unavailable'}</p>
+                <div class="mt-3 pt-3 border-t border-amber-500/30">
+                  <p class="font-medium mb-2">To reconnect:</p>
+                  <ol class="list-decimal ml-5 text-sm space-y-1">
+                    <li>Ensure your external drive is connected and mounted</li>
+                    <li>Click the <strong>Refresh</strong> button in "Available Storage Devices" below</li>
+                    <li>Use <strong>Change Location</strong> to switch back to your external profile</li>
+                  </ol>
+                  <p class="mt-3 text-sm italic opacity-90">Currently using fallback location. Changes will be saved locally until you reconnect.</p>
+                </div>
               </div>
             </div>
           {/if}
 
           {#if profileConfig.storageInfo}
-            <div class="storage-info">
-              <h3>Storage Details</h3>
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">Device ID:</span>
-                  <span class="info-value">{profileConfig.storageInfo.id}</span>
+            <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Storage Details</h3>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Device ID</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{profileConfig.storageInfo.id}</span>
                 </div>
-                <div class="info-item">
-                  <span class="info-label">Label:</span>
-                  <span class="info-value">{profileConfig.storageInfo.label}</span>
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Label</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{profileConfig.storageInfo.label}</span>
                 </div>
-                <div class="info-item">
-                  <span class="info-label">Free Space:</span>
-                  <span class="info-value">{profileConfig.storageInfo.freeSpaceFormatted}</span>
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Free Space</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{profileConfig.storageInfo.freeSpaceFormatted}</span>
                 </div>
-                <div class="info-item">
-                  <span class="info-label">Total Space:</span>
-                  <span class="info-value">{profileConfig.storageInfo.totalSpaceFormatted}</span>
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Total Space</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{profileConfig.storageInfo.totalSpaceFormatted}</span>
                 </div>
-                <div class="info-item">
-                  <span class="info-label">Writable:</span>
-                  <span class="info-value">{profileConfig.storageInfo.writable ? 'Yes' : 'No'}</span>
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Writable</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{profileConfig.storageInfo.writable ? 'Yes' : 'No'}</span>
                 </div>
               </div>
             </div>
           {/if}
 
-          <!-- Encryption Status & Controls -->
-          <div class="encryption-status-card">
-            <h3>🔐 Encryption Status</h3>
-            <div class="encryption-status-content">
+          <!-- Encryption Status -->
+          <div class="mt-6 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">🔐 Encryption Status</h3>
+            <div class="flex flex-col gap-3">
               {#if profileConfig.isEncrypted}
-                <div class="status-badge encrypted">
-                  <span class="status-icon">🔒</span>
-                  <span class="status-text">
-                    Encrypted ({profileConfig.encryptionType === 'veracrypt' ? 'VeraCrypt' : profileConfig.encryptionType === 'luks' ? 'LUKS' : 'AES-256'})
-                  </span>
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full font-medium w-fit bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">
+                  <span class="text-xl">🔒</span>
+                  <span class="text-sm">Encrypted ({profileConfig.encryptionType === 'veracrypt' ? 'VeraCrypt' : profileConfig.encryptionType === 'luks' ? 'LUKS' : 'AES-256'})</span>
                 </div>
-                <p class="status-description">
+                <p class="text-sm text-gray-600 dark:text-gray-400">
                   Your profile data is protected with encryption.
                   {#if profileConfig.encryptionType === 'aes256'}
                     Individual files are encrypted with AES-256-GCM.
@@ -799,43 +740,31 @@
                   {/if}
                 </p>
                 {#if profileConfig.encryptionType === 'aes256'}
-                  <button
-                    class="btn btn-secondary btn-sm"
-                    on:click={() => showDecryptModal = true}
-                    disabled={decryptingInPlace}
-                  >
+                  <button class="btn-secondary btn-sm w-fit" on:click={() => showDecryptModal = true} disabled={decryptingInPlace}>
                     🔓 Decrypt Profile
                   </button>
                 {/if}
               {:else}
-                <div class="status-badge unencrypted">
-                  <span class="status-icon">📁</span>
-                  <span class="status-text">Not Encrypted</span>
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full font-medium w-fit bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                  <span class="text-xl">📁</span>
+                  <span class="text-sm">Not Encrypted</span>
                 </div>
-                <p class="status-description">
-                  Your profile data is stored as plain files. Consider encrypting for better security,
-                  especially if using external storage.
+                <p class="text-sm text-gray-600 dark:text-gray-400">
+                  Your profile data is stored as plain files. Consider encrypting for better security, especially if using external storage.
                 </p>
-                <button
-                  class="btn btn-primary btn-sm"
-                  on:click={() => showEncryptModal = true}
-                  disabled={encryptingInPlace}
-                >
+                <button class="btn-primary btn-sm w-fit" on:click={() => showEncryptModal = true} disabled={encryptingInPlace}>
                   🔒 Encrypt Profile
                 </button>
               {/if}
             </div>
           </div>
 
-          <div class="location-actions">
-            <button
-              class="btn btn-secondary"
-              on:click={() => { showChangeLocationModal = true; changeLocationPath = ''; }}
-            >
+          <div class="flex gap-3 mt-4 flex-wrap">
+            <button class="btn-secondary" on:click={() => { showChangeLocationModal = true; changeLocationPath = ''; }}>
               📂 Change Location
             </button>
             {#if profileConfig.isCustom}
-              <button class="btn btn-secondary" on:click={resetToDefault}>
+              <button class="btn-secondary" on:click={resetToDefault}>
                 Reset to Default Location
               </button>
             {/if}
@@ -845,88 +774,71 @@
     {/if}
 
     <!-- Available Storage Devices -->
-    <div class="card">
-      <div class="card-header">
-        <h2>Available Storage Devices</h2>
-        <button class="btn btn-secondary btn-sm" on:click={loadDevices} disabled={devicesLoading}>
+    <div class="panel mb-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">Available Storage Devices</h2>
+        <button class="btn-secondary btn-sm" on:click={loadDevices} disabled={devicesLoading}>
           {devicesLoading ? 'Scanning...' : '🔄 Refresh'}
         </button>
       </div>
-      <p class="card-note">
+      <p class="text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-2 mb-4">
         💡 Plugged in a new drive? Click <strong>Refresh</strong> to detect it.
       </p>
 
       {#if devicesLoading}
-        <div class="loading-text">Scanning for storage devices...</div>
+        <p class="text-gray-500 dark:text-gray-400 italic">Scanning for storage devices...</p>
       {:else if devices.length === 0}
-        <div class="empty-state">
+        <div class="text-center py-8 text-gray-500 dark:text-gray-400">
           <p>No external storage devices detected.</p>
-          <small>Connect a USB drive or network storage and click Refresh to see it here.</small>
+          <small class="block mt-2 text-sm">Connect a USB drive or network storage and click Refresh to see it here.</small>
         </div>
       {:else}
-        <div class="devices-list">
+        <div class="flex flex-col gap-4">
           {#each devices as device}
-            <div class="device-card" class:external={device.isExternal}>
-              <div class="device-header">
-                <span class="device-icon">{getStorageTypeIcon(device.type)}</span>
-                <div class="device-info">
-                  <strong class="device-label">{device.label}</strong>
-                  <code class="device-path">{device.path}</code>
+            <div class="p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors hover:border-violet-500 {device.isExternal ? 'border-l-[3px] border-l-amber-500' : ''}">
+              <div class="flex items-start gap-3 mb-3">
+                <span class="text-2xl">{getStorageTypeIcon(device.type)}</span>
+                <div class="flex-1">
+                  <strong class="block text-gray-900 dark:text-gray-100">{device.label}</strong>
+                  <code class="text-xs bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded">{device.path}</code>
                 </div>
               </div>
-              <div class="device-details">
-                <span class="device-type">{device.type}</span>
-                <span class="device-fs">{device.fsType || 'Unknown'}</span>
-                <span class="device-space" class:low-space={device.freeSpace < 1024 * 1024 * 1024}>
+              <div class="flex flex-wrap gap-2 mb-3">
+                <span class="px-2 py-0.5 text-xs rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">{device.type}</span>
+                <span class="px-2 py-0.5 text-xs rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">{device.fsType || 'Unknown'}</span>
+                <span class="px-2 py-0.5 text-xs rounded-full {device.freeSpace < 1024 * 1024 * 1024 ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'}">
                   {device.freeSpaceFormatted} free
                 </span>
                 {#if !device.writable}
-                  <span class="device-readonly">Read Only</span>
+                  <span class="px-2 py-0.5 text-xs rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-300">Read Only</span>
                 {/if}
               </div>
-              <div class="device-actions">
-                <div class="path-editor">
+              <div class="flex items-center gap-3">
+                <div class="flex-1 flex items-center gap-2 min-w-0">
                   {#if editingDeviceId === device.id}
                     <input
                       type="text"
-                      class="path-input"
+                      class="input-field flex-1 font-mono text-xs"
                       bind:value={devicePaths[device.id]}
                       on:blur={stopEditingPath}
                       on:keydown={(e) => e.key === 'Enter' && stopEditingPath()}
                       placeholder={device.suggestedPath}
                     />
                     {#if devicePaths[device.id] !== device.suggestedPath}
-                      <button
-                        class="btn btn-icon"
-                        title="Reset to default"
-                        on:click={() => resetDevicePath(device)}
-                      >
-                        ↺
-                      </button>
+                      <button class="btn-ghost btn-sm" title="Reset to default" on:click={() => resetDevicePath(device)}>↺</button>
                     {/if}
                   {:else}
                     <code
-                      class="suggested-path"
-                      class:modified={devicePaths[device.id] && devicePaths[device.id] !== device.suggestedPath}
+                      class="flex-1 text-xs text-violet-600 dark:text-violet-400 cursor-pointer px-2 py-1 rounded hover:bg-violet-500/10 break-all {devicePaths[device.id] && devicePaths[device.id] !== device.suggestedPath ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}"
                       on:click={() => startEditingPath(device)}
                       title="Click to edit path"
                     >
                       {getDevicePath(device)}
                     </code>
-                    <button
-                      class="btn btn-icon"
-                      title="Edit path"
-                      on:click={() => startEditingPath(device)}
-                    >
-                      ✏️
-                    </button>
+                    <button class="btn-ghost btn-sm" title="Edit path" on:click={() => startEditingPath(device)}>✏️</button>
                   {/if}
                 </div>
-                <button
-                  class="btn btn-primary btn-sm"
-                  on:click={() => initiateMove(getDevicePath(device))}
-                  disabled={!device.writable || migrating}
-                >
+                <button class="btn-primary btn-sm" on:click={() => initiateMove(getDevicePath(device))} disabled={!device.writable || migrating}>
                   Move Here
                 </button>
               </div>
@@ -937,45 +849,44 @@
     </div>
 
     <!-- Custom Path Input -->
-    <div class="card">
-      <h2>Custom Path</h2>
-      <p class="card-description">Specify a custom location for your profile data</p>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Custom Path</h2>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Specify a custom location for your profile data</p>
 
       {#if !showCustomPath}
-        <button class="btn btn-secondary" on:click={() => showCustomPath = true}>
-          Enter Custom Path
-        </button>
+        <button class="btn-secondary" on:click={() => showCustomPath = true}>Enter Custom Path</button>
       {:else}
-        <div class="custom-path-form">
-          <div class="form-group">
-            <label for="customPath">Profile Path</label>
+        <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-2">
+            <label for="customPath" class="font-medium text-gray-700 dark:text-gray-300">Profile Path</label>
             <input
               id="customPath"
               type="text"
+              class="input-field font-mono"
               bind:value={customPath}
               placeholder="/path/to/your/profile"
               on:blur={handleValidateCustomPath}
               disabled={validating || migrating}
             />
-            <small>Enter an absolute path where you want to store your profile data</small>
+            <small class="text-sm text-gray-500 dark:text-gray-400">Enter an absolute path where you want to store your profile data</small>
           </div>
 
           {#if validating}
-            <div class="validation-status validating">
-              <div class="spinner small"></div>
+            <div class="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+              <div class="spinner spinner-sm"></div>
               <span>Validating path...</span>
             </div>
           {:else if validation}
-            <div class="validation-result" class:valid={validation.valid} class:invalid={!validation.valid}>
+            <div class="p-4 rounded-lg {validation.valid ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'}">
               {#if validation.valid}
-                <div class="validation-success">
+                <div class="text-green-700 dark:text-green-300">
                   <strong>✓ Valid Path</strong>
-                  <code>{validation.resolvedPath}</code>
+                  <code class="block mt-2 px-2 py-1 bg-green-100 dark:bg-green-800 text-green-800 dark:text-green-200 rounded text-sm">{validation.resolvedPath}</code>
                 </div>
               {:else}
-                <div class="validation-errors">
+                <div class="text-red-700 dark:text-red-300">
                   <strong>✗ Invalid Path</strong>
-                  <ul>
+                  <ul class="mt-2 ml-5 list-disc">
                     {#each validation.errors as err}
                       <li>{err}</li>
                     {/each}
@@ -984,9 +895,9 @@
               {/if}
 
               {#if validation.warnings.length > 0}
-                <div class="validation-warnings">
+                <div class="mt-3 pt-3 border-t border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300">
                   <strong>⚠️ Warnings:</strong>
-                  <ul>
+                  <ul class="mt-2 ml-5 list-disc">
                     {#each validation.warnings as warning}
                       <li>{warning}</li>
                     {/each}
@@ -996,19 +907,11 @@
             </div>
           {/if}
 
-          <div class="form-actions">
-            <button
-              class="btn btn-primary"
-              on:click={() => initiateMove(customPath.trim())}
-              disabled={!validation?.valid || migrating}
-            >
+          <div class="flex gap-3">
+            <button class="btn-primary" on:click={() => initiateMove(customPath.trim())} disabled={!validation?.valid || migrating}>
               Move to Custom Path
             </button>
-            <button
-              class="btn btn-secondary"
-              on:click={() => { showCustomPath = false; customPath = ''; validation = null; }}
-              disabled={migrating}
-            >
+            <button class="btn-secondary" on:click={() => { showCustomPath = false; customPath = ''; validation = null; }} disabled={migrating}>
               Cancel
             </button>
           </div>
@@ -1017,9 +920,9 @@
     </div>
 
     <!-- Security Warning -->
-    <div class="card warning-card">
-      <h2>⚠️ Security Considerations</h2>
-      <ul>
+    <div class="panel bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700">
+      <h2 class="text-xl font-semibold text-amber-800 dark:text-amber-300 mb-3">⚠️ Security Considerations</h2>
+      <ul class="list-disc ml-5 text-amber-700 dark:text-amber-300 space-y-2">
         <li><strong>External Storage:</strong> Data on external drives may be accessible if the drive is lost or stolen - <em>use encryption!</em></li>
         <li><strong>Network Storage:</strong> Network drives may have different access controls and backup policies</li>
         <li><strong>Password Security:</strong> Use a strong, unique password for encryption</li>
@@ -1032,161 +935,102 @@
 <!-- Confirmation Dialog with Migration Options -->
 {#if showConfirmDialog}
   <div class="modal-overlay" on:click={() => showConfirmDialog = false}>
-    <div class="modal-content migration-config-modal" on:click|stopPropagation>
-      <h3>📁 Configure Migration</h3>
+    <div class="modal-content max-w-[500px]" on:click|stopPropagation>
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">📁 Configure Migration</h3>
 
-      <div class="modal-body">
-        <div class="config-section">
-          <label class="config-label">Destination</label>
-          <code class="target-path">{pendingPath}</code>
+      <div class="space-y-4">
+        <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
+          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-2">Destination</label>
+          <code class="block p-3 bg-gray-100 dark:bg-gray-800 text-violet-600 dark:text-violet-400 rounded-lg font-mono text-sm break-all">{pendingPath}</code>
         </div>
 
         <!-- Encryption Selection -->
-        <div class="config-section">
-          <label class="config-label">🔐 Encryption</label>
-          <div class="encryption-options-compact">
-            <label class="radio-option" class:selected={encryptionType === 'none'}>
-              <input type="radio" bind:group={encryptionType} value="none" />
-              <span class="radio-label">📁 None</span>
-            </label>
-            <label class="radio-option" class:selected={encryptionType === 'aes256'}>
-              <input type="radio" bind:group={encryptionType} value="aes256" />
-              <span class="radio-label">🔒 AES-256</span>
-            </label>
-            <label class="radio-option" class:selected={encryptionType === 'luks'}>
-              <input type="radio" bind:group={encryptionType} value="luks" />
-              <span class="radio-label">🐧 LUKS</span>
-            </label>
-            <label class="radio-option" class:selected={encryptionType === 'veracrypt'}>
-              <input type="radio" bind:group={encryptionType} value="veracrypt" />
-              <span class="radio-label">🛡️ VeraCrypt</span>
-            </label>
+        <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
+          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">🔐 Encryption</label>
+          <div class="flex gap-2 mb-3">
+            {#each [
+              { value: 'none', label: '📁 None' },
+              { value: 'aes256', label: '🔒 AES-256' },
+              { value: 'luks', label: '🐧 LUKS' },
+              { value: 'veracrypt', label: '🛡️ VeraCrypt' },
+            ] as option}
+              <label class="flex-1 flex items-center justify-center px-3 py-2 bg-gray-100 dark:bg-gray-800 border-2 border-transparent rounded-lg cursor-pointer transition-all hover:border-violet-500 {encryptionType === option.value ? 'bg-violet-500/10 border-violet-500' : ''}">
+                <input type="radio" bind:group={encryptionType} value={option.value} class="hidden" />
+                <span class="text-sm font-medium {encryptionType === option.value ? 'text-violet-600 dark:text-violet-400' : 'text-gray-700 dark:text-gray-300'}">{option.label}</span>
+              </label>
+            {/each}
           </div>
 
           {#if encryptionType !== 'none'}
-            <div class="encryption-fields">
+            <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-3">
               {#if encryptionType === 'aes256' || encryptionType === 'luks'}
-                <div class="form-group checkbox-group">
-                  <label class="checkbox-label">
-                    <input
-                      type="checkbox"
-                      bind:checked={useMigrationLoginPassword}
-                      on:change={() => { encryptionPassword = ''; encryptionPasswordConfirm = ''; }}
-                    />
-                    <span>Use my login password for encryption</span>
-                  </label>
-                  <p class="checkbox-description">
-                    {#if encryptionType === 'luks'}
-                      Your login password will unlock the LUKS volume automatically when you log in.
-                    {:else}
-                      Your login password will be used as the encryption key.
-                    {/if}
-                  </p>
-                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" bind:checked={useMigrationLoginPassword} on:change={() => { encryptionPassword = ''; encryptionPasswordConfirm = ''; }} class="w-4 h-4 accent-violet-500" />
+                  <span class="text-sm text-gray-700 dark:text-gray-300">Use my login password for encryption</span>
+                </label>
               {/if}
 
               {#if !useMigrationLoginPassword || encryptionType === 'veracrypt'}
-                <div class="form-row">
-                  <input
-                    type="password"
-                    bind:value={encryptionPassword}
-                    placeholder="Password (min 8 characters)"
-                    class="input-field"
-                  />
-                  <input
-                    type="password"
-                    bind:value={encryptionPasswordConfirm}
-                    placeholder="Confirm password"
-                    class="input-field"
-                  />
+                <div class="flex gap-2">
+                  <input type="password" bind:value={encryptionPassword} placeholder="Password (min 8 characters)" class="input-field flex-1" />
+                  <input type="password" bind:value={encryptionPasswordConfirm} placeholder="Confirm password" class="input-field flex-1" />
                 </div>
                 {#if encryptionPassword && !passwordValid}
-                  <span class="field-error">Password must be at least 8 characters</span>
+                  <span class="text-xs text-red-500">Password must be at least 8 characters</span>
                 {/if}
                 {#if encryptionPasswordConfirm && !passwordsMatch}
-                  <span class="field-error">Passwords do not match</span>
+                  <span class="text-xs text-red-500">Passwords do not match</span>
                 {/if}
               {:else}
-                <div class="form-row">
-                  <input
-                    type="password"
-                    bind:value={encryptionPassword}
-                    placeholder="Enter your login password"
-                    class="input-field"
-                    style="flex: 1;"
-                  />
-                </div>
+                <input type="password" bind:value={encryptionPassword} placeholder="Enter your login password" class="input-field" />
                 {#if encryptionPassword && !passwordValid}
-                  <span class="field-error">Password must be at least 8 characters</span>
+                  <span class="text-xs text-red-500">Password must be at least 8 characters</span>
                 {/if}
               {/if}
 
-              {#if encryptionType === 'luks'}
-                <div class="luks-info">
-                  <p class="encryption-description">
-                    🐧 <strong>LUKS</strong> (Linux Unified Key Setup) provides native disk encryption.
-                    Fast and secure - recommended for Linux systems.
-                  </p>
-                  <div class="form-row">
-                    <label class="inline-label"></label>
-                    <select bind:value={containerSize} class="select-field">
-                      {#each CONTAINER_SIZES as size}
-                        <option value={size.value}>{size.label}</option>
-                      {/each}
-                    </select>
-                  </div>
+              {#if encryptionType === 'luks' || encryptionType === 'veracrypt'}
+                <div class="flex items-center gap-2">
+                  <label class="text-sm text-gray-500 dark:text-gray-400">Container Size:</label>
+                  <select bind:value={containerSize} class="select-field">
+                    {#each CONTAINER_SIZES as size}
+                      <option value={size.value}>{size.label}</option>
+                    {/each}
+                  </select>
                 </div>
               {/if}
 
-              {#if encryptionType === 'veracrypt'}
-                {#if !veracryptStatus?.installed}
-                  <div class="veracrypt-warning">
-                    ⚠️ VeraCrypt not installed. <a href="https://www.veracrypt.fr/en/Downloads.html" target="_blank">Download</a>
-                  </div>
-                {:else}
-                  <div class="form-row">
-                    <label class="inline-label">Container Size:</label>
-                    <select bind:value={containerSize} class="select-field">
-                      {#each CONTAINER_SIZES as size}
-                        <option value={size.value}>{size.label}</option>
-                      {/each}
-                    </select>
-                  </div>
-                {/if}
+              {#if encryptionType === 'veracrypt' && !veracryptStatus?.installed}
+                <div class="p-2 bg-amber-100 dark:bg-amber-900/30 rounded text-xs text-amber-700 dark:text-amber-300">
+                  ⚠️ VeraCrypt not installed. <a href="https://www.veracrypt.fr/en/Downloads.html" target="_blank" class="text-blue-500 underline">Download</a>
+                </div>
               {/if}
 
-              {#if !useMigrationLoginPassword}
-                <p class="password-note">
-                  ⚠️ Password is never stored. If forgotten, data cannot be recovered.
-                </p>
-              {:else}
-                <p class="password-note" style="color: #4caf50;">
-                  ✓ Your login password will be verified and used for encryption.
-                </p>
-              {/if}
+              <p class="text-xs {useMigrationLoginPassword ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}">
+                {useMigrationLoginPassword ? '✓ Your login password will be verified and used for encryption.' : '⚠️ Password is never stored. If forgotten, data cannot be recovered.'}
+              </p>
             </div>
           {/if}
         </div>
 
         <!-- Migration Options -->
-        <div class="config-section">
-          <label class="config-label">⚙️ Options</label>
-          <div class="toggle-options">
-            <label class="checkbox-option">
-              <input type="checkbox" bind:checked={keepSourceFiles} />
+        <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
+          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">⚙️ Options</label>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300">
+              <input type="checkbox" bind:checked={keepSourceFiles} class="w-4 h-4 accent-violet-500" />
               <span>Keep source files after migration</span>
             </label>
-            <label class="checkbox-option">
-              <input type="checkbox" bind:checked={overwriteExisting} />
+            <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300">
+              <input type="checkbox" bind:checked={overwriteExisting} class="w-4 h-4 accent-violet-500" />
               <span>Overwrite existing files at destination</span>
             </label>
           </div>
         </div>
 
         <!-- Summary -->
-        <div class="migration-summary">
-          <strong>This will:</strong>
-          <ul>
+        <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border-l-[3px] border-l-violet-500">
+          <strong class="block text-sm text-gray-500 dark:text-gray-400 mb-2">This will:</strong>
+          <ul class="list-disc ml-5 text-sm text-gray-700 dark:text-gray-300 space-y-1">
             {#if encryptionType === 'veracrypt'}
               <li>Create encrypted VeraCrypt container</li>
             {:else if encryptionType === 'luks'}
@@ -1198,22 +1042,15 @@
             {/if}
             <li>Update system configuration</li>
             {#if !keepSourceFiles}
-              <li class="destructive">Delete original files</li>
+              <li class="text-red-500 dark:text-red-400 font-medium">Delete original files</li>
             {/if}
           </ul>
         </div>
       </div>
 
-      <div class="modal-actions">
-        <button class="btn btn-secondary" on:click={() => showConfirmDialog = false}>
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          on:click={confirmMove}
-          disabled={!encryptionReady}
-          title={!encryptionReady ? 'Complete encryption settings first' : ''}
-        >
+      <div class="modal-footer mt-6">
+        <button class="btn-secondary" on:click={() => showConfirmDialog = false}>Cancel</button>
+        <button class="btn-primary" on:click={confirmMove} disabled={!encryptionReady} title={!encryptionReady ? 'Complete encryption settings first' : ''}>
           {encryptionType !== 'none' ? '🔐 Start Encrypted Migration' : '📦 Start Migration'}
         </button>
       </div>
@@ -1224,27 +1061,27 @@
 <!-- Migration Progress Modal -->
 {#if showMigrationModal}
   <div class="modal-overlay">
-    <div class="modal-content migration-modal">
-      <h3>📦 Migration in Progress</h3>
+    <div class="modal-content max-w-[700px]">
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">📦 Migration in Progress</h3>
 
-      <div class="migration-target">
-        <span class="label">Target:</span>
-        <code>{migrationTarget}</code>
+      <div class="flex items-center gap-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg mb-4">
+        <span class="text-sm text-gray-500 dark:text-gray-400">Target:</span>
+        <code class="flex-1 text-sm text-violet-600 dark:text-violet-400 break-all">{migrationTarget}</code>
       </div>
 
-      <div class="progress-container">
+      <div class="flex flex-col gap-2 max-h-[400px] overflow-y-auto mb-4">
         {#each migrationProgress as step}
-          <div class="progress-step" class:completed={step.status === 'completed'} class:failed={step.status === 'failed'} class:running={step.status === 'running'} class:skipped={step.status === 'skipped'}>
-            <span class="step-icon">{getStatusIcon(step.status)}</span>
-            <div class="step-content">
-              <span class="step-message">{step.message}</span>
+          <div class="progress-step {step.status}">
+            <span class="font-bold w-5 text-center {step.status === 'completed' ? 'text-green-500' : step.status === 'failed' ? 'text-red-500' : step.status === 'running' ? 'text-blue-500' : ''}">{getStatusIcon(step.status)}</span>
+            <div class="flex-1">
+              <span class="block text-sm text-gray-700 dark:text-gray-300">{step.message}</span>
               {#if step.progress !== undefined}
-                <div class="progress-bar">
-                  <div class="progress-fill" style="width: {step.progress}%"></div>
+                <div class="progress-bar-track mt-2">
+                  <div class="progress-bar-fill" style="width: {step.progress}%"></div>
                 </div>
               {/if}
               {#if step.error}
-                <span class="step-error">{step.error}</span>
+                <span class="block mt-1 text-xs text-red-500">{step.error}</span>
               {/if}
             </div>
           </div>
@@ -1252,35 +1089,26 @@
       </div>
 
       {#if !migrating}
-        <div class="modal-actions">
+        <div class="modal-footer">
           {#if migrationSuccess}
-            <div class="migration-success-prompt">
-              <p class="success-message">✅ Migration completed! Would you like to switch to the new location?</p>
-              <div class="action-buttons">
-                <button
-                  class="btn btn-primary"
-                  on:click={() => switchToLocation(migrationTarget)}
-                  disabled={switchingLocation}
-                >
+            <div class="w-full text-center">
+              <p class="text-green-500 font-medium mb-4">✅ Migration completed! Would you like to switch to the new location?</p>
+              <div class="flex gap-3 justify-center flex-wrap">
+                <button class="btn-primary" on:click={() => switchToLocation(migrationTarget)} disabled={switchingLocation}>
                   {switchingLocation ? 'Switching...' : '🔄 Switch to New Location'}
                 </button>
-                <button
-                  class="btn btn-secondary"
-                  on:click={() => { showMigrationModal = false; migrationSuccess = false; }}
-                >
+                <button class="btn-secondary" on:click={() => { showMigrationModal = false; migrationSuccess = false; }}>
                   Keep Current Location
                 </button>
               </div>
             </div>
           {:else}
-            <button class="btn btn-primary" on:click={() => showMigrationModal = false}>
-              Close
-            </button>
+            <button class="btn-primary" on:click={() => showMigrationModal = false}>Close</button>
           {/if}
         </div>
       {:else}
-        <div class="migrating-indicator">
-          <div class="spinner"></div>
+        <div class="flex items-center justify-center gap-3 py-4 text-gray-500 dark:text-gray-400">
+          <div class="spinner spinner-sm"></div>
           <span>Please wait...</span>
         </div>
       {/if}
@@ -1291,115 +1119,79 @@
 <!-- Encrypt Profile Modal -->
 {#if showEncryptModal}
   <div class="modal-overlay" on:click={() => !encryptingInPlace && (showEncryptModal = false)}>
-    <div class="modal-content encryption-modal" on:click|stopPropagation>
-      <h3>🔒 Encrypt Profile Data</h3>
+    <div class="modal-content max-w-[450px]" on:click|stopPropagation>
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">🔒 Encrypt Profile Data</h3>
 
       {#if !encryptingInPlace && encryptInPlaceProgress.length === 0}
-        <div class="modal-body">
-          <p class="encryption-modal-description">
-            Encrypt all existing profile data with AES-256-GCM encryption. This will convert
-            all plain JSON files to encrypted format in-place.
+        <div class="space-y-4">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            Encrypt all existing profile data with AES-256-GCM encryption. This will convert all plain JSON files to encrypted format in-place.
           </p>
 
-          <div class="encryption-fields">
-            <div class="form-group checkbox-group">
-              <label class="checkbox-label">
-                <input
-                  type="checkbox"
-                  bind:checked={useLoginPassword}
-                  on:change={() => { encryptInPlacePassword = ''; encryptInPlacePasswordConfirm = ''; }}
-                />
-                <span>Use my login password for encryption</span>
-              </label>
-              <p class="checkbox-description">
-                Your login password will be used as the encryption key. You won't need to remember a separate password.
-              </p>
-            </div>
+          <div class="p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg space-y-4">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" bind:checked={useLoginPassword} on:change={() => { encryptInPlacePassword = ''; encryptInPlacePasswordConfirm = ''; }} class="w-5 h-5 accent-violet-500" />
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Use my login password for encryption</span>
+            </label>
+            <p class="text-xs text-gray-500 dark:text-gray-400 ml-8">
+              Your login password will be used as the encryption key. You won't need to remember a separate password.
+            </p>
+          </div>
 
-            {#if !useLoginPassword}
-              <div class="form-group">
-                <label for="encryptInPlacePassword">Encryption Password</label>
-                <input
-                  id="encryptInPlacePassword"
-                  type="password"
-                  bind:value={encryptInPlacePassword}
-                  placeholder="Enter password (min 8 characters)"
-                  class="input-field"
-                />
+          {#if !useLoginPassword}
+            <div class="space-y-3">
+              <div class="flex flex-col gap-1.5">
+                <label for="encryptInPlacePassword" class="text-sm font-medium text-gray-700 dark:text-gray-300">Encryption Password</label>
+                <input id="encryptInPlacePassword" type="password" bind:value={encryptInPlacePassword} placeholder="Enter password (min 8 characters)" class="input-field" />
               </div>
-              <div class="form-group">
-                <label for="encryptInPlacePasswordConfirm">Confirm Password</label>
-                <input
-                  id="encryptInPlacePasswordConfirm"
-                  type="password"
-                  bind:value={encryptInPlacePasswordConfirm}
-                  placeholder="Confirm password"
-                  class="input-field"
-                />
+              <div class="flex flex-col gap-1.5">
+                <label for="encryptInPlacePasswordConfirm" class="text-sm font-medium text-gray-700 dark:text-gray-300">Confirm Password</label>
+                <input id="encryptInPlacePasswordConfirm" type="password" bind:value={encryptInPlacePasswordConfirm} placeholder="Confirm password" class="input-field" />
               </div>
-
               {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
-                <span class="field-error">Password must be at least 8 characters</span>
+                <span class="text-xs text-red-500">Password must be at least 8 characters</span>
               {/if}
               {#if encryptInPlacePasswordConfirm && !encryptInPlacePasswordsMatch}
-                <span class="field-error">Passwords do not match</span>
+                <span class="text-xs text-red-500">Passwords do not match</span>
               {/if}
-
-              <div class="password-warning">
-                <strong>⚠️ Important:</strong> Your password is never stored. If you forget it,
-                your data cannot be recovered. Write it down somewhere safe!
+              <div class="p-3 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-lg text-sm text-amber-700 dark:text-amber-300">
+                <strong>⚠️ Important:</strong> Your password is never stored. If you forget it, your data cannot be recovered. Write it down somewhere safe!
               </div>
-            {:else}
-              <div class="form-group">
-                <label for="encryptInPlacePassword">Enter Your Login Password</label>
-                <input
-                  id="encryptInPlacePassword"
-                  type="password"
-                  bind:value={encryptInPlacePassword}
-                  placeholder="Enter your login password"
-                  class="input-field"
-                />
+            </div>
+          {:else}
+            <div class="space-y-3">
+              <div class="flex flex-col gap-1.5">
+                <label for="encryptInPlacePassword" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enter Your Login Password</label>
+                <input id="encryptInPlacePassword" type="password" bind:value={encryptInPlacePassword} placeholder="Enter your login password" class="input-field" />
               </div>
-
               {#if encryptInPlacePassword && !encryptInPlacePasswordValid}
-                <span class="field-error">Password must be at least 8 characters</span>
+                <span class="text-xs text-red-500">Password must be at least 8 characters</span>
               {/if}
-
-              <div class="password-warning" style="background: #e8f5e9; border-color: #4caf50;">
-                <strong>✓ Convenient:</strong> Your login password will be verified and used for encryption.
-                If you change your login password later, you'll need to decrypt and re-encrypt your data.
+              <div class="p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg text-sm text-green-700 dark:text-green-300">
+                <strong>✓ Convenient:</strong> Your login password will be verified and used for encryption. If you change your login password later, you'll need to decrypt and re-encrypt your data.
               </div>
-            {/if}
-          </div>
+            </div>
+          {/if}
         </div>
 
-        <div class="modal-actions">
-          <button class="btn btn-secondary" on:click={() => showEncryptModal = false}>
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            on:click={encryptProfileInPlace}
-            disabled={!encryptInPlaceReady}
-          >
-            🔒 Start Encryption
-          </button>
+        <div class="modal-footer mt-6">
+          <button class="btn-secondary" on:click={() => showEncryptModal = false}>Cancel</button>
+          <button class="btn-primary" on:click={encryptProfileInPlace} disabled={!encryptInPlaceReady}>🔒 Start Encryption</button>
         </div>
       {:else}
-        <!-- Progress view -->
-        <div class="progress-container">
+        <div class="flex flex-col gap-2 max-h-[400px] overflow-y-auto mb-4">
           {#each encryptInPlaceProgress as step}
-            <div class="progress-step" class:completed={step.status === 'completed'} class:failed={step.status === 'failed'} class:running={step.status === 'running'}>
-              <span class="step-icon">{getStatusIcon(step.status)}</span>
-              <div class="step-content">
-                <span class="step-message">{step.message}</span>
+            <div class="progress-step {step.status}">
+              <span class="font-bold w-5 text-center {step.status === 'completed' ? 'text-green-500' : step.status === 'failed' ? 'text-red-500' : step.status === 'running' ? 'text-blue-500' : ''}">{getStatusIcon(step.status)}</span>
+              <div class="flex-1">
+                <span class="block text-sm text-gray-700 dark:text-gray-300">{step.message}</span>
                 {#if step.progress !== undefined}
-                  <div class="progress-bar">
-                    <div class="progress-fill" style="width: {step.progress}%"></div>
+                  <div class="progress-bar-track mt-2">
+                    <div class="progress-bar-fill" style="width: {step.progress}%"></div>
                   </div>
                 {/if}
                 {#if step.error}
-                  <span class="step-error">{step.error}</span>
+                  <span class="block mt-1 text-xs text-red-500">{step.error}</span>
                 {/if}
               </div>
             </div>
@@ -1407,14 +1199,12 @@
         </div>
 
         {#if !encryptingInPlace}
-          <div class="modal-actions">
-            <button class="btn btn-primary" on:click={() => { showEncryptModal = false; encryptInPlaceProgress = []; }}>
-              Close
-            </button>
+          <div class="modal-footer">
+            <button class="btn-primary" on:click={() => { showEncryptModal = false; encryptInPlaceProgress = []; }}>Close</button>
           </div>
         {:else}
-          <div class="migrating-indicator">
-            <div class="spinner"></div>
+          <div class="flex items-center justify-center gap-3 py-4 text-gray-500 dark:text-gray-400">
+            <div class="spinner spinner-sm"></div>
             <span>Encrypting files...</span>
           </div>
         {/if}
@@ -1426,73 +1216,57 @@
 <!-- Decrypt Profile Modal -->
 {#if showDecryptModal}
   <div class="modal-overlay" on:click={() => !decryptingInPlace && (showDecryptModal = false)}>
-    <div class="modal-content encryption-modal" on:click|stopPropagation>
-      <h3>🔓 Decrypt Profile Data</h3>
+    <div class="modal-content max-w-[450px]" on:click|stopPropagation>
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">🔓 Decrypt Profile Data</h3>
 
       {#if !decryptingInPlace && encryptInPlaceProgress.length === 0}
-        <div class="modal-body">
-          <p class="encryption-modal-description">
-            Decrypt all encrypted profile data back to plain JSON files. You will need
-            your encryption password to proceed.
+        <div class="space-y-4">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            Decrypt all encrypted profile data back to plain JSON files. You will need your encryption password to proceed.
           </p>
 
           {#if profileConfig?.encryptionInfo?.useLoginPassword}
-            <div class="password-warning" style="background: #e8f5e9; border-color: #4caf50; margin-bottom: 1rem;">
-              <strong>💡 Hint:</strong> This profile was encrypted using your login password.
-              Enter your login password below.
+            <div class="p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg text-sm text-green-700 dark:text-green-300">
+              <strong>💡 Hint:</strong> This profile was encrypted using your login password. Enter your login password below.
             </div>
           {/if}
 
-          <div class="encryption-fields">
-            <div class="form-group">
-              <label for="decryptPassword">
-                {profileConfig?.encryptionInfo?.useLoginPassword ? 'Login Password' : 'Encryption Password'}
-              </label>
-              <input
-                id="decryptPassword"
-                type="password"
-                bind:value={decryptPassword}
-                placeholder={profileConfig?.encryptionInfo?.useLoginPassword
-                  ? 'Enter your login password'
-                  : 'Enter your encryption password'}
-                class="input-field"
-              />
-            </div>
+          <div class="flex flex-col gap-1.5">
+            <label for="decryptPassword" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {profileConfig?.encryptionInfo?.useLoginPassword ? 'Login Password' : 'Encryption Password'}
+            </label>
+            <input
+              id="decryptPassword"
+              type="password"
+              bind:value={decryptPassword}
+              placeholder={profileConfig?.encryptionInfo?.useLoginPassword ? 'Enter your login password' : 'Enter your encryption password'}
+              class="input-field"
+            />
+          </div>
 
-            <div class="warning-box">
-              <strong>⚠️ Security Note:</strong> After decryption, your profile data will be
-              stored as plain files. Anyone with access to this location can read your data.
-            </div>
+          <div class="p-3 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-lg text-sm text-amber-700 dark:text-amber-300">
+            <strong>⚠️ Security Note:</strong> After decryption, your profile data will be stored as plain files. Anyone with access to this location can read your data.
           </div>
         </div>
 
-        <div class="modal-actions">
-          <button class="btn btn-secondary" on:click={() => showDecryptModal = false}>
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            on:click={decryptProfileInPlace}
-            disabled={!decryptPassword}
-          >
-            🔓 Start Decryption
-          </button>
+        <div class="modal-footer mt-6">
+          <button class="btn-secondary" on:click={() => showDecryptModal = false}>Cancel</button>
+          <button class="btn-primary" on:click={decryptProfileInPlace} disabled={!decryptPassword}>🔓 Start Decryption</button>
         </div>
       {:else}
-        <!-- Progress view -->
-        <div class="progress-container">
+        <div class="flex flex-col gap-2 max-h-[400px] overflow-y-auto mb-4">
           {#each encryptInPlaceProgress as step}
-            <div class="progress-step" class:completed={step.status === 'completed'} class:failed={step.status === 'failed'} class:running={step.status === 'running'}>
-              <span class="step-icon">{getStatusIcon(step.status)}</span>
-              <div class="step-content">
-                <span class="step-message">{step.message}</span>
+            <div class="progress-step {step.status}">
+              <span class="font-bold w-5 text-center {step.status === 'completed' ? 'text-green-500' : step.status === 'failed' ? 'text-red-500' : step.status === 'running' ? 'text-blue-500' : ''}">{getStatusIcon(step.status)}</span>
+              <div class="flex-1">
+                <span class="block text-sm text-gray-700 dark:text-gray-300">{step.message}</span>
                 {#if step.progress !== undefined}
-                  <div class="progress-bar">
-                    <div class="progress-fill" style="width: {step.progress}%"></div>
+                  <div class="progress-bar-track mt-2">
+                    <div class="progress-bar-fill" style="width: {step.progress}%"></div>
                   </div>
                 {/if}
                 {#if step.error}
-                  <span class="step-error">{step.error}</span>
+                  <span class="block mt-1 text-xs text-red-500">{step.error}</span>
                 {/if}
               </div>
             </div>
@@ -1500,14 +1274,12 @@
         </div>
 
         {#if !decryptingInPlace}
-          <div class="modal-actions">
-            <button class="btn btn-primary" on:click={() => { showDecryptModal = false; encryptInPlaceProgress = []; }}>
-              Close
-            </button>
+          <div class="modal-footer">
+            <button class="btn-primary" on:click={() => { showDecryptModal = false; encryptInPlaceProgress = []; }}>Close</button>
           </div>
         {:else}
-          <div class="migrating-indicator">
-            <div class="spinner"></div>
+          <div class="flex items-center justify-center gap-3 py-4 text-gray-500 dark:text-gray-400">
+            <div class="spinner spinner-sm"></div>
             <span>Decrypting files...</span>
           </div>
         {/if}
@@ -1519,40 +1291,34 @@
 <!-- Change Location Modal -->
 {#if showChangeLocationModal}
   <div class="modal-overlay" on:click={() => !switchingLocation && (showChangeLocationModal = false)}>
-    <div class="modal-content change-location-modal" on:click|stopPropagation>
-      <h3>📂 Change Profile Location</h3>
+    <div class="modal-content max-w-[550px]" on:click|stopPropagation>
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">📂 Change Profile Location</h3>
 
-      <div class="modal-body">
-        <p class="modal-description">
-          Switch to a different profile location. The new location must contain
-          existing profile data (persona/ or memory/ folders).
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          Switch to a different profile location. The new location must contain existing profile data (persona/ or memory/ folders).
         </p>
 
-        <div class="form-group">
-          <label for="changeLocationPath">Profile Path</label>
+        <div class="flex flex-col gap-1.5">
+          <label for="changeLocationPath" class="text-sm font-medium text-gray-700 dark:text-gray-300">Profile Path</label>
           <input
             id="changeLocationPath"
             type="text"
+            class="input-field font-mono"
             bind:value={changeLocationPath}
             placeholder="/path/to/existing/profile"
-            class="input-field"
             disabled={switchingLocation}
           />
-          <small>Enter the absolute path to an existing profile directory</small>
+          <small class="text-sm text-gray-500 dark:text-gray-400">Enter the absolute path to an existing profile directory</small>
         </div>
 
-        <!-- Quick select from available devices -->
         {#if devices.length > 0}
-          <div class="quick-select">
-            <label class="quick-select-label">Quick Select:</label>
-            <div class="device-buttons">
+          <div class="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Quick Select:</label>
+            <div class="flex gap-2 flex-wrap">
               {#each devices as device}
                 {#if device.writable}
-                  <button
-                    class="btn btn-sm btn-outline"
-                    on:click={() => changeLocationPath = getDevicePath(device)}
-                    disabled={switchingLocation}
-                  >
+                  <button class="btn-ghost btn-sm border border-gray-300 dark:border-gray-600" on:click={() => changeLocationPath = getDevicePath(device)} disabled={switchingLocation}>
                     {getStorageTypeIcon(device.type)} {device.label}
                   </button>
                 {/if}
@@ -1561,2040 +1327,17 @@
           </div>
         {/if}
 
-        <div class="info-box">
-          <strong>ℹ️ Note:</strong> This will only switch to a location that already
-          contains your profile data. To migrate data to a new location, use the
-          "Move Here" option in the Available Storage Devices section.
+        <div class="p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-lg text-sm text-blue-700 dark:text-blue-300">
+          <strong>ℹ️ Note:</strong> This will only switch to a location that already contains your profile data. To migrate data to a new location, use the "Move Here" option in the Available Storage Devices section.
         </div>
       </div>
 
-      <div class="modal-actions">
-        <button
-          class="btn btn-secondary"
-          on:click={() => showChangeLocationModal = false}
-          disabled={switchingLocation}
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          on:click={() => switchToLocation(changeLocationPath)}
-          disabled={!changeLocationPath.trim() || switchingLocation}
-        >
+      <div class="modal-footer mt-6">
+        <button class="btn-secondary" on:click={() => showChangeLocationModal = false} disabled={switchingLocation}>Cancel</button>
+        <button class="btn-primary" on:click={() => switchToLocation(changeLocationPath)} disabled={!changeLocationPath.trim() || switchingLocation}>
           {switchingLocation ? 'Switching...' : '🔄 Switch Location'}
         </button>
       </div>
     </div>
   </div>
 {/if}
-
-<style>
-  .profile-location-container {
-    padding: 2rem;
-    max-width: 900px;
-    margin: 0 auto;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  .section-header {
-    margin-bottom: 2rem;
-  }
-
-  .section-header h1 {
-    font-size: 2rem;
-    font-weight: 700;
-    color: rgb(17 24 39);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .section-header h1 {
-    color: rgb(243 244 246);
-  }
-
-  .section-header p {
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .section-header p {
-    color: rgb(156 163 175);
-  }
-
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid rgba(139, 92, 246, 0.2);
-    border-top-color: rgb(139, 92, 246);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .spinner.small {
-    width: 20px;
-    height: 20px;
-    border-width: 2px;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .loading-state p,
-  .loading-text {
-    margin-top: 1rem;
-    color: rgb(107 114 128);
-    font-style: italic;
-  }
-
-  :global(.dark) .loading-state p,
-  :global(.dark) .loading-text {
-    color: rgb(156 163 175);
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .alert-error {
-    background: rgb(254 242 242);
-    border: 1px solid rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .alert-error {
-    background: rgb(127 29 29 / 0.3);
-    border-color: rgb(153 27 27);
-    color: rgb(254 226 226);
-  }
-
-  .alert-success {
-    background: rgb(240 253 244);
-    border: 1px solid rgb(187 247 208);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .alert-success {
-    background: rgb(20 83 45 / 0.3);
-    border-color: rgb(22 101 52);
-    color: rgb(187 247 208);
-  }
-
-  .alert-close {
-    background: transparent;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: inherit;
-    opacity: 0.6;
-    padding: 0;
-    line-height: 1;
-  }
-
-  .alert-close:hover {
-    opacity: 1;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .card {
-    background: rgb(17 24 39);
-    border-color: rgb(55 65 81);
-  }
-
-  .card h2 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .card h2 {
-    color: rgb(243 244 246);
-  }
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .card-header h2 {
-    margin: 0;
-  }
-
-  .card-description {
-    color: rgb(107 114 128);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .card-description {
-    color: rgb(156 163 175);
-  }
-
-  .card-note {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .card-note {
-    color: rgb(156 163 175);
-    background: rgb(31 41 55);
-  }
-
-  .current-config {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .config-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .label {
-    font-weight: 500;
-    color: rgb(107 114 128);
-    min-width: 120px;
-  }
-
-  :global(.dark) .label {
-    color: rgb(156 163 175);
-  }
-
-  .value {
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .value {
-    color: rgb(243 244 246);
-  }
-
-  .path-value {
-    background: rgb(243 244 246);
-    color: rgb(139, 92, 246);
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-family: monospace;
-    font-size: 0.875rem;
-    word-break: break-all;
-  }
-
-  :global(.dark) .path-value {
-    background: rgb(31 41 55);
-    color: rgb(196 181 253);
-  }
-
-  .storage-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .storage-badge.storage-internal {
-    background: rgb(219 234 254);
-    color: rgb(30 64 175);
-  }
-
-  :global(.dark) .storage-badge.storage-internal {
-    background: rgb(30 58 138 / 0.3);
-    color: rgb(191 219 254);
-  }
-
-  .storage-badge.storage-external,
-  .storage-badge.storage-usb {
-    background: rgb(254 243 199);
-    color: rgb(146 64 14);
-  }
-
-  :global(.dark) .storage-badge.storage-external,
-  :global(.dark) .storage-badge.storage-usb {
-    background: rgb(120 53 15 / 0.3);
-    color: rgb(253 224 71);
-  }
-
-  .storage-badge.storage-network {
-    background: rgb(237 233 254);
-    color: rgb(91 33 182);
-  }
-
-  :global(.dark) .storage-badge.storage-network {
-    background: rgb(76 29 149 / 0.3);
-    color: rgb(216 180 254);
-  }
-
-  .storage-badge.storage-encrypted {
-    background: rgb(209 250 229);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .storage-badge.storage-encrypted {
-    background: rgb(20 83 45 / 0.3);
-    color: rgb(187 247 208);
-  }
-
-  .warning-box {
-    padding: 1rem;
-    background: rgb(254 252 232);
-    border: 1px solid rgb(253 224 71);
-    border-radius: 0.5rem;
-    margin-top: 0.75rem;
-  }
-
-  :global(.dark) .warning-box {
-    background: rgb(113 63 18 / 0.2);
-    border-color: rgb(180 83 9);
-  }
-
-  .warning-box strong {
-    display: block;
-    color: rgb(120 53 15);
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .warning-box strong {
-    color: rgb(253 224 71);
-  }
-
-  .warning-box p {
-    margin: 0;
-    font-size: 0.875rem;
-    color: rgb(161 98 7);
-  }
-
-  :global(.dark) .warning-box p {
-    color: rgb(250 204 21);
-  }
-
-  .warning-box ul {
-    margin: 0.5rem 0 0 0;
-    padding-left: 1.25rem;
-  }
-
-  .warning-box li {
-    font-size: 0.875rem;
-    color: rgb(161 98 7);
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .warning-box li {
-    color: rgb(250 204 21);
-  }
-
-  /* Drive unavailable specific styles */
-  .drive-unavailable {
-    background: #fff3e0;
-    border-color: #ff9800;
-  }
-
-  :global(.dark) .drive-unavailable {
-    background: rgba(255, 152, 0, 0.15);
-    border-color: #ff9800;
-  }
-
-  .fallback-info {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(255, 152, 0, 0.3);
-  }
-
-  .fallback-info ol {
-    margin: 0.5rem 0;
-    padding-left: 1.25rem;
-  }
-
-  .fallback-info li {
-    font-size: 0.875rem;
-    color: #e65100;
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .fallback-info li {
-    color: #ffb74d;
-  }
-
-  .fallback-tip {
-    margin-bottom: 0.5rem !important;
-  }
-
-  .fallback-note {
-    margin-top: 0.75rem !important;
-    font-style: italic;
-    opacity: 0.9;
-  }
-
-  .storage-info {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .storage-info {
-    background: rgb(31 41 55);
-  }
-
-  .storage-info h3 {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(55 65 81);
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .storage-info h3 {
-    color: rgb(209 213 219);
-  }
-
-  .info-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 0.5rem;
-  }
-
-  .info-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .info-label {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .info-label {
-    color: rgb(156 163 175);
-  }
-
-  .info-value {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .info-value {
-    color: rgb(243 244 246);
-  }
-
-  /* Devices List */
-  .devices-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 2rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .empty-state {
-    color: rgb(156 163 175);
-  }
-
-  .empty-state small {
-    display: block;
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .device-card {
-    background: rgb(249 250 251);
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.5rem;
-    padding: 1rem;
-    transition: border-color 0.2s;
-  }
-
-  :global(.dark) .device-card {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-  }
-
-  .device-card.external {
-    border-left: 3px solid rgb(245 158 11);
-  }
-
-  .device-card:hover {
-    border-color: rgb(139, 92, 246);
-  }
-
-  .device-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .device-icon {
-    font-size: 1.5rem;
-  }
-
-  .device-info {
-    flex: 1;
-  }
-
-  .device-label {
-    display: block;
-    color: rgb(17 24 39);
-    margin-bottom: 0.125rem;
-  }
-
-  :global(.dark) .device-label {
-    color: rgb(243 244 246);
-  }
-
-  .device-path {
-    font-size: 0.75rem;
-    background: rgb(229 231 235);
-    color: rgb(55 65 81);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .device-path {
-    background: rgb(55 65 81);
-    color: rgb(209 213 219);
-  }
-
-  .device-details {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .device-type,
-  .device-fs,
-  .device-space,
-  .device-readonly {
-    font-size: 0.75rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    background: rgb(229 231 235);
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .device-type,
-  :global(.dark) .device-fs,
-  :global(.dark) .device-space,
-  :global(.dark) .device-readonly {
-    background: rgb(55 65 81);
-    color: rgb(209 213 219);
-  }
-
-  .device-space.low-space {
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .device-space.low-space {
-    background: rgb(127 29 29);
-    color: rgb(254 226 226);
-  }
-
-  .device-readonly {
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .device-readonly {
-    background: rgb(127 29 29);
-    color: rgb(254 226 226);
-  }
-
-  .device-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .path-editor {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-
-  .path-input {
-    flex: 1;
-    min-width: 0;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgb(139, 92, 246);
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    font-family: monospace;
-    background: white;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .path-input {
-    background: rgb(31 41 55);
-    border-color: rgb(139, 92, 246);
-    color: rgb(209 213 219);
-  }
-
-  .path-input:focus {
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
-  }
-
-  .suggested-path {
-    flex: 1;
-    font-size: 0.75rem;
-    color: rgb(139, 92, 246);
-    background: transparent;
-    word-break: break-all;
-    cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    transition: background-color 0.15s;
-  }
-
-  .suggested-path:hover {
-    background: rgba(139, 92, 246, 0.1);
-  }
-
-  .suggested-path.modified {
-    color: rgb(245, 158, 11);
-    font-weight: 500;
-  }
-
-  :global(.dark) .suggested-path.modified {
-    color: rgb(253, 224, 71);
-  }
-
-  .btn-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    font-size: 0.875rem;
-    background: transparent;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  :global(.dark) .btn-icon {
-    border-color: rgb(55 65 81);
-  }
-
-  .btn-icon:hover {
-    background: rgb(243 244 246);
-    border-color: rgb(139, 92, 246);
-  }
-
-  :global(.dark) .btn-icon:hover {
-    background: rgb(55 65 81);
-  }
-
-  /* Custom Path Form */
-  .custom-path-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .form-group label {
-    font-weight: 500;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .form-group label {
-    color: rgb(209 213 219);
-  }
-
-  .form-group input {
-    padding: 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    background: white;
-    color: rgb(17 24 39);
-    font-family: monospace;
-  }
-
-  :global(.dark) .form-group input {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: rgb(139, 92, 246);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  .form-group small {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .form-group small {
-    color: rgb(156 163 175);
-  }
-
-  .validation-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: rgb(107 114 128);
-  }
-
-  .validation-result {
-    padding: 1rem;
-    border-radius: 0.5rem;
-  }
-
-  .validation-result.valid {
-    background: rgb(240 253 244);
-    border: 1px solid rgb(187 247 208);
-  }
-
-  :global(.dark) .validation-result.valid {
-    background: rgb(20 83 45 / 0.3);
-    border-color: rgb(22 101 52);
-  }
-
-  .validation-result.invalid {
-    background: rgb(254 242 242);
-    border: 1px solid rgb(254 226 226);
-  }
-
-  :global(.dark) .validation-result.invalid {
-    background: rgb(127 29 29 / 0.3);
-    border-color: rgb(153 27 27);
-  }
-
-  .validation-success {
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .validation-success {
-    color: rgb(187 247 208);
-  }
-
-  .validation-success code {
-    display: block;
-    margin-top: 0.5rem;
-    background: rgb(187 247 208);
-    color: rgb(22 101 52);
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .validation-success code {
-    background: rgb(20 83 45);
-    color: rgb(187 247 208);
-  }
-
-  .validation-errors {
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .validation-errors {
-    color: rgb(254 226 226);
-  }
-
-  .validation-errors ul,
-  .validation-warnings ul {
-    margin: 0.5rem 0 0 0;
-    padding-left: 1.25rem;
-  }
-
-  .validation-warnings {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgb(253 224 71);
-    color: rgb(120 53 15);
-  }
-
-  :global(.dark) .validation-warnings {
-    border-color: rgb(180 83 9);
-    color: rgb(253 224 71);
-  }
-
-  .form-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  /* Options Card */
-  .options-card {
-    background: rgb(249 250 251);
-  }
-
-  :global(.dark) .options-card {
-    background: rgb(31 41 55);
-  }
-
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-  }
-
-  .toggle-label input[type="checkbox"] {
-    display: none;
-  }
-
-  .toggle-switch {
-    position: relative;
-    width: 48px;
-    height: 24px;
-    background: rgb(209 213 219);
-    border-radius: 9999px;
-    transition: background 0.2s;
-  }
-
-  :global(.dark) .toggle-switch {
-    background: rgb(55 65 81);
-  }
-
-  .toggle-switch::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 20px;
-    height: 20px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }
-
-  .toggle-label input:checked + .toggle-switch {
-    background: rgb(139, 92, 246);
-  }
-
-  .toggle-label input:checked + .toggle-switch::after {
-    transform: translateX(24px);
-  }
-
-  .toggle-text {
-    font-weight: 500;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .toggle-text {
-    color: rgb(243 244 246);
-  }
-
-  .option-description {
-    display: block;
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .option-description {
-    color: rgb(156 163 175);
-  }
-
-  /* Encryption Card */
-  .encryption-card {
-    background: linear-gradient(135deg, rgb(249 250 251) 0%, rgb(243 244 246) 100%);
-    border: 1px solid rgb(209 213 219);
-  }
-
-  :global(.dark) .encryption-card {
-    background: linear-gradient(135deg, rgb(17 24 39) 0%, rgb(31 41 55) 100%);
-    border-color: rgb(55 65 81);
-  }
-
-  .encryption-type-selector {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .encryption-option {
-    display: flex;
-    cursor: pointer;
-  }
-
-  .encryption-option input {
-    display: none;
-  }
-
-  .encryption-option .option-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 1rem;
-    background: white;
-    border: 2px solid rgb(229 231 235);
-    border-radius: 0.75rem;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .encryption-option .option-content {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-  }
-
-  .encryption-option:hover .option-content {
-    border-color: rgb(139, 92, 246);
-  }
-
-  .encryption-option.selected .option-content {
-    border-color: rgb(139, 92, 246);
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(219, 39, 119, 0.05) 100%);
-  }
-
-  :global(.dark) .encryption-option.selected .option-content {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(219, 39, 119, 0.1) 100%);
-  }
-
-  .option-icon {
-    font-size: 1.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .option-label {
-    font-weight: 600;
-    color: rgb(17 24 39);
-    font-size: 0.875rem;
-    text-align: center;
-  }
-
-  :global(.dark) .option-label {
-    color: rgb(243 244 246);
-  }
-
-  .option-desc {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    text-align: center;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .option-desc {
-    color: rgb(156 163 175);
-  }
-
-  .encryption-settings {
-    padding: 1rem;
-    background: rgb(249 250 251);
-    border-radius: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .encryption-settings {
-    background: rgb(17 24 39);
-  }
-
-  .encryption-settings .form-group {
-    margin-bottom: 1rem;
-  }
-
-  .encryption-settings .form-group:last-child {
-    margin-bottom: 0;
-  }
-
-  .field-error {
-    display: block;
-    color: rgb(220 38 38);
-    font-size: 0.75rem;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .field-error {
-    color: rgb(252 165 165);
-  }
-
-  .veracrypt-options {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .veracrypt-options {
-    border-color: rgb(55 65 81);
-  }
-
-  .veracrypt-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .veracrypt-status.checking {
-    background: rgb(243 244 246);
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .veracrypt-status.checking {
-    background: rgb(31 41 55);
-    color: rgb(156 163 175);
-  }
-
-  .veracrypt-status.installed {
-    background: rgb(220 252 231);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .veracrypt-status.installed {
-    background: rgb(20 83 45 / 0.3);
-    color: rgb(134 239 172);
-  }
-
-  .veracrypt-status.not-installed {
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .veracrypt-status.not-installed {
-    background: rgb(127 29 29 / 0.3);
-    color: rgb(252 165 165);
-  }
-
-  .veracrypt-status a {
-    margin-left: auto;
-    color: rgb(59 130 246);
-    text-decoration: underline;
-  }
-
-  .status-icon {
-    font-weight: bold;
-    font-size: 1.25rem;
-  }
-
-  .encryption-info {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: rgb(239 246 255);
-    border: 1px solid rgb(191 219 254);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .encryption-info {
-    background: rgb(30 58 138 / 0.2);
-    border-color: rgb(59 130 246);
-  }
-
-  .encryption-info h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(30 64 175);
-  }
-
-  :global(.dark) .encryption-info h4 {
-    color: rgb(147 197 253);
-  }
-
-  .encryption-info ul {
-    margin: 0;
-    padding-left: 1.25rem;
-    font-size: 0.8rem;
-  }
-
-  .encryption-info li {
-    color: rgb(55 65 81);
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .encryption-info li {
-    color: rgb(209 213 219);
-  }
-
-  .password-warning {
-    padding: 0.75rem;
-    background: rgb(254 243 199);
-    border: 1px solid rgb(253 224 71);
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    color: rgb(120 53 15);
-  }
-
-  :global(.dark) .password-warning {
-    background: rgb(120 53 15 / 0.2);
-    border-color: rgb(180 83 9);
-    color: rgb(253 224 71);
-  }
-
-  .encryption-summary {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: rgb(243 244 246);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .encryption-summary {
-    background: rgb(31 41 55);
-  }
-
-  .encryption-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .encryption-badge.aes {
-    background: rgb(220 252 231);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .encryption-badge.aes {
-    background: rgb(20 83 45);
-    color: rgb(134 239 172);
-  }
-
-  .encryption-badge.veracrypt {
-    background: rgb(237 233 254);
-    color: rgb(91 33 182);
-  }
-
-  :global(.dark) .encryption-badge.veracrypt {
-    background: rgb(76 29 149);
-    color: rgb(216 180 254);
-  }
-
-  /* Warning Card */
-  .warning-card {
-    background: rgb(254 243 199);
-    border-color: rgb(253 224 71);
-  }
-
-  :global(.dark) .warning-card {
-    background: rgb(120 53 15 / 0.2);
-    border-color: rgb(180 83 9);
-  }
-
-  .warning-card h2 {
-    color: rgb(120 53 15);
-  }
-
-  :global(.dark) .warning-card h2 {
-    color: rgb(253 224 71);
-  }
-
-  .warning-card ul {
-    margin: 0;
-    padding-left: 1.25rem;
-  }
-
-  .warning-card li {
-    color: rgb(161 98 7);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .warning-card li {
-    color: rgb(250 204 21);
-  }
-
-  /* Buttons */
-  .btn {
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.5rem;
-    font-weight: 600;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-sm {
-    padding: 0.5rem 1rem;
-    font-size: 0.75rem;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, rgb(139, 92, 246) 0%, rgb(219, 39, 119) 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
-  }
-
-  .btn-secondary {
-    background: rgb(243 244 246);
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .btn-secondary {
-    background: rgb(55 65 81);
-    color: rgb(209 213 219);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: rgb(229 231 235);
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: rgb(75 85 99);
-  }
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    max-width: 600px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-  :global(.dark) .modal-content {
-    background: rgb(17 24 39);
-  }
-
-  .modal-content h3 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .modal-content h3 {
-    color: rgb(243 244 246);
-  }
-
-  .modal-body {
-    margin-bottom: 1.5rem;
-  }
-
-  .modal-body p {
-    color: rgb(55 65 81);
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .modal-body p {
-    color: rgb(209 213 219);
-  }
-
-  .target-path {
-    display: block;
-    background: rgb(243 244 246);
-    color: rgb(139, 92, 246);
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    font-family: monospace;
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-    word-break: break-all;
-  }
-
-  :global(.dark) .target-path {
-    background: rgb(31 41 55);
-    color: rgb(196 181 253);
-  }
-
-  .time-warning {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    font-style: italic;
-  }
-
-  :global(.dark) .time-warning {
-    color: rgb(156 163 175);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-  }
-
-  /* Migration success prompt */
-  .migration-success-prompt {
-    text-align: center;
-    width: 100%;
-  }
-
-  .migration-success-prompt .success-message {
-    color: #4caf50;
-    font-weight: 500;
-    margin-bottom: 1rem;
-  }
-
-  .migration-success-prompt .action-buttons {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  /* Location actions */
-  .location-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 1rem;
-    flex-wrap: wrap;
-  }
-
-  /* Change Location Modal */
-  .change-location-modal {
-    max-width: 550px;
-  }
-
-  .change-location-modal .modal-description {
-    color: #666;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .change-location-modal .modal-description {
-    color: #aaa;
-  }
-
-  .quick-select {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #f5f5f5;
-    border-radius: 8px;
-  }
-
-  :global(.dark) .quick-select {
-    background: #2d2d2d;
-  }
-
-  .quick-select-label {
-    display: block;
-    font-weight: 500;
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
-    color: #555;
-  }
-
-  :global(.dark) .quick-select-label {
-    color: #ccc;
-  }
-
-  .device-buttons {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .btn-outline {
-    background: transparent;
-    border: 1px solid #ccc;
-    color: #333;
-  }
-
-  :global(.dark) .btn-outline {
-    border-color: #555;
-    color: #ddd;
-  }
-
-  .btn-outline:hover {
-    background: #e0e0e0;
-  }
-
-  :global(.dark) .btn-outline:hover {
-    background: #3d3d3d;
-  }
-
-  .info-box {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: #e3f2fd;
-    border: 1px solid #2196f3;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    color: #1565c0;
-  }
-
-  :global(.dark) .info-box {
-    background: #1a2634;
-    border-color: #1976d2;
-    color: #64b5f6;
-  }
-
-  /* Migration Configuration Modal */
-  .migration-config-modal {
-    max-width: 500px;
-  }
-
-  .migration-config-modal h3 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .config-section {
-    margin-bottom: 1.25rem;
-    padding-bottom: 1.25rem;
-    border-bottom: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .config-section {
-    border-bottom-color: rgb(55 65 81);
-  }
-
-  .config-section:last-of-type {
-    border-bottom: none;
-    padding-bottom: 0;
-    margin-bottom: 0;
-  }
-
-  .config-label {
-    display: block;
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .config-label {
-    color: rgb(209 213 219);
-  }
-
-  .encryption-options-compact {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .radio-option {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem 0.75rem;
-    background: rgb(243 244 246);
-    border: 2px solid transparent;
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  :global(.dark) .radio-option {
-    background: rgb(31 41 55);
-  }
-
-  .radio-option:hover {
-    border-color: rgb(139, 92, 246);
-  }
-
-  .radio-option.selected {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(219, 39, 119, 0.1) 100%);
-    border-color: rgb(139, 92, 246);
-  }
-
-  .radio-option input {
-    display: none;
-  }
-
-  .radio-label {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: rgb(55 65 81);
-    white-space: nowrap;
-  }
-
-  :global(.dark) .radio-label {
-    color: rgb(209 213 219);
-  }
-
-  .radio-option.selected .radio-label {
-    color: rgb(139, 92, 246);
-  }
-
-  .encryption-fields {
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-  }
-
-  :global(.dark) .encryption-fields {
-    background: rgb(31 41 55);
-  }
-
-  .form-row {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .input-field {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .input-field {
-    background: rgb(17 24 39);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .input-field:focus {
-    outline: none;
-    border-color: rgb(139, 92, 246);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
-  }
-
-  .select-field {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: rgb(17 24 39);
-    cursor: pointer;
-  }
-
-  :global(.dark) .select-field {
-    background: rgb(17 24 39);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .inline-label {
-    font-size: 0.8rem;
-    color: rgb(107 114 128);
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-  }
-
-  :global(.dark) .inline-label {
-    color: rgb(156 163 175);
-  }
-
-  .veracrypt-warning {
-    padding: 0.5rem;
-    background: rgb(254 243 199);
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    color: rgb(120 53 15);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .veracrypt-warning {
-    background: rgb(120 53 15 / 0.3);
-    color: rgb(253 224 71);
-  }
-
-  .veracrypt-warning a {
-    color: rgb(59 130 246);
-    text-decoration: underline;
-    margin-left: 0.25rem;
-  }
-
-  .luks-info {
-    margin-bottom: 0.5rem;
-  }
-
-  .encryption-description {
-    font-size: 0.75rem;
-    color: rgb(75 85 99);
-    margin: 0 0 0.75rem 0;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .encryption-description {
-    color: rgb(156 163 175);
-  }
-
-  .password-note {
-    font-size: 0.7rem;
-    color: rgb(161 98 7);
-    margin: 0.5rem 0 0 0;
-    padding: 0.5rem;
-    background: rgb(254 252 232);
-    border-radius: 0.375rem;
-  }
-
-  :global(.dark) .password-note {
-    background: rgb(113 63 18 / 0.2);
-    color: rgb(250 204 21);
-  }
-
-  .toggle-options {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .checkbox-option {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .checkbox-option {
-    color: rgb(209 213 219);
-  }
-
-  .checkbox-option input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: rgb(139, 92, 246);
-    cursor: pointer;
-  }
-
-  .checkbox-option:hover {
-    color: rgb(139, 92, 246);
-  }
-
-  .migration-summary {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-    border-left: 3px solid rgb(139, 92, 246);
-  }
-
-  :global(.dark) .migration-summary {
-    background: rgb(31 41 55);
-  }
-
-  .migration-summary strong {
-    display: block;
-    font-size: 0.8rem;
-    color: rgb(107 114 128);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .migration-summary strong {
-    color: rgb(156 163 175);
-  }
-
-  .migration-summary ul {
-    margin: 0;
-    padding-left: 1.25rem;
-    font-size: 0.8rem;
-  }
-
-  .migration-summary li {
-    color: rgb(55 65 81);
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .migration-summary li {
-    color: rgb(209 213 219);
-  }
-
-  .migration-summary li.destructive {
-    color: rgb(220 38 38);
-    font-weight: 500;
-  }
-
-  :global(.dark) .migration-summary li.destructive {
-    color: rgb(252 165 165);
-  }
-
-  /* Migration Modal */
-  .migration-modal {
-    max-width: 700px;
-  }
-
-  .migration-target {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    padding: 0.75rem;
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .migration-target {
-    background: rgb(31 41 55);
-  }
-
-  .migration-target code {
-    flex: 1;
-    font-size: 0.875rem;
-    color: rgb(139, 92, 246);
-    word-break: break-all;
-  }
-
-  .progress-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 400px;
-    overflow-y: auto;
-    margin-bottom: 1.5rem;
-  }
-
-  .progress-step {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    background: rgb(249 250 251);
-  }
-
-  :global(.dark) .progress-step {
-    background: rgb(31 41 55);
-  }
-
-  .progress-step.running {
-    background: rgb(219 234 254);
-    border-left: 3px solid rgb(59 130 246);
-  }
-
-  :global(.dark) .progress-step.running {
-    background: rgb(30 58 138 / 0.3);
-    border-left-color: rgb(59 130 246);
-  }
-
-  .progress-step.completed {
-    background: rgb(240 253 244);
-    border-left: 3px solid rgb(34 197 94);
-  }
-
-  :global(.dark) .progress-step.completed {
-    background: rgb(20 83 45 / 0.3);
-    border-left-color: rgb(34 197 94);
-  }
-
-  .progress-step.failed {
-    background: rgb(254 242 242);
-    border-left: 3px solid rgb(239 68 68);
-  }
-
-  :global(.dark) .progress-step.failed {
-    background: rgb(127 29 29 / 0.3);
-    border-left-color: rgb(239 68 68);
-  }
-
-  .progress-step.skipped {
-    opacity: 0.6;
-  }
-
-  .step-icon {
-    font-weight: bold;
-    width: 20px;
-    text-align: center;
-  }
-
-  .progress-step.completed .step-icon {
-    color: rgb(34 197 94);
-  }
-
-  .progress-step.failed .step-icon {
-    color: rgb(239 68 68);
-  }
-
-  .progress-step.running .step-icon {
-    color: rgb(59 130 246);
-  }
-
-  .step-content {
-    flex: 1;
-  }
-
-  .step-message {
-    display: block;
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .step-message {
-    color: rgb(209 213 219);
-  }
-
-  .progress-bar {
-    margin-top: 0.5rem;
-    height: 4px;
-    background: rgb(229 231 235);
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: rgb(55 65 81);
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: rgb(139, 92, 246);
-    transition: width 0.3s;
-  }
-
-  .step-error {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    color: rgb(239 68 68);
-  }
-
-  :global(.dark) .step-error {
-    color: rgb(252 165 165);
-  }
-
-  .migrating-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .migrating-indicator {
-    color: rgb(156 163 175);
-  }
-
-  /* Encryption Status Card */
-  .encryption-status-card {
-    margin-top: 1.5rem;
-    padding: 1rem;
-    background: linear-gradient(135deg, rgb(249 250 251) 0%, rgb(243 244 246) 100%);
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.75rem;
-  }
-
-  :global(.dark) .encryption-status-card {
-    background: linear-gradient(135deg, rgb(17 24 39) 0%, rgb(31 41 55) 100%);
-    border-color: rgb(55 65 81);
-  }
-
-  .encryption-status-card h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .encryption-status-card h3 {
-    color: rgb(243 244 246);
-  }
-
-  .encryption-status-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    font-weight: 500;
-    width: fit-content;
-  }
-
-  .status-badge.encrypted {
-    background: rgb(220 252 231);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .status-badge.encrypted {
-    background: rgb(20 83 45 / 0.4);
-    color: rgb(134 239 172);
-  }
-
-  .status-badge.unencrypted {
-    background: rgb(254 243 199);
-    color: rgb(120 53 15);
-  }
-
-  :global(.dark) .status-badge.unencrypted {
-    background: rgb(120 53 15 / 0.3);
-    color: rgb(253 224 71);
-  }
-
-  .status-badge .status-icon {
-    font-size: 1.25rem;
-  }
-
-  .status-badge .status-text {
-    font-size: 0.875rem;
-  }
-
-  .status-description {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .status-description {
-    color: rgb(156 163 175);
-  }
-
-  /* Encryption Modal */
-  .encryption-modal {
-    max-width: 450px;
-  }
-
-  .encryption-modal-description {
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-    margin: 0 0 1rem 0;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .encryption-modal-description {
-    color: rgb(209 213 219);
-  }
-
-  .encryption-modal .encryption-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .encryption-modal .encryption-fields .form-group {
-    margin-bottom: 0;
-  }
-
-  .encryption-modal .encryption-fields .form-group label {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(55 65 81);
-    margin-bottom: 0.375rem;
-  }
-
-  :global(.dark) .encryption-modal .encryption-fields .form-group label {
-    color: rgb(209 213 219);
-  }
-
-  .encryption-modal .encryption-fields .input-field {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    background: white;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .encryption-modal .encryption-fields .input-field {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .encryption-modal .encryption-fields .input-field:focus {
-    outline: none;
-    border-color: rgb(139, 92, 246);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  .checkbox-group {
-    margin-bottom: 1rem;
-    padding: 1rem;
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-    border: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .checkbox-group {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-  }
-
-  .checkbox-label {
-    display: flex !important;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
-    cursor: pointer;
-    accent-color: rgb(139, 92, 246);
-  }
-
-  .checkbox-description {
-    margin: 0.5rem 0 0 2rem;
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .checkbox-description {
-    color: rgb(156 163 175);
-  }
-</style>

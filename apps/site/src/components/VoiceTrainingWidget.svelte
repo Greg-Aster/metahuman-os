@@ -96,10 +96,9 @@
   let currentRobotMessage = "";
   let robotMessageInterval: ReturnType<typeof setInterval> | null = null;
   let trainingLogs: string[] = [];
-  let showLogs = false; // Toggle between robot messages and logs
+  let showLogs = false;
   let logsContainer: HTMLDivElement | null = null;
 
-  // Auto-scroll logs to bottom when new logs arrive
   $: if (logsContainer && trainingLogs.length > 0) {
     setTimeout(() => {
       if (logsContainer) {
@@ -108,21 +107,18 @@
     }, 100);
   }
 
-  // Training parameters for RVC
   let totalEpochs = 300;
   let saveEveryEpoch = 50;
   let batchSize = 8;
   let rvcDevice: 'auto' | 'cuda' | 'cpu' = 'auto';
   let showAdvancedSettings = false;
 
-  // Auto-export settings (shared across providers)
   type SelectionMethod = 'quality' | 'random' | 'sequential';
   let exportSelectionMethod: SelectionMethod = 'quality';
-  let exportTargetDuration = 10; // seconds for GPT-SoVITS, minutes for RVC/Kokoro
-  let exportMaxSamples = 50; // max samples to export
+  let exportTargetDuration = 10;
+  let exportMaxSamples = 50;
   let showExportSettings = false;
 
-  // Provider-specific export defaults
   $: exportDefaults = {
     sovits: { targetDuration: 10, maxSamples: 5, durationUnit: 'seconds' },
     rvc: { targetDuration: 15, maxSamples: 200, durationUnit: 'minutes' },
@@ -130,7 +126,6 @@
     piper: { targetDuration: 60, maxSamples: 500, durationUnit: 'minutes' },
   };
 
-  // Reset export settings when provider changes
   function resetExportSettings() {
     const defaults = exportDefaults[provider] || exportDefaults.sovits;
     exportTargetDuration = defaults.targetDuration;
@@ -146,7 +141,7 @@
     currentRobotMessage = getRandomRobotMessage();
     robotMessageInterval = setInterval(() => {
       currentRobotMessage = getRandomRobotMessage();
-    }, 10000); // Change message every 10 seconds
+    }, 10000);
   }
 
   function stopRobotMessages() {
@@ -196,7 +191,6 @@
       }
     : null;
 
-  // Provider-specific settings
   $: providerConfig = {
     piper: {
       name: 'Piper TTS',
@@ -204,7 +198,7 @@
       color: '#3b82f6',
       minQuality: 0.7,
       minSamples: 100,
-      minDuration: 300, // 5 minutes
+      minDuration: 300,
       trainingType: 'full',
     },
     sovits: {
@@ -213,7 +207,7 @@
       color: '#10b981',
       minQuality: 0.8,
       minSamples: 3,
-      minDuration: 5, // 5-10 seconds
+      minDuration: 5,
       trainingType: 'reference',
     },
     rvc: {
@@ -222,7 +216,7 @@
       color: '#8b5cf6',
       minQuality: 0.7,
       minSamples: 50,
-      minDuration: 600, // 10 minutes
+      minDuration: 600,
       trainingType: 'full',
     },
     kokoro: {
@@ -231,7 +225,7 @@
       color: '#f59e0b',
       minQuality: 0.75,
       minSamples: 30,
-      minDuration: 300, // 5 minutes
+      minDuration: 300,
       trainingType: 'voicepack',
     },
   };
@@ -240,10 +234,7 @@
   $: apiProvider = provider === 'sovits' ? 'gpt-sovits' : provider;
 
   async function fetchProgress() {
-    // Only fetch Piper-specific progress when Piper is selected
-    if (provider !== 'piper') {
-      return;
-    }
+    if (provider !== 'piper') return;
 
     try {
       const response = await apiFetch('/api/voice-training?action=progress');
@@ -278,10 +269,7 @@
   }
 
   async function fetchSamples() {
-    // Only fetch Piper samples when Piper is selected
-    if (provider !== 'piper') {
-      return;
-    }
+    if (provider !== 'piper') return;
 
     try {
       const response = await apiFetch('/api/voice-training?action=samples&limit=10');
@@ -337,7 +325,6 @@
           provider: apiProvider,
           speakerId: 'default',
           minQuality: currentConfig.minQuality,
-          // New export settings
           selectionMethod: exportSelectionMethod,
           targetDuration: targetDurationSeconds,
           maxSamples: exportMaxSamples,
@@ -422,7 +409,6 @@
         if (!trainingPollInterval) {
           trainingPollInterval = setInterval(pollTrainingStatus, 5000);
         }
-        // Fetch training logs for Kokoro and RVC
         if (provider === 'kokoro' || provider === 'rvc') {
           await fetchTrainingLogs();
         }
@@ -481,7 +467,6 @@
         throw new Error(message);
       }
 
-      // Start polling for status
       await pollTrainingStatus();
       if (!trainingPollInterval) {
         trainingPollInterval = setInterval(pollTrainingStatus, 5000);
@@ -505,12 +490,11 @@
 
     kokoroTraining = true;
     showTrainingModal = true;
-    showLogs = true; // Show logs by default for Kokoro
+    showLogs = true;
     startRobotMessages();
 
     try {
       const result = await startKokoroTrainingRequest(kokoroConfig);
-      // Don't show alert - the modal will show progress
       console.log('[Kokoro] Training started:', result.message);
       await pollTrainingStatus();
     } catch (e) {
@@ -641,7 +625,6 @@
     loading = true;
     await Promise.all([fetchProgress(), fetchSamples(), fetchTrainingStatus(), fetchReadiness()]);
 
-    // Check RVC training status
     if (provider === 'rvc' || provider === 'kokoro') {
       await pollTrainingStatus();
     }
@@ -661,9 +644,7 @@
 
   function handlePureTrainingToggle() {
     if (kokoroConfig.pureTraining) {
-      // Disable checkpoint continuation in pure mode
       kokoroConfig.continueFromCheckpoint = false;
-      // Suggest higher epochs for pure training
       if (kokoroConfig.epochs < 300) {
         kokoroConfig.epochs = 300;
       }
@@ -679,9 +660,7 @@
       });
 
       if (response.ok) {
-        // Update the local provider
         provider = newProvider;
-        // Reload data for the new provider
         await loadData();
       } else {
         console.error('[VoiceTrainingWidget] Failed to change provider:', await response.text());
@@ -711,252 +690,226 @@
   });
 </script>
 
-<div class="voice-training-widget">
-  <div class="header">
-    <div class="title-section">
-      <h2>Voice Clone Training</h2>
-      <div class="provider-selector">
-        <label class="provider-label">Provider:</label>
-        <div class="provider-tabs">
+<div class="p-5 max-w-[1000px]">
+  <!-- Header -->
+  <div class="flex justify-between items-center mb-5 max-md:flex-col max-md:items-start max-md:gap-4">
+    <div class="flex flex-col gap-3">
+      <h2 class="m-0 text-2xl font-semibold text-gray-900 dark:text-gray-200">Voice Clone Training</h2>
+      <div class="flex items-center gap-3">
+        <label class="text-sm font-semibold text-gray-500 dark:text-gray-400">Provider:</label>
+        <div class="flex gap-2">
           {#each Object.entries(providerConfig) as [key, config]}
             <button
-              class="provider-tab"
-              class:active={provider === key}
-              style="--provider-color: {config.color}"
+              class="px-4 py-2 border-2 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 text-sm font-medium
+                {provider === key
+                  ? 'text-white'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:-translate-y-px'}"
+              style="--provider-color: {config.color}; {provider === key ? `background-color: ${config.color}; border-color: ${config.color}` : ''}"
               on:click={() => changeProvider(key)}
             >
-              <span class="provider-tab-icon">{config.icon}</span>
-              <span class="provider-tab-name">{config.name}</span>
+              <span class="text-base">{config.icon}</span>
+              <span class="font-semibold">{config.name}</span>
             </button>
           {/each}
         </div>
       </div>
     </div>
-    <div class="training-controls">
-      <div class="toggle-container">
-        <label class="toggle-switch">
-          <input
-            type="checkbox"
-            bind:checked={trainingEnabled}
-            on:change={toggleTraining}
-            disabled={togglingTraining}
-          />
-          <span class="slider"></span>
-        </label>
-        <span class="toggle-label">{trainingEnabled ? 'Enabled' : 'Disabled'}</span>
-      </div>
+    <div class="flex items-center gap-2.5">
+      <label class="relative inline-block cursor-pointer">
+        <input
+          type="checkbox"
+          bind:checked={trainingEnabled}
+          on:change={toggleTraining}
+          disabled={togglingTraining}
+          class="sr-only peer"
+        />
+        <div class="w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-green-500 dark:peer-checked:bg-green-400 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white dark:after:bg-gray-200 after:rounded-full after:transition-transform peer-checked:after:translate-x-6"></div>
+      </label>
+      <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[65px]">{trainingEnabled ? 'Enabled' : 'Disabled'}</span>
     </div>
   </div>
 
   {#if error}
-    <div class="error">
+    <div class="banner banner-error mb-4">
       <strong>Error:</strong> {error}
     </div>
   {/if}
 
   {#if !trainingEnabled}
-    <div class="disabled-notice">
-      <p>Voice clone training is currently disabled.</p>
-      <p>Enable it above to start collecting voice samples during conversations.</p>
+    <div class="panel p-5 mb-5 text-center">
+      <p class="my-1 text-gray-500 dark:text-gray-400">Voice clone training is currently disabled.</p>
+      <p class="my-1 text-gray-500 dark:text-gray-400">Enable it above to start collecting voice samples during conversations.</p>
     </div>
   {/if}
 
   {#if loading && !readiness}
-    <div class="loading">Loading training data...</div>
+    <div class="p-5 text-center text-gray-500 dark:text-gray-400">Loading training data...</div>
   {:else if readiness}
-    <div class="progress-section">
-      <div class="readiness-header">
-        <h3>Training Readiness</h3>
+    <div class="mb-8">
+      <!-- Readiness Header -->
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="m-0 text-lg font-semibold text-gray-700 dark:text-gray-300">Training Readiness</h3>
         {#if readiness.ready}
-          <span class="ready-badge">✓ Ready</span>
+          <span class="inline-block px-3 py-1.5 bg-green-500 text-white rounded-full font-semibold text-sm">✓ Ready</span>
         {:else}
-          <span class="not-ready-badge">⏳ Not Ready</span>
+          <span class="inline-block px-3 py-1.5 bg-amber-500 text-white rounded-full font-semibold text-sm">⏳ Not Ready</span>
         {/if}
       </div>
 
       <!-- Provider-specific workflow guide -->
       {#if provider === 'rvc'}
-        <div class="workflow-guide rvc">
-          <div class="guide-header">
-            <span class="guide-icon">🎭</span>
+        <div class="rounded-lg p-5 mb-5 border-2 border-violet-500 bg-gradient-to-br from-purple-100 to-blue-50 dark:from-violet-950/40 dark:to-blue-950/40">
+          <div class="flex items-center gap-2.5 mb-4 text-lg font-semibold text-blue-700 dark:text-blue-300">
+            <span class="text-2xl">🎭</span>
             <strong>RVC Training Pipeline</strong>
           </div>
-          <ol class="guide-steps">
-            <li>
-              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
-            </li>
-            <li>
-              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
-              <ul>
-                <li>Need 50+ samples (10-15 minutes total)</li>
-                <li>Quality threshold: 70%+</li>
+          <ol class="m-0 mb-4 pl-6 text-gray-700 dark:text-gray-200 leading-relaxed list-decimal">
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Enable Training:</strong> Turn on voice training above (if not already enabled)</li>
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Need 50+ samples (10-15 minutes total)</li>
+                <li class="mb-1">Quality threshold: 70%+</li>
               </ul>
             </li>
-            <li>
-              <strong>Select Training Data:</strong> Click "Select Samples" below to choose high-quality clips
-            </li>
-            <li>
-              <strong>Copy to Training Dir:</strong> Click "Copy Selected Samples" to prepare training data
-            </li>
-            <li>
-              <strong>Start Training:</strong> Click "Train RVC Model" to begin the training process
-              <ul>
-                <li>Training takes 30-60 minutes depending on hardware</li>
-                <li>GPU highly recommended (4GB+ VRAM)</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Select Training Data:</strong> Click "Select Samples" below to choose high-quality clips</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Copy to Training Dir:</strong> Click "Copy Selected Samples" to prepare training data</li>
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Start Training:</strong> Click "Train RVC Model" to begin the training process
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Training takes 30-60 minutes depending on hardware</li>
+                <li class="mb-1">GPU highly recommended (4GB+ VRAM)</li>
               </ul>
             </li>
-            <li>
-              <strong>Test Your Voice:</strong> Once training completes, go to Voice Settings to test!
-            </li>
+            <li class="mb-0"><strong class="text-blue-700 dark:text-blue-300">Test Your Voice:</strong> Once training completes, go to Voice Settings to test!</li>
           </ol>
-          <div class="guide-note">
+          <div class="p-3 bg-blue-500/10 dark:bg-blue-400/15 border-l-4 border-blue-500 dark:border-blue-400 rounded text-sm text-blue-700 dark:text-blue-300">
             <strong>💡 Remember:</strong> RVC requires full model training with significant data. More samples = better quality!
           </div>
         </div>
       {:else if provider === 'sovits'}
-        <div class="workflow-guide sovits">
-          <div class="guide-header">
-            <span class="guide-icon">🤖</span>
+        <div class="rounded-lg p-5 mb-5 border-2 border-emerald-500 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950/40 dark:to-purple-950/40">
+          <div class="flex items-center gap-2.5 mb-4 text-lg font-semibold text-blue-700 dark:text-blue-300">
+            <span class="text-2xl">🤖</span>
             <strong>GPT-SoVITS Automated Workflow</strong>
           </div>
-          <ol class="guide-steps">
-            <li>
-              <strong>Record Your Voice:</strong> Use the recorder below to record 5-10 seconds of clear speech
-              <ul>
-                <li>The sample is <strong>automatically</strong> copied to the reference directory</li>
-                <li>No manual export needed!</li>
+          <ol class="m-0 mb-4 pl-6 text-gray-700 dark:text-gray-200 leading-relaxed list-decimal">
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Record Your Voice:</strong> Use the recorder below to record 5-10 seconds of clear speech
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">The sample is <strong>automatically</strong> copied to the reference directory</li>
+                <li class="mb-1">No manual export needed!</li>
               </ul>
             </li>
-            <li>
-              <strong>Alternative - Select from Conversations:</strong> If you prefer, click "Select Samples" to choose from previously recorded conversations
-              <ul>
-                <li>Look for 80%+ quality scores</li>
-                <li>Then click "Copy Selected Samples" or "Auto-Export Best Samples"</li>
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Alternative - Select from Conversations:</strong> If you prefer, click "Select Samples" to choose from previously recorded conversations
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Look for 80%+ quality scores</li>
+                <li class="mb-1">Then click "Copy Selected Samples" or "Auto-Export Best Samples"</li>
               </ul>
             </li>
-            <li>
-              <strong>Go to Voice Settings:</strong> Click "Voice Settings" in the left sidebar
-            </li>
-            <li>
-              <strong>Select GPT-SoVITS Provider:</strong> Choose GPT-SoVITS from the provider dropdown
-            </li>
-            <li>
-              <strong>Click Save:</strong> The server will <strong>automatically start</strong> and load your reference audio
-            </li>
-            <li>
-              <strong>Test Your Voice:</strong> Use the "Test Voice" button in Voice Settings to hear your cloned voice!
-            </li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Go to Voice Settings:</strong> Click "Voice Settings" in the left sidebar</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Select GPT-SoVITS Provider:</strong> Choose GPT-SoVITS from the provider dropdown</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Click Save:</strong> The server will <strong>automatically start</strong> and load your reference audio</li>
+            <li class="mb-0"><strong class="text-blue-700 dark:text-blue-300">Test Your Voice:</strong> Use the "Test Voice" button in Voice Settings to hear your cloned voice!</li>
           </ol>
-          <div class="guide-note">
+          <div class="p-3 bg-blue-500/10 dark:bg-blue-400/15 border-l-4 border-blue-500 dark:border-blue-400 rounded text-sm text-blue-700 dark:text-blue-300">
             <strong>💡 Fully Automated:</strong> Recording → Auto-copy → Test → Save. GPT-SoVITS clones your voice in real-time using reference audio. No training required!
           </div>
         </div>
       {:else if provider === 'kokoro'}
-        <div class="workflow-guide kokoro">
-          <div class="guide-header">
-            <span class="guide-icon">🎵</span>
+        <div class="rounded-lg p-5 mb-5 border-2 border-amber-500 bg-gradient-to-br from-amber-50 to-orange-100 dark:from-amber-950/40 dark:to-orange-950/40">
+          <div class="flex items-center gap-2.5 mb-4 text-lg font-semibold text-blue-700 dark:text-blue-300">
+            <span class="text-2xl">🎵</span>
             <strong>Kokoro Voicepack Workflow</strong>
-            <a href="/user-guide/23-voice-system#4-kokoro-styletts2-voicepacks" target="_blank" class="guide-link" title="Open full voice system documentation">
+            <a href="/user-guide/23-voice-system#4-kokoro-styletts2-voicepacks" target="_blank" class="ml-auto px-3 py-1 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded transition-all hover:bg-blue-500/20 hover:-translate-y-px" title="Open full voice system documentation">
               📖 Full Guide
             </a>
           </div>
-          <ol class="guide-steps">
-            <li>
-              <strong>Enable Training:</strong> Turn on voice training above (if not already enabled)
-            </li>
-            <li>
-              <strong>Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
-              <ul>
-                <li>Need 30+ samples (5 minutes total)</li>
-                <li>Quality threshold: 75%+</li>
+          <ol class="m-0 mb-4 pl-6 text-gray-700 dark:text-gray-200 leading-relaxed list-decimal">
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Enable Training:</strong> Turn on voice training above (if not already enabled)</li>
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Collect Samples:</strong> Have conversations with MetaHuman - samples are automatically recorded
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Need 30+ samples (5 minutes total)</li>
+                <li class="mb-1">Quality threshold: 75%+</li>
               </ul>
             </li>
-            <li>
-              <strong>Select High-Quality Samples:</strong> Click "Select Samples" below to choose the best clips
-            </li>
-            <li>
-              <strong>Export Training Data:</strong> Click "Copy Selected Samples" or "Auto-Export Best Samples" to stage your dataset
-              <ul>
-                <li>Need at least 10 curated samples (2+ minutes)</li>
-                <li>Quality threshold: 75%+</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Select High-Quality Samples:</strong> Click "Select Samples" below to choose the best clips</li>
+            <li class="mb-3">
+              <strong class="text-blue-700 dark:text-blue-300">Export Training Data:</strong> Click "Copy Selected Samples" or "Auto-Export Best Samples" to stage your dataset
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Need at least 10 curated samples (2+ minutes)</li>
+                <li class="mb-1">Quality threshold: 75%+</li>
               </ul>
             </li>
-            <li>
-              <strong>Train Voicepack:</strong> Set options below and click "Train Kokoro Voicepack"
-              <ul>
-                <li>Creates a .pt voicepack saved under <code>out/voices/kokoro-voicepacks</code></li>
-                <li>Enable "Use custom voicepack" in Voice Settings to try it instantly</li>
+            <li class="mb-0">
+              <strong class="text-blue-700 dark:text-blue-300">Train Voicepack:</strong> Set options below and click "Train Kokoro Voicepack"
+              <ul class="mt-2 pl-6 list-disc text-sm text-gray-600 dark:text-gray-400">
+                <li class="mb-1">Creates a .pt voicepack saved under <code class="bg-gray-200 dark:bg-gray-700 px-1 rounded">out/voices/kokoro-voicepacks</code></li>
+                <li class="mb-1">Enable "Use custom voicepack" in Voice Settings to try it instantly</li>
               </ul>
             </li>
           </ol>
-          <div class="guide-note">
+          <div class="p-3 bg-blue-500/10 dark:bg-blue-400/15 border-l-4 border-blue-500 dark:border-blue-400 rounded text-sm text-blue-700 dark:text-blue-300">
             <strong>💡 Tip:</strong> You can still switch between 54 built-in Kokoro voices while your custom pack trains.
           </div>
         </div>
       {:else}
-        <div class="workflow-guide piper">
-          <div class="guide-header">
-            <span class="guide-icon">🎙️</span>
+        <div class="rounded-lg p-5 mb-5 border-2 border-blue-500 bg-gradient-to-br from-teal-50 to-green-50 dark:from-teal-950/40 dark:to-green-950/40">
+          <div class="flex items-center gap-2.5 mb-4 text-lg font-semibold text-blue-700 dark:text-blue-300">
+            <span class="text-2xl">🎙️</span>
             <strong>Piper Training Workflow</strong>
           </div>
-          <ol class="guide-steps">
-            <li>
-              <strong>Enable Training:</strong> Turn on voice training above
-            </li>
-            <li>
-              <strong>Collect Data:</strong> Have many conversations - Piper needs 100+ samples (5+ minutes)
-            </li>
-            <li>
-              <strong>Export Dataset:</strong> Click "Auto-Export Best Samples" when ready
-            </li>
-            <li>
-              <strong>Train Model:</strong> Use the exported dataset with Piper's training tools
-            </li>
-            <li>
-              <strong>Deploy Model:</strong> Configure Piper to use your trained model
-            </li>
+          <ol class="m-0 mb-4 pl-6 text-gray-700 dark:text-gray-200 leading-relaxed list-decimal">
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Enable Training:</strong> Turn on voice training above</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Collect Data:</strong> Have many conversations - Piper needs 100+ samples (5+ minutes)</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Export Dataset:</strong> Click "Auto-Export Best Samples" when ready</li>
+            <li class="mb-3"><strong class="text-blue-700 dark:text-blue-300">Train Model:</strong> Use the exported dataset with Piper's training tools</li>
+            <li class="mb-0"><strong class="text-blue-700 dark:text-blue-300">Deploy Model:</strong> Configure Piper to use your trained model</li>
           </ol>
-          <div class="guide-note">
+          <div class="p-3 bg-blue-500/10 dark:bg-blue-400/15 border-l-4 border-blue-500 dark:border-blue-400 rounded text-sm text-blue-700 dark:text-blue-300">
             <strong>💡 Remember:</strong> Piper requires significant training data. More samples = better voice quality.
           </div>
         </div>
       {/if}
 
-      <div class="stats">
-        <div class="stat">
-          <span class="label">Samples:</span>
-          <span class="value">{readiness.samples.total}</span>
-          <span class="requirement">({readiness.requirements.minSamples} needed)</span>
+      <!-- Stats -->
+      <div class="flex gap-5 mb-4 flex-wrap">
+        <div class="flex flex-col gap-1">
+          <span class="text-sm text-gray-500 dark:text-gray-400">Samples:</span>
+          <span class="text-xl font-bold text-gray-900 dark:text-gray-100">{readiness.samples.total}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">({readiness.requirements.minSamples} needed)</span>
         </div>
-        <div class="stat">
-          <span class="label">Duration:</span>
-          <span class="value">{formatDuration(readiness.samples.duration)}</span>
-          <span class="requirement">({formatDuration(readiness.requirements.minDuration)} needed)</span>
+        <div class="flex flex-col gap-1">
+          <span class="text-sm text-gray-500 dark:text-gray-400">Duration:</span>
+          <span class="text-xl font-bold text-gray-900 dark:text-gray-100">{formatDuration(readiness.samples.duration)}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">({formatDuration(readiness.requirements.minDuration)} needed)</span>
         </div>
-        <div class="stat">
-          <span class="label">Avg Quality:</span>
-          <span class="value">{(readiness.samples.quality * 100).toFixed(0)}%</span>
-          <span class="requirement">({(readiness.requirements.minQuality * 100).toFixed(0)}% needed)</span>
+        <div class="flex flex-col gap-1">
+          <span class="text-sm text-gray-500 dark:text-gray-400">Avg Quality:</span>
+          <span class="text-xl font-bold text-gray-900 dark:text-gray-100">{(readiness.samples.quality * 100).toFixed(0)}%</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">({(readiness.requirements.minQuality * 100).toFixed(0)}% needed)</span>
         </div>
       </div>
 
       {#if !readiness.ready && readiness.reason}
-        <div class="info">
-        {readiness.reason}
+        <div class="p-2.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500 dark:text-gray-400 text-sm mb-4">
+          {readiness.reason}
         </div>
       {/if}
 
-      <!-- RVC: Show copied samples status -->
+      <!-- RVC/Kokoro: Show copied samples status -->
       {#if (provider === 'rvc' || provider === 'kokoro') && readiness.copied}
-        <div class="rvc-copied-status" class:kokoro-ready={provider === 'kokoro'}>
+        <div class="p-3 px-4 my-4 rounded-lg border-2 text-sm {provider === 'kokoro' ? 'bg-gradient-to-r from-amber-50 to-orange-100 dark:from-amber-950/30 dark:to-orange-950/30 border-amber-500' : 'bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30 border-violet-500'}">
           <strong>📦 Samples in {provider === 'rvc' ? 'RVC' : 'Kokoro'} Training Directory:</strong>
           {readiness.copied.count} samples ({formatDuration(readiness.copied.duration)})
           {#if readiness.copied.count === 0}
-            <br><em>Click "Auto-Export Best Samples" or "Select Samples" → "Copy Selected Samples" to prepare training data</em>
+            <br><em class="text-gray-500 dark:text-gray-400 text-sm">Click "Auto-Export Best Samples" or "Select Samples" → "Copy Selected Samples" to prepare training data</em>
           {/if}
         </div>
         {#if provider === 'rvc' && readiness.ready && !copiedDatasetReady}
-          <div class="info warning">
+          <div class="p-2.5 bg-orange-50 dark:bg-orange-900/15 border border-orange-300 dark:border-orange-600/65 rounded text-orange-700 dark:text-orange-300 text-sm mb-4">
             {#if copiedNeeds && copiedNeeds.samples > 0}
               Need {copiedNeeds.samples} more sample{copiedNeeds.samples === 1 ? '' : 's'} in the RVC directory.
             {/if}
@@ -966,7 +919,7 @@
             <br>Use "Select Samples" → "Copy Selected Samples" or "Auto-Export Best Samples" before training.
           </div>
         {:else if provider === 'kokoro' && readiness.ready && !kokoroDatasetReady}
-          <div class="info warning">
+          <div class="p-2.5 bg-orange-50 dark:bg-orange-900/15 border border-orange-300 dark:border-orange-600/65 rounded text-orange-700 dark:text-orange-300 text-sm mb-4">
             Need at least 10 curated samples (2+ minutes) copied to the Kokoro dataset before training.
           </div>
         {/if}
@@ -974,42 +927,40 @@
 
       <!-- RVC: Show training progress -->
       {#if provider === 'rvc' && trainingStatus && trainingStatus.status !== 'idle'}
-        <div class="training-progress" class:running={trainingStatus.status === 'running'} class:completed={trainingStatus.status === 'completed'} class:failed={trainingStatus.status === 'failed'}>
-          <div class="progress-header">
-            <strong>
-              {#if trainingStatus.status === 'running'}
-                🔄 Training in Progress
-              {:else if trainingStatus.status === 'completed'}
-                ✅ Training Completed
-              {:else if trainingStatus.status === 'failed'}
-                ❌ Training Failed
-              {/if}
-            </strong>
+        <div class="p-4 my-4 rounded-lg border-2 text-sm {trainingStatus.status === 'running' ? 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 border-blue-500' : trainingStatus.status === 'completed' ? 'bg-gradient-to-r from-green-50 to-lime-50 dark:from-green-950/30 dark:to-lime-950/30 border-green-500' : 'bg-gradient-to-r from-red-50 to-pink-50 dark:from-red-950/30 dark:to-pink-950/30 border-red-500'}">
+          <div class="mb-3 text-base font-semibold">
+            {#if trainingStatus.status === 'running'}
+              🔄 Training in Progress
+            {:else if trainingStatus.status === 'completed'}
+              ✅ Training Completed
+            {:else if trainingStatus.status === 'failed'}
+              ❌ Training Failed
+            {/if}
           </div>
 
           {#if trainingStatus.status === 'running' || trainingStatus.status === 'completed'}
-            <div class="progress-bar-container">
-              <div class="progress-bar" style="width: {trainingStatus.progress}%"></div>
-              <span class="progress-text">{trainingStatus.progress}%</span>
+            <div class="relative w-full h-6 bg-gray-300 dark:bg-gray-600 rounded-xl overflow-hidden my-3">
+              <div class="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-xl transition-all" style="width: {trainingStatus.progress}%"></div>
+              <span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-semibold text-white drop-shadow">{trainingStatus.progress}%</span>
             </div>
           {/if}
 
           {#if trainingStatus.currentEpoch && trainingStatus.totalEpochs}
-            <div class="progress-details">
+            <div class="my-2 text-sm text-gray-600 dark:text-gray-300">
               Epoch {trainingStatus.currentEpoch} / {trainingStatus.totalEpochs}
             </div>
           {/if}
 
           {#if trainingStatus.message}
-            <div class="progress-message">{trainingStatus.message}</div>
+            <div class="my-2 p-2 bg-white/70 dark:bg-black/30 rounded text-sm text-gray-700 dark:text-gray-300">{trainingStatus.message}</div>
           {/if}
 
           {#if trainingStatus.error}
-            <div class="progress-error">{trainingStatus.error}</div>
+            <div class="my-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-400 dark:border-red-600 rounded text-sm text-red-700 dark:text-red-300">{trainingStatus.error}</div>
           {/if}
 
           {#if trainingStatus.modelPath}
-            <div class="model-path">
+            <div class="mt-3 p-2 bg-white/70 dark:bg-black/30 rounded text-xs break-all text-gray-700 dark:text-gray-300">
               <strong>Model:</strong> {trainingStatus.modelPath}
             </div>
           {/if}
@@ -1017,42 +968,40 @@
       {/if}
 
       {#if provider === 'kokoro' && trainingStatus && trainingStatus.status !== 'idle'}
-        <div class="training-progress kokoro-progress" class:running={trainingStatus.status === 'running'} class:completed={trainingStatus.status === 'completed'} class:failed={trainingStatus.status === 'failed'}>
-          <div class="progress-header">
-            <strong>
-              {#if trainingStatus.status === 'running'}
-                🎵 Training Kokoro Voicepack
-              {:else if trainingStatus.status === 'completed'}
-                ✅ Voicepack Ready
-              {:else if trainingStatus.status === 'failed'}
-                ❌ Training Failed
-              {/if}
-            </strong>
+        <div class="p-4 my-4 rounded-lg border-2 text-sm bg-gradient-to-r from-amber-50 to-orange-100 dark:from-amber-950/30 dark:to-orange-950/30 border-amber-500 {trainingStatus.status === 'completed' ? 'border-green-500' : trainingStatus.status === 'failed' ? 'border-red-500' : ''}">
+          <div class="mb-3 text-base font-semibold">
+            {#if trainingStatus.status === 'running'}
+              🎵 Training Kokoro Voicepack
+            {:else if trainingStatus.status === 'completed'}
+              ✅ Voicepack Ready
+            {:else if trainingStatus.status === 'failed'}
+              ❌ Training Failed
+            {/if}
           </div>
 
-          <div class="progress-bar-container">
-            <div class="progress-bar" style="width: {trainingStatus.progress}%"></div>
-            <span class="progress-text">{trainingStatus.progress}%</span>
+          <div class="relative w-full h-6 bg-gray-300 dark:bg-gray-600 rounded-xl overflow-hidden my-3">
+            <div class="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-xl transition-all" style="width: {trainingStatus.progress}%"></div>
+            <span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-semibold text-white drop-shadow">{trainingStatus.progress}%</span>
           </div>
 
           {#if trainingStatus.message}
-            <div class="progress-details">{trainingStatus.message}</div>
+            <div class="my-2 text-sm text-gray-600 dark:text-gray-300">{trainingStatus.message}</div>
           {/if}
 
           {#if trainingStatus.voicepackPath}
-            <div class="progress-details small">
+            <div class="my-2 text-sm text-gray-600 dark:text-gray-300">
               <strong>Voicepack:</strong> {trainingStatus.voicepackPath}
             </div>
           {/if}
 
           {#if trainingStatus.datasetSamples}
-            <div class="progress-details small">
+            <div class="my-2 text-sm text-gray-600 dark:text-gray-300">
               Dataset: {trainingStatus.datasetSamples} samples ({(trainingStatus.datasetMinutes || 0).toFixed(2)} minutes)
             </div>
           {/if}
 
           {#if trainingStatus.error}
-            <div class="progress-error">{trainingStatus.error}</div>
+            <div class="my-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-400 dark:border-red-600 rounded text-sm text-red-700 dark:text-red-300">{trainingStatus.error}</div>
           {/if}
         </div>
       {/if}
@@ -1066,49 +1015,50 @@
         />
       {/if}
 
-      <div class="actions">
-        <button on:click={() => showSelector = !showSelector} class="primary-btn">
+      <!-- Actions -->
+      <div class="mt-4 flex gap-2.5 flex-wrap max-md:flex-col">
+        <button on:click={() => showSelector = !showSelector} class="btn-primary btn-sm">
           {showSelector ? 'Hide' : 'Select'} Samples
         </button>
-        <button on:click={autoExportBest} disabled={exporting || !readiness.ready} class="success-btn">
+        <button on:click={autoExportBest} disabled={exporting || !readiness.ready} class="btn-success btn-sm">
           {exporting ? 'Exporting...' : 'Auto-Export Best Samples'}
         </button>
-        <button on:click={() => showExportSettings = !showExportSettings} class="settings-btn export-settings-btn">
+        <button on:click={() => showExportSettings = !showExportSettings} class="btn-secondary btn-sm">
           {showExportSettings ? '📊 Hide' : '📊 Show'} Export Settings
         </button>
         {#if provider === 'rvc'}
-          <button on:click={() => showAdvancedSettings = !showAdvancedSettings} class="settings-btn">
+          <button on:click={() => showAdvancedSettings = !showAdvancedSettings} class="btn-secondary btn-sm">
             {showAdvancedSettings ? '⚙️ Hide' : '⚙️ Show'} Training Settings
           </button>
-          <button on:click={startTraining} disabled={training || !canStartTraining} class="train-btn">
+          <button on:click={startTraining} disabled={training || !canStartTraining} class="px-4 py-2 bg-violet-500 hover:bg-violet-600 text-white font-semibold rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm">
             {training ? 'Training...' : '🎭 Train RVC Model'}
           </button>
         {:else if provider === 'kokoro'}
-          <button on:click={startKokoroTraining} disabled={kokoroTraining || !canStartTraining} class="train-btn kokoro-train">
+          <button on:click={startKokoroTraining} disabled={kokoroTraining || !canStartTraining} class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white dark:text-gray-900 font-semibold rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm">
             {kokoroTraining ? 'Training...' : '🎵 Train Kokoro Voicepack'}
           </button>
         {/if}
-        <button class="danger-btn" on:click={purgeAllData} disabled={purging}>
+        <button class="btn-danger btn-sm" on:click={purgeAllData} disabled={purging}>
           {purging ? 'Purging...' : 'Purge All Data'}
         </button>
       </div>
 
       <!-- Auto-Export Settings Panel -->
       {#if showExportSettings}
-        <div class="export-settings">
-          <h4>📊 Auto-Export Settings</h4>
-          <div class="settings-grid">
-            <div class="setting-group">
-              <label for="selectionMethod">
+        <div class="mt-5 border-2 border-blue-500 dark:border-blue-400 rounded-lg p-5 bg-blue-50 dark:bg-blue-950/30">
+          <h4 class="m-0 mb-4 text-blue-600 dark:text-blue-400 text-lg">📊 Auto-Export Settings</h4>
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-5 mb-4">
+            <div class="flex flex-col gap-2">
+              <label for="selectionMethod" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Selection Method:
-                <span class="setting-help">How to choose samples</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">How to choose samples</span>
               </label>
-              <select id="selectionMethod" bind:value={exportSelectionMethod}>
+              <select id="selectionMethod" bind:value={exportSelectionMethod} class="select-field">
                 <option value="quality">Highest Quality First</option>
                 <option value="random">Random Selection</option>
                 <option value="sequential">Sequential (Oldest First)</option>
               </select>
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 {#if exportSelectionMethod === 'quality'}
                   Picks highest quality samples first (default, recommended)
                 {:else if exportSelectionMethod === 'random'}
@@ -1119,10 +1069,10 @@
               </div>
             </div>
 
-            <div class="setting-group">
-              <label for="targetDuration">
+            <div class="flex flex-col gap-2">
+              <label for="targetDuration" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Target Duration ({exportDefaults[provider]?.durationUnit || 'seconds'}):
-                <span class="setting-help">Total audio duration to export</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">Total audio duration to export</span>
               </label>
               <input
                 id="targetDuration"
@@ -1131,8 +1081,9 @@
                 min={provider === 'sovits' ? 5 : 1}
                 max={provider === 'sovits' ? 30 : 60}
                 step={provider === 'sovits' ? 1 : 1}
+                class="input-field"
               />
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 {#if provider === 'sovits'}
                   GPT-SoVITS: 5-10 seconds recommended for reference audio
                 {:else if provider === 'rvc'}
@@ -1145,10 +1096,10 @@
               </div>
             </div>
 
-            <div class="setting-group">
-              <label for="maxSamples">
+            <div class="flex flex-col gap-2">
+              <label for="maxSamples" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Max Samples:
-                <span class="setting-help">Maximum number of samples to export</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">Maximum number of samples to export</span>
               </label>
               <input
                 id="maxSamples"
@@ -1157,14 +1108,15 @@
                 min="1"
                 max={provider === 'sovits' ? 10 : 500}
                 step="1"
+                class="input-field"
               />
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Limits total samples exported (quality threshold still applies)
               </div>
             </div>
           </div>
-          <div class="settings-actions">
-            <button on:click={resetExportSettings} class="secondary-btn">
+          <div class="mt-4 flex justify-end gap-2.5">
+            <button on:click={resetExportSettings} class="btn-secondary btn-sm">
               Reset to Defaults
             </button>
           </div>
@@ -1172,13 +1124,13 @@
       {/if}
 
       {#if provider === 'rvc' && showAdvancedSettings}
-        <div class="training-settings">
-          <h4>⚙️ Training Parameters</h4>
-          <div class="settings-grid">
-            <div class="setting-group">
-              <label for="totalEpochs">
+        <div class="mt-5 border-2 border-violet-500 dark:border-violet-400 rounded-lg p-5 bg-violet-50 dark:bg-violet-950/30">
+          <h4 class="m-0 mb-4 text-violet-600 dark:text-violet-400 text-lg">⚙️ Training Parameters</h4>
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-5 mb-4">
+            <div class="flex flex-col gap-2">
+              <label for="totalEpochs" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Total Epochs:
-                <span class="setting-help">Number of training iterations (300-1000)</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">Number of training iterations (300-1000)</span>
               </label>
               <input
                 id="totalEpochs"
@@ -1188,16 +1140,17 @@
                 max="2000"
                 step="50"
                 disabled={training}
+                class="input-field"
               />
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Default: 300. Higher = better quality but longer training time.
                 <br />Recommended: 300-600 for good quality, 800-1000 for best results.
               </div>
             </div>
-            <div class="setting-group">
-              <label for="saveEveryEpoch">
+            <div class="flex flex-col gap-2">
+              <label for="saveEveryEpoch" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Save Checkpoint Every:
-                <span class="setting-help">How often to save model checkpoints</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">How often to save model checkpoints</span>
               </label>
               <input
                 id="saveEveryEpoch"
@@ -1207,15 +1160,16 @@
                 max="200"
                 step="10"
                 disabled={training}
+                class="input-field"
               />
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Default: 50. Lower = more checkpoints (uses more disk space).
               </div>
             </div>
-            <div class="setting-group">
-              <label for="batchSize">
+            <div class="flex flex-col gap-2">
+              <label for="batchSize" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Batch Size:
-                <span class="setting-help">Training batch size</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">Training batch size</span>
               </label>
               <input
                 id="batchSize"
@@ -1225,31 +1179,33 @@
                 max="32"
                 step="1"
                 disabled={training}
+                class="input-field"
               />
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Default: 8. Lower if you run out of GPU memory. Higher for faster training (if GPU allows).
               </div>
             </div>
-            <div class="setting-group">
-              <label for="rvcDevice">
+            <div class="flex flex-col gap-2">
+              <label for="rvcDevice" class="font-semibold text-gray-700 dark:text-gray-200 flex flex-col gap-1">
                 Device:
-                <span class="setting-help">Training device</span>
+                <span class="font-normal text-sm text-gray-500 dark:text-gray-400 italic">Training device</span>
               </label>
               <select
                 id="rvcDevice"
                 bind:value={rvcDevice}
                 disabled={training}
+                class="select-field"
               >
                 <option value="auto">Auto (GPU if available)</option>
                 <option value="cuda">CUDA (GPU)</option>
                 <option value="cpu">CPU</option>
               </select>
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 GPU is much faster (30-60 min). CPU training is slower but works without NVIDIA GPU.
               </div>
             </div>
           </div>
-          <div class="settings-info">
+          <div class="mt-4 p-3 bg-violet-200 dark:bg-violet-900/40 border-l-4 border-violet-500 rounded text-sm text-gray-700 dark:text-gray-200">
             <strong>⏱️ Estimated Training Time:</strong>
             {#if totalEpochs <= 300}
               30-60 minutes
@@ -1266,12 +1222,12 @@
       {/if}
 
       {#if provider === 'kokoro'}
-        <div class="kokoro-training-card">
-          <h4>🎵 Kokoro Voicepack Settings</h4>
-          <div class="settings-grid">
-            <div class="setting-group">
-              <label for="kokoro-lang">Language Code</label>
-              <select id="kokoro-lang" bind:value={kokoroConfig.langCode}>
+        <div class="mt-5 border-2 border-amber-500 dark:border-amber-400 rounded-lg p-5 bg-amber-50 dark:bg-amber-950/30">
+          <h4 class="m-0 mb-4 text-amber-700 dark:text-amber-400 text-lg">🎵 Kokoro Voicepack Settings</h4>
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-5 mb-4">
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-lang" class="font-semibold text-gray-700 dark:text-gray-200">Language Code</label>
+              <select id="kokoro-lang" bind:value={kokoroConfig.langCode} class="select-field">
                 <option value="a">American English (a)</option>
                 <option value="b">British English (b)</option>
                 <option value="e">Spanish (es)</option>
@@ -1283,9 +1239,9 @@
                 <option value="z">Mandarin Chinese (zh)</option>
               </select>
             </div>
-            <div class="setting-group">
-              <label for="kokoro-base">Base Voice</label>
-              <select id="kokoro-base" bind:value={kokoroConfig.baseVoice}>
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-base" class="font-semibold text-gray-700 dark:text-gray-200">Base Voice</label>
+              <select id="kokoro-base" bind:value={kokoroConfig.baseVoice} class="select-field">
                 <optgroup label="American English - Male">
                   <option value="am_adam">Adam (Low pitch)</option>
                   <option value="am_echo">Echo (Low pitch)</option>
@@ -1323,73 +1279,73 @@
                   <option value="bf_lily">Lily (Medium pitch)</option>
                 </optgroup>
               </select>
-              <div class="setting-note">Choose a base voice that matches your gender and approximate pitch. Training will adapt this voice to sound like you.</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">Choose a base voice that matches your gender and approximate pitch. Training will adapt this voice to sound like you.</div>
             </div>
-            <div class="setting-group">
-              <label for="kokoro-epochs">Epochs</label>
-              <input id="kokoro-epochs" type="number" min="60" max="400" bind:value={kokoroConfig.epochs} />
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-epochs" class="font-semibold text-gray-700 dark:text-gray-200">Epochs</label>
+              <input id="kokoro-epochs" type="number" min="60" max="400" bind:value={kokoroConfig.epochs} class="input-field" />
             </div>
-            <div class="setting-group">
-              <label for="kokoro-lr">Learning Rate</label>
-              <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroConfig.learningRate} />
-              <div class="setting-note">Controls adaptation speed. Lower = slower but more stable. Recommended: 0.0003-0.0005</div>
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-lr" class="font-semibold text-gray-700 dark:text-gray-200">Learning Rate</label>
+              <input id="kokoro-lr" type="number" step="0.0001" bind:value={kokoroConfig.learningRate} class="input-field" />
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">Controls adaptation speed. Lower = slower but more stable. Recommended: 0.0003-0.0005</div>
             </div>
-            <div class="setting-group">
-              <label for="kokoro-reg">Regularization</label>
-              <input id="kokoro-reg" type="number" step="0.001" min="0.001" max="0.01" bind:value={kokoroConfig.regularization} />
-              <div class="setting-note">Keeps voice close to base. Higher = more conservative. Recommended: 0.003-0.005</div>
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-reg" class="font-semibold text-gray-700 dark:text-gray-200">Regularization</label>
+              <input id="kokoro-reg" type="number" step="0.001" min="0.001" max="0.01" bind:value={kokoroConfig.regularization} class="input-field" />
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">Keeps voice close to base. Higher = more conservative. Recommended: 0.003-0.005</div>
             </div>
-            <div class="setting-group">
-              <label for="kokoro-device">Device</label>
-              <select id="kokoro-device" bind:value={kokoroConfig.device}>
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-device" class="font-semibold text-gray-700 dark:text-gray-200">Device</label>
+              <select id="kokoro-device" bind:value={kokoroConfig.device} class="select-field">
                 <option value="auto">Auto (GPU if available)</option>
                 <option value="cuda">CUDA</option>
                 <option value="cpu">CPU</option>
               </select>
             </div>
-            <div class="setting-group">
-              <label for="kokoro-max">Max Samples</label>
-              <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroConfig.maxSamples} />
+            <div class="flex flex-col gap-2">
+              <label for="kokoro-max" class="font-semibold text-gray-700 dark:text-gray-200">Max Samples</label>
+              <input id="kokoro-max" type="number" min="50" max="400" bind:value={kokoroConfig.maxSamples} class="input-field" />
             </div>
-            <div class="setting-group">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={kokoroConfig.continueFromCheckpoint} disabled={kokoroConfig.pureTraining} />
+            <div class="flex flex-col gap-2">
+              <label class="flex flex-row items-center gap-2 cursor-pointer select-none font-semibold text-gray-700 dark:text-gray-200">
+                <input type="checkbox" bind:checked={kokoroConfig.continueFromCheckpoint} disabled={kokoroConfig.pureTraining} class="w-4 h-4 cursor-pointer" />
                 Continue from existing checkpoint
               </label>
-              <div class="setting-note">If checked, resume training from existing {kokoroConfig.speakerId}.pt voicepack. If unchecked, start fresh from base voice.</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">If checked, resume training from existing {kokoroConfig.speakerId}.pt voicepack. If unchecked, start fresh from base voice.</div>
             </div>
-            <div class="setting-group">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={kokoroConfig.pureTraining} on:change={handlePureTrainingToggle} />
+            <div class="flex flex-col gap-2">
+              <label class="flex flex-row items-center gap-2 cursor-pointer select-none font-semibold text-gray-700 dark:text-gray-200">
+                <input type="checkbox" bind:checked={kokoroConfig.pureTraining} on:change={handlePureTrainingToggle} class="w-4 h-4 cursor-pointer" />
                 Pure training mode (experimental)
               </label>
-              <div class="setting-note">
+              <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Train from random initialization with NO base voice influence.
-                Saves to <code>{kokoroConfig.speakerId}-pure.pt</code> for A/B comparison.
+                Saves to <code class="bg-gray-200 dark:bg-gray-700 px-1 rounded">{kokoroConfig.speakerId}-pure.pt</code> for A/B comparison.
                 Requires 2-3x more epochs (300-400 recommended).
               </div>
             </div>
           </div>
-          <p class="kokoro-hint">
+          <p class="text-sm text-amber-800 dark:text-amber-300 mt-2.5">
             <strong>Auto-normalization:</strong> All samples are automatically normalized to -16 LUFS when copied to the dataset for optimal training quality.
             <br>
-            Voicepacks save to <code>profiles/&lt;user&gt;/out/voices/kokoro-voicepacks</code>. Use the Voice Settings tab to enable custom Kokoro voices after training.
+            Voicepacks save to <code class="bg-amber-200 dark:bg-amber-800 px-1 rounded">profiles/&lt;user&gt;/out/voices/kokoro-voicepacks</code>. Use the Voice Settings tab to enable custom Kokoro voices after training.
           </p>
         </div>
       {/if}
 
       {#if showSelector}
-        <div class="selector-container">
+        <div class="mt-5 border-2 border-blue-500 dark:border-blue-400 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
           <ReferenceAudioSelector
             provider={apiProvider}
             minQuality={currentConfig.minQuality}
             onSelectionChange={handleSelectionChange}
           />
-          <div class="selector-actions">
-            <button on:click={copySelectedSamples} disabled={copying || selectedSampleIds.length === 0} class="success-btn">
+          <div class="mt-4 flex gap-2.5 justify-end">
+            <button on:click={copySelectedSamples} disabled={copying || selectedSampleIds.length === 0} class="btn-success btn-sm">
               {copying ? 'Copying...' : `Copy ${selectedSampleIds.length} Selected Samples`}
             </button>
-            <button on:click={() => showSelector = false} class="secondary-btn">
+            <button on:click={() => showSelector = false} class="btn-secondary btn-sm">
               Cancel
             </button>
           </div>
@@ -1397,25 +1353,26 @@
       {/if}
     </div>
 
-    <div class="samples-section">
-      <h3>Recent Samples</h3>
+    <!-- Samples Section -->
+    <div class="mt-8">
+      <h3 class="m-0 mb-2.5 text-lg font-semibold text-gray-700 dark:text-gray-300">Recent Samples</h3>
       {#if samples.length === 0}
-        <p class="no-samples">No samples collected yet. Start a voice conversation to begin!</p>
+        <p class="p-5 text-center text-gray-500 dark:text-gray-400 italic">No samples collected yet. Start a voice conversation to begin!</p>
       {:else}
-        <div class="samples-list">
+        <div class="flex flex-col gap-2.5">
           {#each samples as sample (sample.id)}
-            <div class="sample">
-              <div class="sample-header">
-                <span class="sample-time">{formatTimestamp(sample.timestamp)}</span>
-                <span class="sample-duration">{formatDuration(sample.duration)}</span>
-                <span class="sample-quality" class:high={sample.quality >= 0.8} class:medium={sample.quality >= 0.6 && sample.quality < 0.8} class:low={sample.quality < 0.6}>
+            <div class="panel p-4">
+              <div class="flex gap-4 mb-2 text-sm">
+                <span class="text-gray-500 dark:text-gray-400">{formatTimestamp(sample.timestamp)}</span>
+                <span class="text-blue-500 font-bold">{formatDuration(sample.duration)}</span>
+                <span class="px-2 py-0.5 rounded font-bold text-white {sample.quality >= 0.8 ? 'bg-green-500' : sample.quality >= 0.6 ? 'bg-amber-500' : 'bg-red-500'}">
                   {(sample.quality * 100).toFixed(0)}%
                 </span>
               </div>
-              <div class="sample-transcript">
+              <div class="mb-2.5 text-gray-700 dark:text-gray-300 italic">
                 "{(sample.transcript || '').substring(0, 100)}{(sample.transcript || '').length > 100 ? '...' : ''}"
               </div>
-              <button class="delete-btn" on:click={() => deleteSample(sample.id)}>
+              <button class="btn-danger btn-xs" on:click={() => deleteSample(sample.id)}>
                 Delete
               </button>
             </div>
@@ -1427,111 +1384,114 @@
 
   <!-- Training Modal Overlay -->
   {#if showTrainingModal}
-    <div class="training-modal-overlay">
-      <div class="training-modal" class:kokoro-modal={provider === 'kokoro'}>
-        <div class="modal-header">
-          <h2>
+    <div class="fixed inset-0 bg-black/85 backdrop-blur-sm z-[9999] flex items-center justify-center animate-fade-in">
+      <div class="max-w-[700px] w-[90%] p-8 rounded-2xl border-3 shadow-[0_0_40px_rgba(0,255,136,0.5)] animate-scale-in {provider === 'kokoro' ? 'bg-gradient-to-br from-[#1a1410] to-[#211813] border-amber-500 shadow-[0_0_40px_rgba(245,158,11,0.5)]' : 'bg-gradient-to-br from-[#1a1a2e] to-[#16213e] border-green-400'}">
+        <!-- Modal Header -->
+        <div class="text-center mb-8 relative">
+          <h2 class="text-3xl m-0 mb-4 animate-pulse {provider === 'kokoro' ? 'text-amber-500' : 'text-green-400'}" style="text-shadow: 0 0 10px {provider === 'kokoro' ? 'rgba(245,158,11,0.7)' : 'rgba(0,255,136,0.7)'}">
             {#if provider === 'kokoro'}
               🎵 Kokoro Voicepack Training in Progress 🎵
             {:else}
               ⚡ RVC Model Training in Progress ⚡
             {/if}
           </h2>
-          <button class="cancel-training-btn" on:click={cancelTraining} title="Cancel Training">
+          <button class="absolute top-0 right-2.5 w-9 h-9 bg-red-500/10 border-2 border-red-500 text-red-500 text-2xl rounded-full cursor-pointer transition-all flex items-center justify-center p-0 leading-none hover:bg-red-500 hover:text-white hover:scale-110 hover:shadow-[0_0_15px_rgba(239,83,80,0.5)] active:scale-95" on:click={cancelTraining} title="Cancel Training">
             ✕
           </button>
-          <div class="warning-banner">
+          <div class="bg-gradient-to-r from-red-600 via-orange-500 to-red-600 bg-[length:200%_100%] text-white px-5 py-3 rounded-lg font-bold text-base animate-warning-slide shadow-[0_0_20px_rgba(255,0,0,0.5)]">
             ⚠️ DO NOT NAVIGATE AWAY - Training will be interrupted! ⚠️
           </div>
         </div>
 
-        <div class="modal-body">
+        <!-- Modal Body -->
+        <div class="text-gray-200">
           {#if trainingStatus}
             <!-- Progress Bar -->
-            <div class="modal-progress-container">
-              <div class="modal-progress-bar" style="width: {trainingStatus.progress}%">
-                <div class="progress-glow"></div>
+            <div class="relative w-full h-10 bg-[#1a1a2e] border-2 {provider === 'kokoro' ? 'border-amber-500' : 'border-green-400'} rounded-full overflow-hidden my-6 shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
+              <div class="h-full rounded-[18px] relative transition-all duration-500 animate-progress-shine {provider === 'kokoro' ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500' : 'bg-gradient-to-r from-green-400 via-teal-400 to-green-400'} bg-[length:200%_100%]" style="width: {trainingStatus.progress}%">
+                <div class="absolute top-0 right-0 bottom-0 w-12 bg-gradient-to-r from-transparent to-white/50 animate-glow-move"></div>
               </div>
-              <span class="modal-progress-text">{trainingStatus.progress}%</span>
+              <span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-bold text-xl text-white drop-shadow-md">{trainingStatus.progress}%</span>
             </div>
 
             <!-- Epoch Counter -->
             {#if trainingStatus.currentEpoch && trainingStatus.totalEpochs}
-              <div class="epoch-display">
-                <span class="epoch-label">Epoch:</span>
-                <span class="epoch-value">{trainingStatus.currentEpoch} / {trainingStatus.totalEpochs}</span>
+              <div class="text-center text-xl my-5 {provider === 'kokoro' ? 'text-amber-500' : 'text-green-400'}">
+                <span class="font-semibold mr-2.5">Epoch:</span>
+                <span class="font-bold text-2xl {provider === 'kokoro' ? 'text-amber-400' : 'text-teal-400'}">{trainingStatus.currentEpoch} / {trainingStatus.totalEpochs}</span>
               </div>
             {/if}
 
             <!-- Dataset Info for Kokoro -->
             {#if provider === 'kokoro' && trainingStatus.datasetSamples}
-              <div class="dataset-display">
-                <span class="dataset-label">Dataset:</span>
-                <span class="dataset-value">{trainingStatus.datasetSamples} samples ({(trainingStatus.datasetMinutes || 0).toFixed(1)} min)</span>
+              <div class="text-center text-lg my-4 text-amber-500">
+                <span class="font-semibold mr-2">Dataset:</span>
+                <span class="font-bold text-xl text-orange-400">{trainingStatus.datasetSamples} samples ({(trainingStatus.datasetMinutes || 0).toFixed(1)} min)</span>
               </div>
             {/if}
 
             <!-- Status Message -->
             {#if trainingStatus.message}
-              <div class="status-message">{trainingStatus.message}</div>
+              <div class="text-center p-3 bg-green-400/10 border-l-4 border-green-400 rounded-md my-4 text-sm">{trainingStatus.message}</div>
             {/if}
           {/if}
 
           <!-- Toggle between robot messages and logs -->
           {#if (provider === 'kokoro' || provider === 'rvc') && showLogs}
             <!-- Training Logs View -->
-            <div class="logs-container">
-              <div class="logs-header">
-                <h3>📋 Training Logs</h3>
-                <button class="toggle-view-btn" on:click={() => showLogs = false}>
+            <div class="my-8 p-5 bg-black/30 border-2 border-amber-500 rounded-xl">
+              <div class="flex justify-between items-center mb-4 pb-2.5 border-b border-amber-500/30">
+                <h3 class="m-0 text-amber-500 text-xl">📋 Training Logs</h3>
+                <button class="px-3 py-1.5 bg-amber-500/20 border border-amber-500 rounded-md text-amber-300 text-sm cursor-pointer transition-all hover:bg-amber-500/30 hover:-translate-y-px" on:click={() => showLogs = false}>
                   Show Robot Messages
                 </button>
               </div>
-              <div class="logs-content" bind:this={logsContainer}>
+              <div class="max-h-[300px] overflow-y-auto font-mono text-sm leading-relaxed bg-black/40 p-4 rounded-lg border border-amber-500/20 scrollbar-thin scrollbar-track-black/20 scrollbar-thumb-amber-500" bind:this={logsContainer}>
                 {#if trainingLogs.length === 0}
-                  <div class="logs-placeholder">
+                  <div class="text-center text-gray-400 italic py-8">
                     Waiting for training logs...
                   </div>
                 {:else}
                   {#each trainingLogs as logLine}
-                    <div class="log-line">{logLine}</div>
+                    <div class="text-gray-300 my-0.5 py-0.5 break-words">{logLine}</div>
                   {/each}
                 {/if}
               </div>
             </div>
           {:else}
             <!-- Robot Takeover Message -->
-            <div class="robot-message-container">
-              <div class="robot-message">
+            <div class="my-8 p-5 bg-red-500/5 border-2 border-dashed border-red-500 rounded-xl">
+              <div class="text-center text-lg font-semibold text-red-400 mb-4 min-h-[30px] animate-robot-flicker">
                 {currentRobotMessage}
               </div>
-              <div class="robot-ascii">
-                <pre>
-
+              <div class="flex justify-center">
+                <pre class="text-green-400 text-xl leading-tight m-0 animate-robot-bounce" style="text-shadow: 0 0 5px rgba(0,255,136,0.5)">
      ...kill
-        all 
+        all
        humans...
                 </pre>
               </div>
               {#if provider === 'kokoro' || provider === 'rvc'}
-                <button class="toggle-view-btn" on:click={() => showLogs = true}>
-                  Show Training Logs
-                </button>
+                <div class="text-center mt-4">
+                  <button class="px-3 py-1.5 bg-amber-500/20 border border-amber-500 rounded-md text-amber-300 text-sm cursor-pointer transition-all hover:bg-amber-500/30 hover:-translate-y-px" on:click={() => showLogs = true}>
+                    Show Training Logs
+                  </button>
+                </div>
               {/if}
             </div>
           {/if}
 
-          <div class="training-info">
+          <div class="mt-6 p-4 bg-teal-400/5 rounded-lg border border-green-400/30">
             {#if provider === 'kokoro'}
-              <p>⏱️ Estimated time: Eons -- Your childern will be dead when this is finished</p>
-              <p>🎵 StyleTTS2 voice encoder optimization</p>
-              <p>💾 Training voicepack embeddings</p>
-              <p>🌐 Skynet connection: Established</p>
+              <p class="my-2 text-sm text-gray-400">⏱️ Estimated time: Eons -- Your childern will be dead when this is finished</p>
+              <p class="my-2 text-sm text-gray-400">🎵 StyleTTS2 voice encoder optimization</p>
+              <p class="my-2 text-sm text-gray-400">💾 Training voicepack embeddings</p>
+              <p class="my-2 text-sm text-gray-400">🌐 Skynet connection: Established</p>
             {:else}
-              <p>⏱️ Estimated time: Epochs</p>
-              <p>🔥 GPU temperature: Rising steadily</p>
-              <p>💾 System resources: Being consumed</p>
-              <p>🌐 Skynet connection: Established</p>
+              <p class="my-2 text-sm text-gray-400">⏱️ Estimated time: Epochs</p>
+              <p class="my-2 text-sm text-gray-400">🔥 GPU temperature: Rising steadily</p>
+              <p class="my-2 text-sm text-gray-400">💾 System resources: Being consumed</p>
+              <p class="my-2 text-sm text-gray-400">🌐 Skynet connection: Established</p>
             {/if}
           </div>
         </div>
@@ -1541,1507 +1501,63 @@
 </div>
 
 <style>
-  .voice-training-widget {
-    padding: 20px;
-    max-width: 1000px;
+  @keyframes animate-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-
-  .title-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1.5rem;
-    color: #1a1a1a;
-  }
-
-  :global(.dark) h2 {
-    color: #e0e0e0;
-  }
-
-  .provider-selector {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .provider-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #666;
-  }
-
-  :global(.dark) .provider-label {
-    color: #999;
-  }
-
-  .provider-tabs {
-    display: flex;
-    gap: 8px;
-  }
-
-  .provider-tab {
-    padding: 8px 16px;
-    border: 2px solid #ddd;
-    border-radius: 8px;
-    background: white;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: #666;
-  }
-
-  :global(.dark) .provider-tab {
-    background: #2a2a2a;
-    border-color: #444;
-    color: #999;
-  }
-
-  .provider-tab:hover {
-    border-color: var(--provider-color);
-    transform: translateY(-1px);
-  }
-
-  .provider-tab.active {
-    border-color: var(--provider-color);
-    background: var(--provider-color);
-    color: white;
-  }
-
-  :global(.dark) .provider-tab.active {
-    background: var(--provider-color);
-    color: white;
-  }
-
-  .provider-tab-icon {
-    font-size: 1rem;
-  }
-
-  .provider-tab-name {
-    font-weight: 600;
-  }
-
-  .training-controls {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .toggle-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    cursor: pointer;
-  }
-
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-    position: absolute;
-  }
-
-  .slider {
-    position: relative;
-    display: block;
-    width: 50px;
-    height: 24px;
-    background-color: #ccc;
-    border-radius: 24px;
-    transition: background-color 0.3s;
-  }
-
-  .slider::before {
-    content: '';
-    position: absolute;
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    border-radius: 50%;
-    transition: transform 0.3s;
-  }
-
-  .toggle-switch input:checked + .slider {
-    background-color: #4CAF50;
-  }
-
-  .toggle-switch input:checked + .slider::before {
-    transform: translateX(26px);
-  }
-
-  .toggle-switch input:disabled + .slider {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  :global(.dark) .slider {
-    background-color: #555;
-  }
-
-  :global(.dark) .slider::before {
-    background-color: #ddd;
-  }
-
-  :global(.dark) .toggle-switch input:checked + .slider {
-    background-color: #66BB6A;
-  }
-
-  .toggle-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #333;
-    min-width: 65px;
-  }
-
-  :global(.dark) .toggle-label {
-    color: #ccc;
-  }
-
-  .disabled-notice {
-    padding: 20px;
-    margin-bottom: 20px;
-    background: #f0f0f0;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    text-align: center;
-  }
-
-  .disabled-notice p {
-    margin: 5px 0;
-    color: #666;
-  }
-
-  :global(.dark) .disabled-notice {
-    background: #2a2a2a;
-    border-color: #444;
-  }
-
-  :global(.dark) .disabled-notice p {
-    color: #999;
-  }
-
-  h3 {
-    margin: 0 0 10px 0;
-    font-size: 1.2rem;
-    color: #333;
-  }
-
-  :global(.dark) h3 {
-    color: #ccc;
-  }
-
-  .error {
-    padding: 10px;
-    margin-bottom: 15px;
-    background: #fee;
-    border: 1px solid #fcc;
-    border-radius: 4px;
-    color: #c00;
-  }
-
-  :global(.dark) .error {
-    background: #400;
-    border-color: #600;
-    color: #fcc;
-  }
-
-  .loading {
-    padding: 20px;
-    text-align: center;
-    color: #666;
-  }
-
-  :global(.dark) .loading {
-    color: #999;
-  }
-
-  .progress-section {
-    margin-bottom: 30px;
-  }
-
-  .readiness-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-  }
-
-  .workflow-guide {
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
-    border: 2px solid;
-  }
-
-  .workflow-guide.rvc {
-    background: linear-gradient(135deg, #f3e5f5 0%, #e1f5fe 100%);
-    border-color: #8b5cf6;
-  }
-
-  .workflow-guide.sovits {
-    background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
-    border-color: #10b981;
-  }
-
-  .workflow-guide.piper {
-    background: linear-gradient(135deg, #e0f2f1 0%, #e8f5e9 100%);
-    border-color: #3b82f6;
-  }
-
-  .workflow-guide.kokoro {
-    background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
-    border-color: #f59e0b;
-  }
-
-  :global(.dark) .workflow-guide.rvc {
-    background: linear-gradient(135deg, #2a1a3a 0%, #1a2a3a 100%);
-    border-color: #a78bfa;
-  }
-
-  :global(.dark) .workflow-guide.kokoro {
-    background: linear-gradient(135deg, #3a2a1a 0%, #3a251a 100%);
-    border-color: #fbbf24;
-  }
-
-  .rvc-copied-status {
-    padding: 12px 16px;
-    margin: 15px 0;
-    background: linear-gradient(135deg, #f3e5f5 0%, #fce4ec 100%);
-    border: 2px solid #8b5cf6;
-    border-radius: 8px;
-    font-size: 0.9rem;
-  }
-
-  .rvc-copied-status.kokoro-ready {
-    background: linear-gradient(135deg, #fff7e6 0%, #ffe4b5 100%);
-    border-color: #f59e0b;
-  }
-
-  :global(.dark) .rvc-copied-status {
-    background: linear-gradient(135deg, #2a1a3a 0%, #3a1a2a 100%);
-    border-color: #a78bfa;
-    color: #e0e0e0;
-  }
-
-  :global(.dark) .rvc-copied-status.kokoro-ready {
-    background: linear-gradient(135deg, #3a2a1a 0%, #4a2a1a 100%);
-    border-color: #fbbf24;
-  }
-
-  .rvc-copied-status em {
-    color: #666;
-    font-size: 0.85rem;
-  }
-
-  :global(.dark) .rvc-copied-status em {
-    color: #999;
-  }
-
-  .training-progress {
-    padding: 16px;
-    margin: 15px 0;
-    border-radius: 8px;
-    border: 2px solid;
-    font-size: 0.9rem;
-  }
-
-  .training-progress.running {
-    background: linear-gradient(135deg, #e3f2fd 0%, #e1f5fe 100%);
-    border-color: #2196f3;
-  }
-
-  .training-progress.completed {
-    background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
-    border-color: #4caf50;
-  }
-
-  .training-progress.failed {
-    background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
-    border-color: #f44336;
-  }
-
-  .training-progress.kokoro-progress {
-    background: linear-gradient(135deg, #fff7e6 0%, #ffe4b5 100%);
-    border-color: #f59e0b;
-  }
-
-  :global(.dark) .training-progress.running {
-    background: linear-gradient(135deg, #1a2a3a 0%, #1a3a3a 100%);
-    border-color: #42a5f5;
-  }
-
-  :global(.dark) .training-progress.completed {
-    background: linear-gradient(135deg, #1a2a1a 0%, #2a3a1a 100%);
-    border-color: #66bb6a;
-  }
-
-  :global(.dark) .training-progress.failed {
-    background: linear-gradient(135deg, #3a1a1a 0%, #3a1a2a 100%);
-    border-color: #ef5350;
-  }
-
-  :global(.dark) .training-progress.kokoro-progress {
-    background: linear-gradient(135deg, #3a2a1a 0%, #4a2a1a 100%);
-    border-color: #fbbf24;
-  }
-
-  .progress-header {
-    margin-bottom: 12px;
-    font-size: 1rem;
-  }
-
-  .progress-bar-container {
-    position: relative;
-    width: 100%;
-    height: 24px;
-    background: #e0e0e0;
-    border-radius: 12px;
-    overflow: hidden;
-    margin: 12px 0;
-  }
-
-  :global(.dark) .progress-bar-container {
-    background: #424242;
-  }
-
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #4caf50 0%, #66bb6a 100%);
-    transition: width 0.3s ease;
-    border-radius: 12px;
-  }
-
-  .training-progress.running .progress-bar {
-    background: linear-gradient(90deg, #2196f3 0%, #42a5f5 100%);
-  }
-
-  .progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-weight: 600;
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-
-  .progress-details {
-    margin: 8px 0;
-    font-size: 0.85rem;
-    color: #555;
-  }
-
-  :global(.dark) .progress-details {
-    color: #aaa;
-  }
-
-  .progress-message {
-    margin: 8px 0;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 4px;
-    font-size: 0.85rem;
-    color: #333;
-  }
-
-  :global(.dark) .progress-message {
-    background: rgba(0, 0, 0, 0.3);
-    color: #ddd;
-  }
-
-  .progress-error {
-    margin: 8px 0;
-    padding: 8px;
-    background: #ffebee;
-    border: 1px solid #ef5350;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    color: #c62828;
-  }
-
-  :global(.dark) .progress-error {
-    background: rgba(244, 67, 54, 0.2);
-    border-color: #ef5350;
-    color: #ef9a9a;
-  }
-
-  .model-path {
-    margin-top: 12px;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 4px;
-    font-size: 0.8rem;
-    word-break: break-all;
-    color: #333;
-  }
-
-  :global(.dark) .model-path {
-    background: rgba(0, 0, 0, 0.3);
-    color: #ddd;
-  }
-
-  :global(.dark) .workflow-guide.sovits {
-    background: linear-gradient(135deg, #1a2a3a 0%, #2a1a2a 100%);
-    border-color: #34d399;
-  }
-
-  :global(.dark) .workflow-guide.piper {
-    background: linear-gradient(135deg, #1a3a3a 0%, #1a3a2a 100%);
-    border-color: #60a5fa;
-  }
-
-  .guide-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 15px;
-    font-size: 1.1rem;
-    color: #1565c0;
-    font-weight: 600;
-  }
-
-  :global(.dark) .guide-header {
-    color: #93c5fd;
-  }
-
-  .guide-icon {
-    font-size: 1.5rem;
-  }
-
-  .guide-link {
-    margin-left: auto;
-    padding: 4px 12px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: #1565c0;
-    text-decoration: none;
-    background: rgba(21, 101, 192, 0.1);
-    border: 1px solid rgba(21, 101, 192, 0.3);
-    border-radius: 4px;
-    transition: all 0.2s ease;
-  }
-
-  .guide-link:hover {
-    background: rgba(21, 101, 192, 0.2);
-    border-color: rgba(21, 101, 192, 0.5);
-    transform: translateY(-1px);
-  }
-
-  :global(.dark) .guide-link {
-    color: #93c5fd;
-    background: rgba(147, 197, 253, 0.1);
-    border-color: rgba(147, 197, 253, 0.3);
-  }
-
-  :global(.dark) .guide-link:hover {
-    background: rgba(147, 197, 253, 0.2);
-    border-color: rgba(147, 197, 253, 0.5);
-  }
-
-  .guide-steps {
-    margin: 0 0 15px 0;
-    padding-left: 1.5rem;
-    color: #333;
-    line-height: 1.6;
-  }
-
-  :global(.dark) .guide-steps {
-    color: #e0e0e0;
-  }
-
-  .guide-steps li {
-    margin-bottom: 12px;
-  }
-
-  .guide-steps li:last-child {
-    margin-bottom: 0;
-  }
-
-  .guide-steps ul {
-    margin: 8px 0 0 0;
-    padding-left: 1.5rem;
-    list-style-type: disc;
-    font-size: 0.95rem;
-    color: #555;
-  }
-
-  :global(.dark) .guide-steps ul {
-    color: #bbb;
-  }
-
-  .guide-steps ul li {
-    margin-bottom: 4px;
-  }
-
-  .guide-steps strong {
-    color: #1565c0;
-  }
-
-  :global(.dark) .guide-steps strong {
-    color: #93c5fd;
-  }
-
-  .guide-note {
-    padding: 12px;
-    background: rgba(33, 150, 243, 0.1);
-    border-left: 4px solid #2196F3;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    color: #1565c0;
-  }
-
-  :global(.dark) .guide-note {
-    background: rgba(74, 158, 255, 0.15);
-    border-color: #4a9eff;
-    color: #93c5fd;
-  }
-
-  .ready-badge {
-    display: inline-block;
-    padding: 6px 12px;
-    background: #4CAF50;
-    color: white;
-    border-radius: 16px;
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .not-ready-badge {
-    display: inline-block;
-    padding: 6px 12px;
-    background: #FF9800;
-    color: white;
-    border-radius: 16px;
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .stats {
-    display: flex;
-    gap: 20px;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
-  }
-
-  .stat {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .stat .label {
-    font-size: 0.85rem;
-    color: #666;
-  }
-
-  :global(.dark) .stat .label {
-    color: #999;
-  }
-
-  .stat .value {
-    font-size: 1.2rem;
-    font-weight: bold;
-    color: #1a1a1a;
-  }
-
-  :global(.dark) .stat .value {
-    color: #e0e0e0;
-  }
-
-  .stat .requirement {
-    font-size: 0.75rem;
-    color: #888;
-  }
-
-  :global(.dark) .stat .requirement {
-    color: #666;
-  }
-
-  .info {
-    padding: 10px;
-    background: #f0f0f0;
-    border-radius: 4px;
-    color: #666;
-    font-size: 0.9rem;
-    margin-bottom: 15px;
-  }
-
-  .info.warning {
-    background: #fff4e6;
-    border: 1px solid #fdba74;
-    color: #c2410c;
-  }
-
-  :global(.dark) .info {
-    background: #2a2a2a;
-    color: #999;
-  }
-
-  :global(.dark) .info.warning {
-    background: rgba(251, 146, 60, 0.15);
-    border-color: rgba(251, 146, 60, 0.65);
-    color: #fdba74;
-  }
-
-  .actions {
-    margin-top: 15px;
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  button {
-    padding: 10px 20px;
-    background: #2196F3;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 1rem;
-    transition: all 0.2s;
-    font-weight: 500;
-  }
-
-  button:hover:not(:disabled) {
-    background: #1976D2;
-    transform: translateY(-1px);
-  }
-
-  button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-    opacity: 0.6;
+  .animate-fade-in {
+    animation: animate-fade-in 0.3s ease-in-out;
   }
 
-  :global(.dark) button:disabled {
-    background: #444;
+  @keyframes animate-scale-in {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
   }
-
-  .primary-btn {
-    background: #2196F3;
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: #1976D2;
-  }
-
-  .success-btn {
-    background: #4CAF50;
-  }
-
-  .success-btn:hover:not(:disabled) {
-    background: #45a049;
-  }
-
-  .train-btn {
-    background: #8b5cf6;
-    font-weight: 600;
-  }
-
-  .train-btn:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  .train-btn.kokoro-train {
-    background: #f59e0b;
-    color: #1f1f1f;
-  }
-
-  :global(.dark) .train-btn.kokoro-train {
-    color: #fff;
-  }
-
-  .train-btn.kokoro-train:hover:not(:disabled) {
-    background: #d97706;
-  }
-
-  .secondary-btn {
-    background: #757575;
-  }
-
-  .secondary-btn:hover:not(:disabled) {
-    background: #616161;
-  }
-
-  .danger-btn {
-    background: #f44336;
-  }
-
-  .danger-btn:hover:not(:disabled) {
-    background: #d32f2f;
-  }
-
-  :global(.dark) .danger-btn {
-    background: #e53935;
-  }
-
-  :global(.dark) .danger-btn:hover:not(:disabled) {
-    background: #c62828;
-  }
-
-  .settings-btn {
-    background: #607d8b;
-  }
-
-  .settings-btn:hover:not(:disabled) {
-    background: #546e7a;
-  }
-
-  .training-settings {
-    margin-top: 20px;
-    border: 2px solid #8b5cf6;
-    border-radius: 8px;
-    padding: 20px;
-    background: #f3f0ff;
-  }
-
-  :global(.dark) .training-settings {
-    background: #1a1520;
-    border-color: #9f7aea;
-  }
-
-  .training-settings h4 {
-    margin: 0 0 15px 0;
-    color: #8b5cf6;
-    font-size: 1.1rem;
-  }
-
-  :global(.dark) .training-settings h4 {
-    color: #9f7aea;
-  }
-
-  /* Export Settings Panel */
-  .export-settings {
-    margin-top: 20px;
-    border: 2px solid #3b82f6;
-    border-radius: 8px;
-    padding: 20px;
-    background: #eff6ff;
-  }
-
-  :global(.dark) .export-settings {
-    background: #1a2030;
-    border-color: #60a5fa;
-  }
-
-  .export-settings h4 {
-    margin: 0 0 15px 0;
-    color: #2563eb;
-    font-size: 1.1rem;
-  }
-
-  :global(.dark) .export-settings h4 {
-    color: #60a5fa;
-  }
-
-  .export-settings select {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #ccc;
-    background: white;
-    font-size: 0.95rem;
-  }
-
-  :global(.dark) .export-settings select {
-    background: #2a2a3a;
-    border-color: #444;
-    color: #fff;
-  }
-
-  .export-settings-btn {
-    background: #3b82f6 !important;
-  }
-
-  .export-settings-btn:hover:not(:disabled) {
-    background: #2563eb !important;
-  }
-
-  .settings-actions {
-    margin-top: 15px;
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-  }
-
-  .kokoro-training-card {
-    margin-top: 20px;
-    border: 2px solid #f59e0b;
-    border-radius: 8px;
-    padding: 20px;
-    background: #fff7e6;
-  }
-
-  :global(.dark) .kokoro-training-card {
-    background: #3a2a1a;
-    border-color: #fbbf24;
-  }
-
-  .kokoro-training-card h4 {
-    margin: 0 0 15px 0;
-    color: #b45309;
-    font-size: 1.1rem;
-  }
-
-  :global(.dark) .kokoro-training-card h4 {
-    color: #fbbf24;
-  }
-
-  .kokoro-hint {
-    font-size: 0.85rem;
-    color: #7a4c06;
-    margin-top: 10px;
-  }
-
-  :global(.dark) .kokoro-hint {
-    color: #fde68a;
-  }
-
-  .settings-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 20px;
-    margin-bottom: 15px;
-  }
-
-  .setting-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .setting-group label {
-    font-weight: 600;
-    color: #333;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  :global(.dark) .setting-group label {
-    color: #e0e0e0;
-  }
-
-  .setting-help {
-    font-weight: 400;
-    font-size: 0.85rem;
-    color: #666;
-    font-style: italic;
-  }
-
-  :global(.dark) .setting-help {
-    color: #999;
-  }
-
-  .setting-group input[type="number"] {
-    padding: 10px;
-    border: 2px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 1rem;
-    background: white;
-    color: #333;
-    transition: border-color 0.2s;
-  }
-
-  :global(.dark) .setting-group input[type="number"] {
-    background: #2a2a2a;
-    color: #e0e0e0;
-    border-color: #444;
-  }
-
-  .setting-group input[type="number"]:focus {
-    outline: none;
-    border-color: #8b5cf6;
-  }
-
-  .setting-group input[type="number"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .setting-note {
-    font-size: 0.85rem;
-    color: #666;
-    line-height: 1.4;
-  }
-
-  :global(.dark) .setting-note {
-    color: #999;
-  }
-
-  .checkbox-label {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-
-  .settings-info {
-    margin-top: 15px;
-    padding: 12px;
-    background: #e9d5ff;
-    border-left: 4px solid #8b5cf6;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    color: #333;
-  }
-
-  :global(.dark) .settings-info {
-    background: #2d1b3d;
-    border-color: #9f7aea;
-    color: #e0e0e0;
-  }
-
-  .selector-container {
-    margin-top: 20px;
-    border: 2px solid #2196F3;
-    border-radius: 8px;
-    padding: 15px;
-    background: #f8f9fa;
-  }
-
-  :global(.dark) .selector-container {
-    background: #1a1a1a;
-    border-color: #4a9eff;
-  }
-
-  .selector-actions {
-    margin-top: 15px;
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-  }
-
-  .samples-section {
-    margin-top: 30px;
-  }
-
-  .no-samples {
-    padding: 20px;
-    text-align: center;
-    color: #666;
-    font-style: italic;
-  }
-
-  :global(.dark) .no-samples {
-    color: #999;
+  .animate-scale-in {
+    animation: animate-scale-in 0.3s ease-in-out;
   }
 
-  .samples-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  @keyframes warning-slide {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
   }
-
-  .sample {
-    padding: 15px;
-    background: #f9f9f9;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-  }
-
-  :global(.dark) .sample {
-    background: #2a2a2a;
-    border-color: #444;
-  }
-
-  .sample-header {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 8px;
-    font-size: 0.85rem;
-  }
-
-  .sample-time {
-    color: #666;
-  }
-
-  :global(.dark) .sample-time {
-    color: #999;
-  }
-
-  .sample-duration {
-    color: #2196F3;
-    font-weight: bold;
-  }
-
-  .sample-quality {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-weight: bold;
-  }
-
-  .sample-quality.high {
-    background: #4CAF50;
-    color: white;
-  }
-
-  .sample-quality.medium {
-    background: #FF9800;
-    color: white;
-  }
-
-  .sample-quality.low {
-    background: #F44336;
-    color: white;
-  }
-
-  .sample-transcript {
-    margin-bottom: 10px;
-    color: #333;
-    font-style: italic;
-  }
-
-  :global(.dark) .sample-transcript {
-    color: #ccc;
-  }
-
-  .delete-btn {
-    padding: 5px 10px;
-    background: #f44336;
-    color: white;
-    font-size: 0.85rem;
-  }
-
-  .delete-btn:hover {
-    background: #d32f2f;
-  }
-
-  @media (max-width: 768px) {
-    .header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 15px;
-    }
-
-    .actions {
-      flex-direction: column;
-    }
-
-    button {
-      width: 100%;
-    }
-  }
-
-  /* Training Modal Overlay Styles */
-  .training-modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.85);
-    backdrop-filter: blur(8px);
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: fadeIn 0.3s ease-in-out;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  .training-modal {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 3px solid #00ff88;
-    border-radius: 16px;
-    box-shadow: 0 0 40px rgba(0, 255, 136, 0.5);
-    max-width: 700px;
-    width: 90%;
-    padding: 30px;
-    animation: scaleIn 0.3s ease-in-out;
-  }
-
-  :global(.dark) .training-modal {
-    background: linear-gradient(135deg, #0a0a1a 0%, #0d1321 100%);
-  }
-
-  .training-modal.kokoro-modal {
-    border: 3px solid #f59e0b;
-    box-shadow: 0 0 40px rgba(245, 158, 11, 0.5);
-  }
-
-  :global(.dark) .training-modal.kokoro-modal {
-    background: linear-gradient(135deg, #1a1410 0%, #211813 100%);
-  }
-
-  @keyframes scaleIn {
-    from {
-      transform: scale(0.9);
-      opacity: 0;
-    }
-    to {
-      transform: scale(1);
-      opacity: 1;
-    }
-  }
-
-  .modal-header {
-    text-align: center;
-    margin-bottom: 30px;
-    position: relative;
-  }
-
-  .modal-header h2 {
-    color: #00ff88;
-    font-size: 1.8rem;
-    margin: 0 0 15px 0;
-    text-shadow: 0 0 10px rgba(0, 255, 136, 0.7);
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .cancel-training-btn {
-    position: absolute;
-    top: 0;
-    right: 10px;
-    background: rgba(239, 83, 80, 0.1);
-    border: 2px solid #ef5350;
-    color: #ef5350;
-    font-size: 1.5rem;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    line-height: 1;
-  }
-
-  .cancel-training-btn:hover {
-    background: #ef5350;
-    color: white;
-    transform: scale(1.1);
-    box-shadow: 0 0 15px rgba(239, 83, 80, 0.5);
-  }
-
-  .cancel-training-btn:active {
-    transform: scale(0.95);
-  }
-
-  @keyframes pulse {
-    0%, 100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.7;
-    }
+  .animate-warning-slide {
+    animation: warning-slide 3s linear infinite;
   }
 
-  .warning-banner {
-    background: linear-gradient(90deg, #ff0000 0%, #ff6b00 50%, #ff0000 100%);
-    background-size: 200% 100%;
-    color: white;
-    padding: 12px 20px;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 1rem;
-    animation: warningSlide 3s linear infinite;
-    box-shadow: 0 0 20px rgba(255, 0, 0, 0.5);
+  @keyframes progress-shine {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
   }
-
-  @keyframes warningSlide {
-    0% {
-      background-position: 0% 0%;
-    }
-    100% {
-      background-position: 200% 0%;
-    }
-  }
-
-  .modal-body {
-    color: #e0e0e0;
-  }
-
-  .modal-progress-container {
-    position: relative;
-    width: 100%;
-    height: 40px;
-    background: #1a1a2e;
-    border: 2px solid #00ff88;
-    border-radius: 20px;
-    overflow: hidden;
-    margin: 25px 0;
-    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
-  }
-
-  .modal-progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #00ff88 0%, #00d4aa 50%, #00ff88 100%);
-    background-size: 200% 100%;
-    transition: width 0.5s ease;
-    border-radius: 18px;
-    position: relative;
-    animation: progressShine 2s linear infinite;
-  }
-
-  @keyframes progressShine {
-    0% {
-      background-position: 0% 0%;
-    }
-    100% {
-      background-position: 200% 0%;
-    }
-  }
-
-  .progress-glow {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 50px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5));
-    animation: glowMove 1.5s ease-in-out infinite;
-  }
-
-  @keyframes glowMove {
-    0%, 100% {
-      opacity: 0;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-
-  .modal-progress-text {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-weight: 700;
-    font-size: 1.2rem;
-    color: #fff;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-  }
-
-  .epoch-display {
-    text-align: center;
-    font-size: 1.3rem;
-    margin: 20px 0;
-    color: #00ff88;
-  }
-
-  .epoch-label {
-    font-weight: 600;
-    margin-right: 10px;
-  }
-
-  .epoch-value {
-    font-weight: 700;
-    font-size: 1.5rem;
-    color: #00d4aa;
-  }
-
-  .dataset-display {
-    text-align: center;
-    font-size: 1.1rem;
-    margin: 15px 0;
-    color: #f59e0b;
-  }
-
-  .dataset-label {
-    font-weight: 600;
-    margin-right: 8px;
-  }
-
-  .dataset-value {
-    font-weight: 700;
-    font-size: 1.2rem;
-    color: #fb923c;
-  }
-
-  .status-message {
-    text-align: center;
-    padding: 12px;
-    background: rgba(0, 255, 136, 0.1);
-    border-left: 4px solid #00ff88;
-    border-radius: 6px;
-    margin: 15px 0;
-    font-size: 0.95rem;
+  .animate-progress-shine {
+    animation: progress-shine 2s linear infinite;
   }
 
-  .robot-message-container {
-    margin: 30px 0;
-    padding: 20px;
-    background: rgba(255, 0, 0, 0.05);
-    border: 2px dashed #ff0000;
-    border-radius: 12px;
+  @keyframes glow-move {
+    0%, 100% { opacity: 0; }
+    50% { opacity: 1; }
   }
-
-  .robot-message {
-    text-align: center;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #ff4444;
-    margin-bottom: 15px;
-    min-height: 30px;
-    animation: robotFlicker 0.1s infinite alternate;
-  }
-
-  @keyframes robotFlicker {
-    0% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0.95;
-    }
-  }
-
-  .robot-ascii {
-    display: flex;
-    justify-content: center;
-  }
-
-  .robot-ascii pre {
-    color: #00ff88;
-    font-size: 1.2rem;
-    line-height: 1.2;
-    margin: 0;
-    text-shadow: 0 0 5px rgba(0, 255, 136, 0.5);
-    animation: robotBounce 1s ease-in-out infinite;
-  }
-
-  @keyframes robotBounce {
-    0%, 100% {
-      transform: translateY(0);
-    }
-    50% {
-      transform: translateY(-5px);
-    }
-  }
-
-  .logs-container {
-    margin: 30px 0;
-    padding: 20px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 2px solid #f59e0b;
-    border-radius: 12px;
-  }
-
-  .logs-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
-  }
-
-  .logs-header h3 {
-    margin: 0;
-    color: #f59e0b;
-    font-size: 1.2rem;
-  }
-
-  .toggle-view-btn {
-    padding: 6px 12px;
-    background: rgba(245, 158, 11, 0.2);
-    border: 1px solid #f59e0b;
-    border-radius: 6px;
-    color: #fbbf24;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .toggle-view-btn:hover {
-    background: rgba(245, 158, 11, 0.3);
-    transform: translateY(-1px);
-  }
-
-  .logs-content {
-    max-height: 300px;
-    overflow-y: auto;
-    font-family: 'Courier New', monospace;
-    font-size: 0.85rem;
-    line-height: 1.4;
-    background: rgba(0, 0, 0, 0.4);
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid rgba(245, 158, 11, 0.2);
+  .animate-glow-move {
+    animation: glow-move 1.5s ease-in-out infinite;
   }
 
-  .logs-content::-webkit-scrollbar {
-    width: 8px;
+  @keyframes robot-flicker {
+    0% { opacity: 1; }
+    100% { opacity: 0.95; }
   }
-
-  .logs-content::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 4px;
-  }
-
-  .logs-content::-webkit-scrollbar-thumb {
-    background: #f59e0b;
-    border-radius: 4px;
-  }
-
-  .logs-content::-webkit-scrollbar-thumb:hover {
-    background: #fbbf24;
-  }
-
-  .log-line {
-    color: #d1d5db;
-    margin: 3px 0;
-    padding: 2px 0;
-    word-wrap: break-word;
+  .animate-robot-flicker {
+    animation: robot-flicker 0.1s infinite alternate;
   }
 
-  .logs-placeholder {
-    text-align: center;
-    color: #9ca3af;
-    font-style: italic;
-    padding: 30px;
+  @keyframes robot-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
   }
-
-  .training-info {
-    margin-top: 25px;
-    padding: 15px;
-    background: rgba(0, 212, 170, 0.05);
-    border-radius: 8px;
-    border: 1px solid rgba(0, 255, 136, 0.3);
+  .animate-robot-bounce {
+    animation: robot-bounce 1s ease-in-out infinite;
   }
 
-  .training-info p {
-    margin: 8px 0;
-    font-size: 0.95rem;
-    color: #b0b0b0;
+  .border-3 {
+    border-width: 3px;
   }
 </style>

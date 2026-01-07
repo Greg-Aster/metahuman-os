@@ -10,6 +10,8 @@
 export interface AgentContext {
   /** Username of the profile owner */
   username: string;
+  /** User ID (alias for username, for compatibility) */
+  userId?: string;
   /** Root data directory for the profile */
   dataDir: string;
   /** Abort signal for cancellation support */
@@ -38,8 +40,12 @@ export interface AgentResult {
   data?: unknown;
   /** Error message if failed */
   error?: string;
+  /** Multiple error messages if failed */
+  errors?: string[];
   /** Execution duration in milliseconds */
   duration?: number;
+  /** Execution duration in milliseconds (alias for duration) */
+  durationMs?: number;
   /** Number of items processed (if applicable) */
   itemsProcessed?: number;
 }

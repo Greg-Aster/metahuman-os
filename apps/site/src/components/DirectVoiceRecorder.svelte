@@ -223,37 +223,37 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
   $: statusColor = recordingSeconds < MIN_DURATION ? 'text-yellow-400' : 'text-green-400';
 </script>
 
-<div class="direct-voice-recorder">
-  <div class="recorder-header">
-    <h3>Quick Voice Recording</h3>
-    <p class="help-text">
+<div class="border border-gray-700 rounded-lg p-6 bg-gray-900 mb-8">
+  <div class="mb-4">
+    <h3 class="m-0 mb-2 text-white text-lg">Quick Voice Recording</h3>
+    <p class="m-0 mb-4 text-gray-500 text-sm">
       Record at least {MIN_DURATION} seconds of clear speech for voice cloning.
       Speak the prompt below or say anything natural. Click Stop when done.
     </p>
   </div>
 
-  <div class="recording-prompt">
-    <label>Recommended prompt:</label>
-    <div class="prompt-text">{RECOMMENDED_PROMPT}</div>
+  <div class="bg-gray-800 p-4 rounded mb-4">
+    <label class="block text-gray-500 text-sm mb-2">Recommended prompt:</label>
+    <div class="text-gray-300 italic leading-relaxed">{RECOMMENDED_PROMPT}</div>
   </div>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="banner banner-error mb-4">{error}</div>
   {/if}
 
   {#if successMessage}
-    <div class="success-message">{successMessage}</div>
+    <div class="banner banner-success mb-4">{successMessage}</div>
   {/if}
 
-  <div class="recorder-controls">
+  <div class="flex flex-col gap-4">
     {#if !isRecording && !audioUrl}
-      <button on:click={startRecording} class="btn-record">
+      <button on:click={startRecording} class="py-4 px-8 text-lg bg-red-500 text-white border-0 rounded cursor-pointer hover:bg-red-400 transition-colors">
         🎤 Start Recording
       </button>
     {:else if isRecording}
-      <div class="recording-status">
+      <div class="flex flex-col items-center gap-4">
         <div class="recording-indicator">● Recording...</div>
-        <div class="recording-timer {statusColor}">
+        <div class="text-3xl font-bold font-mono {statusColor}">
           {recordingSeconds}s
           {#if recordingSeconds < MIN_DURATION}
             (minimum {MIN_DURATION}s)
@@ -261,13 +261,13 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
             ✓ Ready to stop
           {/if}
         </div>
-        <button on:click={stopRecording} class="btn-stop">
+        <button on:click={stopRecording} class="py-3 px-8 text-base bg-gray-600 text-white border-0 rounded cursor-pointer hover:bg-gray-500">
           ⏹️ Stop
         </button>
       </div>
     {:else if audioUrl}
-      <div class="playback-controls">
-        <div class="recording-info">
+      <div class="flex flex-col gap-4">
+        <div class="text-center text-gray-300">
           Recorded: {recordingSeconds}s
           {#if canSave}
             ✓ Ready to save
@@ -275,14 +275,14 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
             ⚠️ Too short (minimum {MIN_DURATION}s)
           {/if}
         </div>
-        <div class="action-buttons">
-          <button on:click={playRecording} class="btn-play">
+        <div class="flex gap-2 justify-center flex-wrap">
+          <button on:click={playRecording} class="action-btn bg-blue-600 text-white hover:bg-blue-500">
             {isPlaying ? '⏸️ Pause' : '▶️ Play'}
           </button>
-          <button on:click={discardRecording} class="btn-discard">
+          <button on:click={discardRecording} class="action-btn bg-red-500 text-white hover:bg-red-400">
             🗑️ Discard
           </button>
-          <button on:click={saveAsVoiceProfile} class="btn-save" disabled={!canSave}>
+          <button on:click={saveAsVoiceProfile} class="action-btn bg-green-500 text-black font-bold hover:bg-green-400 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!canSave}>
             💾 Save as Voice Profile
           </button>
         </div>
@@ -292,190 +292,18 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
 </div>
 
 <style>
-  .direct-voice-recorder {
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 1.5rem;
-    background: #1a1a1a;
-    margin-bottom: 2rem;
-  }
-
-  .recorder-header h3 {
-    margin: 0 0 0.5rem 0;
-    color: #fff;
-    font-size: 1.1rem;
-  }
-
-  .help-text {
-    margin: 0 0 1rem 0;
-    color: #888;
-    font-size: 0.9rem;
-  }
-
-  .recording-prompt {
-    background: #252525;
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-  }
-
-  .recording-prompt label {
-    display: block;
-    color: #888;
-    font-size: 0.85rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .prompt-text {
-    color: #ccc;
-    font-style: italic;
-    line-height: 1.5;
-  }
-
-  .error-message {
-    background: #3a1a1a;
-    border: 1px solid #ff4444;
-    color: #ff6666;
-    padding: 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-  }
-
-  .success-message {
-    background: #1a3a1a;
-    border: 1px solid #44ff44;
-    color: #66ff66;
-    padding: 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-  }
-
-  .recorder-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .btn-record {
-    padding: 1rem 2rem;
-    font-size: 1.1rem;
-    background: #ff4444;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-record:hover {
-    background: #ff6666;
-  }
-
-  .recording-status {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-  }
-
+  /* Recording indicator pulsing animation */
   .recording-indicator {
-    color: #ff4444;
-    font-weight: bold;
-    font-size: 1.2rem;
+    @apply text-red-500 font-bold text-xl;
     animation: pulse 1s infinite;
   }
-
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
 
-  .recording-timer {
-    font-size: 2rem;
-    font-weight: bold;
-    font-family: monospace;
-  }
-
-  .text-yellow-400 {
-    color: #facc15;
-  }
-
-  .text-green-400 {
-    color: #4ade80;
-  }
-
-  .btn-stop {
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
-    background: #666;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
-  .btn-stop:hover {
-    background: #888;
-  }
-
-  .playback-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .recording-info {
-    text-align: center;
-    color: #ccc;
-    font-size: 1rem;
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  .action-buttons button {
-    padding: 0.75rem 1.5rem;
-    font-size: 0.95rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  }
-
-  .action-buttons button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-play {
-    background: #4444ff;
-    color: white;
-  }
-
-  .btn-play:hover:not(:disabled) {
-    background: #6666ff;
-  }
-
-  .btn-discard {
-    background: #ff4444;
-    color: white;
-  }
-
-  .btn-discard:hover {
-    background: #ff6666;
-  }
-
-  .btn-save {
-    background: #44ff44;
-    color: #000;
-    font-weight: bold;
-  }
-
-  .btn-save:hover:not(:disabled) {
-    background: #66ff66;
+  /* Action button base */
+  .action-btn {
+    @apply py-3 px-6 text-sm border-0 rounded cursor-pointer transition-opacity;
   }
 </style>

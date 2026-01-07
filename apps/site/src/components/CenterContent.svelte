@@ -607,7 +607,7 @@ async function loadMemoryContent(relPath: string) {
 
   </script>
 
-<div class="center-content">
+<div class="flex flex-col h-full w-full overflow-hidden">
   {#if $activeView === 'chat'}
     <ChatInterface />
   {:else if $activeView === 'dashboard'}
@@ -618,39 +618,39 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={dashboardTab === 'overview'} on:click={() => dashboardTab = 'overview'}>Overview</button>
-          <button class="tab-button" class:active={dashboardTab === 'tasks'} on:click={() => dashboardTab = 'tasks'}>Tasks</button>
-          <button class="tab-button" class:active={dashboardTab === 'approvals'} on:click={() => dashboardTab = 'approvals'}>Approvals</button>
-          <button class="tab-button" class:active={dashboardTab === 'operator'} on:click={() => dashboardTab = 'operator'}>Active Operator</button>
-          <button class="tab-button" class:active={dashboardTab === 'queue'} on:click={() => dashboardTab = 'queue'}>Queue Lanes</button>
+          <button class="tab-button {dashboardTab === 'overview' ? 'active' : ''}" on:click={() => dashboardTab = 'overview'}>Overview</button>
+          <button class="tab-button {dashboardTab === 'tasks' ? 'active' : ''}" on:click={() => dashboardTab = 'tasks'}>Tasks</button>
+          <button class="tab-button {dashboardTab === 'approvals' ? 'active' : ''}" on:click={() => dashboardTab = 'approvals'}>Approvals</button>
+          <button class="tab-button {dashboardTab === 'operator' ? 'active' : ''}" on:click={() => dashboardTab = 'operator'}>Active Operator</button>
+          <button class="tab-button {dashboardTab === 'queue' ? 'active' : ''}" on:click={() => dashboardTab = 'queue'}>Queue Lanes</button>
         </div>
         {#if dashboardTab === 'overview'}
           {#await loadComponent('Dashboard')}
-            <div class="loading-placeholder">Loading dashboard...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading dashboard...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if dashboardTab === 'tasks'}
           {#await loadComponent('TaskManager')}
-            <div class="loading-placeholder">Loading tasks...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading tasks...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if dashboardTab === 'approvals'}
           {#await loadComponent('ApprovalQueue')}
-            <div class="loading-placeholder">Loading approvals...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading approvals...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if dashboardTab === 'operator'}
           {#await loadComponent('ActiveOperatorDashboard')}
-            <div class="loading-placeholder">Loading active operator...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading active operator...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if dashboardTab === 'queue'}
           {#await loadComponent('UnifiedQueueDashboard')}
-            <div class="loading-placeholder">Loading queue lanes...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading queue lanes...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -665,32 +665,32 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={voiceTab === 'upload'} on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
-          <button class="tab-button" class:active={voiceTab === 'training'} on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
-          <button class="tab-button" class:active={voiceTab === 'settings'} on:click={() => voiceTab = 'settings'}>Voice Settings</button>
+          <button class="tab-button {voiceTab === 'upload' ? 'active' : ''}" on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
+          <button class="tab-button {voiceTab === 'training' ? 'active' : ''}" on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
+          <button class="tab-button {voiceTab === 'settings' ? 'active' : ''}" on:click={() => voiceTab = 'settings'}>Voice Settings</button>
         </div>
         {#if voiceTab === 'upload'}
-          <div class="audio-grid">
+          <div class="grid grid-cols-2 gap-4">
             {#await loadComponent('AudioUpload')}
-              <div class="loading-placeholder">Loading...</div>
+              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading...</div>
             {:then Component}
               <svelte:component this={Component} />
             {/await}
             {#await loadComponent('AudioRecorder')}
-              <div class="loading-placeholder">Loading...</div>
+              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading...</div>
             {:then Component}
               <svelte:component this={Component} />
             {/await}
           </div>
         {:else if voiceTab === 'training'}
           {#await loadComponent('VoiceTrainingWidget')}
-            <div class="loading-placeholder">Loading voice training...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading voice training...</div>
           {:then Component}
             <svelte:component this={Component} provider={currentVoiceProvider} />
           {/await}
         {:else if voiceTab === 'settings'}
           {#await loadComponent('VoiceSettings')}
-            <div class="loading-placeholder">Loading settings...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -705,39 +705,39 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={trainingTab === 'wizard'} on:click={() => trainingTab = 'wizard'}>🧙 Training Wizard</button>
-          <button class="tab-button" class:active={trainingTab === 'datasets'} on:click={() => trainingTab = 'datasets'}>📜 Training History</button>
-          <button class="tab-button" class:active={trainingTab === 'manage'} on:click={() => trainingTab = 'manage'}>📊 Dataset Management</button>
-          <button class="tab-button" class:active={trainingTab === 'system'} on:click={() => trainingTab = 'system'}>⚙️ System Controls</button>
-          <button class="tab-button" class:active={trainingTab === 'monitor'} on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
+          <button class="tab-button {trainingTab === 'wizard' ? 'active' : ''}" on:click={() => trainingTab = 'wizard'}>🧙 Training Wizard</button>
+          <button class="tab-button {trainingTab === 'datasets' ? 'active' : ''}" on:click={() => trainingTab = 'datasets'}>📜 Training History</button>
+          <button class="tab-button {trainingTab === 'manage' ? 'active' : ''}" on:click={() => trainingTab = 'manage'}>📊 Dataset Management</button>
+          <button class="tab-button {trainingTab === 'system' ? 'active' : ''}" on:click={() => trainingTab = 'system'}>⚙️ System Controls</button>
+          <button class="tab-button {trainingTab === 'monitor' ? 'active' : ''}" on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
         </div>
         {#if trainingTab === 'wizard'}
           {#await loadComponent('TrainingWizard')}
-            <div class="loading-placeholder">Loading training wizard...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training wizard...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if trainingTab === 'datasets'}
           {#await loadComponent('TrainingHistory')}
-            <div class="loading-placeholder">Loading training history...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training history...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if trainingTab === 'manage'}
           {#await loadComponent('DatasetManagement')}
-            <div class="loading-placeholder">Loading dataset management...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading dataset management...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if trainingTab === 'system'}
           {#await loadComponent('SystemControls')}
-            <div class="loading-placeholder">Loading system controls...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading system controls...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
         {:else if trainingTab === 'monitor'}
           {#await loadComponent('TrainingMonitor')}
-            <div class="loading-placeholder">Loading training monitor...</div>
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training monitor...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -752,14 +752,14 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={personaTab==='editor'} on:click={() => personaTab='editor'}>Editor</button>
-          <button class="tab-button" class:active={personaTab==='memory'} on:click={() => personaTab='memory'}>Memory</button>
-          <button class="tab-button" class:active={personaTab==='generator'} on:click={() => personaTab='generator'}>Generator</button>
+          <button class="tab-button {personaTab==='editor' ? 'active' : ''}" on:click={() => personaTab='editor'}>Editor</button>
+          <button class="tab-button {personaTab==='memory' ? 'active' : ''}" on:click={() => personaTab='memory'}>Memory</button>
+          <button class="tab-button {personaTab==='generator' ? 'active' : ''}" on:click={() => personaTab='generator'}>Generator</button>
         </div>
         {#if personaTab === 'editor'}
-          <div class="persona-editor-wrapper">
+          <div class="h-[calc(100vh-200px)] min-h-[500px] overflow-hidden">
             {#await loadComponent('PersonaEditor')}
-              <div class="loading-placeholder">Loading persona editor...</div>
+              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading persona editor...</div>
             {:then Component}
               <svelte:component this={Component} />
             {/await}
@@ -767,29 +767,29 @@ async function loadMemoryContent(relPath: string) {
         {:else if personaTab === 'memory'}
           <div class="memory-section">
             {#await loadComponent('MemoryControls')}
-              <div class="loading-placeholder">Loading memory controls...</div>
+              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading memory controls...</div>
             {:then Component}
               <svelte:component this={Component} on:captured={loadEvents} />
             {/await}
           </div>
           <div class="tab-group">
-            <button class="tab-button" class:active={memoryTab==='episodic'} on:click={() => memoryTab='episodic'}>Episodic</button>
-            <button class="tab-button" class:active={memoryTab==='reflections'} on:click={() => memoryTab='reflections'}>Reflections</button>
-            <button class="tab-button" class:active={memoryTab==='tasks'} on:click={() => memoryTab='tasks'}>Tasks</button>
-            <button class="tab-button" class:active={memoryTab==='curated'} on:click={() => memoryTab='curated'}>Curated</button>
-            <button class="tab-button" class:active={memoryTab==='ai-ingestor'} on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
-            <button class="tab-button" class:active={memoryTab==='audio'} on:click={() => memoryTab='audio'}>Audio</button>
-            <button class="tab-button" class:active={memoryTab==='dreams'} on:click={() => memoryTab='dreams'}>Dreams 💭</button>
-            <button class="tab-button" class:active={memoryTab==='curiosity'} on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
-            <button class="tab-button" class:active={memoryTab==='functions'} on:click={() => memoryTab='functions'}>Functions 🔧</button>
-            <button class="tab-button" class:active={memoryTab==='pruned'} on:click={() => memoryTab='pruned'}>Pruned 🗑️</button>
+            <button class="tab-button {memoryTab==='episodic' ? 'active' : ''}" on:click={() => memoryTab='episodic'}>Episodic</button>
+            <button class="tab-button {memoryTab==='reflections' ? 'active' : ''}" on:click={() => memoryTab='reflections'}>Reflections</button>
+            <button class="tab-button {memoryTab==='tasks' ? 'active' : ''}" on:click={() => memoryTab='tasks'}>Tasks</button>
+            <button class="tab-button {memoryTab==='curated' ? 'active' : ''}" on:click={() => memoryTab='curated'}>Curated</button>
+            <button class="tab-button {memoryTab==='ai-ingestor' ? 'active' : ''}" on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
+            <button class="tab-button {memoryTab==='audio' ? 'active' : ''}" on:click={() => memoryTab='audio'}>Audio</button>
+            <button class="tab-button {memoryTab==='dreams' ? 'active' : ''}" on:click={() => memoryTab='dreams'}>Dreams 💭</button>
+            <button class="tab-button {memoryTab==='curiosity' ? 'active' : ''}" on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
+            <button class="tab-button {memoryTab==='functions' ? 'active' : ''}" on:click={() => memoryTab='functions'}>Functions 🔧</button>
+            <button class="tab-button {memoryTab==='pruned' ? 'active' : ''}" on:click={() => memoryTab='pruned'}>Pruned 🗑️</button>
           </div>
 
           <!-- Search and Pagination Controls -->
           {#if !['tasks', 'curated', 'curiosity', 'functions'].includes(memoryTab)}
-            <div class="memory-controls-bar">
-              <div class="search-box">
-                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="flex justify-between items-center gap-4 mb-4 p-3 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg border border-black/[0.06] dark:border-white/[0.08]">
+              <div class="relative flex-1 max-w-[400px]">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="11" cy="11" r="8"/>
                   <path d="m21 21-4.35-4.35"/>
                 </svg>
@@ -797,15 +797,15 @@ async function loadMemoryContent(relPath: string) {
                   type="text"
                   placeholder="Search memories..."
                   bind:value={searchQuery}
-                  class="search-input"
+                  class="w-full py-2 pl-9 pr-8 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 transition-all focus:outline-none focus:border-violet-600 focus:ring-[3px] focus:ring-violet-600/10"
                 />
                 {#if searchQuery}
-                  <button class="search-clear" on:click={() => searchQuery = ''}>×</button>
+                  <button class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 border-none bg-gray-200 dark:bg-gray-600 rounded-full cursor-pointer text-sm text-gray-500 dark:text-gray-400 flex items-center justify-center hover:bg-gray-300 dark:hover:bg-gray-500" on:click={() => searchQuery = ''}>×</button>
                 {/if}
               </div>
-              <div class="pagination-info">
+              <div class="flex items-center gap-2">
                 {#if currentTotalItems > 0}
-                  <span class="item-count">
+                  <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     {currentTotalItems} {currentTotalItems === 1 ? 'memory' : 'memories'}
                     {#if searchQuery}(filtered){/if}
                   </span>
@@ -814,32 +814,32 @@ async function loadMemoryContent(relPath: string) {
             </div>
 
             {#if currentTotalPages > 1}
-              <div class="pagination-controls">
+              <div class="flex justify-center items-center gap-2 mb-4 p-2 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg">
                 <button
-                  class="page-btn"
+                  class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium cursor-pointer transition-all hover:enabled:bg-gray-100 dark:hover:enabled:bg-gray-700 hover:enabled:border-gray-400 dark:hover:enabled:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   on:click={() => currentPage = 1}
                   disabled={currentPage === 1}
                   title="First page"
                 >««</button>
                 <button
-                  class="page-btn"
+                  class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium cursor-pointer transition-all hover:enabled:bg-gray-100 dark:hover:enabled:bg-gray-700 hover:enabled:border-gray-400 dark:hover:enabled:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   on:click={() => currentPage = Math.max(1, currentPage - 1)}
                   disabled={currentPage === 1}
                   title="Previous page"
                 >«</button>
 
-                <span class="page-indicator">
+                <span class="px-3 text-sm text-gray-600 dark:text-gray-400 font-medium">
                   Page {currentPage} of {currentTotalPages}
                 </span>
 
                 <button
-                  class="page-btn"
+                  class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium cursor-pointer transition-all hover:enabled:bg-gray-100 dark:hover:enabled:bg-gray-700 hover:enabled:border-gray-400 dark:hover:enabled:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   on:click={() => currentPage = Math.min(currentTotalPages, currentPage + 1)}
                   disabled={currentPage === currentTotalPages}
                   title="Next page"
                 >»</button>
                 <button
-                  class="page-btn"
+                  class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium cursor-pointer transition-all hover:enabled:bg-gray-100 dark:hover:enabled:bg-gray-700 hover:enabled:border-gray-400 dark:hover:enabled:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   on:click={() => currentPage = currentTotalPages}
                   disabled={currentPage === currentTotalPages}
                   title="Last page"
@@ -865,31 +865,31 @@ async function loadMemoryContent(relPath: string) {
             </div>
           </div>
         {:else if memoryTab==='episodic'}
-          <div class="events-list">
+          <div class="flex flex-col gap-4">
             {#each paginatedEvents as event}
               {@const key = getEventKey(event)}
               {@const isOpen = key ? !!expanded[key] : false}
               <div class="event-card">
                 <div class="event-card-header">
                   <button
-                    class="event-title-button"
+                    class="flex-1 flex items-center gap-2 bg-transparent border-0 p-0 m-0 cursor-pointer text-left font-[inherit] focus-visible:outline-2 focus-visible:outline-blue-500/60 focus-visible:outline-offset-2"
                     type="button"
                     on:click={() => toggleExpanded(event)}
                     aria-expanded={isOpen}
                   >
                     <span class="event-card-title">{getPreview(event.content)}</span>
-                    <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
                     <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                   </button>
-                  <div class="validation-controls">
-                    <button class="val-btn edit" title="Edit memory" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Memory')}>
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div class="flex gap-1">
+                    <button class="w-7 h-7 rounded-md border border-blue-600/30 bg-white dark:bg-white/5 font-bold cursor-pointer transition-all hover:scale-105 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" title="Edit memory" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Memory')}>
+                      <svg class="w-3 h-3 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                       </svg>
                     </button>
-                    <button class="val-btn good" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
+                    <button class="w-7 h-7 rounded-md border border-green-600/30 bg-white dark:bg-white/5 font-bold cursor-pointer transition-all hover:scale-105 hover:bg-green-50 dark:hover:bg-green-900/20 text-green-600 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark as correct" on:click={() => setValidation(event, 'correct')} disabled={saving[event.relPath] || event.validation?.status === 'correct'}>+
                     </button>
-                    <button class="val-btn bad" title="Delete memory" on:click={() => onMinusClick(event)} disabled={deleting[event.relPath]}>−
+                    <button class="w-7 h-7 rounded-md border border-red-600/30 bg-white dark:bg-white/5 font-bold cursor-pointer transition-all hover:scale-105 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete memory" on:click={() => onMinusClick(event)} disabled={deleting[event.relPath]}>−
                     </button>
                   </div>
                 </div>
@@ -1093,7 +1093,7 @@ async function loadMemoryContent(relPath: string) {
               {#each paginatedAiIngestor as event}
                 {@const key = getEventKey(event)}
                 {@const isOpen = key ? !!expanded[key] : false}
-                <div class="event-card ai-ingestor-card">
+                <div class="event-card border-l-4 border-l-violet-600 dark:border-l-violet-400">
                   <div class="event-card-header">
                     <button
                       class="event-title-button"
@@ -1333,38 +1333,38 @@ async function loadMemoryContent(relPath: string) {
           {/if}
         </div>
         {:else if memoryTab === 'functions'}
-          <div class="functions-list">
+          <div class="flex flex-col gap-4">
             {#if functionMemories.length > 0}
               {#each functionMemories as func}
-                <div class="event-card function-card">
+                <div class="event-card border-l-[3px] border-l-indigo-500 dark:border-l-indigo-400">
                   <div class="event-card-header">
-                    <div class="function-header-content">
-                      <div class="function-title-row">
-                        <span class="function-icon">{func.trustLevel === 'verified' ? '✓' : '📝'}</span>
-                        <span class="function-title">{func.title}</span>
-                        <span class="function-trust-badge {func.trustLevel}">{func.trustLevel}</span>
+                    <div class="w-full">
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="text-xl flex-shrink-0">{func.trustLevel === 'verified' ? '✓' : '📝'}</span>
+                        <span class="text-base font-semibold text-gray-900 dark:text-gray-100 flex-1">{func.title}</span>
+                        <span class="px-3 py-1 rounded-full text-xs font-medium uppercase {func.trustLevel === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/15 dark:text-emerald-400' : 'bg-amber-400/10 text-amber-600 dark:bg-amber-400/15 dark:text-amber-400'}">{func.trustLevel}</span>
                       </div>
-                      <div class="function-summary">{func.summary}</div>
+                      <div class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{func.summary}</div>
                     </div>
                   </div>
-                  <div class="function-body">
-                    <div class="function-stats">
-                      <div class="stat-item">
-                        <span class="stat-label">Uses:</span>
-                        <span class="stat-value">{func.usageCount}</span>
+                  <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                    <div class="flex gap-6 mb-3">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500 dark:text-gray-400 font-medium">Uses:</span>
+                        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{func.usageCount}</span>
                       </div>
-                      <div class="stat-item">
-                        <span class="stat-label">Quality:</span>
-                        <span class="stat-value">{func.qualityScore ? (func.qualityScore * 100).toFixed(0) + '%' : 'N/A'}</span>
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500 dark:text-gray-400 font-medium">Quality:</span>
+                        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{func.qualityScore ? (func.qualityScore * 100).toFixed(0) + '%' : 'N/A'}</span>
                       </div>
-                      <div class="stat-item">
-                        <span class="stat-label">Skills:</span>
-                        <span class="stat-value">{func.skillsUsed.length}</span>
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500 dark:text-gray-400 font-medium">Skills:</span>
+                        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{func.skillsUsed.length}</span>
                       </div>
                     </div>
-                    <div class="function-skills">
+                    <div class="flex flex-wrap gap-2">
                       {#each func.skillsUsed as skill}
-                        <span class="skill-tag">{skill}</span>
+                        <span class="px-2.5 py-1 bg-gray-100 dark:bg-gray-700 rounded-md text-xs text-gray-600 dark:text-gray-300 font-mono">{skill}</span>
                       {/each}
                     </div>
                   </div>
@@ -1562,95 +1562,46 @@ async function loadMemoryContent(relPath: string) {
 </div>
 
 <style>
-  /* Minimal custom styles - most styling now uses Tailwind classes from global CSS */
+  /* Minimal custom styles for CenterContent - essential styles only */
 
-  .center-content {
-    @apply flex flex-col h-full w-full overflow-hidden;
-  }
-
+  /* Terminal view - layout-specific */
   .terminal-view {
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
+    @apply p-0 flex flex-col h-full;
   }
 
   .terminal-view .view-header {
-    flex-shrink: 0;
+    @apply flex-shrink-0;
   }
 
   .terminal-view .view-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+    @apply flex-1 flex flex-col min-h-0;
   }
 
   .terminal-view .terminal-iframe-container {
-    padding: 0;
-    flex: 1;
-    width: 100%;
-    position: relative;
-    min-height: 0;
+    @apply p-0 flex-1 w-full relative min-h-0;
   }
 
   .terminal-iframe {
-    width: 100%;
-    height: 100%;
-    border: none;
-    background: #000;
+    @apply w-full h-full border-none bg-black;
   }
 
-  .audio-grid {
-    @apply grid grid-cols-2 gap-4;
+  /* Event body content */
+  .event-body {
+    @apply mt-3 text-base leading-relaxed text-gray-700 dark:text-gray-300
+           border-t border-black/10 dark:border-white/10 pt-3;
   }
 
-  /* Events list - using flex gap */
-  .events-list {
-    @apply flex flex-col gap-4;
+  .event-body pre {
+    @apply m-0 whitespace-pre-wrap break-words font-[inherit];
   }
 
-  /* Event title button - custom behavior */
-  .event-title-button {
-    @apply flex-1 flex items-center gap-2 bg-transparent cursor-pointer text-left;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    font: inherit;
+  .event-body.loading,
+  .event-body.error {
+    @apply font-medium;
   }
 
-  .event-title-button:focus-visible {
-    @apply outline-2 outline-blue-500/60 outline-offset-2;
-  }
-
-  .event-toggle-icon {
-    @apply text-xs text-gray-500 dark:text-gray-400;
-  }
-
-  /* Validation controls */
-  .validation-controls {
-    @apply flex gap-1;
-  }
-
-  .val-btn {
-    @apply w-7 h-7 rounded-md border border-black/15 dark:border-white/20
-           bg-white dark:bg-white/5 font-bold cursor-pointer
-           transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
-  .val-btn.edit {
-    @apply text-blue-600 border-blue-600/30
-           hover:bg-blue-50 dark:hover:bg-blue-900/20;
-  }
-
-  .val-btn.good {
-    @apply text-green-600 border-green-600/30
-           hover:bg-green-50 dark:hover:bg-green-900/20;
-  }
-
-  .val-btn.bad {
-    @apply text-red-600 border-red-600/30
-           hover:bg-red-50 dark:hover:bg-red-900/20;
+  .event-body.error {
+    @apply text-red-600;
   }
 
   /* Event status badges */
@@ -1666,137 +1617,7 @@ async function loadMemoryContent(relPath: string) {
     @apply text-red-600 bg-red-600/10;
   }
 
-  /* Event body content */
-  .event-body {
-    @apply mt-3 text-base leading-relaxed text-gray-700 dark:text-gray-300
-           border-t border-black/10 dark:border-white/10 pt-3;
-  }
-
-  .event-body pre {
-    @apply m-0 whitespace-pre-wrap break-words;
-    font: inherit;
-  }
-
-  .event-body.loading,
-  .event-body.error {
-    @apply font-medium;
-  }
-
-  .event-body.error {
-    @apply text-red-600;
-  }
-
-  /* Screen reader only */
-  .sr-only {
-    @apply absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0;
-    clip: rect(0, 0, 0, 0);
-  }
-
-  /* Persona panel */
-  .persona-panel {
-    @apply max-w-3xl mx-auto p-8;
-  }
-
-  .persona-form {
-    @apply flex flex-col gap-7;
-  }
-
-  .persona-section h4 {
-    @apply text-base font-semibold mb-3;
-  }
-
-  .form-grid {
-    @apply grid gap-4 mb-4;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  }
-
-  .field {
-    @apply flex flex-col gap-1.5;
-  }
-
-  .field > span {
-    @apply block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1;
-  }
-
-  .field input,
-  .field textarea {
-    @apply w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600
-           bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
-           focus:outline-none focus:ring-2 focus:ring-violet-500 dark:focus:ring-violet-400;
-  }
-
-  .field textarea {
-    @apply min-h-[120px] resize-y;
-  }
-
-  .persona-actions {
-    @apply flex justify-end;
-  }
-
-  .save-button {
-    @apply px-4 py-2 rounded-lg font-semibold transition-all text-white
-           disabled:opacity-50 disabled:cursor-not-allowed;
-    background: linear-gradient(135deg, rgb(124 58 237), rgb(109 40 217));
-    transition: transform 0.1s ease, box-shadow 0.2s ease;
-  }
-
-  .save-button:hover:not(:disabled) {
-    box-shadow: 0 10px 25px rgba(124, 58, 237, 0.25);
-  }
-
-  .save-button:active:not(:disabled) {
-    transform: translateY(1px);
-  }
-
-  .save-button:disabled {
-    @apply opacity-70 cursor-wait;
-  }
-
-  .persona-alert {
-    @apply rounded-lg px-4 py-3 mb-4 text-sm flex items-center justify-between gap-4;
-  }
-
-  .persona-alert.success {
-    @apply bg-green-50 dark:bg-green-900/20
-           border border-green-200 dark:border-green-700
-           text-green-800 dark:text-green-300;
-  }
-
-  .persona-alert.error {
-    @apply bg-red-50 dark:bg-red-900/20
-           border border-red-200 dark:border-red-700
-           text-red-800 dark:text-red-300;
-  }
-
-  .persona-alert.inline {
-    @apply justify-start;
-  }
-
-  .retry-button {
-    @apply bg-red-600 text-white font-semibold px-3.5 py-1.5 rounded-lg
-           cursor-pointer transition-colors flex-shrink-0 hover:bg-red-700;
-    appearance: none;
-    border: none;
-  }
-
-  /* Scrollbar styling */
-  .view-content::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .view-content::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .view-content::-webkit-scrollbar-thumb {
-    @apply bg-black/20 dark:bg-white/20 rounded;
-  }
-
-  .view-content::-webkit-scrollbar-thumb:hover {
-    @apply bg-black/30 dark:bg-white/30;
-  }
-
-  /* Card type indicators - using border accent utilities */
+  /* Card type indicators */
   .ai-ingestor-card {
     @apply border-l-4 border-l-violet-600 dark:border-l-violet-400;
   }
@@ -1809,7 +1630,11 @@ async function loadMemoryContent(relPath: string) {
     @apply border-l-4 border-l-yellow-500 dark:border-l-yellow-400;
   }
 
-  /* Tag wrapper */
+  .pruned-card {
+    @apply border-l-[3px] border-l-gray-400 dark:border-l-gray-500 opacity-85;
+  }
+
+  /* Tags and links */
   .event-tags,
   .event-links {
     @apply flex flex-wrap gap-1 mt-1;
@@ -1825,42 +1650,21 @@ async function loadMemoryContent(relPath: string) {
            text-blue-600 dark:text-blue-400 font-medium;
   }
 
-  /* Onboarding Wrapper */
-  .onboarding-wrapper {
-    @apply max-w-4xl mx-auto py-4;
-  }
-
-  /* Curiosity Questions */
+  /* Curiosity questions */
   .curiosity-question {
-    border-left: 3px solid #7c3aed;
+    @apply border-l-[3px] border-l-violet-600;
   }
 
   .curiosity-question.pending {
-    background: rgba(124, 58, 237, 0.05);
-  }
-
-  :global(.dark) .curiosity-question.pending {
-    background: rgba(167, 139, 250, 0.08);
+    @apply bg-violet-600/5 dark:bg-violet-400/[0.08];
   }
 
   .curiosity-question.answered {
-    background: rgba(16, 185, 129, 0.05);
-    border-left-color: #10b981;
-  }
-
-  :global(.dark) .curiosity-question.answered {
-    background: rgba(52, 211, 153, 0.08);
-    border-left-color: #34d399;
+    @apply bg-emerald-500/5 dark:bg-emerald-400/[0.08] border-l-emerald-500 dark:border-l-emerald-400;
   }
 
   .question-text {
-    font-style: italic;
-    color: #4b5563;
-    line-height: 1.6;
-  }
-
-  :global(.dark) .question-text {
-    color: #d1d5db;
+    @apply italic text-gray-600 dark:text-gray-300 leading-relaxed;
   }
 
   .btn-view, .btn-reply {
@@ -1882,366 +1686,28 @@ async function loadMemoryContent(relPath: string) {
            dark:bg-green-900/30 dark:text-green-400;
   }
 
-  /* Dialogue Source Badge - color-coded inner dialogue sources */
+  /* Dialogue source badge */
   .dialogue-source-badge {
-    @apply text-xs px-2 py-0.5 rounded-full font-medium mr-2;
-    background-color: #6b7280; /* Default gray if no color specified */
-    color: white;
-    text-transform: lowercase;
-    flex-shrink: 0;
+    @apply text-xs px-2 py-0.5 rounded-full font-medium mr-2 text-white lowercase flex-shrink-0 bg-gray-500;
   }
 
-  /* Function Memory Styles */
-  .functions-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+  /* Scrollbar styling - can't be done with Tailwind */
+  .view-content::-webkit-scrollbar {
+    width: 8px;
   }
 
-  .function-card {
-    border-left: 3px solid #6366f1;
+  .view-content::-webkit-scrollbar-track {
+    background: transparent;
   }
 
-  :global(.dark) .function-card {
-    border-left-color: #818cf8;
+  .view-content::-webkit-scrollbar-thumb {
+    @apply bg-black/20 dark:bg-white/20 rounded;
   }
 
-  .pruned-card {
-    border-left: 3px solid #9ca3af;
-    opacity: 0.85;
+  .view-content::-webkit-scrollbar-thumb:hover {
+    @apply bg-black/30 dark:bg-white/30;
   }
 
-  :global(.dark) .pruned-card {
-    border-left-color: #6b7280;
-  }
-
-  .function-header-content {
-    width: 100%;
-  }
-
-  .function-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .function-icon {
-    font-size: 1.25rem;
-    flex-shrink: 0;
-  }
-
-  .function-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #111827;
-    flex: 1;
-  }
-
-  :global(.dark) .function-title {
-    color: #f3f4f6;
-  }
-
-  .function-trust-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-  }
-
-  .function-trust-badge.verified {
-    background: rgba(16, 185, 129, 0.1);
-    color: #059669;
-  }
-
-  :global(.dark) .function-trust-badge.verified {
-    background: rgba(52, 211, 153, 0.15);
-    color: #34d399;
-  }
-
-  .function-trust-badge.draft {
-    background: rgba(251, 191, 36, 0.1);
-    color: #d97706;
-  }
-
-  :global(.dark) .function-trust-badge.draft {
-    background: rgba(251, 191, 36, 0.15);
-    color: #fbbf24;
-  }
-
-  .function-summary {
-    font-size: 0.875rem;
-    color: #6b7280;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .function-summary {
-    color: #9ca3af;
-  }
-
-  .function-body {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .function-body {
-    border-top-color: #374151;
-  }
-
-  .function-stats {
-    display: flex;
-    gap: 1.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .stat-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .stat-label {
-    font-size: 0.75rem;
-    color: #6b7280;
-    font-weight: 500;
-  }
-
-  :global(.dark) .stat-label {
-    color: #9ca3af;
-  }
-
-  .stat-value {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  :global(.dark) .stat-value {
-    color: #f3f4f6;
-  }
-
-  .function-skills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .skill-tag {
-    padding: 0.25rem 0.625rem;
-    background: #f3f4f6;
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    color: #4b5563;
-    font-family: 'Courier New', monospace;
-  }
-
-  :global(.dark) .skill-tag {
-    background: #374151;
-    color: #d1d5db;
-  }
-
-  /* Search and Pagination Controls */
-  .memory-controls-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.06);
-  }
-
-  :global(.dark) .memory-controls-bar {
-    background: rgba(255, 255, 255, 0.03);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-
-  .search-box {
-    position: relative;
-    flex: 1;
-    max-width: 400px;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 0.75rem;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 1rem;
-    height: 1rem;
-    color: #9ca3af;
-    pointer-events: none;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 0.5rem 2rem 0.5rem 2.25rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-    transition: border-color 0.15s, box-shadow 0.15s;
-  }
-
-  :global(.dark) .search-input {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  .search-input::placeholder {
-    color: #9ca3af;
-  }
-
-  .search-clear {
-    position: absolute;
-    right: 0.5rem;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 1.25rem;
-    height: 1.25rem;
-    border: none;
-    background: #e5e7eb;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 0.875rem;
-    line-height: 1;
-    color: #6b7280;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s;
-  }
-
-  :global(.dark) .search-clear {
-    background: #374151;
-    color: #9ca3af;
-  }
-
-  .search-clear:hover {
-    background: #d1d5db;
-  }
-
-  :global(.dark) .search-clear:hover {
-    background: #4b5563;
-  }
-
-  .pagination-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .item-count {
-    font-size: 0.75rem;
-    color: #6b7280;
-    white-space: nowrap;
-  }
-
-  :global(.dark) .item-count {
-    color: #9ca3af;
-  }
-
-  .pagination-controls {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding: 0.5rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .pagination-controls {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .page-btn {
-    padding: 0.375rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    background: white;
-    color: #374151;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  :global(.dark) .page-btn {
-    background: #1f2937;
-    border-color: #374151;
-    color: #d1d5db;
-  }
-
-  .page-btn:hover:not(:disabled) {
-    background: #f3f4f6;
-    border-color: #9ca3af;
-  }
-
-  :global(.dark) .page-btn:hover:not(:disabled) {
-    background: #374151;
-    border-color: #6b7280;
-  }
-
-  .page-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .page-indicator {
-    padding: 0 0.75rem;
-    font-size: 0.875rem;
-    color: #4b5563;
-    font-weight: 500;
-  }
-
-  :global(.dark) .page-indicator {
-    color: #9ca3af;
-  }
-
-  /* Persona Editor Wrapper - provides height constraint for PersonaEditor component */
-  .persona-editor-wrapper {
-    height: calc(100vh - 200px);
-    min-height: 500px;
-    overflow: hidden;
-  }
-
-  /* Loading placeholder for lazy-loaded components */
-  .loading-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    color: #9ca3af;
-    font-size: 0.875rem;
-    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
-  }
-
-  :global(.dark) .loading-placeholder {
-    color: #6b7280;
-  }
 </style>
 
 <!-- Memory Editor Modal (lazy-loaded when opened) -->

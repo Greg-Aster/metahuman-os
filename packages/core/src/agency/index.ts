@@ -29,8 +29,17 @@ export * as agencyStorage from './storage.js';
 // Config
 export * as agencyConfig from './config.js';
 
-// Executor (graph-based execution)
-export * from './executor.js';
+// Executor (graph-based execution) - exclude clearGraphCache (conflicts with graph-streaming)
+export {
+  type DesireExecutionProgress,
+  type DesireProgressCallback,
+  loadDesireExecutorGraph,
+  loadOutcomeReviewerGraph,
+  type ExecuteDesireResult,
+  executeDesireViaGraph,
+  type ReviewOutcomeResult,
+  reviewOutcomeViaGraph,
+} from './executor.js';
 
 // Re-export common functions at top level for convenience
 export {

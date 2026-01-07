@@ -200,64 +200,64 @@
   }
 </script>
 
-<div class="embed-generator">
-  <div class="embed-header">
-    <h3>Personality Interview</h3>
-    <button class="btn-back" on:click={onBack}>
+<div class="w-full flex flex-col gap-6">
+  <div class="flex justify-between items-center pb-4 border-b border-white/10 dark:border-white/10">
+    <h3 class="text-2xl font-bold m-0 text-white dark:text-white">Personality Interview</h3>
+    <button class="btn-secondary text-sm py-2 px-4" on:click={onBack}>
       ← Back to Options
     </button>
   </div>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="banner banner-error">{error}</div>
   {/if}
 
   {#if currentSession}
-    <div class="interview-content">
+    <div class="flex flex-col gap-6">
       <!-- Progress Meter -->
-      <div class="progress-section">
-        <h4>Category Coverage</h4>
-        <div class="progress-bars">
+      <div>
+        <h4 class="text-base font-semibold mb-4 text-white/90 dark:text-white/90">Category Coverage</h4>
+        <div class="flex flex-col gap-3">
           {#each Object.entries(currentSession?.categoryCoverage || {}) as [category, percentage]}
-            <div class="progress-item">
-              <span class="category-name">{category}</span>
-              <div class="progress-bar-container">
+            <div class="flex items-center gap-4">
+              <span class="text-sm text-white/70 dark:text-white/70 min-w-[120px] capitalize">{category}</span>
+              <div class="flex-1 h-2 bg-white/10 dark:bg-white/10 rounded overflow-hidden">
                 <div
-                  class="progress-bar-fill"
+                  class="h-full rounded transition-all duration-300"
                   style="width: {percentage}%; background-color: {getCategoryColor(percentage)}"
                 ></div>
               </div>
-              <span class="category-percentage">{percentage}%</span>
+              <span class="text-sm text-white/70 dark:text-white/70 min-w-[45px] text-right">{percentage}%</span>
             </div>
           {/each}
         </div>
       </div>
 
       <!-- Conversation -->
-      <div class="conversation" bind:this={messagesContainer}>
+      <div class="conversation-area" bind:this={messagesContainer}>
         {#each currentSession?.questions || [] as question, i}
-          <div class="message assistant">
-            <div class="message-content">
-              <strong>Psychotherapist:</strong>
-              <p>{question.prompt}</p>
-              <span class="message-meta">{question.category}</span>
+          <div class="interview-msg interview-msg-assistant">
+            <div class="p-4 rounded-lg">
+              <strong class="block text-white dark:text-white mb-2 text-sm">Psychotherapist:</strong>
+              <p class="m-0 text-white/90 dark:text-white/90 leading-relaxed">{question.prompt}</p>
+              <span class="block text-xs text-white/50 dark:text-white/50 mt-2 capitalize">{question.category}</span>
             </div>
           </div>
 
           {#if currentSession?.answers?.[i]}
-            <div class="message user">
-              <div class="message-content">
-                <strong>You:</strong>
-                <p>{currentSession.answers[i].content}</p>
+            <div class="interview-msg interview-msg-user">
+              <div class="p-4 rounded-lg">
+                <strong class="block text-white dark:text-white mb-2 text-sm">You:</strong>
+                <p class="m-0 text-white/90 dark:text-white/90 leading-relaxed">{currentSession.answers[i].content}</p>
               </div>
             </div>
           {/if}
         {/each}
 
         {#if loading && currentSession.status === 'active'}
-          <div class="message assistant">
-            <div class="message-content">
-              <em>Thinking...</em>
+          <div class="interview-msg interview-msg-assistant">
+            <div class="p-4 rounded-lg">
+              <em class="text-white/60">Thinking...</em>
             </div>
           </div>
         {/if}
@@ -265,8 +265,9 @@
 
       <!-- Input Area -->
       {#if currentSession?.status === 'active' && (currentSession?.questions?.length || 0) > (currentSession?.answers?.length || 0)}
-        <div class="input-area">
+        <div class="flex flex-col gap-3">
           <textarea
+            class="form-textarea bg-white/5 dark:bg-white/5 border-white/20 dark:border-white/20 text-white dark:text-white"
             bind:value={currentAnswer}
             placeholder="Type your answer here..."
             rows="4"
@@ -277,26 +278,26 @@
               }
             }}
           ></textarea>
-          <div class="input-actions">
-            <button class="btn btn-primary" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
+          <div class="flex justify-between items-center">
+            <button class="interview-submit-btn" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
               {loading ? 'Submitting...' : 'Submit Answer'}
             </button>
-            <p class="hint">Press Ctrl+Enter to submit</p>
+            <p class="text-xs text-white/50 dark:text-white/50 m-0">Press Ctrl+Enter to submit</p>
           </div>
         </div>
       {/if}
 
       {#if currentSession?.status === 'completed' || currentSession?.status === 'finalized'}
-        <div class="completion-message">
-          <h4>✓ Interview Complete!</h4>
-          <p>Processing your responses and updating your persona profile...</p>
+        <div class="banner banner-success text-center">
+          <h4 class="text-lg font-semibold text-green-500 mb-2">✓ Interview Complete!</h4>
+          <p class="text-sm text-white/80 dark:text-white/80 m-0">Processing your responses and updating your persona profile...</p>
         </div>
       {/if}
 
       {#if currentSession?.status === 'applied'}
-        <div class="success-message">
-          <h4>✓ Persona Applied Successfully</h4>
-          <p>Your personality profile has been created. Continuing to next step...</p>
+        <div class="banner banner-success text-center">
+          <h4 class="text-lg font-semibold text-green-500 mb-2">✓ Persona Applied Successfully</h4>
+          <p class="text-sm text-white/80 dark:text-white/80 m-0">Your personality profile has been created. Continuing to next step...</p>
         </div>
       {/if}
     </div>
@@ -304,305 +305,32 @@
 </div>
 
 <style>
-  .embed-generator {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
+  /* Conversation area - scrollable message list */
+  .conversation-area {
+    @apply flex flex-col gap-4 max-h-[400px] overflow-y-auto p-4 rounded-lg bg-white/5;
   }
 
-  .embed-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  /* Interview messages */
+  .interview-msg {
+    @apply flex flex-col;
+  }
+  .interview-msg-assistant > div {
+    @apply bg-blue-400/10 border-l-[3px] border-l-blue-400;
+  }
+  .interview-msg-user > div {
+    @apply bg-violet-400/10 border-l-[3px] border-l-violet-400;
   }
 
-  :global(html:not(.dark)) .embed-header {
-    border-bottom-color: rgba(0, 0, 0, 0.1);
-  }
-
-  .embed-header h3 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin: 0;
-    color: white;
-  }
-
-  :global(html:not(.dark)) .embed-header h3 {
-    color: rgb(17, 24, 39);
-  }
-
-  .btn-back {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.9);
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(html:not(.dark)) .btn-back {
-    background: rgba(0, 0, 0, 0.05);
-    border-color: rgba(0, 0, 0, 0.2);
-    color: rgba(0, 0, 0, 0.8);
-  }
-
-  .btn-back:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  :global(html:not(.dark)) .btn-back:hover {
-    background: rgba(0, 0, 0, 0.08);
-    border-color: rgba(0, 0, 0, 0.3);
-  }
-
-  .error-message {
-    padding: 0.75rem 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 8px;
-    color: #ef4444;
-    font-size: 0.875rem;
-  }
-
-  .interview-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .progress-section h4 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0 0 1rem;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  :global(html:not(.dark)) .progress-section h4 {
-    color: rgba(0, 0, 0, 0.9);
-  }
-
-  .progress-bars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .progress-item {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .category-name {
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.7);
-    min-width: 120px;
-    text-transform: capitalize;
-  }
-
-  :global(html:not(.dark)) .category-name {
-    color: rgba(0, 0, 0, 0.7);
-  }
-
-  .progress-bar-container {
-    flex: 1;
-    height: 8px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  :global(html:not(.dark)) .progress-bar-container {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    transition: width 0.3s ease;
-    border-radius: 4px;
-  }
-
-  .category-percentage {
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.7);
-    min-width: 45px;
-    text-align: right;
-  }
-
-  :global(html:not(.dark)) .category-percentage {
-    color: rgba(0, 0, 0, 0.7);
-  }
-
-  .conversation {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    max-height: 400px;
-    overflow-y: auto;
-    padding: 1rem;
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 8px;
-  }
-
-  :global(html:not(.dark)) .conversation {
-    background: rgba(0, 0, 0, 0.02);
-  }
-
-  .message {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .message.assistant .message-content {
-    background: rgba(96, 165, 250, 0.1);
-    border-left: 3px solid #60a5fa;
-  }
-
-  .message.user .message-content {
-    background: rgba(167, 139, 250, 0.1);
-    border-left: 3px solid #a78bfa;
-  }
-
-  .message-content {
-    padding: 1rem;
-    border-radius: 8px;
-  }
-
-  .message-content strong {
-    display: block;
-    color: white;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  :global(html:not(.dark)) .message-content strong {
-    color: rgb(17, 24, 39);
-  }
-
-  .message-content p {
-    margin: 0;
-    color: rgba(255, 255, 255, 0.9);
-    line-height: 1.6;
-  }
-
-  :global(html:not(.dark)) .message-content p {
-    color: rgba(0, 0, 0, 0.9);
-  }
-
-  .message-meta {
-    display: block;
-    font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.5);
-    margin-top: 0.5rem;
-    text-transform: capitalize;
-  }
-
-  :global(html:not(.dark)) .message-meta {
-    color: rgba(0, 0, 0, 0.5);
-  }
-
-  .input-area {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .input-area textarea {
-    width: 100%;
-    padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
-    color: white;
-    font-size: 0.9375rem;
-    font-family: inherit;
-    resize: vertical;
-  }
-
-  :global(html:not(.dark)) .input-area textarea {
-    background: rgba(0, 0, 0, 0.05);
-    border-color: rgba(0, 0, 0, 0.2);
-    color: rgb(17, 24, 39);
-  }
-
-  .input-area textarea:focus {
-    outline: none;
-    border-color: #60a5fa;
-  }
-
-  .input-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-  }
-
-  .btn-primary {
+  /* Submit button with gradient */
+  .interview-submit-btn {
+    @apply py-3 px-6 rounded-lg text-base font-medium cursor-pointer transition-all border-0 text-white;
     background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
-    color: white;
   }
-
-  .btn-primary:hover:not(:disabled) {
+  .interview-submit-btn:hover:not(:disabled) {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(96, 165, 250, 0.4);
   }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .hint {
-    font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.5);
-    margin: 0;
-  }
-
-  :global(html:not(.dark)) .hint {
-    color: rgba(0, 0, 0, 0.5);
-  }
-
-  .completion-message,
-  .success-message {
-    padding: 1.5rem;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 8px;
-    text-align: center;
-  }
-
-  .completion-message h4,
-  .success-message h4 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #10b981;
-    margin: 0 0 0.5rem;
-  }
-
-  .completion-message p,
-  .success-message p {
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.8);
-    margin: 0;
-  }
-
-  :global(html:not(.dark)) .completion-message p,
-  :global(html:not(.dark)) .success-message p {
-    color: rgba(0, 0, 0, 0.7);
+  .interview-submit-btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
   }
 </style>

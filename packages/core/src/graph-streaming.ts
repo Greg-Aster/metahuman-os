@@ -47,26 +47,27 @@ export interface GraphStreamingParams {
 }
 
 export interface StreamEvent {
-  type: 'progress' | 'answer' | 'error' | 'cancelled' | 'claude_cli_output' | 'claude_cli_waiting' | 'claude_cli_complete';
+  type: 'progress' | 'answer' | 'error' | 'cancelled' | 'big_brother_output' | 'big_brother_waiting' | 'big_brother_complete';
   data: any;
 }
 
 /**
- * Claude CLI streaming events for real-time output display
+ * Big Brother streaming events for real-time output display
+ * Provider-agnostic: works with any escalation backend (Claude, Open Interpreter, etc.)
  */
-export interface ClaudeCliOutputEvent {
+export interface BigBrotherOutputEvent {
   chunk: string;
   timestamp: number;
   sessionId?: string;
 }
 
-export interface ClaudeCliWaitingEvent {
+export interface BigBrotherWaitingEvent {
   question: string;
   timestamp: number;
   sessionId?: string;
 }
 
-export interface ClaudeCliCompleteEvent {
+export interface BigBrotherCompleteEvent {
   success: boolean;
   exitCode?: number;
   timestamp: number;
@@ -148,8 +149,10 @@ async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | nu
 
 /**
  * Load a cognitive graph by mode name with caching
+ * @param graphKey - The cognitive mode key (e.g., 'dual', 'agent', 'emulation')
+ * @param username - Optional username for Big Brother config lookup (bypasses getUserContext())
  */
-export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | null> {
+export async function loadGraphForMode(graphKey: string, username?: string): Promise<LoadedGraph | null> {
   if (!graphKey) {
     console.log('[graph-streaming] No graphKey provided');
     return null;
@@ -161,15 +164,22 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
   let useBigBrotherGraph = false;
   if (normalizedKey === 'dual') {
     try {
-      const { getUserContext } = await import('./context.js');
-      const userContext = getUserContext();
+      // Use provided username, or fall back to getUserContext()
+      let resolvedUsername = username;
+      if (!resolvedUsername) {
+        const { getUserContext } = await import('./context.js');
+        const userContext = getUserContext();
+        resolvedUsername = userContext?.username;
+      }
 
       // Skip Big Brother check if no authenticated user (all configs are user-specific)
-      if (userContext?.username) {
+      if (resolvedUsername) {
         const { loadOperatorConfig } = await import('./config.js');
         const { ensureBackendsInitialized, getActiveBackend, getBackend } = await import('./escalation-backend.js');
-        const operatorConfig = loadOperatorConfig(userContext.username);
+        const operatorConfig = loadOperatorConfig(resolvedUsername);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+
+        console.log(`[graph-streaming] Big Brother check: username=${resolvedUsername}, enabled=${bigBrotherEnabled}, provider=${operatorConfig.bigBrotherMode?.provider}`);
 
         if (bigBrotherEnabled) {
           const rawProvider = operatorConfig.bigBrotherMode?.provider;
@@ -178,7 +188,7 @@ export async function loadGraphForMode(graphKey: string): Promise<LoadedGraph | 
             : rawProvider;
 
           await ensureBackendsInitialized();
-          const backend = provider ? getBackend(provider) : getActiveBackend(userContext.username);
+          const backend = provider ? getBackend(provider) : getActiveBackend(resolvedUsername);
           const backendAvailable = backend ? await backend.isAvailable() : false;
 
           if (backendAvailable) {
@@ -294,9 +304,9 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
       };
 
       try {
-        // Load graph
+        // Load graph - pass username so Big Brother config can be checked properly
         push('progress', { step: 'loading_graph', message: 'Loading cognitive workflow...' });
-        const loaded = await loadGraphForMode(cognitiveMode);
+        const loaded = await loadGraphForMode(cognitiveMode, userContext?.username);
 
         if (!loaded) {
           push('error', { message: 'Failed to load cognitive graph' });
@@ -397,21 +407,22 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
             }
           }
 
-          // Claude CLI streaming events - forward directly without throttling
-          if (event.type === 'claude_cli_output') {
-            push('claude_cli_output', {
+          // Big Brother streaming events - forward directly without throttling
+          // Provider-agnostic: works with any escalation backend
+          if (event.type === 'big_brother_output') {
+            push('big_brother_output', {
               chunk: event.data?.chunk || '',
               timestamp: Date.now(),
               sessionId,
             });
-          } else if (event.type === 'claude_cli_waiting') {
-            push('claude_cli_waiting', {
+          } else if (event.type === 'big_brother_waiting') {
+            push('big_brother_waiting', {
               question: event.data?.question || '',
               timestamp: Date.now(),
               sessionId,
             });
-          } else if (event.type === 'claude_cli_complete') {
-            push('claude_cli_complete', {
+          } else if (event.type === 'big_brother_complete') {
+            push('big_brother_complete', {
               success: event.data?.success ?? true,
               exitCode: event.data?.exitCode,
               timestamp: Date.now(),

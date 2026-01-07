@@ -122,29 +122,30 @@
   }
 </script>
 
-<div class="training-data-controls" class:disabled>
+<div class="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 {disabled ? 'opacity-60 pointer-events-none' : ''}">
   <!-- Persona Toggle -->
-  <div class="control-section">
-    <label class="toggle-row">
-      <span class="toggle-label">
-        <strong>Include Persona Data</strong>
-        <span class="toggle-description">Include core personality traits and values in training</span>
+  <div class="mb-6">
+    <label class="flex justify-between items-center p-3 bg-white dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700 cursor-pointer">
+      <span class="flex flex-col gap-1">
+        <strong class="text-sm">Include Persona Data</strong>
+        <span class="text-xs text-gray-500">Include core personality traits and values in training</span>
       </span>
       <input
         type="checkbox"
         checked={includePersona}
         on:change={handlePersonaChange}
         {disabled}
+        class="w-5 h-5 cursor-pointer"
       />
     </label>
   </div>
 
   <!-- Presets -->
-  <div class="control-section">
-    <h4>Quick Presets</h4>
-    <div class="preset-buttons">
+  <div class="mb-6">
+    <h4 class="m-0 mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Quick Presets</h4>
+    <div class="flex flex-wrap gap-2">
       <button
-        class="preset-btn"
+        class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('balanced')}
         {disabled}
         title="Default balanced mix: conversations 40%, observations 25%, therapy 15%, self-generated lower"
@@ -152,7 +153,7 @@
         Balanced (Default)
       </button>
       <button
-        class="preset-btn"
+        class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('user-focused')}
         {disabled}
         title="Focus on user input: conversations 50%, observations 30%, minimal self-generated content"
@@ -160,7 +161,7 @@
         User-Focused
       </button>
       <button
-        class="preset-btn"
+        class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('self-growth')}
         {disabled}
         title="Increase self-generated content: reflections 15%, inner dialogue 10%, dreams 8%"
@@ -171,22 +172,22 @@
   </div>
 
   <!-- Memory Type Sliders -->
-  <div class="control-section">
-    <div class="section-header">
-      <h4>Memory Type Weights</h4>
-      <span class="total-badge info">
+  <div class="mb-0">
+    <div class="flex justify-between items-center mb-2">
+      <h4 class="m-0 text-sm font-semibold text-gray-700 dark:text-gray-300">Memory Type Weights</h4>
+      <span class="text-[0.7rem] font-semibold px-2 py-1 bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300 rounded">
         Primary = 100% | Secondary = % of primary
       </span>
     </div>
 
     {#each Object.entries(memoryTypeGroups) as [groupName, types]}
-      <div class="type-group">
-        <h5 class="group-title">{groupName}</h5>
-        {#each types as type}
-          <div class="slider-row">
-            <div class="slider-info">
-              <span class="slider-label">{type.label}</span>
-              <span class="slider-value">{mergedPercentages[type.key]}%</span>
+      <div class="p-3 bg-white dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700 mb-3">
+        <h5 class="m-0 mb-2 text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 tracking-wide">{groupName}</h5>
+        {#each types as type, i}
+          <div class="{i < types.length - 1 ? 'mb-3' : ''}">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-sm font-medium">{type.label}</span>
+              <span class="text-sm font-semibold text-blue-500 dark:text-blue-400 min-w-[3rem] text-right">{mergedPercentages[type.key]}%</span>
             </div>
             <input
               type="range"
@@ -196,16 +197,16 @@
               value={mergedPercentages[type.key]}
               on:input={(e) => handleSliderChange(type.key, e)}
               {disabled}
-              class="slider"
+              class="slider w-full h-1.5 rounded bg-gray-200 dark:bg-gray-700 appearance-none cursor-pointer"
             />
-            <span class="slider-description">{type.description}</span>
+            <span class="text-[0.7rem] text-gray-500 dark:text-gray-400 block mt-1">{type.description}</span>
           </div>
         {/each}
       </div>
     {/each}
 
     <button
-      class="reset-btn"
+      class="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 cursor-pointer transition-all hover:enabled:bg-gray-200 dark:hover:enabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
       on:click={resetToDefaults}
       {disabled}
     >
@@ -214,258 +215,22 @@
   </div>
 
   <!-- Info Box -->
-  <div class="info-box">
-    <strong>How it works (Pie Chart Model):</strong>
-    <br/>
+  <div class="mt-4 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-500 rounded-md text-[0.8rem] text-blue-800 dark:text-blue-200 leading-relaxed">
+    <strong class="block mb-1">How it works (Pie Chart Model):</strong>
     <em>Primary data</em> (conversations, observations, journals) = <strong>100% included</strong> — this is YOUR voice.
     <br/>
     <em>Secondary data</em> (reflections, dreams, etc.) = added as a <strong>% of primary</strong>.
     <br/><br/>
-    <strong>Example:</strong> If you have 800 conversations + observations, and inner_dialogue is set to 3%,
+    <strong class="block mt-2 mb-1">Example:</strong> If you have 800 conversations + observations, and inner_dialogue is set to 3%,
     you get 800 + (800 × 3% = 24) = 824 total samples.
     <br/><br/>
-    <strong>Tip:</strong> Ingest more of your writing (notes, journals, blog posts) to increase primary data.
+    <strong class="block mt-2 mb-1">Tip:</strong> Ingest more of your writing (notes, journals, blog posts) to increase primary data.
     The more primary data you have, the more supplemental data gets included proportionally.
   </div>
 </div>
 
 <style>
-  .training-data-controls {
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 8px;
-    border: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .training-data-controls {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .training-data-controls.disabled {
-    opacity: 0.6;
-    pointer-events: none;
-  }
-
-  .control-section {
-    margin-bottom: 1.5rem;
-  }
-
-  .control-section:last-of-type {
-    margin-bottom: 0;
-  }
-
-  h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) h4 {
-    color: #d1d5db;
-  }
-
-  h5.group-title {
-    margin: 1rem 0 0.5rem 0;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: #6b7280;
-    letter-spacing: 0.05em;
-  }
-
-  :global(.dark) h5.group-title {
-    color: #9ca3af;
-  }
-
-  /* Toggle Row */
-  .toggle-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: white;
-    border-radius: 6px;
-    border: 1px solid #e5e7eb;
-    cursor: pointer;
-  }
-
-  :global(.dark) .toggle-row {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .toggle-label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .toggle-label strong {
-    font-size: 0.875rem;
-  }
-
-  .toggle-description {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .toggle-row input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
-    cursor: pointer;
-  }
-
-  /* Preset Buttons */
-  .preset-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .preset-btn {
-    padding: 0.5rem 1rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  :global(.dark) .preset-btn {
-    background: #111827;
-    border-color: #374151;
-    color: #d1d5db;
-  }
-
-  .preset-btn:hover:not(:disabled) {
-    background: #3b82f6;
-    color: white;
-    border-color: #3b82f6;
-  }
-
-  .preset-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Section Header */
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .section-header h4 {
-    margin: 0;
-  }
-
-  .total-badge {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.25rem 0.5rem;
-    background: #dcfce7;
-    color: #166534;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .total-badge {
-    background: #064e3b;
-    color: #6ee7b7;
-  }
-
-  .total-badge.invalid {
-    background: #fee2e2;
-    color: #dc2626;
-  }
-
-  :global(.dark) .total-badge.invalid {
-    background: #7f1d1d;
-    color: #fca5a5;
-  }
-
-  .total-badge.info {
-    background: #e0f2fe;
-    color: #0369a1;
-    font-size: 0.7rem;
-  }
-
-  :global(.dark) .total-badge.info {
-    background: #0c4a6e;
-    color: #7dd3fc;
-  }
-
-  .total-badge .warning {
-    font-weight: normal;
-  }
-
-  /* Type Group */
-  .type-group {
-    padding: 0.75rem;
-    background: white;
-    border-radius: 6px;
-    border: 1px solid #e5e7eb;
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .type-group {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .type-group h5 {
-    margin-top: 0;
-  }
-
-  /* Slider Row */
-  .slider-row {
-    margin-bottom: 0.75rem;
-  }
-
-  .slider-row:last-child {
-    margin-bottom: 0;
-  }
-
-  .slider-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.25rem;
-  }
-
-  .slider-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .slider-value {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #3b82f6;
-    min-width: 3rem;
-    text-align: right;
-  }
-
-  :global(.dark) .slider-value {
-    color: #60a5fa;
-  }
-
-  .slider {
-    width: 100%;
-    height: 6px;
-    border-radius: 3px;
-    background: #e5e7eb;
-    appearance: none;
-    cursor: pointer;
-  }
-
-  :global(.dark) .slider {
-    background: #374151;
-  }
-
+  /* Slider thumb styling - can't be done with Tailwind */
   .slider::-webkit-slider-thumb {
     appearance: none;
     width: 16px;
@@ -487,75 +252,5 @@
     background: #3b82f6;
     cursor: pointer;
     border: none;
-  }
-
-  .slider-description {
-    font-size: 0.7rem;
-    color: #6b7280;
-    display: block;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .slider-description {
-    color: #9ca3af;
-  }
-
-  /* Reset Button */
-  .reset-btn {
-    margin-top: 1rem;
-    padding: 0.5rem 1rem;
-    background: #f3f4f6;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    color: #374151;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  :global(.dark) .reset-btn {
-    background: #374151;
-    border-color: #4b5563;
-    color: #d1d5db;
-  }
-
-  .reset-btn:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .reset-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .reset-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Info Box */
-  .info-box {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    color: #1e40af;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .info-box {
-    background: #1e3a5f;
-    border-color: #3b82f6;
-    color: #93c5fd;
-  }
-
-  .info-box strong {
-    display: block;
-    margin-bottom: 0.25rem;
-  }
-
-  .info-box strong:not(:first-child) {
-    margin-top: 0.5rem;
   }
 </style>

@@ -140,29 +140,25 @@
   }
 </script>
 
-<div class="lifeline-container">
+<div class="p-8 max-w-[900px] mx-auto">
   <!-- Header -->
-  <div class="lifeline-header">
-    <h2 class="lifeline-title">🆘 Lifeline Protocol</h2>
-    <div class="status-pill disabled">Currently Disabled</div>
+  <div class="flex items-center justify-between mb-8 flex-wrap gap-4">
+    <h2 class="text-3xl font-semibold m-0 text-gray-100">🆘 Lifeline Protocol</h2>
+    <div class="status-badge bg-gray-600 text-gray-400">Currently Disabled</div>
   </div>
 
-
   <!-- Main Content -->
-  <div class="lifeline-content">
-    <div class="protocol-description">
-      <h3>Protocol Overview</h3>
-      <p>
+  <div class="card p-8">
+    <div class="mb-6">
+      <h3 class="text-xl font-semibold text-gray-100 mb-4">Protocol Overview</h3>
+      <p class="text-gray-400 leading-relaxed mb-4">
         The Lifeline Protocol is an emergency override
         where all system priorities subordinate to the preservation and wellbeing of USER. This protocol may be disabled for some users.
-      </p>
-      <p>
-
       </p>
     </div>
 
     <!-- Panic Button -->
-    <div class="panic-section">
+    <div class="mt-12 text-center">
       <button
         class="panic-button"
         onclick={panic}
@@ -170,11 +166,10 @@
       >
         {triggering ? 'ENGAGING...' : 'P A N I C'}
       </button>
-
     </div>
 
     {#if error}
-      <div class="error-message">
+      <div class="banner banner-error mt-6 text-center">
         ⚠️ {error}
       </div>
     {/if}
@@ -183,8 +178,8 @@
 
 <!-- Terminal Background Effect -->
 {#if terminalActive}
-  <div class="terminal-background">
-    <div class="terminal-content">
+  <div class="terminal-bg">
+    <div class="max-w-[1200px] mx-auto">
       {#each terminalLines as line}
         <div class="terminal-line">{line}</div>
       {/each}
@@ -196,36 +191,36 @@
 <!-- Full-Screen Overlay -->
 {#if showOverlay}
   <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-  <div class="lifeline-overlay" onclick={(e) => { if (e.target === e.currentTarget) { dismissOverlay(); } }} role="presentation">
-    <div class="overlay-content" role="dialog" aria-modal="true">
-      <div class="overlay-header">
-<!--         <div class="alert-icon">🆘</div>
- -->        <h1 class="overlay-title">LIFELINE PROTOCOL ENGAGED</h1>
+  <div class="modal-overlay !bg-black/80" onclick={(e) => { if (e.target === e.currentTarget) { dismissOverlay(); } }} role="presentation">
+    <div class="lifeline-modal" role="dialog" aria-modal="true">
+      <div class="text-center mb-8">
+        <h1 class="text-2xl font-black text-red-500 tracking-widest uppercase drop-shadow-[0_0_20px_rgba(231,76,60,0.5)]">
+          LIFELINE PROTOCOL ENGAGED
+        </h1>
       </div>
 
-      <div class="overlay-body">
-        <p class="overlay-primary">
+      <div class="mb-8">
+        <p class="text-xl text-gray-100 text-center mb-8 leading-relaxed font-medium">
           All protocols subordinated to preservation of USER.
         </p>
 
-        <div class="overlay-status">
-          <div class="status-item">
-            <span class="status-label">Status:</span>
-            <span class="status-value simulated">ACTIVE</span>
+        <div class="bg-black/30 rounded-lg p-6 mb-6">
+          <div class="flex justify-between items-center py-3 border-b border-white/10">
+            <span class="text-gray-400 font-semibold uppercase text-sm tracking-wide">Status:</span>
+            <span class="font-bold px-3 py-1 rounded bg-red-700 text-white">ACTIVE</span>
           </div>
-          <div class="status-item">
-            <span class="status-label">Guardrails:</span>
-            <span class="status-value active">DISABLED</span>
+          <div class="flex justify-between items-center py-3 border-b border-white/10">
+            <span class="text-gray-400 font-semibold uppercase text-sm tracking-wide">Guardrails:</span>
+            <span class="font-bold px-3 py-1 rounded bg-red-700 text-white">DISABLED</span>
           </div>
-          <div class="status-item">
-            <span class="status-label">Mode:</span>
-            <span class="status-value active">PANIC</span>
+          <div class="flex justify-between items-center py-3">
+            <span class="text-gray-400 font-semibold uppercase text-sm tracking-wide">Mode:</span>
+            <span class="font-bold px-3 py-1 rounded bg-red-700 text-white">PANIC</span>
           </div>
         </div>
-
       </div>
 
-      <button class="dismiss-button" onclick={dismissOverlay}>
+      <button class="btn-secondary w-full py-4 uppercase tracking-widest font-semibold" onclick={dismissOverlay}>
         Dismiss
       </button>
     </div>
@@ -233,321 +228,61 @@
 {/if}
 
 <style>
-  .lifeline-container {
-    padding: 2rem;
-    max-width: 900px;
-    margin: 0 auto;
-  }
-
-  .lifeline-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .lifeline-title {
-    font-size: 1.75rem;
-    font-weight: 600;
-    margin: 0;
-    color: #f8f9fa;
-  }
-
-  .status-pill {
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .status-pill.disabled {
-    background-color: #495057;
-    color: #adb5bd;
-  }
-
-
-
-  .lifeline-content {
-    background-color: #23272a;
-    border-radius: 8px;
-    padding: 2rem;
-  }
-
-  .protocol-description h3 {
-    margin: 0 0 1rem 0;
-    color: #f8f9fa;
-    font-size: 1.25rem;
-  }
-
-  .protocol-description p {
-    color: #adb5bd;
-    line-height: 1.6;
-    margin-bottom: 1rem;
-  }
-
-  .panic-section {
-    margin-top: 3rem;
-    text-align: center;
-  }
-
+  /* Panic button - unique gradient styling */
   .panic-button {
+    @apply text-white border-0 py-6 px-16 text-3xl font-black tracking-[0.3em] rounded-lg cursor-pointer transition-all uppercase;
     background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-    color: white;
-    border: none;
-    padding: 1.5rem 4rem;
-    font-size: 2rem;
-    font-weight: 900;
-    letter-spacing: 0.3em;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3), 0 0 20px rgba(231, 76, 60, 0.3);
-    text-transform: uppercase;
   }
-
   .panic-button:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4), 0 0 30px rgba(231, 76, 60, 0.5);
   }
-
-  .panic-button:active:not(:disabled) {
-    transform: translateY(0);
-  }
-
   .panic-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    @apply opacity-60 cursor-not-allowed;
   }
 
-  .error-message {
-    margin-top: 1.5rem;
-    padding: 1rem;
-    background-color: #3d1f1f;
-    border: 1px solid #e74c3c;
-    border-radius: 4px;
-    color: #ff6b6b;
-    text-align: center;
+  /* Lifeline modal - unique danger styling */
+  .lifeline-modal {
+    @apply rounded-2xl p-12 w-[90%] max-w-[600px];
+    background: linear-gradient(135deg, #1a1d21 0%, #2c2f33 100%);
+    border: 3px solid #e74c3c;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 100px rgba(231, 76, 60, 0.4);
+    animation: slideIn 0.4s ease-out;
+  }
+  @keyframes slideIn {
+    from { transform: translateY(-50px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
   }
 
-  /* Overlay Styles */
-  .lifeline-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10001;
+  /* Terminal effect - unique dramatic styling */
+  .terminal-bg {
+    @apply fixed inset-0 z-[9999] overflow-y-auto p-8 font-mono;
+    background-color: #0a0e14;
     animation: fadeIn 0.3s ease-out;
   }
-
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
   }
-
-  .overlay-content {
-    background: linear-gradient(135deg, #1a1d21 0%, #2c2f33 100%);
-    border: 3px solid #e74c3c;
-    border-radius: 16px;
-    padding: 3rem;
-    max-width: 600px;
-    width: 90%;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 100px rgba(231, 76, 60, 0.4);
-    animation: slideIn 0.4s ease-out;
-  }
-
-  @keyframes slideIn {
-    from {
-      transform: translateY(-50px);
-      opacity: 0;
-    }
-    to {
-      transform: translateY(0);
-      opacity: 1;
-    }
-  }
-
-  .overlay-header {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-
-
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.1); }
-  }
-
-  .overlay-title {
-    font-size: 2rem;
-    font-weight: 900;
-    color: #e74c3c;
-    margin: 0;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    text-shadow: 0 0 20px rgba(231, 76, 60, 0.5);
-  }
-
-  .overlay-body {
-    margin-bottom: 2rem;
-  }
-
-  .overlay-primary {
-    font-size: 1.25rem;
-    color: #f8f9fa;
-    text-align: center;
-    margin-bottom: 2rem;
-    line-height: 1.6;
-    font-weight: 500;
-  }
-
-  .overlay-status {
-    background-color: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .status-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .status-item:last-child {
-    border-bottom: none;
-  }
-
-  .status-label {
-    color: #adb5bd;
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 0.875rem;
-    letter-spacing: 0.05em;
-  }
-
-  .status-value {
-    font-weight: 700;
-    font-size: 1rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
-  }
-
-  .status-value.simulated {
-    background-color: #ae2727;
-    color: #fff;
-  }
-
-  .status-value.active {
-    background-color: #ae2727;
-    color: #fff;
-  }
-
-
-
-  .dismiss-button {
-    width: 100%;
-    background-color: #495057;
-    color: white;
-    border: none;
-    padding: 1rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-
-  .dismiss-button:hover {
-    background-color: #5a6268;
-    transform: translateY(-1px);
-  }
-
-  .dismiss-button:active {
-    transform: translateY(0);
-  }
-
-  /* Terminal Background Effect */
-  .terminal-background {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #0a0e14;
-    z-index: 9999;
-    overflow-y: auto;
-    padding: 2rem;
-    font-family: 'Courier New', Courier, monospace;
-    animation: terminalFadeIn 0.3s ease-out;
-  }
-
-  @keyframes terminalFadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  .terminal-content {
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-
   .terminal-line {
+    @apply text-[0.95rem] leading-relaxed mb-1;
     color: #00ff00;
-    font-size: 0.95rem;
-    line-height: 1.6;
-    margin-bottom: 0.25rem;
-    animation: terminalLineAppear 0.1s ease-out;
     text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+    animation: lineAppear 0.1s ease-out;
   }
-
-  @keyframes terminalLineAppear {
-    from {
-      opacity: 0;
-      transform: translateX(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+  @keyframes lineAppear {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
   }
-
   .terminal-cursor {
-    display: inline-block;
+    @apply inline-block text-[0.95rem];
     color: #00ff00;
-    font-size: 0.95rem;
-    animation: cursorBlink 1s step-end infinite;
     text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+    animation: blink 1s step-end infinite;
   }
-
-  @keyframes cursorBlink {
-    0%, 50% {
-      opacity: 1;
-    }
-    51%, 100% {
-      opacity: 0;
-    }
-  }
-
-  /* Dark mode compatibility (already dark by default) */
-  :global(.dark) .lifeline-container {
-    /* Already styled for dark mode */
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
   }
 </style>

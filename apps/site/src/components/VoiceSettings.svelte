@@ -84,18 +84,12 @@
   let testingVoice = false;
   let testAudio: HTMLAudioElement | null = null;
   let generatingReference = false;
-  let isGuest = false; // Track if user is viewing as guest
+  let isGuest = false;
 
-  // Hardware button capture preference (stored in localStorage)
   let hardwareButtonsEnabled = false;
-
-  // Native device voice mode (uses phone's built-in STT/TTS instead of server)
   let nativeVoiceModeEnabled = false;
-
-  // Detect if running in Capacitor Android app (vs browser)
   let isCapacitorApp = false;
 
-  // VAD Test Recorder State
   let vadTestRecording = false;
   let vadTestVolume = 0;
   let vadTestSpeaking = false;
@@ -107,7 +101,6 @@
   let vadSilenceTimer: number | null = null;
   let vadStartTime: number | null = null;
 
-  // Provider metadata
   const providerInfo = {
     piper: {
       name: 'Piper TTS',
@@ -142,30 +135,18 @@
   async function loadSettings() {
     try {
       loading = true;
-
-      // Detect if running in Capacitor Android app
-      // Capacitor injects itself on the window object when running in native shell
       isCapacitorApp = typeof window !== 'undefined' &&
         !!(window as any).Capacitor &&
         (window as any).Capacitor.isNativePlatform?.() === true;
 
-      console.log('[VoiceSettings] Capacitor app detected:', isCapacitorApp);
-
-      // Load hardware button preference from localStorage
       hardwareButtonsEnabled = localStorage.getItem('mh-hardware-buttons') === 'true';
-
-      // Load native voice mode preference
       nativeVoiceModeEnabled = localStorage.getItem('mh-native-voice-mode') === 'true';
 
       const response = await apiFetch('/api/voice-settings');
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
+      isGuest = false;
 
-      // Check if we're a guest by attempting a no-op save check
-      // (we could also add a /api/auth/status endpoint, but this works)
-      isGuest = false; // Assume authenticated until proven otherwise
-
-      // Set RVC defaults if not present
       if (config && config.rvc) {
         config.rvc.indexRate = config.rvc.indexRate ?? 1.0;
         config.rvc.volumeEnvelope = config.rvc.volumeEnvelope ?? 0.0;
@@ -179,7 +160,6 @@
         config.kokoro.normalizeCustomVoicepacks = config.kokoro.normalizeCustomVoicepacks ?? true;
       }
 
-      // Set STT defaults if not present
       if (config && config.stt) {
         config.stt.model = config.stt.model || 'base.en';
         config.stt.device = config.stt.device || 'cpu';
@@ -198,7 +178,6 @@
       error = null;
     } catch (e) {
       error = String(e);
-      console.error('[VoiceSettings] Load error:', e);
     } finally {
       loading = false;
     }
@@ -210,8 +189,6 @@
       successMessage = null;
       error = null;
 
-      console.log('[VoiceSettings] Saving config:', { provider: config?.provider });
-
       const response = await apiFetch('/api/voice-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -221,7 +198,6 @@
       const result = await response.json();
 
       if (!response.ok) {
-        // Check if it's an authentication error
         if (result.error?.includes('Authentication required')) {
           isGuest = true;
           error = "We apologize! You're viewing this profile as a guest and can't save settings. You can still test the voice to hear how it sounds! 🎙️";
@@ -232,15 +208,9 @@
 
       successMessage = result.message || 'Settings saved successfully!';
       setTimeout(() => { successMessage = null; }, 5000);
-
-      // Dispatch event to notify other components (e.g., ChatInterface) that VAD settings changed
       window.dispatchEvent(new CustomEvent('voice-settings-updated'));
-      console.log('[VoiceSettings] Dispatched voice-settings-updated event');
     } catch (e) {
-      if (!error) { // Only set error if we haven't already set a friendly message
-        error = String(e);
-      }
-      console.error('[VoiceSettings] Save error:', e);
+      if (!error) error = String(e);
     } finally {
       saving = false;
     }
@@ -248,7 +218,6 @@
 
   async function generateReference() {
     if (!config || config.provider !== 'sovits') return;
-
     if (isGuest) {
       error = "We apologize! You're viewing this profile as a guest and can't modify voice settings. Only the profile owner can generate reference audio. 🎙️";
       return;
@@ -272,7 +241,6 @@
       const result = await response.json();
 
       if (!response.ok) {
-        // Check for authentication error
         if (result.error?.includes('Authentication required')) {
           isGuest = true;
           error = "We apologize! You're viewing this profile as a guest and can't modify voice settings. Only the profile owner can generate reference audio. 🎙️";
@@ -284,19 +252,12 @@
       successMessage = result.message || 'Reference audio regenerated successfully!';
       setTimeout(() => { successMessage = null; }, 5000);
     } catch (e) {
-      if (!error) {
-        error = String(e);
-      }
-      console.error('[VoiceSettings] Generate reference error:', e);
+      if (!error) error = String(e);
     } finally {
       generatingReference = false;
     }
   }
 
-  /**
-   * Play audio from streaming SSE endpoint - used for slow providers like RVC
-   * Returns when all audio has finished playing
-   */
   async function testVoiceStreaming(requestBody: any): Promise<void> {
     const response = await apiFetch('/api/tts-stream', {
       method: 'POST',
@@ -315,12 +276,9 @@
     let isPlaying = false;
     let streamComplete = false;
 
-    // Play next audio in queue
     const playNext = () => {
       if (currentAudioIndex >= audioQueue.length) {
-        if (streamComplete) {
-          testingVoice = false;
-        }
+        if (streamComplete) testingVoice = false;
         return;
       }
 
@@ -345,7 +303,6 @@
       });
     };
 
-    // Read SSE events
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -362,28 +319,19 @@
 
           if (data.event === 'complete') {
             streamComplete = true;
-            if (!isPlaying && currentAudioIndex >= audioQueue.length) {
-              testingVoice = false;
-            }
+            if (!isPlaying && currentAudioIndex >= audioQueue.length) testingVoice = false;
             continue;
           }
 
-          if (data.event === 'error') {
-            throw new Error(data.error);
-          }
+          if (data.event === 'error') throw new Error(data.error);
 
           if (data.audio_base64) {
-            // Decode base64 and create audio element
             const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
             const audioBlob = new Blob([audioBytes], { type: 'audio/wav' });
             const audioUrl = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioUrl);
             audioQueue.push(audio);
-
-            // Start playing if not already
-            if (!isPlaying) {
-              playNext();
-            }
+            if (!isPlaying) playNext();
           }
         } catch (e) {
           console.warn('[VoiceSettings] Error parsing SSE event:', e);
@@ -394,8 +342,6 @@
 
   async function testVoice(forceProvider?: Provider) {
     if (!config) return;
-
-    // Use explicit provider or fall back to current selection
     const providerToTest = forceProvider || config.provider;
 
     try {
@@ -407,12 +353,8 @@
         testAudio = null;
       }
 
-      console.log('[VoiceSettings] Testing voice with provider:', providerToTest);
-      // Add cache-busting suffix to test text to ensure fresh audio generation
       const cacheBustedText = `${testText} [${Date.now()}]`;
       let requestBody: any = { text: cacheBustedText, provider: providerToTest };
-
-      // Determine if we should use streaming (for slow providers)
       const useStreaming = providerToTest === 'rvc' || providerToTest === 'kokoro';
 
       if (providerToTest === 'piper' && config.piper) {
@@ -422,56 +364,42 @@
           testingVoice = false;
           return;
         }
-        // Use full model path instead of just ID
         requestBody.voiceId = voice.modelPath;
         requestBody.speakingRate = config.piper.speakingRate;
       } else if (providerToTest === 'sovits' && config.sovits) {
-        // TTS API expects voiceId, not speakerId
         requestBody.voiceId = config.sovits.speakerId;
         requestBody.speed = config.sovits.speed;
       } else if (providerToTest === 'rvc' && config.rvc) {
-        // TTS API expects voiceId, not speakerId
         requestBody.voiceId = config.rvc.speakerId;
         requestBody.pitchShift = config.rvc.pitchShift;
         requestBody.speed = config.rvc.speed;
       } else if (providerToTest === 'kokoro' && config.kokoro) {
-        // For custom voicepacks, save settings first to update voice.json
         if (config.kokoro.voice.startsWith('custom_')) {
           try {
             await saveSettings();
           } catch (e) {
-            // If authentication required, guest user can still test using profile owner's voice.json
             const errorMsg = String(e);
             if (!errorMsg.includes('Authentication required')) {
               error = 'Failed to save custom voicepack settings before testing';
               testingVoice = false;
               return;
             }
-            // Mark as guest and continue - guests will use profile owner's existing voice.json
             isGuest = true;
-            console.log('[VoiceSettings] Guest user testing with profile owner\'s voice settings');
           }
-
-          // Don't send voiceId for custom voicepacks - let it use the saved config
-          // (voice.json has the correct voice name without 'custom_' prefix + useCustomVoicepack flag)
           requestBody.langCode = config.kokoro.langCode;
           requestBody.speed = config.kokoro.speed;
         } else {
-          // Built-in voice - send voiceId normally
-          requestBody.voiceId = config.kokoro.voice;  // e.g., 'af_heart', 'af_bella'
-          requestBody.langCode = config.kokoro.langCode;  // e.g., 'a' for auto-detect
-          requestBody.speed = config.kokoro.speed;  // 0.5-2.0
+          requestBody.voiceId = config.kokoro.voice;
+          requestBody.langCode = config.kokoro.langCode;
+          requestBody.speed = config.kokoro.speed;
         }
       }
 
-      // Use streaming for slow providers (RVC, Kokoro) to reduce perceived latency
       if (useStreaming) {
-        console.log('[VoiceSettings] Using streaming mode for', providerToTest);
         await testVoiceStreaming(requestBody);
         return;
       }
 
-      // Batch mode for fast providers (Piper, SoVits)
       const response = await apiFetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -496,20 +424,16 @@
       await testAudio.play();
     } catch (e) {
       error = String(e);
-      console.error('[VoiceSettings] Test error:', e);
       testingVoice = false;
     }
   }
 
   function switchProvider(newProvider: Provider) {
     if (config) {
-      console.log('[VoiceSettings] Switching provider:', config.provider, '→', newProvider);
-      config = { ...config, provider: newProvider }; // Create new object to trigger reactivity
-      console.log('[VoiceSettings] Provider switched. Current:', config.provider);
+      config = { ...config, provider: newProvider };
     }
   }
 
-  // VAD Test Recorder Functions
   async function startVADTest() {
     if (!config?.stt?.vad) return;
 
@@ -520,24 +444,17 @@
       vadTestVolume = 0;
       vadAudioChunks = [];
 
-      // Get microphone access with audio processing
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
 
-      // Set up audio analysis
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
       vadAnalyser = audioContext.createAnalyser();
       vadAnalyser.fftSize = 2048;
-      vadAnalyser.smoothingTimeConstant = 0.8; // Smooth out volume fluctuations
+      vadAnalyser.smoothingTimeConstant = 0.8;
       source.connect(vadAnalyser);
 
-      // Set up recorder
       vadMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       vadMediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) vadAudioChunks.push(e.data);
@@ -546,12 +463,9 @@
       vadMediaRecorder.start();
       vadTestRecording = true;
       vadStartTime = Date.now();
-
-      // Start VAD analysis loop
       runVADAnalysis();
     } catch (err) {
       vadTestError = `Failed to start recording: ${(err as Error).message}`;
-      console.error('[VAD Test] Error:', err);
     }
   }
 
@@ -561,29 +475,18 @@
     const tick = () => {
       if (!vadTestRecording || !vadAnalyser) return;
 
-      // Use shared audio utility for voice-frequency-focused volume calculation
       vadTestVolume = calculateVoiceVolume(vadAnalyser, 150);
-
       const threshold = config?.stt?.vad?.voiceThreshold ?? 12;
       const silenceDelay = config?.stt?.vad?.silenceDelay ?? 5000;
 
-      // Voice detected
       if (vadTestVolume > threshold) {
-        if (!vadTestSpeaking) {
-          console.log('[VAD Test] Speech started');
-          vadTestSpeaking = true;
-        }
-        // Clear silence timer (user is still speaking)
+        if (!vadTestSpeaking) vadTestSpeaking = true;
         if (vadSilenceTimer) {
           clearTimeout(vadSilenceTimer);
           vadSilenceTimer = null;
         }
-      }
-      // Silence detected while we were speaking
-      else if (vadTestSpeaking && !vadSilenceTimer) {
-        // Start silence timer
+      } else if (vadTestSpeaking && !vadSilenceTimer) {
         vadSilenceTimer = window.setTimeout(() => {
-          console.log('[VAD Test] Silence detected, stopping');
           vadTestSpeaking = false;
           stopVADTest();
         }, silenceDelay);
@@ -602,66 +505,48 @@
       vadTestRecording = false;
       vadTestSpeaking = false;
 
-      // Clear silence timer
       if (vadSilenceTimer) {
         clearTimeout(vadSilenceTimer);
         vadSilenceTimer = null;
       }
 
-      // Check minimum duration before stopping
       const duration = vadStartTime ? (Date.now() - vadStartTime) : 0;
       const minDuration = config.stt.vad.minDuration ?? 500;
 
       if (duration < minDuration) {
-        console.log(`[VAD Test] Recording too short (${duration}ms), ignoring`);
         vadTestError = `Recording too short (${duration}ms). Minimum: ${minDuration}ms`;
-        // Still need to stop the recorder
-        if (vadMediaRecorder.state !== 'inactive') {
-          vadMediaRecorder.stop();
-        }
+        if (vadMediaRecorder.state !== 'inactive') vadMediaRecorder.stop();
         vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
         return;
       }
 
-      // Wait for recorder to stop and data to be available
-      // ondataavailable fires asynchronously after stop()
       const audioBlob = await new Promise<Blob>((resolve, reject) => {
         const recorder = vadMediaRecorder!;
         const chunks = vadAudioChunks;
 
-        // Set up onstop handler to create blob after all data is collected
         recorder.onstop = () => {
-          console.log(`[VAD Test] Recorder stopped, ${chunks.length} chunks collected`);
           if (chunks.length === 0) {
             reject(new Error('No audio data recorded'));
             return;
           }
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          console.log(`[VAD Test] Created blob: ${blob.size} bytes`);
-          resolve(blob);
+          resolve(new Blob(chunks, { type: 'audio/webm' }));
         };
 
-        // Stop recorder if not already stopped
         if (recorder.state !== 'inactive') {
           recorder.stop();
         } else {
-          // Already stopped, create blob from existing chunks
           if (chunks.length === 0) {
             reject(new Error('No audio data recorded'));
             return;
           }
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          resolve(blob);
+          resolve(new Blob(chunks, { type: 'audio/webm' }));
         }
       });
 
-      // Stop all tracks
       vadMediaRecorder.stream.getTracks().forEach(track => track.stop());
 
-      // Send to STT
       vadTestTranscription = 'Transcribing...';
       const buf = await audioBlob.arrayBuffer();
-      console.log(`[VAD Test] Sending ${buf.byteLength} bytes to STT`);
 
       const response = await apiFetch('/api/stt?format=webm', {
         method: 'POST',
@@ -675,13 +560,10 @@
 
       const result = await response.json();
       vadTestTranscription = result.transcript || result.text || '(no speech detected)';
-      console.log('[VAD Test] Transcription:', vadTestTranscription);
     } catch (err) {
       vadTestError = `${(err as Error).message}`;
       vadTestTranscription = '';
-      console.error('[VAD Test] Error:', err);
     } finally {
-      // Reset volume display
       vadTestVolume = 0;
     }
   }
@@ -707,38 +589,37 @@
   onMount(loadSettings);
 </script>
 
-<div class="voice-settings">
-  <h3 class="section-title">🎙️ Voice Settings</h3>
+<div class="p-6 max-w-[800px]">
+  <h3 class="text-2xl font-semibold text-gray-800 dark:text-gray-100 m-0 mb-6">🎙️ Voice Settings</h3>
 
   {#if loading}
-    <div class="loading">Loading voice settings...</div>
+    <div class="py-8 text-center text-gray-500">Loading voice settings...</div>
   {:else if error}
-    <div class="error-message">{error}</div>
+    <div class="p-3 bg-red-100 dark:bg-red-500/10 border border-red-500 rounded-lg text-red-600 dark:text-red-400 mb-4">{error}</div>
   {:else if config}
     {#if isGuest}
-      <div class="guest-notice">
+      <div class="p-4 bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-500/15 dark:to-indigo-500/15 border-2 border-blue-500 dark:border-blue-400 rounded-xl text-blue-800 dark:text-blue-300 mb-6 text-sm leading-relaxed text-center font-medium">
         👋 You're viewing these voice settings as a guest! You can test how the voice sounds, but only the profile owner can make changes. Feel free to explore and listen! 🎧
       </div>
     {/if}
     {#if successMessage}
-      <div class="success-message">{successMessage}</div>
+      <div class="p-3 bg-green-100 dark:bg-green-500/10 border border-emerald-500 rounded-lg text-emerald-600 dark:text-emerald-400 mb-4">{successMessage}</div>
     {/if}
 
     <!-- Provider Selection -->
-    <div class="setting-group">
-      <label>Voice Provider</label>
-      <div class="provider-grid">
+    <div class="mb-6">
+      <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Provider</label>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
         {#each providerEntries as [key, info]}
           <button
-            class="provider-card"
-            class:active={config.provider === key}
-            style="--provider-color: {info.color}"
+            class="p-5 border-2 rounded-xl bg-white dark:bg-gray-800 cursor-pointer transition-all text-center hover:translate-y-[-2px] hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed {config.provider === key ? 'bg-gradient-to-br from-violet-500/15 dark:from-violet-500/25' : 'border-gray-200 dark:border-gray-700'}"
+            style="border-color: {config.provider === key ? info.color : ''}; --provider-color: {info.color}"
             on:click={() => switchProvider(key)}
             disabled={saving}
           >
-            <div class="provider-icon">{info.icon}</div>
-            <div class="provider-name">{info.name}</div>
-            <div class="provider-desc">{info.description}</div>
+            <div class="text-3xl mb-2">{info.icon}</div>
+            <div class="font-semibold text-gray-800 dark:text-gray-100 mb-1">{info.name}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">{info.description}</div>
           </button>
         {/each}
       </div>
@@ -746,413 +627,227 @@
 
     <!-- Provider-Specific Settings -->
     {#if config.provider === 'piper' && config.piper}
-      <div class="provider-settings">
-        <h4>Piper Settings</h4>
+      <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Piper Settings</h4>
 
-        <div class="setting-group">
-          <label for="piper-voice">Voice Model</label>
-          <select id="piper-voice" bind:value={config.piper.currentVoice} disabled={saving}>
+        <div class="mb-6">
+          <label for="piper-voice" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Model</label>
+          <select id="piper-voice" bind:value={config.piper.currentVoice} disabled={saving} class="select-field">
             {#each config.piper.voices as voice}
               <option value={voice.id}>{voice.name} ({voice.language})</option>
             {/each}
           </select>
         </div>
 
-        <div class="setting-group">
-          <label for="piper-rate">
+        <div class="mb-6">
+          <label for="piper-rate" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">
             Speaking Rate: {config.piper.speakingRate.toFixed(2)}x
           </label>
-          <input
-            id="piper-rate"
-            type="range"
-            min="0.5"
-            max="2.0"
-            step="0.05"
-            bind:value={config.piper.speakingRate}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>Slower</span>
-            <span>Normal</span>
-            <span>Faster</span>
+          <input id="piper-rate" type="range" min="0.5" max="2.0" step="0.05" bind:value={config.piper.speakingRate} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>Slower</span><span>Normal</span><span>Faster</span>
           </div>
         </div>
 
-        <!-- Piper Test Section -->
-        <div class="provider-test-section">
-          <label for="piper-test-text">Test Piper Voice</label>
-          <textarea
-            id="piper-test-text"
-            bind:value={testText}
-            rows="2"
-            placeholder="Enter text to test Piper..."
-            disabled={testingVoice || saving}
-          ></textarea>
-          <button
-            class="test-button piper-test"
-            on:click={() => testVoice('piper')}
-            disabled={testingVoice || saving}
-          >
+        <div class="mt-6 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <label for="piper-test-text" class="block text-[0.95rem] font-semibold text-gray-800 dark:text-gray-100 mb-2">Test Piper Voice</label>
+          <textarea id="piper-test-text" bind:value={testText} rows="2" placeholder="Enter text to test Piper..." disabled={testingVoice || saving} class="input-field"></textarea>
+          <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-3 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => testVoice('piper')} disabled={testingVoice || saving}>
             {testingVoice ? '🔊 Playing...' : '▶️ Test Piper'}
           </button>
         </div>
       </div>
 
     {:else if config.provider === 'sovits' && config.sovits}
-      <div class="provider-settings">
-        <h4>GPT-SoVITS Settings</h4>
+      <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">GPT-SoVITS Settings</h4>
 
-        <div class="setting-group">
-          <label>Server Status</label>
-          <ServerStatusIndicator
-            serverName="GPT-SoVITS"
-            statusEndpoint="/api/sovits-server"
-            controlEndpoint="/api/sovits-server"
-            autoRefresh={true}
-            refreshInterval={15000}
-          />
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+          <ServerStatusIndicator serverName="GPT-SoVITS" statusEndpoint="/api/sovits-server" controlEndpoint="/api/sovits-server" autoRefresh={true} refreshInterval={15000} />
         </div>
 
-        <div class="setting-group">
-          <label for="sovits-url">Server URL</label>
-          <input
-            id="sovits-url"
-            type="text"
-            bind:value={config.sovits.serverUrl}
-            disabled={saving}
-          />
+        <div class="mb-6">
+          <label for="sovits-url" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server URL</label>
+          <input id="sovits-url" type="text" bind:value={config.sovits.serverUrl} disabled={saving} class="input-field" />
         </div>
 
-        <div class="setting-group">
-          <label for="sovits-speaker">Speaker ID</label>
-          <input
-            id="sovits-speaker"
-            type="text"
-            bind:value={config.sovits.speakerId}
-            placeholder="default"
-            disabled={saving}
-          />
+        <div class="mb-6">
+          <label for="sovits-speaker" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speaker ID</label>
+          <input id="sovits-speaker" type="text" bind:value={config.sovits.speakerId} placeholder="default" disabled={saving} class="input-field" />
         </div>
 
-        <div class="setting-group">
-          <label for="sovits-temp">
-            Temperature: {config.sovits.temperature.toFixed(2)}
-          </label>
-          <input
-            id="sovits-temp"
-            type="range"
-            min="0.1"
-            max="1.0"
-            step="0.05"
-            bind:value={config.sovits.temperature}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>Stable</span>
-            <span>Balanced</span>
-            <span>Creative</span>
+        <div class="mb-6">
+          <label for="sovits-temp" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Temperature: {config.sovits.temperature.toFixed(2)}</label>
+          <input id="sovits-temp" type="range" min="0.1" max="1.0" step="0.05" bind:value={config.sovits.temperature} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>Stable</span><span>Balanced</span><span>Creative</span>
           </div>
         </div>
 
-        <div class="setting-group">
-          <label for="sovits-speed">
-            Speed: {config.sovits.speed.toFixed(2)}x
-          </label>
-          <input
-            id="sovits-speed"
-            type="range"
-            min="0.5"
-            max="2.0"
-            step="0.05"
-            bind:value={config.sovits.speed}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>Slower</span>
-            <span>Normal</span>
-            <span>Faster</span>
+        <div class="mb-6">
+          <label for="sovits-speed" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speed: {config.sovits.speed.toFixed(2)}x</label>
+          <input id="sovits-speed" type="range" min="0.5" max="2.0" step="0.05" bind:value={config.sovits.speed} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>Slower</span><span>Normal</span><span>Faster</span>
           </div>
         </div>
 
-        <div class="setting-group">
-          <label class="checkbox-label">
+        <div class="mb-6">
+          <label class="flex items-center gap-2 cursor-pointer font-normal">
             <input type="checkbox" bind:checked={config.sovits.autoFallbackToPiper} disabled={saving} />
             Auto-fallback to Piper if unavailable
           </label>
         </div>
 
-        <div class="setting-group">
-          <label>Reference Audio Management</label>
-          <p class="hint">Generate reference.wav from the latest recorded sample in your voice profile.</p>
-          <button
-            class="btn-generate-reference"
-            on:click={generateReference}
-            disabled={generatingReference || saving}
-          >
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Reference Audio Management</label>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Generate reference.wav from the latest recorded sample in your voice profile.</p>
+          <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-2 bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={generateReference} disabled={generatingReference || saving}>
             {generatingReference ? '🔄 Generating...' : '🎯 Generate Reference Audio'}
           </button>
         </div>
 
-        <!-- SoVITS Test Section -->
-        <div class="provider-test-section">
-          <label for="sovits-test-text">Test Cloned Voice</label>
-          <textarea
-            id="sovits-test-text"
-            bind:value={testText}
-            rows="2"
-            placeholder="Enter text to test your cloned voice..."
-            disabled={testingVoice || saving}
-          ></textarea>
-          <button
-            class="test-button sovits-test"
-            on:click={() => testVoice('sovits')}
-            disabled={testingVoice || saving}
-          >
+        <div class="mt-6 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <label for="sovits-test-text" class="block text-[0.95rem] font-semibold text-gray-800 dark:text-gray-100 mb-2">Test Cloned Voice</label>
+          <textarea id="sovits-test-text" bind:value={testText} rows="2" placeholder="Enter text to test your cloned voice..." disabled={testingVoice || saving} class="input-field"></textarea>
+          <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-3 bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => testVoice('sovits')} disabled={testingVoice || saving}>
             {testingVoice ? '🔊 Playing...' : '▶️ Test SoVITS'}
           </button>
         </div>
       </div>
 
     {:else if config.provider === 'rvc' && config.rvc}
-      <div class="provider-settings">
-        <h4>RVC Settings</h4>
+      <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">RVC Settings</h4>
 
-        <div class="setting-group">
-          <label>Server Status</label>
-          <ServerStatusIndicator
-            serverName="RVC"
-            statusEndpoint="/api/rvc-server"
-            controlEndpoint="/api/rvc-server"
-            autoRefresh={true}
-            refreshInterval={15000}
-          />
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+          <ServerStatusIndicator serverName="RVC" statusEndpoint="/api/rvc-server" controlEndpoint="/api/rvc-server" autoRefresh={true} refreshInterval={15000} />
         </div>
 
-        <div class="setting-group">
-          <label for="rvc-speaker">Voice Model</label>
+        <div class="mb-6">
+          <label for="rvc-speaker" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Model</label>
           {#if config.rvc.speakers && config.rvc.speakers.length > 0}
-            <select
-              id="rvc-speaker"
-              bind:value={config.rvc.speakerId}
-              disabled={saving}
-            >
+            <select id="rvc-speaker" bind:value={config.rvc.speakerId} disabled={saving} class="select-field">
               {#each config.rvc.speakers as speaker}
-                <option value={speaker.id}>
-                  {speaker.name} {speaker.hasIndex ? '✓' : ''}
-                </option>
+                <option value={speaker.id}>{speaker.name} {speaker.hasIndex ? '✓' : ''}</option>
               {/each}
             </select>
-            <p class="hint">Select a trained voice model. ✓ indicates index file available for better quality.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Select a trained voice model. ✓ indicates index file available for better quality.</p>
           {:else}
-            <input
-              id="rvc-speaker"
-              type="text"
-              bind:value={config.rvc.speakerId}
-              placeholder="default"
-              disabled={saving}
-            />
-            <p class="hint">No trained models found. Train a model first or enter speaker ID manually.</p>
+            <input id="rvc-speaker" type="text" bind:value={config.rvc.speakerId} placeholder="default" disabled={saving} class="input-field" />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">No trained models found. Train a model first or enter speaker ID manually.</p>
           {/if}
         </div>
 
-        <div class="setting-group">
-          <label for="rvc-pitch">
-            Pitch Shift: {config.rvc.pitchShift > 0 ? '+' : ''}{config.rvc.pitchShift} semitones
-          </label>
-          <input
-            id="rvc-pitch"
-            type="range"
-            min="-12"
-            max="12"
-            step="1"
-            bind:value={config.rvc.pitchShift}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>-12 (Lower)</span>
-            <span>0 (Normal)</span>
-            <span>+12 (Higher)</span>
+        <div class="mb-6">
+          <label for="rvc-pitch" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Pitch Shift: {config.rvc.pitchShift > 0 ? '+' : ''}{config.rvc.pitchShift} semitones</label>
+          <input id="rvc-pitch" type="range" min="-12" max="12" step="1" bind:value={config.rvc.pitchShift} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>-12 (Lower)</span><span>0 (Normal)</span><span>+12 (Higher)</span>
           </div>
         </div>
 
-        <div class="setting-group">
-          <label for="rvc-speed">
-            Speed: {config.rvc.speed.toFixed(2)}x
-          </label>
-          <input
-            id="rvc-speed"
-            type="range"
-            min="0.5"
-            max="2.0"
-            step="0.05"
-            bind:value={config.rvc.speed}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>Slower</span>
-            <span>Normal</span>
-            <span>Faster</span>
+        <div class="mb-6">
+          <label for="rvc-speed" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speed: {config.rvc.speed.toFixed(2)}x</label>
+          <input id="rvc-speed" type="range" min="0.5" max="2.0" step="0.05" bind:value={config.rvc.speed} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>Slower</span><span>Normal</span><span>Faster</span>
           </div>
         </div>
 
         <!-- Advanced Quality Settings -->
-        <div class="advanced-settings">
-          <h5 style="margin: 1rem 0 0.5rem 0; color: #6b7280; font-size: 0.875rem;">⚙️ Advanced Quality Settings</h5>
+        <div class="my-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <h5 class="my-2 text-gray-500 dark:text-gray-400 text-sm font-semibold">⚙️ Advanced Quality Settings</h5>
 
-          <div class="setting-group">
-            <label for="rvc-index-rate">
-              Index Rate: {(config.rvc.indexRate ?? 1.0).toFixed(2)}
-            </label>
-            <input
-              id="rvc-index-rate"
-              type="range"
-              min="0.0"
-              max="1.0"
-              step="0.05"
-              bind:value={config.rvc.indexRate}
-              disabled={saving}
-            />
-            <p class="hint">Voice retrieval strength (higher = more voice characteristics, 1.0 recommended)</p>
+          <div class="mb-6">
+            <label for="rvc-index-rate" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Index Rate: {(config.rvc.indexRate ?? 1.0).toFixed(2)}</label>
+            <input id="rvc-index-rate" type="range" min="0.0" max="1.0" step="0.05" bind:value={config.rvc.indexRate} disabled={saving} class="range-slider" />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Voice retrieval strength (higher = more voice characteristics, 1.0 recommended)</p>
           </div>
 
-          <div class="setting-group">
-            <label for="rvc-volume-envelope">
-              Volume Envelope: {(config.rvc.volumeEnvelope ?? 0.0).toFixed(2)}
-            </label>
-            <input
-              id="rvc-volume-envelope"
-              type="range"
-              min="0.0"
-              max="1.0"
-              step="0.05"
-              bind:value={config.rvc.volumeEnvelope}
-              disabled={saving}
-            />
-            <p class="hint">RMS mix rate (0.0 = pure conversion, 1.0 = blend with original)</p>
+          <div class="mb-6">
+            <label for="rvc-volume-envelope" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Volume Envelope: {(config.rvc.volumeEnvelope ?? 0.0).toFixed(2)}</label>
+            <input id="rvc-volume-envelope" type="range" min="0.0" max="1.0" step="0.05" bind:value={config.rvc.volumeEnvelope} disabled={saving} class="range-slider" />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">RMS mix rate (0.0 = pure conversion, 1.0 = blend with original)</p>
           </div>
 
-          <div class="setting-group">
-            <label for="rvc-protect">
-              Consonant Protection: {(config.rvc.protect ?? 0.15).toFixed(2)}
-            </label>
-            <input
-              id="rvc-protect"
-              type="range"
-              min="0.0"
-              max="0.5"
-              step="0.01"
-              bind:value={config.rvc.protect}
-              disabled={saving}
-            />
-            <p class="hint">Protect voiceless consonants (0.15-0.20 recommended for clarity)</p>
+          <div class="mb-6">
+            <label for="rvc-protect" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Consonant Protection: {(config.rvc.protect ?? 0.15).toFixed(2)}</label>
+            <input id="rvc-protect" type="range" min="0.0" max="0.5" step="0.01" bind:value={config.rvc.protect} disabled={saving} class="range-slider" />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Protect voiceless consonants (0.15-0.20 recommended for clarity)</p>
           </div>
 
-          <div class="setting-group">
-            <label for="rvc-f0-method">Pitch Detection Method</label>
-            <select
-              id="rvc-f0-method"
-              bind:value={config.rvc.f0Method}
-              disabled={saving}
-            >
+          <div class="mb-6">
+            <label for="rvc-f0-method" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Pitch Detection Method</label>
+            <select id="rvc-f0-method" bind:value={config.rvc.f0Method} disabled={saving} class="select-field">
               <option value="rmvpe">RMVPE (Recommended)</option>
               <option value="crepe">CREPE (High Quality)</option>
               <option value="harvest">Harvest (Fast)</option>
               <option value="dio">DIO (Fastest)</option>
             </select>
-            <p class="hint">RMVPE is the most accurate for most voices</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">RMVPE is the most accurate for most voices</p>
           </div>
 
-          <div class="setting-group">
-            <label for="rvc-device">Device for Inference</label>
-            <select
-              id="rvc-device"
-              bind:value={config.rvc.device}
-              disabled={saving}
-            >
+          <div class="mb-6">
+            <label for="rvc-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Device for Inference</label>
+            <select id="rvc-device" bind:value={config.rvc.device} disabled={saving} class="select-field">
               <option value="cuda">GPU (CUDA) - Faster</option>
               <option value="cpu">CPU - Slower, no GPU conflicts</option>
             </select>
-            <p class="hint" style="color: #f59e0b; font-weight: 500;">
-              ⚠️ Restart server required: Device changes only take effect after restarting the RVC server (use the restart button in Server Status above).
-            </p>
-            <p class="hint">
-              CPU mode eliminates GPU VRAM conflicts with Ollama but is 10-40x slower.
-              Recommended: GPU (CUDA) for conversation, CPU only if GPU unavailable.
-            </p>
+            <p class="mt-2 text-xs text-amber-500 font-medium">⚠️ Restart server required: Device changes only take effect after restarting the RVC server.</p>
           </div>
 
-          <div class="quality-tips">
-            <strong>💡 Quality Tips:</strong>
-            <ul>
-              <li>For grainy voice: Keep Index Rate at 1.0, Volume Envelope at 0.0</li>
-              <li>For robotic voice: Increase Consonant Protection to 0.20-0.25</li>
-              <li>For muffled voice: Decrease Consonant Protection to 0.10-0.15</li>
-              <li>Test after each adjustment to hear the difference</li>
+          <div class="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 border-l-[3px] border-blue-500 rounded text-sm">
+            <strong class="text-gray-800 dark:text-gray-100">💡 Quality Tips:</strong>
+            <ul class="mt-2 pl-5 text-gray-700 dark:text-gray-300">
+              <li class="my-1">For grainy voice: Keep Index Rate at 1.0, Volume Envelope at 0.0</li>
+              <li class="my-1">For robotic voice: Increase Consonant Protection to 0.20-0.25</li>
+              <li class="my-1">For muffled voice: Decrease Consonant Protection to 0.10-0.15</li>
+              <li class="my-1">Test after each adjustment to hear the difference</li>
             </ul>
           </div>
         </div>
 
-        <div class="setting-group">
-          <label class="checkbox-label">
+        <div class="mb-6">
+          <label class="flex items-center gap-2 cursor-pointer font-normal">
             <input type="checkbox" bind:checked={config.rvc.autoFallbackToPiper} disabled={saving} />
             Auto-fallback to Piper if model unavailable
           </label>
         </div>
 
-        <!-- RVC Test Section -->
-        <div class="provider-test-section">
-          <label for="rvc-test-text">Test RVC Voice</label>
-          <textarea
-            id="rvc-test-text"
-            bind:value={testText}
-            rows="2"
-            placeholder="Enter text to test RVC voice conversion..."
-            disabled={testingVoice || saving}
-          ></textarea>
-          <button
-            class="test-button rvc-test"
-            on:click={() => testVoice('rvc')}
-            disabled={testingVoice || saving}
-          >
+        <div class="mt-6 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <label for="rvc-test-text" class="block text-[0.95rem] font-semibold text-gray-800 dark:text-gray-100 mb-2">Test RVC Voice</label>
+          <textarea id="rvc-test-text" bind:value={testText} rows="2" placeholder="Enter text to test RVC voice conversion..." disabled={testingVoice || saving} class="input-field"></textarea>
+          <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-3 bg-violet-500 text-white hover:bg-violet-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => testVoice('rvc')} disabled={testingVoice || saving}>
             {testingVoice ? '🔊 Playing...' : '▶️ Test RVC'}
           </button>
         </div>
       </div>
 
     {:else if config.provider === 'kokoro' && config.kokoro}
-      <div class="provider-settings">
-        <h4>Kokoro TTS Settings</h4>
+      <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Kokoro TTS Settings</h4>
 
-        <div class="setting-group">
-          <label>Server Status</label>
-          <ServerStatusIndicator
-            serverName="Kokoro"
-            statusEndpoint="/api/kokoro-server"
-            controlEndpoint="/api/kokoro-server"
-            autoRefresh={true}
-            refreshInterval={15000}
-          />
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+          <ServerStatusIndicator serverName="Kokoro" statusEndpoint="/api/kokoro-server" controlEndpoint="/api/kokoro-server" autoRefresh={true} refreshInterval={15000} />
         </div>
 
-        <div class="setting-group">
-          <label for="kokoro-voice">Voice</label>
-          <select id="kokoro-voice" bind:value={config.kokoro.voice} disabled={saving}>
+        <div class="mb-6">
+          <label for="kokoro-voice" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice</label>
+          <select id="kokoro-voice" bind:value={config.kokoro.voice} disabled={saving} class="select-field">
             {#if config.kokoro.voices && config.kokoro.voices.length > 0}
-              <!-- Built-in voices -->
               <optgroup label="Built-in Voices">
                 {#each config.kokoro.voices.filter(v => !v.isCustom) as voice}
-                  <option value={voice.id}>
-                    {voice.name} ({voice.lang}, {voice.gender}, {voice.quality})
-                  </option>
+                  <option value={voice.id}>{voice.name} ({voice.lang}, {voice.gender}, {voice.quality})</option>
                 {/each}
               </optgroup>
-              <!-- Custom voicepacks -->
               {#if config.kokoro.voices.some(v => v.isCustom)}
                 <optgroup label="Custom Voicepacks">
                   {#each config.kokoro.voices.filter(v => v.isCustom) as voice}
-                    <option value={voice.id}>
-                      {voice.name}
-                    </option>
+                    <option value={voice.id}>{voice.name}</option>
                   {/each}
                 </optgroup>
               {/if}
@@ -1164,7 +859,7 @@
               <option value="am_michael">Michael (English, Male, High)</option>
             {/if}
           </select>
-          <p class="hint">
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
             {#if config.kokoro.voices?.some(v => v.isCustom)}
               Choose from 54 built-in voices or your custom trained voicepacks
             {:else}
@@ -1173,9 +868,9 @@
           </p>
         </div>
 
-        <div class="setting-group">
-          <label for="kokoro-lang">Language Code</label>
-          <select id="kokoro-lang" bind:value={config.kokoro.langCode} disabled={saving}>
+        <div class="mb-6">
+          <label for="kokoro-lang" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Language Code</label>
+          <select id="kokoro-lang" bind:value={config.kokoro.langCode} disabled={saving} class="select-field">
             <option value="a">Auto-detect</option>
             <option value="en">English</option>
             <option value="ja">Japanese</option>
@@ -1185,134 +880,99 @@
             <option value="de">German</option>
             <option value="ko">Korean</option>
           </select>
-          <p class="hint">Language for text processing (auto-detect recommended)</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Language for text processing (auto-detect recommended)</p>
         </div>
 
-        <div class="setting-group">
-          <label for="kokoro-speed">
-            Speed: {config.kokoro.speed.toFixed(2)}x
-          </label>
-          <input
-            id="kokoro-speed"
-            type="range"
-            min="0.5"
-            max="2.0"
-            step="0.05"
-            bind:value={config.kokoro.speed}
-            disabled={saving}
-          />
-          <div class="range-labels">
-            <span>Slower</span>
-            <span>Normal</span>
-            <span>Faster</span>
+        <div class="mb-6">
+          <label for="kokoro-speed" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speed: {config.kokoro.speed.toFixed(2)}x</label>
+          <input id="kokoro-speed" type="range" min="0.5" max="2.0" step="0.05" bind:value={config.kokoro.speed} disabled={saving} class="range-slider" />
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span>Slower</span><span>Normal</span><span>Faster</span>
           </div>
         </div>
 
-        <div class="setting-group">
-          <label for="kokoro-device">Device for Inference</label>
-          <select
-            id="kokoro-device"
-            bind:value={config.kokoro.device}
-            disabled={saving}
-          >
+        <div class="mb-6">
+          <label for="kokoro-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Device for Inference</label>
+          <select id="kokoro-device" bind:value={config.kokoro.device} disabled={saving} class="select-field">
             <option value="cpu">CPU - Fast & no GPU conflicts</option>
             <option value="cuda">GPU (CUDA) - Faster (requires GPU)</option>
           </select>
-          <p class="hint">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
         </div>
 
-        <div class="setting-group">
-          <label class="checkbox-label">
-            <input
-              type="checkbox"
-              bind:checked={config.kokoro.useCustomVoicepack}
-              disabled={saving}
-            />
+        <div class="mb-6">
+          <label class="flex items-center gap-2 cursor-pointer font-normal">
+            <input type="checkbox" bind:checked={config.kokoro.useCustomVoicepack} disabled={saving} />
             <span>Use Custom Voicepack</span>
           </label>
-          <p class="hint">Enable to use your trained voicepack instead of built-in voices. Disable to use the voice selected in the dropdown above.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Enable to use your trained voicepack instead of built-in voices.</p>
         </div>
 
         {#if config.kokoro.useCustomVoicepack}
-          <div class="setting-group">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                bind:checked={config.kokoro.normalizeCustomVoicepacks}
-                disabled={saving}
-              />
+          <div class="mb-6">
+            <label class="flex items-center gap-2 cursor-pointer font-normal">
+              <input type="checkbox" bind:checked={config.kokoro.normalizeCustomVoicepacks} disabled={saving} />
               <span>Normalize Custom Voicepack Volume</span>
             </label>
-            <p class="hint">Automatically boost quiet custom voicepacks to -3dB peak. Enable if your voicepack sounds too quiet.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Automatically boost quiet custom voicepacks to -3dB peak.</p>
           </div>
         {/if}
 
-        <div class="setting-group">
-          <label class="checkbox-label">
+        <div class="mb-6">
+          <label class="flex items-center gap-2 cursor-pointer font-normal">
             <input type="checkbox" bind:checked={config.kokoro.autoFallbackToPiper} disabled={saving} />
             Auto-fallback to Piper if unavailable
           </label>
         </div>
 
-        <!-- Kokoro Test Section -->
-        <div class="provider-test-section">
-          <label for="kokoro-test-text">Test Kokoro Voice</label>
-          <textarea
-            id="kokoro-test-text"
-            bind:value={testText}
-            rows="2"
-            placeholder="Enter text to test Kokoro synthesis..."
-            disabled={testingVoice || saving}
-          ></textarea>
-          <button
-            class="test-button kokoro-test"
-            on:click={() => testVoice('kokoro')}
-            disabled={testingVoice || saving}
-          >
+        <div class="mt-6 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <label for="kokoro-test-text" class="block text-[0.95rem] font-semibold text-gray-800 dark:text-gray-100 mb-2">Test Kokoro Voice</label>
+          <textarea id="kokoro-test-text" bind:value={testText} rows="2" placeholder="Enter text to test Kokoro synthesis..." disabled={testingVoice || saving} class="input-field"></textarea>
+          <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-3 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => testVoice('kokoro')} disabled={testingVoice || saving}>
             {testingVoice ? '🔊 Playing...' : '▶️ Test Kokoro'}
           </button>
         </div>
       </div>
     {/if}
 
-    <!-- STT (Speech-to-Text) Settings -->
+    <!-- STT Settings -->
     {#if config.stt}
-      <div class="stt-section">
-        <h4 class="subsection-title">🎤 Speech-to-Text (Whisper)</h4>
+      <div class="mt-8 p-6 bg-gray-50 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl">
+        <h4 class="text-xl font-semibold text-gray-800 dark:text-gray-100 m-0 mb-5">🎤 Speech-to-Text (Whisper)</h4>
 
-        <div class="setting-group">
-          <label>Model Size</label>
-          <select bind:value={config.stt.model} disabled={saving}>
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Model Size</label>
+          <select bind:value={config.stt.model} disabled={saving} class="select-field">
             <option value="tiny.en">Tiny (~75MB, fastest)</option>
             <option value="base.en">Base (~140MB, balanced)</option>
             <option value="small.en">Small (~460MB, more accurate)</option>
             <option value="medium.en">Medium (~1.5GB, most accurate)</option>
           </select>
-          <p class="hint">Smaller models are faster but less accurate. GPU recommended for medium/large models.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Smaller models are faster but less accurate. GPU recommended for medium/large models.</p>
         </div>
 
-        <div class="setting-group">
-          <label>Processing Device</label>
-          <select bind:value={config.stt.device} disabled={saving}>
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Processing Device</label>
+          <select bind:value={config.stt.device} disabled={saving} class="select-field">
             <option value="cpu">CPU</option>
             <option value="cuda">GPU (CUDA)</option>
           </select>
-          <p class="hint">GPU processing is 10-50x faster than CPU. Requires NVIDIA GPU with CUDA support.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">GPU processing is 10-50x faster than CPU. Requires NVIDIA GPU with CUDA support.</p>
         </div>
 
-        <div class="setting-group">
-          <label>Compute Type</label>
-          <select bind:value={config.stt.computeType} disabled={saving}>
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Compute Type</label>
+          <select bind:value={config.stt.computeType} disabled={saving} class="select-field">
             <option value="int8">INT8 (fastest, CPU-friendly)</option>
             <option value="float16">FLOAT16 (balanced, GPU-optimized)</option>
             <option value="float32">FLOAT32 (highest precision)</option>
           </select>
-          <p class="hint">Use INT8 for CPU, FLOAT16 for GPU. FLOAT32 only if precision is critical.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Use INT8 for CPU, FLOAT16 for GPU. FLOAT32 only if precision is critical.</p>
         </div>
 
-        <div class="setting-group">
-          <label>Language</label>
-          <select bind:value={config.stt.language} disabled={saving}>
+        <div class="mb-6">
+          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Language</label>
+          <select bind:value={config.stt.language} disabled={saving} class="select-field">
             <option value="en">English</option>
             <option value="es">Spanish</option>
             <option value="fr">French</option>
@@ -1325,79 +985,65 @@
           </select>
         </div>
 
-        <div class="setting-group">
-          <label class="checkbox-label">
+        <div class="mb-6">
+          <label class="flex items-center gap-2 cursor-pointer font-normal">
             <input type="checkbox" bind:checked={config.stt.useServer} disabled={saving} />
             Use persistent Whisper server (recommended)
           </label>
-          <p class="hint">Persistent server keeps model in memory for instant transcription (~1-3 second speedup per request)</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Persistent server keeps model in memory for instant transcription</p>
         </div>
 
         {#if config.stt.useServer}
-          <div class="setting-group">
-            <label class="checkbox-label">
+          <div class="mb-6">
+            <label class="flex items-center gap-2 cursor-pointer font-normal">
               <input type="checkbox" bind:checked={config.stt.autoStart} disabled={saving} />
               Auto-start server on boot
             </label>
-            <p class="hint">Automatically start Whisper server when MetaHuman starts</p>
           </div>
 
-          <div class="setting-group">
-            <label>Server Status</label>
-            <ServerStatusIndicator
-              serverName="Whisper STT"
-              statusEndpoint="/api/whisper-server"
-              controlEndpoint="/api/whisper-server"
-              autoRefresh={true}
-              refreshInterval={15000}
-            />
+          <div class="mb-6">
+            <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+            <ServerStatusIndicator serverName="Whisper STT" statusEndpoint="/api/whisper-server" controlEndpoint="/api/whisper-server" autoRefresh={true} refreshInterval={15000} />
           </div>
         {/if}
 
-        <!-- Native Device Voice Mode - Only shown in Capacitor Android app -->
         {#if isCapacitorApp}
-          <div class="native-voice-section">
-            <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">📱 Native Device Voice Mode</h5>
+          <div class="mt-8 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+            <h5 class="my-4 text-gray-500 dark:text-gray-400 text-base font-semibold">📱 Native Device Voice Mode</h5>
 
-            <div class="setting-group">
-              <label class="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={nativeVoiceModeEnabled}
-                  on:change={(e) => {
-                    nativeVoiceModeEnabled = e.currentTarget.checked;
-                    localStorage.setItem('mh-native-voice-mode', nativeVoiceModeEnabled ? 'true' : 'false');
-                    // Dispatch event to notify other components
-                    window.dispatchEvent(new CustomEvent('voice-settings-updated'));
-                  }}
-                  disabled={saving}
-                />
+            <div class="mb-6">
+              <label class="flex items-center gap-2 cursor-pointer font-normal">
+                <input type="checkbox" checked={nativeVoiceModeEnabled} on:change={(e) => {
+                  nativeVoiceModeEnabled = e.currentTarget.checked;
+                  localStorage.setItem('mh-native-voice-mode', nativeVoiceModeEnabled ? 'true' : 'false');
+                  window.dispatchEvent(new CustomEvent('voice-settings-updated'));
+                }} disabled={saving} />
                 Use device's built-in voice (faster, works offline)
               </label>
-              <p class="hint">
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {#if nativeVoiceModeEnabled}
-                  <strong style="color: #10b981;">✓ Native Mode Active</strong> - Using your device's speech recognition and text-to-speech. Faster response, no network needed, but uses generic device voice.
+                  <strong class="text-emerald-500">✓ Native Mode Active</strong> - Using your device's speech recognition and text-to-speech.
                 {:else}
-                  <strong>Remote Mode Active</strong> - Using server-based Whisper (STT) and your custom trained voice (TTS). More accurate transcription and personalized voice, but requires network.
+                  <strong>Remote Mode Active</strong> - Using server-based Whisper (STT) and your custom trained voice (TTS).
                 {/if}
               </p>
-              <div class="native-voice-comparison">
-                <div class="comparison-item">
-                  <strong>Native Device:</strong>
-                  <ul>
-                    <li>⚡ Instant response</li>
-                    <li>📴 Works offline</li>
-                    <li>🔋 Lower battery usage</li>
-                    <li>🗣️ Generic device voice</li>
+              <div class="grid grid-cols-2 gap-4 mt-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm">
+                <div>
+                  <strong class="block mb-2 text-gray-700 dark:text-gray-100">Native Device:</strong>
+                  <ul class="m-0 pl-5 text-gray-500 dark:text-gray-400">
+                    <li class="my-1">⚡ Instant response</li>
+                    <li class="my-1">📴 Works offline</li>
+                    <li class="my-1">🔋 Lower battery usage</li>
+                    <li class="my-1">🗣️ Generic device voice</li>
                   </ul>
                 </div>
-                <div class="comparison-item">
-                  <strong>Remote Server:</strong>
-                  <ul>
-                    <li>🎯 More accurate STT (Whisper)</li>
-                    <li>🎭 Custom trained voice</li>
-                    <li>🌐 Requires network</li>
-                    <li>⏱️ ~1-2s latency</li>
+                <div>
+                  <strong class="block mb-2 text-gray-700 dark:text-gray-100">Remote Server:</strong>
+                  <ul class="m-0 pl-5 text-gray-500 dark:text-gray-400">
+                    <li class="my-1">🎯 More accurate STT (Whisper)</li>
+                    <li class="my-1">🎭 Custom trained voice</li>
+                    <li class="my-1">🌐 Requires network</li>
+                    <li class="my-1">⏱️ ~1-2s latency</li>
                   </ul>
                 </div>
               </div>
@@ -1405,150 +1051,91 @@
           </div>
         {/if}
 
-        <!-- Hardware Controls -->
-        <div class="hardware-controls-section">
-          <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">🎧 Hardware Button Capture</h5>
+        <div class="mt-8 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <h5 class="my-4 text-gray-500 dark:text-gray-400 text-base font-semibold">🎧 Hardware Button Capture</h5>
 
-          <div class="setting-group">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                checked={hardwareButtonsEnabled}
-                on:change={(e) => {
-                  hardwareButtonsEnabled = e.currentTarget.checked;
-                  localStorage.setItem('mh-hardware-buttons', hardwareButtonsEnabled ? 'true' : 'false');
-                }}
-                disabled={saving}
-              />
+          <div class="mb-6">
+            <label class="flex items-center gap-2 cursor-pointer font-normal">
+              <input type="checkbox" checked={hardwareButtonsEnabled} on:change={(e) => {
+                hardwareButtonsEnabled = e.currentTarget.checked;
+                localStorage.setItem('mh-hardware-buttons', hardwareButtonsEnabled ? 'true' : 'false');
+              }} disabled={saving} />
               Enable earbud/headphone button capture
             </label>
-            <p class="hint">Allows play/pause buttons on Bluetooth earbuds and headphones to trigger voice input. Creates a background audio session.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Allows play/pause buttons on Bluetooth earbuds and headphones to trigger voice input.</p>
           </div>
         </div>
 
-        <!-- VAD Settings -->
-        <div class="vad-settings-section">
-          <h5 style="margin: 1.5rem 0 1rem 0; color: #6b7280; font-size: 1rem; font-weight: 600;">⚙️ Voice Activity Detection Settings</h5>
+        <div class="mt-8 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+          <h5 class="my-4 text-gray-500 dark:text-gray-400 text-base font-semibold">⚙️ Voice Activity Detection Settings</h5>
 
-          <div class="setting-group">
-            <label for="vad-threshold">
-              Voice Threshold: {config.stt.vad?.voiceThreshold ?? 12}
-            </label>
-            <input
-              id="vad-threshold"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              bind:value={config.stt.vad.voiceThreshold}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>0 (Very Sensitive)</span>
-              <span>50</span>
-              <span>100 (Less Sensitive)</span>
+          <div class="mb-6">
+            <label for="vad-threshold" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Threshold: {config.stt.vad?.voiceThreshold ?? 12}</label>
+            <input id="vad-threshold" type="range" min="0" max="100" step="1" bind:value={config.stt.vad.voiceThreshold} disabled={saving} class="range-slider" />
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <span>0 (Very Sensitive)</span><span>50</span><span>100 (Less Sensitive)</span>
             </div>
-            <p class="hint">How loud audio needs to be to register as speech. Lower = more sensitive to quiet speech.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">How loud audio needs to be to register as speech.</p>
           </div>
 
-          <div class="setting-group">
-            <label for="vad-silence-delay">
-              Silence Delay: {(config.stt.vad?.silenceDelay ?? 5000) / 1000} seconds
-            </label>
-            <input
-              id="vad-silence-delay"
-              type="range"
-              min="1000"
-              max="30000"
-              step="500"
-              bind:value={config.stt.vad.silenceDelay}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>1s (Quick)</span>
-              <span>15s</span>
-              <span>30s (Patient)</span>
+          <div class="mb-6">
+            <label for="vad-silence-delay" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Silence Delay: {(config.stt.vad?.silenceDelay ?? 5000) / 1000} seconds</label>
+            <input id="vad-silence-delay" type="range" min="1000" max="30000" step="500" bind:value={config.stt.vad.silenceDelay} disabled={saving} class="range-slider" />
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <span>1s (Quick)</span><span>15s</span><span>30s (Patient)</span>
             </div>
-            <p class="hint">How long to wait in silence before auto-stopping. Higher = allows longer pauses mid-sentence.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">How long to wait in silence before auto-stopping.</p>
           </div>
 
-          <div class="setting-group">
-            <label for="vad-min-duration">
-              Minimum Duration: {config.stt.vad?.minDuration ?? 500}ms
-            </label>
-            <input
-              id="vad-min-duration"
-              type="range"
-              min="100"
-              max="5000"
-              step="100"
-              bind:value={config.stt.vad.minDuration}
-              disabled={saving}
-            />
-            <div class="range-labels">
-              <span>100ms (Short)</span>
-              <span>2.5s</span>
-              <span>5s (Long)</span>
+          <div class="mb-6">
+            <label for="vad-min-duration" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Minimum Duration: {config.stt.vad?.minDuration ?? 500}ms</label>
+            <input id="vad-min-duration" type="range" min="100" max="5000" step="100" bind:value={config.stt.vad.minDuration} disabled={saving} class="range-slider" />
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <span>100ms (Short)</span><span>2.5s</span><span>5s (Long)</span>
             </div>
-            <p class="hint">Minimum recording length to prevent accidental clicks from triggering transcription.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Minimum recording length to prevent accidental clicks.</p>
           </div>
 
           <!-- VAD Test Recorder -->
-          <div class="vad-test-section">
-            <label>Test Voice Detection</label>
-            <p class="hint">Click to start recording. Speak naturally, and the system will auto-stop after silence using your current settings.</p>
+          <div class="mt-6 p-6 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-500 dark:border-blue-400 rounded-xl">
+            <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Test Voice Detection</label>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Click to start recording. Speak naturally, and the system will auto-stop after silence.</p>
 
             {#if !vadTestRecording}
-              <button
-                class="test-button vad-start"
-                on:click={startVADTest}
-                disabled={saving}
-              >
+              <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-3 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={startVADTest} disabled={saving}>
                 🎤 Start VAD Test
               </button>
             {:else}
-              <div class="vad-test-active">
-                <div class="vad-volume-meter">
-                  <div class="vad-volume-label">
+              <div class="flex flex-col gap-4">
+                <div class="flex flex-col gap-2">
+                  <div class="text-sm font-semibold text-gray-800 dark:text-gray-100 flex justify-between items-center">
                     Volume: {vadTestVolume.toFixed(0)}
                     {#if vadTestSpeaking}
-                      <span class="speaking-indicator">🔴 SPEAKING</span>
+                      <span class="text-red-500 font-bold animate-pulse">🔴 SPEAKING</span>
                     {:else}
-                      <span class="silence-indicator">⚪ Silence</span>
+                      <span class="text-gray-400">⚪ Silence</span>
                     {/if}
                   </div>
-                  <div class="vad-volume-bar">
-                    <div
-                      class="vad-volume-fill"
-                      class:speaking={vadTestSpeaking}
-                      style="width: {vadTestVolume}%"
-                    ></div>
-                    <div
-                      class="vad-threshold-marker"
-                      style="left: {config.stt.vad?.voiceThreshold ?? 12}%"
-                    ></div>
+                  <div class="relative h-10 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden">
+                    <div class="h-full transition-[width] duration-100 {vadTestSpeaking ? 'bg-gradient-to-r from-red-500 to-red-400' : 'bg-gradient-to-r from-blue-500 to-blue-400'}" style="width: {vadTestVolume}%"></div>
+                    <div class="absolute top-0 bottom-0 w-[3px] bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" style="left: {config.stt.vad?.voiceThreshold ?? 12}%"></div>
                   </div>
                 </div>
-                <button
-                  class="test-button vad-cancel"
-                  on:click={cancelVADTest}
-                >
+                <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600" on:click={cancelVADTest}>
                   ❌ Cancel
                 </button>
               </div>
             {/if}
 
             {#if vadTestTranscription}
-              <div class="vad-transcription-result">
-                <strong>Transcription:</strong>
-                <p>{vadTestTranscription}</p>
+              <div class="mt-4 p-4 bg-green-100 dark:bg-green-500/10 border border-emerald-500 dark:border-emerald-400 rounded-lg">
+                <strong class="text-emerald-600 dark:text-emerald-400 text-sm">Transcription:</strong>
+                <p class="mt-2 text-gray-800 dark:text-gray-100 text-[0.95rem]">{vadTestTranscription}</p>
               </div>
             {/if}
 
             {#if vadTestError}
-              <div class="vad-test-error">
-                {vadTestError}
-              </div>
+              <div class="mt-4 p-3 bg-red-100 dark:bg-red-500/10 border border-red-500 dark:border-red-400 rounded-lg text-red-600 dark:text-red-400 text-sm">{vadTestError}</div>
             {/if}
           </div>
         </div>
@@ -1556,17 +1143,12 @@
     {/if}
 
     <!-- Actions -->
-    <div class="actions">
-      <button
-        class="save-button"
-        on:click={saveSettings}
-        disabled={saving || isGuest}
-        title={isGuest ? "Guest users cannot save settings - viewing profile owner's configuration" : "Save voice settings"}
-      >
+    <div class="mt-6">
+      <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed" on:click={saveSettings} disabled={saving || isGuest} title={isGuest ? "Guest users cannot save settings" : "Save voice settings"}>
         {saving ? 'Saving...' : isGuest ? '🔒 Guest Mode (Read-Only)' : '💾 Save Settings'}
       </button>
       {#if isGuest}
-        <p class="guest-hint">
+        <p class="mt-3 text-center text-sm text-gray-500 dark:text-gray-400 italic">
           💡 Tip: Log in or create an account to customize your own voice settings!
         </p>
       {/if}
@@ -1575,741 +1157,21 @@
 </div>
 
 <style>
-  .voice-settings {
-    padding: 1.5rem;
-    max-width: 800px;
+  .range-slider {
+    @apply w-full h-1.5 rounded-sm bg-gray-200 dark:bg-gray-700 outline-none appearance-none;
   }
-
-  .section-title {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #1f2937;
-    margin: 0 0 1.5rem 0;
+  .range-slider::-webkit-slider-thumb {
+    @apply appearance-none w-5 h-5 rounded-full bg-violet-600 cursor-pointer;
   }
-
-  :global(.dark) .section-title {
-    color: #f3f4f6;
-  }
-
-  .loading {
-    padding: 2rem;
-    text-align: center;
-    color: #6b7280;
-  }
-
-  .error-message {
-    padding: 0.75rem 1rem;
-    background: #fee2e2;
-    border: 1px solid #ef4444;
-    border-radius: 0.5rem;
-    color: #dc2626;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .error-message {
-    background: rgba(239, 68, 68, 0.1);
-    color: #f87171;
-  }
-
-  .success-message {
-    padding: 0.75rem 1rem;
-    background: #d1fae5;
-    border: 1px solid #10b981;
-    border-radius: 0.5rem;
-    color: #059669;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .success-message {
-    background: rgba(16, 185, 129, 0.1);
-    color: #34d399;
-  }
-
-  .setting-group {
-    margin-bottom: 1.5rem;
-  }
-
-  label {
-    display: block;
-    font-weight: 500;
-    color: #374151;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) label {
-    color: #d1d5db;
-  }
-
-  .provider-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-  }
-
-  .provider-card {
-    padding: 1.25rem;
-    border: 2px solid #e5e7eb;
-    border-radius: 0.75rem;
-    background: white;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
-  }
-
-  :global(.dark) .provider-card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .provider-card:hover:not(:disabled) {
-    border-color: var(--provider-color);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .provider-card.active {
-    border-color: var(--provider-color);
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.15), transparent);
-  }
-
-  :global(.dark) .provider-card.active {
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.25), transparent);
-  }
-
-  .provider-card:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .provider-icon {
-    font-size: 2rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .provider-name {
-    font-weight: 600;
-    color: #1f2937;
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .provider-name {
-    color: #f3f4f6;
-  }
-
-  .provider-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .provider-desc {
-    color: #9ca3af;
-  }
-
-  .provider-settings {
-    background: #f9fafb;
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .provider-settings {
-    background: #111827;
-  }
-
-  .provider-settings h4 {
-    margin: 0 0 1rem 0;
-    font-size: 1.125rem;
-    color: #1f2937;
-  }
-
-  :global(.dark) .provider-settings h4 {
-    color: #f3f4f6;
-  }
-
-  select,
-  textarea,
-  input[type="text"] {
-    width: 100%;
-    padding: 0.625rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) select,
-  :global(.dark) textarea,
-  :global(.dark) input[type="text"] {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  select:focus,
-  textarea:focus,
-  input[type="text"]:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  select:disabled,
-  textarea:disabled,
-  input[type="text"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  input[type="range"] {
-    width: 100%;
-    height: 6px;
-    border-radius: 3px;
-    background: #e5e7eb;
-    outline: none;
-    -webkit-appearance: none;
-  }
-
-  :global(.dark) input[type="range"] {
-    background: #374151;
-  }
-
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #7c3aed;
-    cursor: pointer;
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #7c3aed;
-    cursor: pointer;
-    border: none;
-  }
-
-  .range-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .range-labels {
-    color: #9ca3af;
-  }
-
-  .hint {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .hint {
-    color: #9ca3af;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-weight: 400;
-  }
-
-  input[type="checkbox"] {
-    width: auto;
-    cursor: pointer;
-  }
-
-  .test-section {
-    background: #f3f4f6;
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .test-section {
-    background: #1f2937;
-  }
-
-  .test-button,
-  .save-button {
-    width: 100%;
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 0.5rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .test-button {
-    background: #3b82f6;
-    color: white;
-    margin-top: 0.75rem;
-  }
-
-  .test-button:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .test-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .save-button {
-    background: #7c3aed;
-    color: white;
-  }
-
-  .save-button:hover:not(:disabled) {
-    background: #6d28d9;
-  }
-
-  .save-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .actions {
-    margin-top: 1.5rem;
-  }
-
-  .guest-notice {
-    padding: 1rem;
-    background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
-    border: 2px solid #3b82f6;
-    border-radius: 0.75rem;
-    color: #1e40af;
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    text-align: center;
-    font-weight: 500;
-  }
-
-  :global(.dark) .guest-notice {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(99, 102, 241, 0.15) 100%);
-    border-color: #60a5fa;
-    color: #93c5fd;
-  }
-
-  .guest-hint {
-    margin-top: 0.75rem;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #6b7280;
-    font-style: italic;
-  }
-
-  :global(.dark) .guest-hint {
-    color: #9ca3af;
-  }
-
-  .btn-generate-reference {
-    width: 100%;
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 0.5rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: #10b981;
-    color: white;
-    margin-top: 0.5rem;
-  }
-
-  .btn-generate-reference:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .btn-generate-reference:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .provider-test-section {
-    margin-top: 1.5rem;
-    padding-top: 1.5rem;
-    border-top: 2px solid #e5e7eb;
-  }
-
-  :global(.dark) .provider-test-section {
-    border-top-color: #374151;
-  }
-
-  .provider-test-section label {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  :global(.dark) .provider-test-section label {
-    color: #f3f4f6;
-  }
-
-  .test-button.piper-test {
-    background: #3b82f6;
-  }
-
-  .test-button.piper-test:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .test-button.sovits-test {
-    background: #10b981;
-  }
-
-  .test-button.sovits-test:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .test-button.rvc-test {
-    background: #8b5cf6;
-  }
-
-  .test-button.rvc-test:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  /* Advanced settings section */
-  .advanced-settings {
-    margin: 1.5rem 0;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .advanced-settings {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .advanced-settings h5 {
-    margin: 0.5rem 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  :global(.dark) .advanced-settings h5 {
-    color: #9ca3af;
-  }
-
-  .quality-tips {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: #eff6ff;
-    border-left: 3px solid #3b82f6;
-    border-radius: 0.25rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .quality-tips {
-    background: #1e3a5f;
-    border-color: #60a5fa;
-  }
-
-  .quality-tips strong {
-    color: #1f2937;
-  }
-
-  :global(.dark) .quality-tips strong {
-    color: #f3f4f6;
-  }
-
-  .quality-tips ul {
-    margin: 0.5rem 0 0 0;
-    padding-left: 1.25rem;
-    color: #374151;
-  }
-
-  :global(.dark) .quality-tips ul {
-    color: #d1d5db;
-  }
-
-  .quality-tips li {
-    margin: 0.25rem 0;
-  }
-
-  /* STT Section Styles */
-  .stt-section {
-    margin-top: 2rem;
-    padding: 1.5rem;
-    background: #f9fafb;
-    border: 2px solid #e5e7eb;
-    border-radius: 0.75rem;
-  }
-
-  :global(.dark) .stt-section {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .subsection-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #1f2937;
-    margin: 0 0 1.25rem 0;
-  }
-
-  :global(.dark) .subsection-title {
-    color: #f3f4f6;
-  }
-
-  /* VAD Settings Styles */
-  .vad-settings-section {
-    margin-top: 2rem;
-    padding-top: 1.5rem;
-    border-top: 2px solid #e5e7eb;
-  }
-
-  :global(.dark) .vad-settings-section {
-    border-top-color: #374151;
-  }
-
-  .vad-test-section {
-    margin-top: 1.5rem;
-    padding: 1.5rem;
-    background: #f0f9ff;
-    border: 2px solid #3b82f6;
-    border-radius: 0.75rem;
-  }
-
-  :global(.dark) .vad-test-section {
-    background: #1e3a5f;
-    border-color: #60a5fa;
-  }
-
-  .vad-test-active {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .vad-volume-meter {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .vad-volume-label {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #1f2937;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  :global(.dark) .vad-volume-label {
-    color: #f3f4f6;
-  }
-
-  .speaking-indicator {
-    color: #ef4444;
-    font-weight: 700;
-    animation: pulse 1s infinite;
+  .range-slider::-moz-range-thumb {
+    @apply w-5 h-5 rounded-full bg-violet-600 cursor-pointer border-none;
   }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
   }
-
-  .silence-indicator {
-    color: #9ca3af;
-  }
-
-  .vad-volume-bar {
-    position: relative;
-    height: 40px;
-    background: #e5e7eb;
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  :global(.dark) .vad-volume-bar {
-    background: #374151;
-  }
-
-  .vad-volume-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #3b82f6, #60a5fa);
-    transition: width 0.1s ease;
-  }
-
-  .vad-volume-fill.speaking {
-    background: linear-gradient(90deg, #ef4444, #f87171);
-  }
-
-  .vad-threshold-marker {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: #fbbf24;
-    box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
-  }
-
-  .test-button.vad-start {
-    background: #3b82f6;
-  }
-
-  .test-button.vad-start:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .test-button.vad-cancel {
-    background: #ef4444;
-  }
-
-  .test-button.vad-cancel:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  .vad-transcription-result {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #d1fae5;
-    border: 1px solid #10b981;
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .vad-transcription-result {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: #34d399;
-  }
-
-  .vad-transcription-result strong {
-    color: #059669;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .vad-transcription-result strong {
-    color: #34d399;
-  }
-
-  .vad-transcription-result p {
-    margin: 0.5rem 0 0 0;
-    color: #1f2937;
-    font-size: 0.95rem;
-  }
-
-  :global(.dark) .vad-transcription-result p {
-    color: #f3f4f6;
-  }
-
-  .vad-test-error {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: #fee2e2;
-    border: 1px solid #ef4444;
-    border-radius: 0.5rem;
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .vad-test-error {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: #f87171;
-    color: #f87171;
-  }
-
-  /* Custom Voicepack Info */
-  .custom-voicepack-info {
-    margin: 1rem 0;
-    padding: 1rem;
-    background: #dbeafe;
-    border: 2px solid #3b82f6;
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .custom-voicepack-info {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: #60a5fa;
-  }
-
-  .custom-voicepack-info strong {
-    display: block;
-    color: #1e40af;
-    font-size: 0.95rem;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .custom-voicepack-info strong {
-    color: #60a5fa;
-  }
-
-  .custom-voicepack-info p {
-    margin: 0;
-    color: #1f2937;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .custom-voicepack-info p {
-    color: #d1d5db;
-  }
-
-  /* Native Voice Mode Section */
-  .native-voice-section {
-    margin-top: 2rem;
-    padding-top: 1.5rem;
-    border-top: 2px solid #e5e7eb;
-  }
-
-  :global(.dark) .native-voice-section {
-    border-top-color: #374151;
-  }
-
-  .native-voice-comparison {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .native-voice-comparison {
-    background: #1f2937;
-  }
-
-  .comparison-item {
-    font-size: 0.875rem;
-  }
-
-  .comparison-item strong {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #374151;
-  }
-
-  :global(.dark) .comparison-item strong {
-    color: #f3f4f6;
-  }
-
-  .comparison-item ul {
-    margin: 0;
-    padding-left: 1.25rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .comparison-item ul {
-    color: #9ca3af;
-  }
-
-  .comparison-item li {
-    margin: 0.25rem 0;
+  .animate-pulse {
+    animation: pulse 1s infinite;
   }
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { slide } from 'svelte/transition';
   import { isOwner } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import LizardBrainPanel from './LizardBrainPanel.svelte';
@@ -173,8 +174,11 @@
     risk: 'low',
   };
 
+  // Compact card expansion state
+  let expandedCardId: string | null = null;  // Which desire card is expanded
+  let expandedPlanId: string | null = null;  // Which plan details are shown (within expanded card)
+
   // Plan detail view and critique
-  let expandedDesireId: string | null = null;
   let critiqueText: Record<string, string> = {};
   let showHistoryFor: string | null = null;
   let revisingId: string | null = null;
@@ -381,24 +385,6 @@
     }
   }
 
-  function getNatureBgColor(metrics?: DesireMetrics): string {
-    const nature = inferDesireNature(metrics);
-    switch (nature) {
-      case 'recurring': return '#dbeafe';
-      case 'achievable': return '#dcfce7';
-      case 'aspirational': return '#f3e8ff';
-    }
-  }
-
-  function getNatureDarkBgColor(metrics?: DesireMetrics): string {
-    const nature = inferDesireNature(metrics);
-    switch (nature) {
-      case 'recurring': return '#1e3a5f';
-      case 'achievable': return '#14532d';
-      case 'aspirational': return '#3b0764';
-    }
-  }
-
   function getNatureExplanation(metrics?: DesireMetrics): string {
     if (!metrics) return 'New desire - nature will emerge as you interact with it';
 
@@ -413,23 +399,6 @@
       case 'aspirational':
         return `A long-term aspiration (${metrics.executionAttemptCount} attempts, still pursuing)`;
     }
-  }
-
-  // Calculate success rate percentage
-  function getSuccessRate(metrics?: DesireMetrics): number {
-    if (!metrics || metrics.executionAttemptCount === 0) return 0;
-    return Math.round((metrics.executionSuccessCount / metrics.executionAttemptCount) * 100);
-  }
-
-  // Calculate reinforcement health (positive = being reinforced, negative = decaying)
-  function getReinforcementHealth(metrics?: DesireMetrics): { value: number; label: string } {
-    if (!metrics) return { value: 0, label: 'No data' };
-    const net = metrics.netReinforcement;
-    if (net > 5) return { value: 100, label: 'Strongly reinforced' };
-    if (net > 0) return { value: 70, label: 'Growing' };
-    if (net === 0) return { value: 50, label: 'Stable' };
-    if (net > -5) return { value: 30, label: 'Weakening' };
-    return { value: 10, label: 'Fading' };
   }
 
   function getScratchpadEntryIcon(type: string): string {
@@ -460,10 +429,6 @@
       case 'note': return '📝';
       default: return '•';
     }
-  }
-
-  function toggleScratchpad(id: string) {
-    showScratchpadFor = showScratchpadFor === id ? null : id;
   }
 
   function formatTimestamp(ts: string | null): string {
@@ -896,7 +861,7 @@
       if (critiqueText[id]) {
         critiqueText[id] = '';
       }
-      expandedDesireId = null;
+      expandedCardId = null;
       await loadAll(true, true);
     } catch (e) {
       error = (e as Error).message;
@@ -1192,7 +1157,7 @@
       }
       // Clear the critique text after successful submission
       critiqueText[id] = '';
-      expandedDesireId = null;
+      expandedCardId = null;
       await loadAll(true, true);
     } catch (e) {
       error = (e as Error).message;
@@ -1201,8 +1166,19 @@
     }
   }
 
+  // Toggle card expansion (collapsed/expanded view)
+  function toggleCardExpand(id: string) {
+    expandedCardId = expandedCardId === id ? null : id;
+    // Reset sub-expansions when collapsing
+    if (expandedCardId !== id) {
+      expandedPlanId = null;
+      showHistoryFor = null;
+      showScratchpadFor = null;
+    }
+  }
+
   function togglePlanDetail(id: string) {
-    expandedDesireId = expandedDesireId === id ? null : id;
+    expandedPlanId = expandedPlanId === id ? null : id;
   }
 
   function togglePlanHistory(id: string) {
@@ -1246,47 +1222,47 @@
   });
 </script>
 
-<div class="agency-dashboard">
+<div class="p-4">
   {#if !$isOwner}
-    <div class="card p-6 text-center space-y-2">
+    <div class="panel p-6 text-center space-y-2">
       <h2 class="text-lg font-semibold">Agency Access Restricted</h2>
       <p class="muted text-sm">Log in as the owner to manage autonomous desires.</p>
     </div>
   {:else if loading}
     <div class="text-center py-8">
-      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       <p class="mt-2 muted">Loading agency data...</p>
     </div>
   {:else}
     <!-- Summary Stats -->
     {#if summary}
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Total Desires</div>
-          <div class="stat-value">{summary.total}</div>
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Desires</div>
+          <div class="text-2xl font-bold mt-1">{summary.total}</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Active</div>
-          <div class="stat-value text-blue-600 dark:text-blue-400">{summary.active}</div>
+        <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Active</div>
+          <div class="text-2xl font-bold mt-1 text-blue-600 dark:text-blue-400">{summary.active}</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Waiting</div>
-          <div class="stat-value text-yellow-600 dark:text-yellow-400">{summary.waiting}</div>
+        <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Waiting</div>
+          <div class="text-2xl font-bold mt-1 text-yellow-600 dark:text-yellow-400">{summary.waiting}</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Completed</div>
-          <div class="stat-value text-green-600 dark:text-green-400">{summary.completed}</div>
+        <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Completed</div>
+          <div class="text-2xl font-bold mt-1 text-green-600 dark:text-green-400">{summary.completed}</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Failed/Rejected</div>
-          <div class="stat-value text-red-600 dark:text-red-400">{summary.failed}</div>
+        <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Failed/Rejected</div>
+          <div class="text-2xl font-bold mt-1 text-red-600 dark:text-red-400">{summary.failed}</div>
         </div>
       </div>
     {/if}
 
     <!-- Metrics -->
     {#if metrics}
-      <div class="card p-4 mt-4">
+      <div class="panel p-4 mt-4">
         <h3 class="text-sm font-semibold mb-3">Performance Metrics</h3>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
           <div>
@@ -1310,9 +1286,9 @@
     {/if}
 
     <!-- Lizard Brain Activity Panel (Collapsible) -->
-    <div class="card mt-4">
+    <div class="panel mt-4">
       <button
-        class="w-full p-4 flex items-center justify-between text-left hover:bg-opacity-80"
+        class="w-full p-4 flex items-center justify-between text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         on:click={() => showLizardBrain = !showLizardBrain}
       >
         <div class="flex items-center gap-2">
@@ -1330,32 +1306,32 @@
 
     <!-- Error Display -->
     {#if error}
-      <div class="error-banner mt-4">
+      <div class="banner banner-error mt-4">
         {error}
         <button class="ml-2 underline" on:click={() => error = ''}>Dismiss</button>
       </div>
     {/if}
 
     <!-- Controls -->
-    <div class="controls mt-4">
+    <div class="flex justify-between items-center flex-wrap gap-2 mt-4">
       <div class="flex items-center gap-2">
-        <select bind:value={statusFilter} on:change={loadDesires} class="select-input">
+        <select bind:value={statusFilter} on:change={loadDesires} class="select-field">
           <option value="active">🔄 Active (In Progress)</option>
           <option value="needs_action">⚠️ Needs Your Action</option>
           <option value="completed">✅ Completed</option>
           <option value="archived">📦 Archived</option>
           <option value="all">All</option>
         </select>
-        <button class="btn-secondary" on:click={() => loadAll(true, true)}>Refresh</button>
+        <button class="btn-secondary btn-sm" on:click={() => loadAll(true, true)}>Refresh</button>
       </div>
-      <button class="btn-primary" on:click={() => showNewDesire = !showNewDesire}>
+      <button class="btn-primary btn-sm" on:click={() => showNewDesire = !showNewDesire}>
         {showNewDesire ? 'Cancel' : '+ New Desire'}
       </button>
     </div>
 
     <!-- New Desire Form -->
     {#if showNewDesire}
-      <div class="card p-4 mt-4 space-y-3">
+      <div class="panel p-4 mt-4 space-y-3">
         <h3 class="font-semibold">Create Manual Desire</h3>
         <input
           type="text"
@@ -1378,685 +1354,718 @@
         <div class="flex items-center gap-4">
           <label class="text-sm">
             Risk Level:
-            <select bind:value={newDesire.risk} class="select-input ml-2">
+            <select bind:value={newDesire.risk} class="select-field ml-2">
               <option value="none">None</option>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
           </label>
-          <button class="btn-primary" on:click={handleCreateDesire}>Create</button>
+          <button class="btn-primary btn-sm" on:click={handleCreateDesire}>Create</button>
         </div>
       </div>
     {/if}
 
     <!-- Consolidated Desire List - All desires in one place -->
-    <div class="desire-list mt-4">
+    <div class="flex flex-col gap-3 mt-4">
       {#if desires.length === 0}
-        <div class="empty-state">
+        <div class="text-center py-8">
           <p class="muted">No desires found</p>
           <p class="text-sm muted mt-1">Desires will be generated automatically by the agency system</p>
         </div>
       {:else}
         {#each desires.sort((a, b) => (b.strength || 0) - (a.strength || 0)) as desire}
-          <div class="desire-card" style="border-left: 4px solid {getNatureColor(desire.metrics)};">
-            <!-- Header with title and status badges -->
-            <div class="desire-header">
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div
+            class="panel p-4 cursor-pointer transition-all hover:bg-gray-50 dark:hover:bg-gray-800/50"
+            class:cursor-default={expandedCardId === desire.id}
+            style="border-left: 4px solid {getNatureColor(desire.metrics)};"
+            role="button"
+            tabindex="0"
+            aria-expanded={expandedCardId === desire.id}
+            on:click={() => toggleCardExpand(desire.id)}
+            on:keydown={(e) => e.key === 'Enter' && toggleCardExpand(desire.id)}
+          >
+            <!-- ========== COLLAPSED VIEW (always visible) ========== -->
+            <div class="flex flex-col gap-1">
+              <!-- Row 1: Title + badges -->
               <div class="flex items-center gap-2">
-                <span class="source-icon">{getSourceIcon(desire.source)}</span>
-                <h4 class="desire-title">{desire.title}</h4>
+                <span class="text-xl">{getSourceIcon(desire.source)}</span>
+                <h4 class="font-semibold text-sm flex-1 min-w-[120px] truncate">{desire.title}</h4>
+                <span
+                  class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white text-xs flex-shrink-0"
+                  style="background: {getNatureColor(desire.metrics)};"
+                  title={getNatureTooltip(desire.metrics)}
+                >
+                  {getNatureIcon(desire.metrics)}
+                </span>
+                <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getStatusColor(desire.status)}">{desire.status}</span>
+                <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getRiskColor(desire.risk)}">{desire.risk}</span>
+                <span class="text-xs text-gray-400 ml-auto flex-shrink-0">{expandedCardId === desire.id ? '▼' : '▶'}</span>
               </div>
-              <div class="flex items-center gap-2">
-                <!-- Compact strength indicator with trend -->
-                <div class="strength-compact">
-                  <div class="strength-compact-bar">
+
+              <!-- Row 2: Inline metrics -->
+              <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 pl-7">
+                <div class="flex items-center gap-1">
+                  <div class="w-10 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div
-                      class="strength-compact-fill"
-                      style="width: {Math.min(100, ((desire.strength || 0) / (desire.threshold || 0.7)) * 100)}%; background: {(desire.strength || 0) >= (desire.threshold || 0.7) ? '#22c55e' : '#f59e0b'};"
+                      class="h-full rounded-full transition-all duration-300"
+                      style="width: {(desire.strength || 0) * 100}%; background: {(desire.strength || 0) >= 0.7 ? '#22c55e' : '#f59e0b'};"
                     ></div>
                   </div>
-                  <span class="strength-compact-text">
+                  <span class="font-semibold text-xs min-w-[35px]">
                     {#if desire.metrics?.netReinforcement !== undefined && desire.metrics.netReinforcement > 0}
-                      <span class="trend-arrow up">↑</span>
+                      <span class="text-green-500 font-bold">↑</span>
                     {:else if desire.metrics?.netReinforcement !== undefined && desire.metrics.netReinforcement < 0}
-                      <span class="trend-arrow down">↓</span>
+                      <span class="text-red-500 font-bold">↓</span>
                     {:else}
-                      <span class="trend-arrow stable">→</span>
+                      <span class="text-gray-500 font-bold">→</span>
                     {/if}
                     {((desire.strength || 0) * 100).toFixed(0)}%
                   </span>
                 </div>
-                <span class={`badge ${getStatusColor(desire.status)}`}>{desire.status}</span>
-                <span class={`badge ${getRiskColor(desire.risk)}`}>{desire.risk}</span>
-              </div>
-            </div>
-
-            <p class="desire-description">{desire.description}</p>
-
-            {#if desire.reason}
-              <p class="desire-reason"><em>"{desire.reason}"</em></p>
-            {/if}
-
-            <!-- ========== NEW: Desire Insights Panel ========== -->
-            <div class="desire-insights" style="background: {getNatureBgColor(desire.metrics)}; --dark-bg: {getNatureDarkBgColor(desire.metrics)};">
-              <!-- Nature Badge - Large and Prominent -->
-              <div class="nature-section">
-                <div class="nature-badge-large" style="background: {getNatureColor(desire.metrics)};">
-                  <span class="nature-icon-large">{getNatureIcon(desire.metrics)}</span>
-                  <span class="nature-label-large">{getNatureLabel(desire.metrics)}</span>
-                </div>
-                <p class="nature-explanation">{getNatureExplanation(desire.metrics)}</p>
-              </div>
-
-              <!-- Key Metrics Grid - Always Visible -->
-              <div class="metrics-grid">
-                <div class="metric-item">
-                  <span class="metric-icon">🔁</span>
-                  <span class="metric-value">{desire.metrics?.cycleCount ?? 0}</span>
-                  <span class="metric-label">Cycles</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-icon">✅</span>
-                  <span class="metric-value">{desire.metrics?.completionCount ?? 0}</span>
-                  <span class="metric-label">Completions</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-icon">⚡</span>
-                  <span class="metric-value">{desire.metrics?.executionAttemptCount ?? 0}</span>
-                  <span class="metric-label">Attempts</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-icon">📋</span>
-                  <span class="metric-value">{desire.metrics?.planVersionCount ?? 0}</span>
-                  <span class="metric-label">Plan Versions</span>
-                </div>
-              </div>
-
-              <!-- Strength Bar -->
-              <div class="strength-section">
-                <div class="strength-header">
-                  <span class="strength-label">Strength</span>
-                  <span class="strength-value">{(desire.strength * 100).toFixed(0)}%</span>
-                </div>
-                <div class="strength-bar-container">
-                  <div class="strength-bar" style="width: {desire.strength * 100}%; background: {getNatureColor(desire.metrics)};"></div>
-                </div>
-                {#if desire.metrics}
-                  <div class="reinforcement-indicator">
-                    {#if desire.metrics.netReinforcement > 0}
-                      <span class="reinforcement-positive">💪 +{desire.metrics.netReinforcement} net reinforcement</span>
-                    {:else if desire.metrics.netReinforcement < 0}
-                      <span class="reinforcement-negative">📉 {desire.metrics.netReinforcement} (decaying)</span>
-                    {:else}
-                      <span class="reinforcement-neutral">⚖️ Stable</span>
-                    {/if}
-                  </div>
+                <span class="text-gray-300 dark:text-gray-600">•</span>
+                <span>{desire.metrics?.cycleCount ?? 0} cycles</span>
+                <span class="text-gray-300 dark:text-gray-600">•</span>
+                <span>{desire.metrics?.completionCount ?? 0} done</span>
+                <span class="text-gray-300 dark:text-gray-600">•</span>
+                <span>v{desire.plan?.version ?? 1}</span>
+                {#if desire.scratchpad?.entryCount}
+                  <span class="text-gray-300 dark:text-gray-600">•</span>
+                  <span class="text-violet-500 dark:text-violet-400">{desire.scratchpad.entryCount} events</span>
                 {/if}
               </div>
-
-              <!-- User Interaction Stats -->
-              {#if desire.metrics && (desire.metrics.userInputCount > 0 || desire.metrics.userApprovalCount > 0)}
-                <div class="user-interaction-stats">
-                  <span class="user-stat">👤 {desire.metrics.userInputCount} inputs</span>
-                  <span class="user-stat">👍 {desire.metrics.userApprovalCount} approvals</span>
-                  {#if desire.metrics.userRejectionCount > 0}
-                    <span class="user-stat">👎 {desire.metrics.userRejectionCount} rejections</span>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-            <!-- ========== END: Desire Insights Panel ========== -->
-
-            <div class="desire-meta">
-              <span class="muted text-xs">Created: {formatTimestamp(desire.createdAt)}</span>
-              <span class="muted text-xs">Updated: {formatTimestamp(desire.updatedAt)}</span>
-              {#if desire.scratchpad?.entryCount}
-                <span class="muted text-xs">📜 {desire.scratchpad.entryCount} journal entries</span>
-              {/if}
             </div>
 
-            {#if desire.status === 'approved' && !desire.plan}
-              <!-- Missing plan warning -->
-              <div class="missing-plan-warning">
-                ⚠️ <strong>No plan generated.</strong> Click "Generate Plan" to create an execution plan for this desire.
-              </div>
-            {/if}
+            <!-- ========== EXPANDED VIEW (conditional) ========== -->
+            {#if expandedCardId === desire.id}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 cursor-default" transition:slide={{ duration: 200 }} on:click|stopPropagation>
+                <!-- Description -->
+                <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">{desire.description}</p>
 
-            {#if desire.plan}
-              <!-- Plan Summary Header (clickable to expand) -->
-              <button type="button" class="plan-summary clickable" on:click={() => togglePlanDetail(desire.id)} aria-expanded={expandedDesireId === desire.id}>
-                <div class="plan-summary-header">
-                  <span class="text-xs font-semibold">
-                    📋 Plan v{desire.plan.version || 1}:
-                  </span>
-                  <span class="text-xs muted">
-                    {desire.plan.steps.length} steps, {desire.plan.estimatedRisk} risk
-                    {#if desire.planHistory && desire.planHistory.length > 0}
-                      <span class="history-badge">({desire.planHistory.length} previous)</span>
-                    {/if}
-                  </span>
-                  <span class="expand-icon">{expandedDesireId === desire.id ? '▼' : '▶'}</span>
-                </div>
-                {#if desire.plan.operatorGoal}
-                  <p class="plan-goal text-xs muted">Goal: {desire.plan.operatorGoal}</p>
+                {#if desire.reason}
+                  <p class="text-xs text-gray-500 dark:text-gray-500 mb-2 italic">"{desire.reason}"</p>
                 {/if}
-              </button>
 
-              <!-- Expanded Plan Details -->
-              {#if expandedDesireId === desire.id}
-                <div class="plan-details">
-                  <h5 class="plan-section-title">Execution Steps</h5>
-                  <div class="plan-steps">
-                    {#each desire.plan.steps as step, i}
-                      <div class="plan-step">
-                        <div class="step-header">
-                          <span class="step-number">{step.order || i + 1}</span>
-                          <span class="step-action">{step.action}</span>
-                          <span class={`badge small ${getRiskColor(step.risk)}`}>{step.risk}</span>
-                          {#if step.requiresApproval}
-                            <span class="badge small bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">needs approval</span>
-                          {/if}
-                        </div>
-                        {#if step.skill}
-                          <div class="step-skill">
-                            <span class="text-xs muted">Skill:</span>
-                            <code class="text-xs">{step.skill}</code>
-                          </div>
-                        {/if}
-                        {#if step.expectedOutcome}
-                          <div class="step-outcome">
-                            <span class="text-xs muted">Expected:</span>
-                            <span class="text-xs">{step.expectedOutcome}</span>
-                          </div>
-                        {/if}
-                        {#if step.inputs && Object.keys(step.inputs).length > 0}
-                          <div class="step-inputs">
-                            <span class="text-xs muted">Inputs:</span>
-                            <code class="text-xs">{JSON.stringify(step.inputs)}</code>
-                          </div>
-                        {/if}
-                      </div>
-                    {/each}
+                <!-- Nature explanation (compact) -->
+                <div class="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-md mb-3 flex-wrap">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-white text-xs font-semibold flex-shrink-0" style="background: {getNatureColor(desire.metrics)};">
+                    {getNatureIcon(desire.metrics)} {getNatureLabel(desire.metrics)}
+                  </span>
+                  <span class="text-xs text-gray-600 dark:text-gray-400 flex-1">{getNatureExplanation(desire.metrics)}</span>
+                </div>
+
+                <!-- Collapsible Detailed Metrics -->
+                <details class="mb-3">
+                  <summary class="cursor-pointer p-2 bg-gray-100 dark:bg-gray-800 rounded-md text-sm font-medium flex justify-between list-none [&::-webkit-details-marker]:hidden">
+                    <span>📊 Detailed Metrics</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">
+                      {desire.metrics?.reinforcementCount ?? 0} reinforcements •
+                      {desire.metrics?.executionAttemptCount ?? 0} attempts
+                    </span>
+                  </summary>
+                  <div class="grid grid-cols-4 gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-b-md">
+                    <div class="flex flex-col items-center text-center p-1 text-xs">
+                      <span class="text-xl mb-1">🔁</span>
+                      <span class="text-lg font-bold">{desire.metrics?.cycleCount ?? 0}</span>
+                      <span class="text-[0.6rem] uppercase text-gray-500 dark:text-gray-400">Cycles</span>
+                    </div>
+                    <div class="flex flex-col items-center text-center p-1 text-xs">
+                      <span class="text-xl mb-1">✅</span>
+                      <span class="text-lg font-bold">{desire.metrics?.completionCount ?? 0}</span>
+                      <span class="text-[0.6rem] uppercase text-gray-500 dark:text-gray-400">Completions</span>
+                    </div>
+                    <div class="flex flex-col items-center text-center p-1 text-xs">
+                      <span class="text-xl mb-1">⚡</span>
+                      <span class="text-lg font-bold">{desire.metrics?.executionAttemptCount ?? 0}</span>
+                      <span class="text-[0.6rem] uppercase text-gray-500 dark:text-gray-400">Attempts</span>
+                    </div>
+                    <div class="flex flex-col items-center text-center p-1 text-xs">
+                      <span class="text-xl mb-1">📋</span>
+                      <span class="text-lg font-bold">{desire.metrics?.planVersionCount ?? 0}</span>
+                      <span class="text-[0.6rem] uppercase text-gray-500 dark:text-gray-400">Plan Versions</span>
+                    </div>
                   </div>
-
-                  <!-- Plan History Toggle -->
-                  {#if desire.planHistory && desire.planHistory.length > 0}
-                    <button class="btn-history" on:click|stopPropagation={() => togglePlanHistory(desire.id)}>
-                      {showHistoryFor === desire.id ? '▼ Hide' : '▶ Show'} Previous Versions ({desire.planHistory.length})
-                    </button>
-
-                    {#if showHistoryFor === desire.id}
-                      <div class="plan-history">
-                        {#each desire.planHistory as oldPlan, idx}
-                          <div class="old-plan">
-                            <h6 class="old-plan-title">Version {oldPlan.version || idx + 1} ({formatTimestamp(oldPlan.createdAt)})</h6>
-                            {#if oldPlan.basedOnCritique}
-                              <p class="critique-note text-xs">Critique: "{oldPlan.basedOnCritique}"</p>
-                            {/if}
-                            <ul class="old-plan-steps">
-                              {#each oldPlan.steps as step, i}
-                                <li>{step.order || i + 1}. {step.action}</li>
-                              {/each}
-                            </ul>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  {/if}
-
-                  <!-- Critique & Revision Section -->
-                  {#if ['reviewing', 'approved', 'awaiting_approval', 'planning'].includes(desire.status)}
-                    <div class="critique-section">
-                      <h5 class="plan-section-title">✏️ Request Revision</h5>
-                      <p class="critique-hint text-xs muted">
-                        Not happy with the plan? Provide feedback and request a revision.
-                      </p>
-                      <textarea
-                        class="critique-input"
-                        placeholder="Enter your critique or suggestions for improving this plan..."
-                        bind:value={critiqueText[desire.id]}
-                        rows="3"
-                      ></textarea>
-                      <div class="critique-actions">
-                        <button
-                          class="btn-revise"
-                          disabled={revisingId === desire.id || !critiqueText[desire.id]?.trim()}
-                          on:click|stopPropagation={() => handleRevise(desire.id)}
-                        >
-                          {revisingId === desire.id ? 'Requesting...' : '🔄 Request Revision'}
-                        </button>
-                      </div>
+                  {#if desire.metrics && (desire.metrics.userInputCount > 0 || desire.metrics.userApprovalCount > 0)}
+                    <div class="flex gap-4 p-2 text-xs text-gray-500 dark:text-gray-400 border-t border-dashed border-gray-200 dark:border-gray-700 mt-2">
+                      <span>👤 {desire.metrics.userInputCount} inputs</span>
+                      <span>👍 {desire.metrics.userApprovalCount} approvals</span>
+                      {#if desire.metrics.userRejectionCount > 0}
+                        <span>👎 {desire.metrics.userRejectionCount} rejections</span>
+                      {/if}
                     </div>
                   {/if}
-                </div>
-              {/if}
-            {/if}
+                </details>
 
-            {#if desire.review}
-              <div class="review-summary">
-                <span class="text-xs font-semibold">Review:</span>
-                <span class="text-xs muted">{desire.review.verdict} (alignment: {(desire.review.alignmentScore * 100).toFixed(0)}%)</span>
-                {#if desire.review.reasoning}
-                  <p class="review-reasoning text-xs muted">{desire.review.reasoning}</p>
-                {/if}
-                {#if desire.review.concerns && desire.review.concerns.length > 0}
-                  <div class="review-concerns">
-                    <span class="text-xs font-semibold">Concerns:</span>
-                    <ul class="concerns-list">
-                      {#each desire.review.concerns as concern}
-                        <li class="text-xs muted">• {concern}</li>
-                      {/each}
-                    </ul>
+                <!-- Meta info -->
+                <div class="flex gap-4 text-xs text-gray-500 dark:text-gray-400 mb-2">
+                  <span>Created: {formatTimestamp(desire.createdAt)}</span>
+                  <span>Updated: {formatTimestamp(desire.updatedAt)}</span>
+                </div>
+
+                {#if desire.status === 'approved' && !desire.plan}
+                  <div class="p-3 bg-red-50 dark:bg-red-900/20 border-2 border-red-400 dark:border-red-600 rounded-md mb-2 text-sm text-red-700 dark:text-red-300">
+                    ⚠️ <strong>No plan generated.</strong> Click "Generate Plan" to create an execution plan for this desire.
                   </div>
                 {/if}
-              </div>
-            {/if}
 
-            {#if desire.userCritique}
-              <div class="pending-critique">
-                <span class="text-xs font-semibold">⏳ Pending Revision:</span>
-                <p class="text-xs muted">"{desire.userCritique}"</p>
-                <span class="text-xs muted">Submitted: {formatTimestamp(desire.critiqueAt || null)}</span>
-              </div>
-            {/if}
-
-            <!-- Execution Status Display -->
-            {#if desire.execution}
-              <div class="execution-status" class:executing={desire.execution.status === 'in_progress' || desire.execution.status === 'running'}>
-                <div class="execution-header">
-                  <span class="text-sm font-semibold">
-                    {#if desire.execution.status === 'in_progress' || desire.execution.status === 'running'}
-                      ⚡ Executing...
-                    {:else if desire.execution.status === 'completed'}
-                      ✅ Execution Complete
-                    {:else if desire.execution.status === 'failed'}
-                      ❌ Execution Failed
-                    {:else}
-                      📊 Execution: {desire.execution.status}
-                    {/if}
-                  </span>
-                  <span class="text-xs muted">
-                    Step {desire.execution.stepsCompleted || 0} / {desire.execution.stepsTotal || desire.plan?.steps.length || '?'}
-                  </span>
-                </div>
-                {#if desire.execution.error}
-                  <p class="execution-error text-xs">{desire.execution.error}</p>
-                {/if}
-                <div class="execution-meta text-xs muted">
-                  Started: {formatTimestamp(desire.execution.startedAt)}
-                  {#if desire.execution.completedAt}
-                    • Completed: {formatTimestamp(desire.execution.completedAt)}
-                  {/if}
-                </div>
-              </div>
-            {/if}
-
-            <!-- Outcome Review Display -->
-            {#if desire.outcomeReview}
-              <div class="outcome-review" class:success={desire.outcomeReview.successScore >= 0.7} class:warning={desire.outcomeReview.successScore >= 0.4 && desire.outcomeReview.successScore < 0.7} class:failure={desire.outcomeReview.successScore < 0.4}>
-                <div class="outcome-header">
-                  <span class="text-sm font-semibold">
-                    📊 Outcome: {desire.outcomeReview.verdict}
-                  </span>
-                  <span class="outcome-score">
-                    {(desire.outcomeReview.successScore * 100).toFixed(0)}% success
-                  </span>
-                </div>
-                <p class="outcome-reasoning text-xs">{desire.outcomeReview.reasoning}</p>
-                {#if desire.outcomeReview.executionSummary}
-                  <div class="execution-summary">
-                    <span class="text-xs font-semibold">📋 What was done:</span>
-                    <pre class="summary-content text-xs">{desire.outcomeReview.executionSummary}</pre>
-                  </div>
-                {/if}
-                {#if desire.outcomeReview.lessonsLearned && desire.outcomeReview.lessonsLearned.length > 0}
-                  <div class="outcome-lessons">
-                    <span class="text-xs font-semibold">Lessons:</span>
-                    <ul class="lessons-list">
-                      {#each desire.outcomeReview.lessonsLearned as lesson}
-                        <li class="text-xs muted">• {lesson}</li>
-                      {/each}
-                    </ul>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- Journey Log Button - More Prominent -->
-            {#if desire.metrics || desire.scratchpad}
-              <button
-                class="btn-journey-log"
-                class:expanded={showScratchpadFor === desire.id}
-                style="border-color: {getNatureColor(desire.metrics)};"
-                on:click={() => toggleScratchpadWithLoad(desire.id)}
-              >
-                <span class="journey-log-icon">📜</span>
-                <span class="journey-log-text">
-                  {showScratchpadFor === desire.id ? 'Hide' : 'Explore'} Journey Log
-                </span>
-                {#if desire.scratchpad?.entryCount}
-                  <span class="journey-log-count" style="background: {getNatureColor(desire.metrics)};">
-                    {desire.scratchpad.entryCount} events
-                  </span>
-                {/if}
-                <span class="journey-log-arrow">{showScratchpadFor === desire.id ? '▲' : '▼'}</span>
-              </button>
-
-              {#if showScratchpadFor === desire.id}
-                <div class="scratchpad-viewer">
-                  <!-- Metrics Summary -->
-                  <div class="scratchpad-stats">
-                    <span>📋 Plans: {desire.metrics?.planVersionCount || 0}</span>
-                    <span>🔄 Attempts: {desire.metrics?.executionAttemptCount || 0}</span>
-                    <span>✅ Successes: {desire.metrics?.executionSuccessCount || 0}</span>
-                    <span>💪 Reinforced: {desire.metrics?.reinforcementCount || 0}</span>
-                    <span>📉 Decays: {desire.metrics?.decayCount || 0}</span>
-                    <span>👤 User Input: {desire.metrics?.userInputCount || 0}</span>
-                    <span>🔁 Cycles: {desire.metrics?.cycleCount || 0}</span>
-                  </div>
-
-                  <!-- Plan Version Browser -->
-                  {#if planVersions.length > 0 || (desire.planHistory && desire.planHistory.length > 0)}
-                    <div class="plan-browser">
-                      <h6 class="browser-title">📋 Plan Versions</h6>
-                      <div class="plan-version-list">
-                        {#if desire.plan}
-                          <button
-                            class="plan-version-btn"
-                            class:active={!selectedPlanVersion}
-                            on:click={() => { viewingPlan = desire.plan || null; selectedPlanVersion = null; }}
-                          >
-                            Current (v{desire.plan.version || 1})
-                          </button>
+                {#if desire.plan}
+                  <!-- Plan Summary Header (clickable to expand) -->
+                  <button
+                    type="button"
+                    class="w-full text-left p-2 bg-gray-50 dark:bg-gray-800/50 rounded-md mb-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+                    on:click|stopPropagation={() => togglePlanDetail(desire.id)}
+                    aria-expanded={expandedPlanId === desire.id}
+                  >
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="text-xs font-semibold">
+                        📋 Plan v{desire.plan.version || 1}:
+                      </span>
+                      <span class="text-xs muted">
+                        {desire.plan.steps.length} steps, {desire.plan.estimatedRisk} risk
+                        {#if desire.planHistory && desire.planHistory.length > 0}
+                          <span class="italic text-violet-500">({desire.planHistory.length} previous)</span>
                         {/if}
-                        {#each planVersions as version}
-                          <button
-                            class="plan-version-btn"
-                            class:active={selectedPlanVersion === parseInt(version.replace('v', '').replace('.json', ''))}
-                            on:click={() => loadPlanVersion(desire.id, parseInt(version.replace('v', '').replace('.json', '')))}
-                          >
-                            {version.replace('.json', '')}
-                          </button>
+                      </span>
+                      <span class="ml-auto text-xs text-gray-500">{expandedPlanId === desire.id ? '▼' : '▶'}</span>
+                    </div>
+                    {#if desire.plan.operatorGoal}
+                      <p class="text-xs muted mt-1 italic">Goal: {desire.plan.operatorGoal}</p>
+                    {/if}
+                  </button>
+
+                  <!-- Expanded Plan Details -->
+                  {#if expandedPlanId === desire.id}
+                    <div class="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-md p-4 mb-2">
+                      <h5 class="font-semibold text-sm mb-2 text-gray-700 dark:text-gray-200">Execution Steps</h5>
+                      <div class="flex flex-col gap-3">
+                        {#each desire.plan.steps as step, i}
+                          <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-3">
+                            <div class="flex items-center gap-2 flex-wrap mb-1">
+                              <span class="inline-flex items-center justify-center w-6 h-6 bg-blue-600 text-white rounded-full text-xs font-semibold">{step.order || i + 1}</span>
+                              <span class="font-medium flex-1">{step.action}</span>
+                              <span class="inline-block px-1.5 py-0.5 rounded-full text-[0.625rem] font-medium {getRiskColor(step.risk)}">{step.risk}</span>
+                              {#if step.requiresApproval}
+                                <span class="inline-block px-1.5 py-0.5 rounded-full text-[0.625rem] font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">needs approval</span>
+                              {/if}
+                            </div>
+                            {#if step.skill}
+                              <div class="flex gap-2 mt-1 pl-8">
+                                <span class="text-xs muted">Skill:</span>
+                                <code class="text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">{step.skill}</code>
+                              </div>
+                            {/if}
+                            {#if step.expectedOutcome}
+                              <div class="flex gap-2 mt-1 pl-8">
+                                <span class="text-xs muted">Expected:</span>
+                                <span class="text-xs">{step.expectedOutcome}</span>
+                              </div>
+                            {/if}
+                            {#if step.inputs && Object.keys(step.inputs).length > 0}
+                              <div class="flex gap-2 mt-1 pl-8">
+                                <span class="text-xs muted">Inputs:</span>
+                                <code class="text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">{JSON.stringify(step.inputs)}</code>
+                              </div>
+                            {/if}
+                          </div>
                         {/each}
                       </div>
-                      {#if viewingPlan && selectedPlanVersion}
-                        <div class="viewing-plan">
-                          <p class="text-xs muted">Viewing v{viewingPlan.version}: {viewingPlan.operatorGoal || 'No goal'}</p>
-                          <div class="plan-steps-preview">
-                            {#each viewingPlan.steps as step, i}
-                              <div class="step-preview text-xs">
-                                {step.order || i + 1}. {step.action}
+
+                      <!-- Plan History Toggle -->
+                      {#if desire.planHistory && desire.planHistory.length > 0}
+                        <button
+                          class="w-full mt-3 p-1.5 text-xs bg-transparent border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/50"
+                          on:click|stopPropagation={() => togglePlanHistory(desire.id)}
+                        >
+                          {showHistoryFor === desire.id ? '▼ Hide' : '▶ Show'} Previous Versions ({desire.planHistory.length})
+                        </button>
+
+                        {#if showHistoryFor === desire.id}
+                          <div class="mt-2 p-2 bg-amber-50 dark:bg-amber-900/30 rounded">
+                            {#each desire.planHistory as oldPlan, idx}
+                              <div class="mb-3 pb-3 border-b border-amber-200 dark:border-amber-800 last:border-b-0 last:mb-0 last:pb-0">
+                                <h6 class="text-xs font-semibold text-amber-700 dark:text-amber-300">Version {oldPlan.version || idx + 1} ({formatTimestamp(oldPlan.createdAt)})</h6>
+                                {#if oldPlan.basedOnCritique}
+                                  <p class="text-xs italic text-amber-600 dark:text-amber-400 my-1">Critique: "{oldPlan.basedOnCritique}"</p>
+                                {/if}
+                                <ul class="list-none p-0 m-0 mt-1 text-xs text-amber-700 dark:text-amber-400">
+                                  {#each oldPlan.steps as step, i}
+                                    <li>{step.order || i + 1}. {step.action}</li>
+                                  {/each}
+                                </ul>
                               </div>
                             {/each}
                           </div>
+                        {/if}
+                      {/if}
+
+                      <!-- Critique & Revision Section -->
+                      {#if ['reviewing', 'approved', 'awaiting_approval', 'planning'].includes(desire.status)}
+                        <div class="mt-4 pt-4 border-t border-dashed border-gray-200 dark:border-gray-700">
+                          <h5 class="font-semibold text-sm mb-2 text-gray-700 dark:text-gray-200">✏️ Request Revision</h5>
+                          <p class="text-xs muted mb-2">
+                            Not happy with the plan? Provide feedback and request a revision.
+                          </p>
+                          <textarea
+                            class="input-field resize-y"
+                            placeholder="Enter your critique or suggestions for improving this plan..."
+                            bind:value={critiqueText[desire.id]}
+                            rows="3"
+                          ></textarea>
+                          <div class="mt-2 flex justify-end">
+                            <button
+                              class="px-3 py-1.5 text-xs font-medium rounded bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={revisingId === desire.id || !critiqueText[desire.id]?.trim()}
+                              on:click|stopPropagation={() => handleRevise(desire.id)}
+                            >
+                              {revisingId === desire.id ? 'Requesting...' : '🔄 Request Revision'}
+                            </button>
+                          </div>
                         </div>
                       {/if}
                     </div>
                   {/if}
+                {/if}
 
-                  <!-- Scratchpad File Browser -->
-                  <div class="scratchpad-browser">
-                    <h6 class="browser-title">📜 Journey Events</h6>
-
-                    {#if scratchpadLoading}
-                      <p class="text-xs muted">Loading events...</p>
-                    {:else if scratchpadEntries.length > 0}
-                      <div class="scratchpad-entries">
-                        {#each scratchpadEntries as entry, idx}
-                          <div
-                            class="scratchpad-entry {entry.data ? 'clickable' : ''} {expandedEntryIndex === idx ? 'expanded' : ''}"
-                            on:click={() => entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
-                            on:keydown={(e) => e.key === 'Enter' && entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
-                            tabindex={entry.data ? 0 : -1}
-                            role={entry.data ? 'button' : undefined}
-                          >
-                            <span class="entry-icon">{getScratchpadEntryIcon(entry.type)}</span>
-                            <div class="entry-content">
-                              <div class="entry-header">
-                                <span class="entry-description">{entry.description}</span>
-                                {#if entry.data}
-                                  <span class="entry-expand-hint text-xs">{expandedEntryIndex === idx ? '▲' : '▼'}</span>
-                                {/if}
-                              </div>
-                              <span class="entry-meta text-xs muted">
-                                {formatTimestamp(entry.timestamp)} by {entry.agentName || entry.actor}
-                              </span>
-                              {#if expandedEntryIndex === idx && entry.data}
-                                <div class="entry-data">
-                                  <pre class="entry-data-json">{JSON.stringify(entry.data, null, 2)}</pre>
-                                </div>
-                              {/if}
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-
-                      <!-- Pagination -->
-                      {#if scratchpadTotal > scratchpadLimit}
-                        <div class="scratchpad-pagination">
-                          <button
-                            class="pagination-btn"
-                            disabled={scratchpadOffset === 0}
-                            on:click={() => loadScratchpadEntries(desire.id, Math.max(0, scratchpadOffset - scratchpadLimit))}
-                          >
-                            ← Newer
-                          </button>
-                          <span class="pagination-info text-xs muted">
-                            {scratchpadOffset + 1}-{Math.min(scratchpadOffset + scratchpadLimit, scratchpadTotal)} of {scratchpadTotal}
-                          </span>
-                          <button
-                            class="pagination-btn"
-                            disabled={scratchpadOffset + scratchpadLimit >= scratchpadTotal}
-                            on:click={() => loadScratchpadEntries(desire.id, scratchpadOffset + scratchpadLimit)}
-                          >
-                            Older →
-                          </button>
-                        </div>
-                      {/if}
-                    {:else}
-                      <p class="text-xs muted">No journey events logged yet</p>
+                {#if desire.review}
+                  <div class="p-2 bg-gray-50 dark:bg-gray-800/50 rounded mb-2">
+                    <span class="text-xs font-semibold">Review:</span>
+                    <span class="text-xs muted">{desire.review.verdict} (alignment: {(desire.review.alignmentScore * 100).toFixed(0)}%)</span>
+                    {#if desire.review.reasoning}
+                      <p class="text-xs muted mt-1 italic">{desire.review.reasoning}</p>
                     {/if}
-
-                    <!-- File List (collapsed) -->
-                    {#if scratchpadFiles.length > 0}
-                      <details class="file-list-details">
-                        <summary class="text-xs muted">📁 {scratchpadFiles.length} files in scratchpad/</summary>
-                        <ul class="file-list">
-                          {#each scratchpadFiles.slice(-10) as file}
-                            <li class="text-xs">{file}</li>
+                    {#if desire.review.concerns && desire.review.concerns.length > 0}
+                      <div class="mt-2">
+                        <span class="text-xs font-semibold">Concerns:</span>
+                        <ul class="list-none p-0 m-0 mt-1">
+                          {#each desire.review.concerns as concern}
+                            <li class="text-xs muted">• {concern}</li>
                           {/each}
-                          {#if scratchpadFiles.length > 10}
-                            <li class="text-xs muted">...and {scratchpadFiles.length - 10} more</li>
-                          {/if}
                         </ul>
-                      </details>
+                      </div>
                     {/if}
                   </div>
+                {/if}
 
-                  {#if desire.folderPath}
-                    <p class="text-xs muted folder-path">
-                      📁 {desire.folderPath}
-                    </p>
+                {#if desire.userCritique}
+                  <div class="p-2 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded mb-2">
+                    <span class="text-xs font-semibold">⏳ Pending Revision:</span>
+                    <p class="text-xs muted">"{desire.userCritique}"</p>
+                    <span class="text-xs muted">Submitted: {formatTimestamp(desire.critiqueAt || null)}</span>
+                  </div>
+                {/if}
+
+                <!-- Execution Status Display -->
+                {#if desire.execution}
+                  <div
+                    class="p-3 rounded-md mb-2 border {(desire.execution.status === 'in_progress' || desire.execution.status === 'running') ? 'bg-green-50 dark:bg-green-900/20 border-green-500 animate-pulse' : 'bg-blue-50 dark:bg-blue-900/20 border-blue-400'}"
+                  >
+                    <div class="flex justify-between items-center mb-1">
+                      <span class="text-sm font-semibold">
+                        {#if desire.execution.status === 'in_progress' || desire.execution.status === 'running'}
+                          ⚡ Executing...
+                        {:else if desire.execution.status === 'completed'}
+                          ✅ Execution Complete
+                        {:else if desire.execution.status === 'failed'}
+                          ❌ Execution Failed
+                        {:else}
+                          📊 Execution: {desire.execution.status}
+                        {/if}
+                      </span>
+                      <span class="text-xs muted">
+                        Step {desire.execution.stepsCompleted || 0} / {desire.execution.stepsTotal || desire.plan?.steps.length || '?'}
+                      </span>
+                    </div>
+                    {#if desire.execution.error}
+                      <p class="text-xs text-red-600 dark:text-red-400 mt-1">{desire.execution.error}</p>
+                    {/if}
+                    <div class="text-xs muted mt-1">
+                      Started: {formatTimestamp(desire.execution.startedAt)}
+                      {#if desire.execution.completedAt}
+                        • Completed: {formatTimestamp(desire.execution.completedAt)}
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- Outcome Review Display -->
+                {#if desire.outcomeReview}
+                  <div
+                    class="p-3 rounded-md mb-2 border {desire.outcomeReview.successScore >= 0.7 ? 'bg-green-50 dark:bg-green-900/20 border-green-500' : desire.outcomeReview.successScore >= 0.4 ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500' : 'bg-red-50 dark:bg-red-900/20 border-red-500'}"
+                  >
+                    <div class="flex justify-between items-center mb-2">
+                      <span class="text-sm font-semibold">
+                        📊 Outcome: {desire.outcomeReview.verdict}
+                      </span>
+                      <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-black/10 dark:bg-white/10">
+                        {(desire.outcomeReview.successScore * 100).toFixed(0)}% success
+                      </span>
+                    </div>
+                    <p class="text-xs mb-2 italic">{desire.outcomeReview.reasoning}</p>
+                    {#if desire.outcomeReview.executionSummary}
+                      <div class="mt-3 p-2 bg-blue-600/10 dark:bg-blue-400/10 rounded border-l-4 border-blue-600">
+                        <span class="text-xs font-semibold">📋 What was done:</span>
+                        <pre class="mt-1 text-xs whitespace-pre-wrap text-gray-600 dark:text-gray-400">{desire.outcomeReview.executionSummary}</pre>
+                      </div>
+                    {/if}
+                    {#if desire.outcomeReview.lessonsLearned && desire.outcomeReview.lessonsLearned.length > 0}
+                      <div class="mt-2">
+                        <span class="text-xs font-semibold">Lessons:</span>
+                        <ul class="list-none p-0 m-0 mt-1">
+                          {#each desire.outcomeReview.lessonsLearned as lesson}
+                            <li class="text-xs muted">• {lesson}</li>
+                          {/each}
+                        </ul>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+
+                <!-- Journey Log Button - More Prominent -->
+                {#if desire.metrics || desire.scratchpad}
+                  <button
+                    class="w-full flex items-center gap-3 p-3 rounded-lg border-2 text-sm font-medium cursor-pointer text-left mb-2 transition-all hover:translate-y-[-1px] hover:shadow-md {showScratchpadFor !== desire.id ? 'bg-white dark:bg-gray-800' : 'border-b-transparent rounded-b-none'}"
+                    style="border-color: {getNatureColor(desire.metrics)};"
+                    on:click={() => toggleScratchpadWithLoad(desire.id)}
+                  >
+                    <span class="text-xl">📜</span>
+                    <span class="flex-1">
+                      {showScratchpadFor === desire.id ? 'Hide' : 'Explore'} Journey Log
+                    </span>
+                    {#if desire.scratchpad?.entryCount}
+                      <span class="px-2 py-1 rounded-full text-white text-xs font-semibold" style="background: {getNatureColor(desire.metrics)};">
+                        {desire.scratchpad.entryCount} events
+                      </span>
+                    {/if}
+                    <span class="text-xs text-gray-500 dark:text-gray-400 ml-auto">{showScratchpadFor === desire.id ? '▲' : '▼'}</span>
+                  </button>
+
+                  {#if showScratchpadFor === desire.id}
+                    <div class="bg-gray-50 dark:bg-gray-800/50 border-2 border-t-0 rounded-b-lg p-4 -mt-2 mb-2" style="border-color: {getNatureColor(desire.metrics)};">
+                      <!-- Metrics Summary -->
+                      <div class="flex flex-wrap gap-4 pb-3 border-b border-gray-200 dark:border-gray-700 mb-3 text-xs text-gray-500 dark:text-gray-400">
+                        <span>📋 Plans: {desire.metrics?.planVersionCount || 0}</span>
+                        <span>🔄 Attempts: {desire.metrics?.executionAttemptCount || 0}</span>
+                        <span>✅ Successes: {desire.metrics?.executionSuccessCount || 0}</span>
+                        <span>💪 Reinforced: {desire.metrics?.reinforcementCount || 0}</span>
+                        <span>📉 Decays: {desire.metrics?.decayCount || 0}</span>
+                        <span>👤 User Input: {desire.metrics?.userInputCount || 0}</span>
+                        <span>🔁 Cycles: {desire.metrics?.cycleCount || 0}</span>
+                      </div>
+
+                      <!-- Plan Version Browser -->
+                      {#if planVersions.length > 0 || (desire.planHistory && desire.planHistory.length > 0)}
+                        <div class="pt-3 border-t border-gray-200 dark:border-gray-700 mt-3">
+                          <h6 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">📋 Plan Versions</h6>
+                          <div class="flex flex-wrap gap-2 mb-2">
+                            {#if desire.plan}
+                              <button
+                                class="px-2 py-1 text-xs rounded border transition-all {!selectedPlanVersion ? 'bg-blue-600 border-blue-700 text-white' : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600'}"
+                                on:click={() => { viewingPlan = desire.plan || null; selectedPlanVersion = null; }}
+                              >
+                                Current (v{desire.plan.version || 1})
+                              </button>
+                            {/if}
+                            {#each planVersions as version}
+                              {@const vNum = parseInt(version.replace('v', '').replace('.json', ''))}
+                              <button
+                                class="px-2 py-1 text-xs rounded border transition-all {selectedPlanVersion === vNum ? 'bg-blue-600 border-blue-700 text-white' : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600'}"
+                                on:click={() => loadPlanVersion(desire.id, vNum)}
+                              >
+                                {version.replace('.json', '')}
+                              </button>
+                            {/each}
+                          </div>
+                          {#if viewingPlan && selectedPlanVersion}
+                            <div class="bg-blue-50 dark:bg-blue-900/30 border border-blue-400 rounded p-2 mt-2">
+                              <p class="text-xs muted">Viewing v{viewingPlan.version}: {viewingPlan.operatorGoal || 'No goal'}</p>
+                              <div class="mt-1">
+                                {#each viewingPlan.steps as step, i}
+                                  <div class="py-0.5 text-xs text-gray-600 dark:text-gray-400">
+                                    {step.order || i + 1}. {step.action}
+                                  </div>
+                                {/each}
+                              </div>
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      <!-- Scratchpad File Browser -->
+                      <div class="pt-3 border-t border-gray-200 dark:border-gray-700 mt-3">
+                        <h6 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">📜 Journey Events</h6>
+
+                        {#if scratchpadLoading}
+                          <p class="text-xs muted">Loading events...</p>
+                        {:else if scratchpadEntries.length > 0}
+                          <div class="max-h-72 overflow-y-auto flex flex-col gap-2">
+                            {#each scratchpadEntries as entry, idx}
+                              <div
+                                class="flex items-start gap-2 p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded transition-colors {entry.data ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800' : ''} {expandedEntryIndex === idx ? 'bg-green-50 dark:bg-green-900/20 border-green-500' : ''}"
+                                on:click={() => entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
+                                on:keydown={(e) => e.key === 'Enter' && entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
+                                tabindex={entry.data ? 0 : -1}
+                                role={entry.data ? 'button' : undefined}
+                              >
+                                <span class="text-base flex-shrink-0">{getScratchpadEntryIcon(entry.type)}</span>
+                                <div class="flex-1 flex flex-col gap-0.5">
+                                  <div class="flex justify-between items-start gap-2">
+                                    <span class="text-sm">{entry.description}</span>
+                                    {#if entry.data}
+                                      <span class="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">{expandedEntryIndex === idx ? '▲' : '▼'}</span>
+                                    {/if}
+                                  </div>
+                                  <span class="text-[0.625rem] text-gray-500 dark:text-gray-400">
+                                    {formatTimestamp(entry.timestamp)} by {entry.agentName || entry.actor}
+                                  </span>
+                                  {#if expandedEntryIndex === idx && entry.data}
+                                    <div class="mt-2 pt-2 border-t border-dashed border-gray-300 dark:border-gray-600">
+                                      <pre class="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-3 rounded overflow-x-auto whitespace-pre-wrap break-words max-h-72 overflow-y-auto">{JSON.stringify(entry.data, null, 2)}</pre>
+                                    </div>
+                                  {/if}
+                                </div>
+                              </div>
+                            {/each}
+                          </div>
+
+                          <!-- Pagination -->
+                          {#if scratchpadTotal > scratchpadLimit}
+                            <div class="flex justify-between items-center mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                              <button
+                                class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={scratchpadOffset === 0}
+                                on:click={() => loadScratchpadEntries(desire.id, Math.max(0, scratchpadOffset - scratchpadLimit))}
+                              >
+                                ← Newer
+                              </button>
+                              <span class="flex-1 text-center text-xs muted">
+                                {scratchpadOffset + 1}-{Math.min(scratchpadOffset + scratchpadLimit, scratchpadTotal)} of {scratchpadTotal}
+                              </span>
+                              <button
+                                class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={scratchpadOffset + scratchpadLimit >= scratchpadTotal}
+                                on:click={() => loadScratchpadEntries(desire.id, scratchpadOffset + scratchpadLimit)}
+                              >
+                                Older →
+                              </button>
+                            </div>
+                          {/if}
+                        {:else}
+                          <p class="text-xs muted">No journey events logged yet</p>
+                        {/if}
+
+                        <!-- File List (collapsed) -->
+                        {#if scratchpadFiles.length > 0}
+                          <details class="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <summary class="text-xs muted cursor-pointer select-none">📁 {scratchpadFiles.length} files in scratchpad/</summary>
+                            <ul class="list-none p-0 m-0 mt-2 max-h-36 overflow-y-auto">
+                              {#each scratchpadFiles.slice(-10) as file}
+                                <li class="py-0.5 text-xs font-mono">{file}</li>
+                              {/each}
+                              {#if scratchpadFiles.length > 10}
+                                <li class="text-xs muted">...and {scratchpadFiles.length - 10} more</li>
+                              {/if}
+                            </ul>
+                          </details>
+                        {/if}
+                      </div>
+
+                      {#if desire.folderPath}
+                        <p class="text-xs muted font-mono mt-2">
+                          📁 {desire.folderPath}
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                {/if}
+
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700" on:click|stopPropagation>
+                  <!-- Stage progression buttons -->
+                  {#if desire.status === 'nascent'}
+                    <button
+                      class="btn-primary btn-xs"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleAdvanceStage(desire.id, 'pending')}
+                    >
+                      → Pending
+                    </button>
+                  {/if}
+                  {#if desire.status === 'pending'}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
+                      disabled={processingId === desire.id || agentProcessingId === desire.id}
+                      on:click={() => handleGeneratePlan(desire.id)}
+                    >
+                      {#if agentProcessingId === desire.id && agentOperation === 'planning'}
+                        <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                      {:else}
+                        🧠
+                      {/if}
+                      Generate Plan
+                    </button>
+                  {/if}
+                  {#if desire.status === 'planning'}
+                    {#if desire.plan}
+                      <button
+                        class="btn-primary btn-xs"
+                        disabled={processingId === desire.id}
+                        on:click={() => handleAdvanceStage(desire.id, 'reviewing')}
+                      >
+                        → Review
+                      </button>
+                    {:else}
+                      <button
+                        class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                        style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
+                        disabled={processingId === desire.id || agentProcessingId === desire.id}
+                        on:click={() => handleGeneratePlan(desire.id)}
+                      >
+                        {#if agentProcessingId === desire.id && agentOperation === 'planning'}
+                          <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                        {:else}
+                          🧠
+                        {/if}
+                        Generate Plan
+                      </button>
+                    {/if}
+                  {/if}
+                  {#if desire.status === 'reviewing' || desire.status === 'awaiting_approval'}
+                    <button
+                      class="btn-success btn-xs"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleApprove(desire.id)}
+                    >
+                      ✅ Approve Plan
+                    </button>
+                  {/if}
+                  {#if desire.status === 'approved'}
+                    {#if desire.plan}
+                      <button
+                        class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                        style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
+                        disabled={processingId === desire.id || agentProcessingId === desire.id}
+                        on:click={() => handleExecute(desire.id)}
+                      >
+                        {#if agentProcessingId === desire.id && agentOperation === 'executing'}
+                          <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                        {:else}
+                          🚀
+                        {/if}
+                        Execute
+                      </button>
+                    {:else}
+                      <!-- No plan - need to generate one first -->
+                      <button
+                        class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed bg-amber-500 hover:bg-amber-600"
+                        disabled={processingId === desire.id || agentProcessingId === desire.id}
+                        on:click={() => handleGeneratePlan(desire.id)}
+                        title="Generate an execution plan for this desire"
+                      >
+                        {#if agentProcessingId === desire.id && agentOperation === 'planning'}
+                          <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                        {:else}
+                          🧠
+                        {/if}
+                        Generate Plan
+                      </button>
+                    {/if}
+                  {/if}
+
+                  <!-- Reset/Unstick for executing or failed desires -->
+                  {#if desire.status === 'executing' || desire.status === 'failed'}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #f59e0b, #d97706);"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleReset(desire.id)}
+                      title="Reset this desire back to planning stage"
+                    >
+                      🔄 Reset
+                    </button>
+                  {/if}
+
+                  <!-- Outcome Review for awaiting_review desires -->
+                  {#if desire.status === 'awaiting_review'}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
+                      disabled={processingId === desire.id || agentProcessingId === desire.id}
+                      on:click={() => handleOutcomeReview(desire.id)}
+                      title="Run outcome review to verify completion"
+                    >
+                      {#if agentProcessingId === desire.id}
+                        <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                        {currentLoadingMessage || 'Reviewing...'}
+                      {:else}
+                        🔍 Run Outcome Review
+                      {/if}
+                    </button>
+                  {/if}
+
+                  <!-- Quick approve (skip to approved) - for early stages only -->
+                  {#if ['nascent', 'pending', 'planning'].includes(desire.status)}
+                    <button
+                      class="btn-primary btn-xs"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleApprove(desire.id)}
+                      title="Skip to approved status"
+                    >
+                      ⏩ Fast Approve
+                    </button>
+                  {/if}
+
+                  <!-- Reject -->
+                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved'].includes(desire.status)}
+                    <button
+                      class="btn-danger btn-xs"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleReject(desire.id)}
+                    >
+                      ❌ Reject
+                    </button>
+                  {/if}
+                  <!-- Archive - for active desires (send to dormant state) -->
+                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'completed'].includes(desire.status)}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleArchive(desire.id)}
+                      title="Archive this desire (can be revived later)"
+                    >
+                      📦 Archive
+                    </button>
+                  {/if}
+
+                  <!-- Revive - for archived desires (bring back to active) -->
+                  {#if ['rejected', 'abandoned', 'failed'].includes(desire.status)}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #10b981, #059669);"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleRevive(desire.id)}
+                      title="Revive this desire back to pending"
+                    >
+                      🔄 Revive
+                    </button>
+                  {/if}
+
+                  {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded bg-gray-500 hover:bg-gray-600 text-white disabled:opacity-50"
+                      disabled={processingId === desire.id}
+                      on:click={() => handleDelete(desire.id)}
+                    >
+                      🗑️ Delete
+                    </button>
                   {/if}
                 </div>
-              {/if}
+              </div>
             {/if}
-
-            <div class="desire-actions">
-              <!-- Stage progression buttons -->
-              {#if desire.status === 'nascent'}
-                <button
-                  class="btn-stage"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleAdvanceStage(desire.id, 'pending')}
-                >
-                  → Pending
-                </button>
-              {/if}
-              {#if desire.status === 'pending'}
-                <button
-                  class="btn-stage btn-agent"
-                  disabled={processingId === desire.id || agentProcessingId === desire.id}
-                  on:click={() => handleGeneratePlan(desire.id)}
-                >
-                  {#if agentProcessingId === desire.id && agentOperation === 'planning'}
-                    <span class="loading-spinner"></span>
-                  {:else}
-                    🧠
-                  {/if}
-                  Generate Plan
-                </button>
-              {/if}
-              {#if desire.status === 'planning'}
-                {#if desire.plan}
-                  <button
-                    class="btn-stage"
-                    disabled={processingId === desire.id}
-                    on:click={() => handleAdvanceStage(desire.id, 'reviewing')}
-                  >
-                    → Review
-                  </button>
-                {:else}
-                  <button
-                    class="btn-stage btn-agent"
-                    disabled={processingId === desire.id || agentProcessingId === desire.id}
-                    on:click={() => handleGeneratePlan(desire.id)}
-                  >
-                    {#if agentProcessingId === desire.id && agentOperation === 'planning'}
-                      <span class="loading-spinner"></span>
-                    {:else}
-                      🧠
-                    {/if}
-                    Generate Plan
-                  </button>
-                {/if}
-              {/if}
-              {#if desire.status === 'reviewing' || desire.status === 'awaiting_approval'}
-                <button
-                  class="btn-approve"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleApprove(desire.id)}
-                >
-                  ✅ Approve Plan
-                </button>
-              {/if}
-              {#if desire.status === 'approved'}
-                {#if desire.plan}
-                  <button
-                    class="btn-execute btn-agent"
-                    disabled={processingId === desire.id || agentProcessingId === desire.id}
-                    on:click={() => handleExecute(desire.id)}
-                  >
-                    {#if agentProcessingId === desire.id && agentOperation === 'executing'}
-                      <span class="loading-spinner"></span>
-                    {:else}
-                      🚀
-                    {/if}
-                    Execute
-                  </button>
-                {:else}
-                  <!-- No plan - need to generate one first -->
-                  <button
-                    class="btn-plan btn-agent"
-                    disabled={processingId === desire.id || agentProcessingId === desire.id}
-                    on:click={() => handleGeneratePlan(desire.id)}
-                    title="Generate an execution plan for this desire"
-                  >
-                    {#if agentProcessingId === desire.id && agentOperation === 'planning'}
-                      <span class="loading-spinner"></span>
-                    {:else}
-                      🧠
-                    {/if}
-                    Generate Plan
-                  </button>
-                {/if}
-              {/if}
-
-              <!-- Reset/Unstick for executing or failed desires -->
-              {#if desire.status === 'executing' || desire.status === 'failed'}
-                <button
-                  class="btn-reset"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleReset(desire.id)}
-                  title="Reset this desire back to planning stage"
-                >
-                  🔄 Reset
-                </button>
-              {/if}
-
-              <!-- Outcome Review for awaiting_review desires -->
-              {#if desire.status === 'awaiting_review'}
-                <button
-                  class="btn-execute btn-agent"
-                  disabled={processingId === desire.id || agentProcessingId === desire.id}
-                  on:click={() => handleOutcomeReview(desire.id)}
-                  title="Run outcome review to verify completion"
-                >
-                  {#if agentProcessingId === desire.id}
-                    <span class="loading-spinner"></span>
-                    {currentLoadingMessage || 'Reviewing...'}
-                  {:else}
-                    🔍 Run Outcome Review
-                  {/if}
-                </button>
-              {/if}
-
-              <!-- Quick approve (skip to approved) - for early stages only -->
-              {#if ['nascent', 'pending', 'planning'].includes(desire.status)}
-                <button
-                  class="btn-stage"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleApprove(desire.id)}
-                  title="Skip to approved status"
-                >
-                  ⏩ Fast Approve
-                </button>
-              {/if}
-
-              <!-- Reject -->
-              {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved'].includes(desire.status)}
-                <button
-                  class="btn-reject"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleReject(desire.id)}
-                >
-                  ❌ Reject
-                </button>
-              {/if}
-              <!-- Archive - for active desires (send to dormant state) -->
-              {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'completed'].includes(desire.status)}
-                <button
-                  class="btn-archive"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleArchive(desire.id)}
-                  title="Archive this desire (can be revived later)"
-                >
-                  📦 Archive
-                </button>
-              {/if}
-
-              <!-- Revive - for archived desires (bring back to active) -->
-              {#if ['rejected', 'abandoned', 'failed'].includes(desire.status)}
-                <button
-                  class="btn-revive"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleRevive(desire.id)}
-                  title="Revive this desire back to pending"
-                >
-                  🔄 Revive
-                </button>
-              {/if}
-
-              {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
-                <button
-                  class="btn-delete"
-                  disabled={processingId === desire.id}
-                  on:click={() => handleDelete(desire.id)}
-                >
-                  🗑️ Delete
-                </button>
-              {/if}
-            </div>
+            <!-- ========== END EXPANDED VIEW ========== -->
           </div>
         {/each}
       {/if}
@@ -2065,45 +2074,55 @@
 
   <!-- Cheeky loading overlay with streaming LLM output -->
   {#if agentProcessingId && currentLoadingMessage}
-    <div class="agent-loading-overlay">
-      <div class="agent-loading-content" class:expanded={streamingOutput}>
-        <div class="agent-loading-brain">🧠</div>
-        <div class="agent-loading-message">{currentLoadingMessage}</div>
+    <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[9999] backdrop-blur-sm">
+      <div
+        class="border-2 border-violet-500 rounded-2xl p-8 text-center shadow-[0_0_40px_rgba(139,92,246,0.4)] animate-pulse"
+        class:max-w-3xl={streamingOutput}
+        class:w-[90%]={streamingOutput}
+        class:max-h-[80vh]={streamingOutput}
+        class:overflow-y-auto={streamingOutput}
+        style="background: linear-gradient(135deg, #1e1e2e 0%, #2d1b4e 50%, #1e1e2e 100%);"
+      >
+        <div class="text-6xl animate-bounce drop-shadow-[0_0_10px_rgba(139,92,246,0.8)]">🧠</div>
+        <div class="mt-4 text-xl text-purple-200 italic tracking-wide">{currentLoadingMessage}</div>
 
         <!-- Streaming status -->
         {#if streamingPhase}
-          <div class="streaming-status">
-            <div class="streaming-phase">{streamingPhase}</div>
+          <div class="mt-4 p-3 bg-violet-600/20 rounded-lg text-left">
+            <div class="text-base text-violet-300 font-medium">{streamingPhase}</div>
             {#if streamingModel}
-              <div class="streaming-model">Model: {streamingModel}</div>
+              <div class="text-sm text-gray-400 mt-1 font-mono">Model: {streamingModel}</div>
             {/if}
             {#if streamingLatency > 0}
-              <div class="streaming-latency">Latency: {(streamingLatency / 1000).toFixed(1)}s</div>
+              <div class="text-sm text-gray-400 mt-1 font-mono">Latency: {(streamingLatency / 1000).toFixed(1)}s</div>
             {/if}
             {#if streamingSteps > 0}
-              <div class="streaming-steps">Steps: {streamingSteps}</div>
+              <div class="text-sm text-gray-400 mt-1 font-mono">Steps: {streamingSteps}</div>
             {/if}
           </div>
         {/if}
 
         <!-- Progress log display -->
         {#if streamingOutput}
-          <div class="streaming-output-container">
-            <div class="streaming-output-header">
+          <div class="mt-4 text-left bg-black/30 rounded-lg overflow-hidden">
+            <div class="flex justify-between items-center px-3 py-2 bg-violet-600/30 text-xs text-violet-200 font-medium">
               <span>📋 Progress Log</span>
-              <span class="streaming-output-length">{streamingOutput.split('\n').length} steps</span>
+              <span class="font-mono text-gray-400">{streamingOutput.split('\n').length} steps</span>
             </div>
-            <pre class="streaming-output">{streamingOutput}</pre>
+            <pre class="p-3 font-mono text-xs leading-relaxed text-purple-200 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">{streamingOutput}</pre>
           </div>
         {/if}
 
-        <div class="agent-loading-bar">
-          <div class="agent-loading-progress"></div>
+        <div class="mt-6 w-48 h-1.5 bg-gray-700 rounded-full overflow-hidden mx-auto">
+          <div
+            class="h-full w-[30%] rounded-full animate-[loading-progress_1.5s_ease-in-out_infinite]"
+            style="background: linear-gradient(90deg, #8b5cf6, #a78bfa, #8b5cf6);"
+          ></div>
         </div>
 
         <!-- Close button -->
         <button
-          class="overlay-close-btn"
+          class="mt-4 px-6 py-2 bg-white/15 border border-white/30 rounded-md text-white/90 text-sm cursor-pointer transition-all hover:bg-white/25 hover:border-white/50 hover:text-white"
           on:click={() => stopLoadingMessages()}
           title="Close overlay"
         >
@@ -2115,2289 +2134,8 @@
 </div>
 
 <style>
-  .agency-dashboard {
-    padding: 1rem;
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .stat-card {
-    background: var(--card-bg, white);
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 8px;
-    padding: 1rem;
-    text-align: center;
-  }
-
-  :global(.dark) .stat-card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .stat-label {
-    font-size: 0.75rem;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .stat-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin-top: 0.25rem;
-  }
-
-  .card {
-    background: var(--card-bg, white);
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 8px;
-  }
-
-  :global(.dark) .card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .select-input {
-    padding: 0.5rem;
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 6px;
-    background: white;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .select-input {
-    background: #374151;
-    border-color: #4b5563;
-    color: white;
-  }
-
-  .input-field {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 6px;
-    background: white;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .input-field {
-    background: #374151;
-    border-color: #4b5563;
-    color: white;
-  }
-
-  .btn-primary {
-    background: #3b82f6;
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    font-weight: 500;
-    font-size: 0.875rem;
-    border: none;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-primary:hover {
-    background: #2563eb;
-  }
-
-  .btn-secondary {
-    background: #f3f4f6;
-    color: #374151;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    font-weight: 500;
-    font-size: 0.875rem;
-    border: none;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #374151;
-    color: #e5e7eb;
-  }
-
-  .btn-secondary:hover {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-secondary:hover {
-    background: #4b5563;
-  }
-
-  .error-banner {
-    background: #fee2e2;
-    border: 1px solid #f87171;
-    color: #b91c1c;
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .error-banner {
-    background: #7f1d1d;
-    border-color: #991b1b;
-    color: #fecaca;
-  }
-
-  .desire-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .desire-card {
-    background: var(--card-bg, white);
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 8px;
-    padding: 1rem;
-  }
-
-  :global(.dark) .desire-card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  /* Compact strength indicator in header */
-  .strength-compact {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 80px;
-  }
-
-  .strength-compact-bar {
-    width: 50px;
-    height: 6px;
-    background: #e5e7eb;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .strength-compact-bar {
-    background: #374151;
-  }
-
-  .strength-compact-fill {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.3s ease;
-  }
-
-  .strength-compact-text {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #374151;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  :global(.dark) .strength-compact-text {
-    color: #d1d5db;
-  }
-
-  .trend-arrow {
-    font-weight: bold;
-  }
-
-  .trend-arrow.up {
-    color: #22c55e;
-  }
-
-  .trend-arrow.down {
-    color: #ef4444;
-  }
-
-  .trend-arrow.stable {
-    color: #6b7280;
-  }
-
-  .desire-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 0.5rem;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .source-icon {
-    font-size: 1.25rem;
-  }
-
-  .desire-title {
-    font-weight: 600;
-    font-size: 1rem;
-  }
-
-  .badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .desire-description {
-    font-size: 0.875rem;
-    color: #4b5563;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .desire-description {
-    color: #9ca3af;
-  }
-
-  .desire-reason {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .desire-reason {
-    color: #9ca3af;
-  }
-
-  .desire-meta {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-  }
-
-  .plan-summary,
-  .review-summary {
-    padding: 0.5rem;
-    background: #f9fafb;
-    border-radius: 4px;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .plan-summary,
-  :global(.dark) .review-summary {
-    background: #111827;
-  }
-
-  button.plan-summary.clickable {
-    cursor: pointer;
-    transition: background 0.2s;
-    width: 100%;
-    text-align: left;
-    border: none;
-    font-family: inherit;
-    font-size: inherit;
-  }
-
-  .plan-summary.clickable:hover {
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .plan-summary.clickable:hover {
-    background: #1f2937;
-  }
-
-  .plan-summary-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .expand-icon {
-    margin-left: auto;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .history-badge {
-    font-style: italic;
-    color: #8b5cf6;
-  }
-
-  .plan-goal {
-    margin-top: 0.25rem;
-    font-style: italic;
-  }
-
-  .plan-details {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .plan-details {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .plan-section-title {
-    font-weight: 600;
-    font-size: 0.875rem;
-    margin-bottom: 0.5rem;
-    color: #374151;
-  }
-
-  :global(.dark) .plan-section-title {
-    color: #e5e7eb;
-  }
-
-  .plan-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .plan-step {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-    padding: 0.75rem;
-  }
-
-  :global(.dark) .plan-step {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .step-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.25rem;
-  }
-
-  .step-number {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: #3b82f6;
-    color: white;
-    border-radius: 50%;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .step-action {
-    font-weight: 500;
-    flex: 1;
-  }
-
-  .step-skill,
-  .step-outcome,
-  .step-inputs {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-    padding-left: 2rem;
-  }
-
-  .step-inputs code,
-  .step-skill code {
-    background: #e5e7eb;
-    padding: 0.125rem 0.375rem;
-    border-radius: 3px;
-    font-family: monospace;
-  }
-
-  :global(.dark) .step-inputs code,
-  :global(.dark) .step-skill code {
-    background: #374151;
-  }
-
-  .badge.small {
-    padding: 0.0625rem 0.375rem;
-    font-size: 0.625rem;
-  }
-
-  .btn-history {
-    background: transparent;
-    border: 1px solid #e5e7eb;
-    color: #6b7280;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    cursor: pointer;
-    margin-top: 0.75rem;
-    width: 100%;
-  }
-
-  .btn-history:hover {
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .btn-history {
-    border-color: #374151;
-    color: #9ca3af;
-  }
-
-  :global(.dark) .btn-history:hover {
-    background: #374151;
-  }
-
-  .plan-history {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: #fef3c7;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .plan-history {
-    background: #78350f;
-  }
-
-  .old-plan {
-    margin-bottom: 0.75rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .old-plan {
-    border-bottom-color: #92400e;
-  }
-
-  .old-plan:last-child {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-  }
-
-  .old-plan-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #92400e;
-  }
-
-  :global(.dark) .old-plan-title {
-    color: #fef3c7;
-  }
-
-  .critique-note {
-    font-style: italic;
-    color: #78350f;
-    margin: 0.25rem 0;
-  }
-
-  :global(.dark) .critique-note {
-    color: #fde68a;
-  }
-
-  .old-plan-steps {
-    list-style: none;
-    padding: 0;
-    margin: 0.25rem 0 0 0;
-    font-size: 0.75rem;
-  }
-
-  .old-plan-steps li {
-    color: #92400e;
-  }
-
-  :global(.dark) .old-plan-steps li {
-    color: #fde68a;
-  }
-
-  .critique-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px dashed #e5e7eb;
-  }
-
-  :global(.dark) .critique-section {
-    border-top-color: #374151;
-  }
-
-  .critique-hint {
-    margin-bottom: 0.5rem;
-  }
-
-  .critique-input {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-    background: white;
-    font-size: 0.875rem;
-    resize: vertical;
-  }
-
-  :global(.dark) .critique-input {
-    background: #111827;
-    border-color: #374151;
-    color: white;
-  }
-
-  .critique-actions {
-    margin-top: 0.5rem;
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .btn-revise {
-    background: #8b5cf6;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-revise:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  .btn-revise:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .review-reasoning {
-    margin-top: 0.25rem;
-    font-style: italic;
-  }
-
-  .review-concerns {
-    margin-top: 0.5rem;
-  }
-
-  .concerns-list {
-    list-style: none;
-    padding: 0;
-    margin: 0.25rem 0 0 0;
-  }
-
-  .pending-critique {
-    padding: 0.5rem;
-    background: #fef3c7;
-    border: 1px solid #fcd34d;
-    border-radius: 4px;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .pending-critique {
-    background: #78350f;
-    border-color: #92400e;
-  }
-
-  .missing-plan-warning {
-    padding: 0.75rem;
-    background: #fee2e2;
-    border: 2px solid #f87171;
-    border-radius: 6px;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
-    color: #b91c1c;
-  }
-
-  :global(.dark) .missing-plan-warning {
-    background: #7f1d1d;
-    border-color: #ef4444;
-    color: #fecaca;
-  }
-
-  .desire-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border-color, #e5e7eb);
-  }
-
-  :global(.dark) .desire-actions {
-    border-color: #374151;
-  }
-
-  .btn-approve {
-    background: #10b981;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-approve:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .btn-reject {
-    background: #ef4444;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-reject:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  .btn-reset {
-    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .btn-reset:hover:not(:disabled) {
-    background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
-  }
-
-  .btn-delete {
-    background: #6b7280;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-delete:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-archive {
-    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .btn-archive:hover:not(:disabled) {
-    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
-  }
-
-  .btn-revive {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .btn-revive:hover:not(:disabled) {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-  }
-
-  .btn-stage {
-    background: #3b82f6;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-stage:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-execute {
-    background: #8b5cf6;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-execute:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  .btn-plan {
-    background: #f59e0b;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-  }
-
-  .btn-plan:hover:not(:disabled) {
-    background: #d97706;
-  }
-
-  .btn-approve:disabled,
-  .btn-reject:disabled,
-  .btn-reset:disabled,
-  .btn-delete:disabled,
-  .btn-stage:disabled,
-  .btn-execute:disabled,
-  .btn-plan:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 2rem;
-  }
-
-  .muted {
-    color: #6b7280;
-  }
-
-  :global(.dark) .muted {
-    color: #9ca3af;
-  }
-
-  /* ========== GROWING DESIRES SECTION ========== */
-  .growing-desires-section {
-    background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
-    border: 2px solid #22c55e;
-    border-radius: 12px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .growing-desires-section {
-    background: linear-gradient(135deg, #14532d 0%, #166534 100%);
-    border-color: #22c55e;
-  }
-
-  .growing-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .growing-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #166534;
-  }
-
-  :global(.dark) .growing-title {
-    color: #86efac;
-  }
-
-  .growing-count {
-    background: #22c55e;
-    color: white;
-    padding: 0.25rem 0.75rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .growing-description {
-    font-size: 0.8rem;
-    color: #166534;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .growing-description {
-    color: #a7f3d0;
-  }
-
-  .growing-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1rem;
-  }
-
-  .growing-card {
-    background: white;
-    border-radius: 8px;
-    padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .growing-card {
-    background: #1f2937;
-  }
-
-  .growing-card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .growing-card-title {
-    font-weight: 500;
-    font-size: 0.9rem;
-    color: #1f2937;
-  }
-
-  :global(.dark) .growing-card-title {
-    color: #f3f4f6;
-  }
-
-  .growing-progress {
-    margin-bottom: 0.75rem;
-  }
-
-  .progress-bar-bg {
-    height: 8px;
-    background: #e5e7eb;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar-bg {
-    background: #374151;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #22c55e, #16a34a);
-    border-radius: 4px;
-    transition: width 0.3s ease;
-  }
-
-  .progress-stats {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 0.25rem;
-  }
-
-  .strength-stat, .threshold-stat {
-    font-size: 0.7rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .strength-stat, :global(.dark) .threshold-stat {
-    color: #9ca3af;
-  }
-
-  .growing-meta {
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.75rem;
-  }
-
-  .reinforcement-count {
-    color: #059669;
-  }
-
-  :global(.dark) .reinforcement-count {
-    color: #34d399;
-  }
-
-  .trend-up {
-    color: #16a34a;
-  }
-
-  .trend-down {
-    color: #dc2626;
-  }
-
-  .trend-stable {
-    color: #6b7280;
-  }
-
-  /* ========== PROMINENT REVIEW SECTION ========== */
-  .pending-review-section {
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-    border: 3px solid #f59e0b;
-    border-radius: 12px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-  }
-
-  :global(.dark) .pending-review-section {
-    background: linear-gradient(135deg, #78350f 0%, #92400e 100%);
-    border-color: #f59e0b;
-  }
-
-  .pending-review-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 2px solid #f59e0b;
-  }
-
-  .pending-review-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #92400e;
-  }
-
-  :global(.dark) .pending-review-title {
-    color: #fef3c7;
-  }
-
-  .pending-review-count {
-    background: #f59e0b;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 9999px;
-    font-weight: 600;
-    font-size: 0.875rem;
-  }
-
-  .review-card {
-    background: white;
-    border: 2px solid #e5e7eb;
-    border-radius: 10px;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .review-card {
-    background: #1f2937;
-    border-color: #4b5563;
-  }
-
-  .review-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .review-card-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  :global(.dark) .review-card-title {
-    color: #f3f4f6;
-  }
-
-  .review-nature-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.75rem;
-    border-radius: 9999px;
-    color: white;
-    font-size: 0.75rem;
-    font-weight: 600;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .review-metrics-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 6px;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .review-metrics-row {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .review-metric {
-    font-size: 0.75rem;
-    color: #4b5563;
-    font-weight: 500;
-  }
-
-  :global(.dark) .review-metric {
-    color: #d1d5db;
-  }
-
-  .review-plan-details {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .review-plan-details {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .plan-header-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .plan-goal-text {
-    font-size: 0.875rem;
-    font-style: italic;
-    color: #4b5563;
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .plan-goal-text {
-    color: #9ca3af;
-  }
-
-  .review-plan-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .review-step {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.5rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-  }
-
-  :global(.dark) .review-step {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .review-step-number {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    background: #3b82f6;
-    color: white;
-    border-radius: 50%;
-    font-size: 0.875rem;
-    font-weight: 600;
-    flex-shrink: 0;
-  }
-
-  .review-step-content {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-  }
-
-  .review-step-action {
-    font-weight: 500;
-  }
-
-  .review-step-skill {
-    color: #6b7280;
-    font-size: 0.75rem;
-    font-style: italic;
-  }
-
-  :global(.dark) .review-step-skill {
-    color: #9ca3af;
-  }
-
-  .badge.tiny {
-    padding: 0.125rem 0.375rem;
-    font-size: 0.625rem;
-  }
-
-  .review-verdict-box {
-    background: #dbeafe;
-    border: 1px solid #3b82f6;
-    border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .review-verdict-box {
-    background: #1e3a5f;
-    border-color: #3b82f6;
-  }
-
-  .review-critique-section {
-    background: #f0fdf4;
-    border: 2px solid #22c55e;
-    border-radius: 8px;
-    padding: 1rem;
-  }
-
-  :global(.dark) .review-critique-section {
-    background: #14532d;
-    border-color: #22c55e;
-  }
-
-  .critique-section-title {
-    font-weight: 600;
-    font-size: 1rem;
-    color: #15803d;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .critique-section-title {
-    color: #86efac;
-  }
-
-  .review-critique-input {
-    width: 100%;
-    padding: 0.75rem;
-    border: 2px solid #86efac;
-    border-radius: 6px;
-    background: white;
-    font-size: 0.875rem;
-    resize: vertical;
-    min-height: 80px;
-  }
-
-  :global(.dark) .review-critique-input {
-    background: #0f172a;
-    border-color: #22c55e;
-    color: white;
-  }
-
-  .review-critique-input:focus {
-    outline: none;
-    border-color: #22c55e;
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
-  }
-
-  .review-action-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 1rem;
-  }
-
-  .btn-revise-large {
-    background: #8b5cf6;
-    color: white;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-revise-large:hover:not(:disabled) {
-    background: #7c3aed;
-    transform: translateY(-1px);
-  }
-
-  .btn-revise-large:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-approve-large {
-    background: #22c55e;
-    color: white;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-approve-large:hover:not(:disabled) {
-    background: #16a34a;
-    transform: translateY(-1px);
-  }
-
-  .btn-approve-large:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-reject-large {
-    background: #ef4444;
-    color: white;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-reject-large:hover:not(:disabled) {
-    background: #dc2626;
-    transform: translateY(-1px);
-  }
-
-  .btn-reject-large:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Type Badge */
-  .type-badge {
-    background: #e0e7ff;
-    color: #4338ca;
-    font-size: 0.65rem;
-    padding: 0.125rem 0.375rem;
-  }
-
-  :global(.dark) .type-badge {
-    background: #312e81;
-    color: #c7d2fe;
-  }
-
-  /* ========== NEW: Desire Insights Panel Styles ========== */
-  .desire-insights {
-    margin: 0.75rem 0;
-    padding: 1rem;
-    border-radius: 10px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .desire-insights {
-    background: var(--dark-bg, #1e293b) !important;
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .nature-section {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .nature-badge-large {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    color: white;
-    font-weight: 600;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  }
-
-  .nature-icon-large {
-    font-size: 1.25rem;
-  }
-
-  .nature-label-large {
-    font-size: 0.875rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .nature-explanation {
-    font-size: 0.8rem;
-    color: #374151;
-    flex: 1;
-    min-width: 200px;
-    margin: 0;
-  }
-
-  :global(.dark) .nature-explanation {
-    color: #d1d5db;
-  }
-
-  .metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  @media (max-width: 640px) {
-    .metrics-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  .metric-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 8px;
-    text-align: center;
-  }
-
-  :global(.dark) .metric-item {
-    background: rgba(0, 0, 0, 0.3);
-  }
-
-  .metric-icon {
-    font-size: 1.25rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .metric-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #1f2937;
-    line-height: 1;
-  }
-
-  :global(.dark) .metric-value {
-    color: #f3f4f6;
-  }
-
-  .metric-label {
-    font-size: 0.625rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #6b7280;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .metric-label {
-    color: #9ca3af;
-  }
-
-  .strength-section {
-    margin-bottom: 0.75rem;
-  }
-
-  .strength-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.375rem;
-  }
-
-  .strength-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #374151;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  :global(.dark) .strength-label {
-    color: #d1d5db;
-  }
-
-  .strength-value {
-    font-size: 0.875rem;
-    font-weight: 700;
-    color: #1f2937;
-  }
-
-  :global(.dark) .strength-value {
-    color: #f3f4f6;
-  }
-
-  .strength-bar-container {
-    height: 8px;
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 999px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .strength-bar-container {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .strength-bar {
-    height: 100%;
-    border-radius: 999px;
-    transition: width 0.3s ease;
-  }
-
-  .reinforcement-indicator {
-    margin-top: 0.375rem;
-    font-size: 0.75rem;
-  }
-
-  .reinforcement-positive {
-    color: #16a34a;
-  }
-
-  :global(.dark) .reinforcement-positive {
-    color: #4ade80;
-  }
-
-  .reinforcement-negative {
-    color: #dc2626;
-  }
-
-  :global(.dark) .reinforcement-negative {
-    color: #f87171;
-  }
-
-  .reinforcement-neutral {
-    color: #6b7280;
-  }
-
-  :global(.dark) .reinforcement-neutral {
-    color: #9ca3af;
-  }
-
-  .user-interaction-stats {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-    font-size: 0.75rem;
-  }
-
-  :global(.dark) .user-interaction-stats {
-    border-top-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .user-stat {
-    color: #4b5563;
-  }
-
-  :global(.dark) .user-stat {
-    color: #9ca3af;
-  }
-
-  /* ========== END: Desire Insights Panel Styles ========== */
-
-  /* Execution Status */
-  .execution-status {
-    padding: 0.75rem;
-    background: #f0f9ff;
-    border: 1px solid #0ea5e9;
-    border-radius: 6px;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .execution-status {
-    background: #082f49;
-    border-color: #0ea5e9;
-  }
-
-  .execution-status.executing {
-    border-color: #22c55e;
-    background: #f0fdf4;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  :global(.dark) .execution-status.executing {
-    background: #14532d;
-    border-color: #22c55e;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-  }
-
-  .execution-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.25rem;
-  }
-
-  .execution-error {
-    color: #dc2626;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .execution-error {
-    color: #f87171;
-  }
-
-  .execution-meta {
-    margin-top: 0.25rem;
-  }
-
-  /* Execution Summary Box (for awaiting review section) */
-  .execution-summary-box {
-    background: #f0f9ff;
-    border: 1px solid #3b82f6;
-    border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .execution-summary-box {
-    background: #1e3a5f;
-    border-color: #60a5fa;
-  }
-
-  .execution-summary-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  /* Outcome Review */
-  .outcome-review {
-    padding: 0.75rem;
-    border-radius: 6px;
-    margin-bottom: 0.5rem;
-    border: 1px solid;
-  }
-
-  .outcome-review.success {
-    background: #f0fdf4;
-    border-color: #22c55e;
-  }
-
-  .outcome-review.warning {
-    background: #fefce8;
-    border-color: #eab308;
-  }
-
-  .outcome-review.failure {
-    background: #fef2f2;
-    border-color: #ef4444;
-  }
-
-  :global(.dark) .outcome-review.success {
-    background: #14532d;
-    border-color: #22c55e;
-  }
-
-  :global(.dark) .outcome-review.warning {
-    background: #713f12;
-    border-color: #eab308;
-  }
-
-  :global(.dark) .outcome-review.failure {
-    background: #7f1d1d;
-    border-color: #ef4444;
-  }
-
-  .outcome-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .outcome-score {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .outcome-reasoning {
-    margin-bottom: 0.5rem;
-    font-style: italic;
-  }
-
-  .outcome-lessons {
-    margin-top: 0.5rem;
-  }
-
-  .lessons-list {
-    list-style: none;
-    padding: 0;
-    margin: 0.25rem 0 0 0;
-  }
-
-  .execution-summary {
-    margin-top: 0.75rem;
-    padding: 0.5rem;
-    background: rgba(59, 130, 246, 0.1);
-    border-radius: 4px;
-    border-left: 3px solid #3b82f6;
-  }
-
-  .execution-summary .summary-content {
-    margin: 0.25rem 0 0 0;
-    white-space: pre-wrap;
-    font-family: inherit;
-    color: #94a3b8;
-    line-height: 1.4;
-  }
-
-  :global(.light) .execution-summary {
-    background: rgba(59, 130, 246, 0.08);
-  }
-
-  :global(.light) .execution-summary .summary-content {
-    color: #64748b;
-  }
-
-  /* Journey Log Button - Enhanced */
-  .btn-journey-log {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: linear-gradient(to right, #f8fafc, #f1f5f9);
-    border: 2px solid #e5e7eb;
-    color: #374151;
-    padding: 0.75rem 1rem;
-    border-radius: 10px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    text-align: left;
-    margin-bottom: 0.5rem;
-    transition: all 0.2s ease;
-  }
-
-  .btn-journey-log:hover {
-    background: linear-gradient(to right, #f1f5f9, #e2e8f0);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  }
-
-  .btn-journey-log.expanded {
-    background: white;
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-    border-bottom-color: transparent;
-  }
-
-  :global(.dark) .btn-journey-log {
-    background: linear-gradient(to right, #1f2937, #374151);
-    border-color: #4b5563;
-    color: #e5e7eb;
-  }
-
-  :global(.dark) .btn-journey-log:hover {
-    background: linear-gradient(to right, #374151, #4b5563);
-  }
-
-  :global(.dark) .btn-journey-log.expanded {
-    background: #111827;
-    border-bottom-color: transparent;
-  }
-
-  .journey-log-icon {
-    font-size: 1.25rem;
-  }
-
-  .journey-log-text {
-    flex: 1;
-  }
-
-  .journey-log-count {
-    padding: 0.25rem 0.5rem;
-    border-radius: 9999px;
-    color: white;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .journey-log-arrow {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-left: auto;
-  }
-
-  :global(.dark) .journey-log-arrow {
-    color: #9ca3af;
-  }
-
-  /* Legacy scratchpad button (keeping for compatibility) */
-  .btn-scratchpad {
-    width: 100%;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    color: #4b5563;
-    padding: 0.5rem;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    text-align: left;
-    margin-bottom: 0.5rem;
-    transition: background 0.2s;
-  }
-
-  .btn-scratchpad:hover {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-scratchpad {
-    background: #374151;
-    border-color: #4b5563;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .btn-scratchpad:hover {
-    background: #4b5563;
-  }
-
-  .scratchpad-viewer {
-    background: #fafafa;
-    border: 2px solid #e5e7eb;
-    border-top: none;
-    border-radius: 0 0 10px 10px;
-    padding: 1rem;
-    margin-top: -0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .scratchpad-viewer {
-    background: #111827;
-    border-color: #4b5563;
-  }
-
-  .scratchpad-stats {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-    margin-bottom: 0.75rem;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .scratchpad-stats {
-    border-bottom-color: #374151;
-    color: #9ca3af;
-  }
-
-  .scratchpad-entries {
-    max-height: 300px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .scratchpad-entry {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .scratchpad-entry {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .entry-icon {
-    font-size: 1rem;
-    flex-shrink: 0;
-  }
-
-  .entry-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .entry-description {
-    font-size: 0.875rem;
-  }
-
-  .entry-meta {
-    font-size: 0.625rem;
-  }
-
-  .entry-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.5rem;
-  }
-
-  .entry-expand-hint {
-    color: #6b7280;
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .entry-expand-hint {
-    color: #9ca3af;
-  }
-
-  .scratchpad-entry.clickable {
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-
-  .scratchpad-entry.clickable:hover {
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .scratchpad-entry.clickable:hover {
-    background: #374151;
-  }
-
-  .scratchpad-entry.expanded {
-    background: #f0fdf4;
-    border-color: #22c55e;
-  }
-
-  :global(.dark) .scratchpad-entry.expanded {
-    background: #14532d;
-    border-color: #22c55e;
-  }
-
-  .entry-data {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px dashed #d1d5db;
-  }
-
-  :global(.dark) .entry-data {
-    border-top-color: #4b5563;
-  }
-
-  .entry-data-json {
-    font-size: 0.75rem;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    background: #f9fafb;
-    padding: 0.75rem;
-    border-radius: 4px;
-    overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 300px;
-    overflow-y: auto;
-    margin: 0;
-    color: #374151;
-  }
-
-  :global(.dark) .entry-data-json {
-    background: #111827;
-    color: #e5e7eb;
-  }
-
-  /* Scratchpad Browser */
-  .scratchpad-browser {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .scratchpad-browser {
-    border-top-color: #374151;
-  }
-
-  .browser-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #374151;
-  }
-
-  :global(.dark) .browser-title {
-    color: #d1d5db;
-  }
-
-  .scratchpad-pagination {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 0.75rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .scratchpad-pagination {
-    border-top-color: #374151;
-  }
-
-  .pagination-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .pagination-btn:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  .pagination-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  :global(.dark) .pagination-btn {
-    background: #374151;
-    border-color: #4b5563;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .pagination-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .pagination-info {
-    flex: 1;
-    text-align: center;
-  }
-
-  /* Plan Browser */
-  .plan-browser {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .plan-browser {
-    border-top-color: #374151;
-  }
-
-  .plan-version-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .plan-version-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .plan-version-btn:hover {
-    background: #e5e7eb;
-  }
-
-  .plan-version-btn.active {
-    background: #3b82f6;
-    border-color: #2563eb;
-    color: white;
-  }
-
-  :global(.dark) .plan-version-btn {
-    background: #374151;
-    border-color: #4b5563;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .plan-version-btn:hover {
-    background: #4b5563;
-  }
-
-  :global(.dark) .plan-version-btn.active {
-    background: #2563eb;
-    border-color: #1d4ed8;
-    color: white;
-  }
-
-  .viewing-plan {
-    background: #f0f9ff;
-    border: 1px solid #0ea5e9;
-    border-radius: 6px;
-    padding: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  :global(.dark) .viewing-plan {
-    background: #082f49;
-    border-color: #0ea5e9;
-  }
-
-  .plan-steps-preview {
-    margin-top: 0.25rem;
-  }
-
-  .step-preview {
-    padding: 0.125rem 0;
-    color: #4b5563;
-  }
-
-  :global(.dark) .step-preview {
-    color: #9ca3af;
-  }
-
-  /* File List */
-  .file-list-details {
-    margin-top: 0.75rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .file-list-details {
-    border-top-color: #374151;
-  }
-
-  .file-list-details summary {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .file-list {
-    list-style: none;
-    padding: 0;
-    margin: 0.5rem 0 0 0;
-    max-height: 150px;
-    overflow-y: auto;
-  }
-
-  .file-list li {
-    padding: 0.125rem 0;
-    font-family: monospace;
-  }
-
-  .folder-path {
-    margin-top: 0.5rem;
-    font-family: monospace;
-  }
-
-  .scratchpad-summary {
-    padding: 0.5rem 0;
-  }
-
-  /* Agent loading overlay */
-  .agent-loading-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-    backdrop-filter: blur(4px);
-  }
-
-  .agent-loading-content {
-    background: linear-gradient(135deg, #1e1e2e 0%, #2d1b4e 50%, #1e1e2e 100%);
-    border: 2px solid #8b5cf6;
-    border-radius: 16px;
-    padding: 2rem 3rem;
-    text-align: center;
-    box-shadow: 0 0 40px rgba(139, 92, 246, 0.4);
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.4); }
-    50% { box-shadow: 0 0 60px rgba(139, 92, 246, 0.6); }
-  }
-
-  .agent-loading-brain {
-    font-size: 4rem;
-    animation: float 3s ease-in-out infinite;
-    filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.8));
-  }
-
-  @keyframes float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-10px); }
-  }
-
-  .agent-loading-message {
-    margin-top: 1rem;
-    font-size: 1.25rem;
-    color: #e9d5ff;
-    font-style: italic;
-    letter-spacing: 0.05em;
-    animation: fade-message 2s ease-in-out;
-  }
-
-  @keyframes fade-message {
-    0% { opacity: 0; transform: translateY(10px); }
-    100% { opacity: 1; transform: translateY(0); }
-  }
-
-  .agent-loading-bar {
-    margin-top: 1.5rem;
-    width: 200px;
-    height: 6px;
-    background: #374151;
-    border-radius: 3px;
-    overflow: hidden;
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  .agent-loading-progress {
-    height: 100%;
-    width: 30%;
-    background: linear-gradient(90deg, #8b5cf6, #a78bfa, #8b5cf6);
-    border-radius: 3px;
-    animation: loading-progress 1.5s ease-in-out infinite;
-  }
-
   @keyframes loading-progress {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(400%); }
-  }
-
-  /* Close button for overlay */
-  .overlay-close-btn {
-    margin-top: 1rem;
-    padding: 0.5rem 1.5rem;
-    background: rgba(255, 255, 255, 0.15);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .overlay-close-btn:hover {
-    background: rgba(255, 255, 255, 0.25);
-    border-color: rgba(255, 255, 255, 0.5);
-    color: white;
-  }
-
-  /* Expanded content when streaming output is available */
-  .agent-loading-content.expanded {
-    max-width: 800px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-  /* Streaming status display */
-  .streaming-status {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: rgba(139, 92, 246, 0.2);
-    border-radius: 8px;
-    text-align: left;
-  }
-
-  .streaming-phase {
-    font-size: 1rem;
-    color: #a78bfa;
-    font-weight: 500;
-  }
-
-  .streaming-model,
-  .streaming-latency,
-  .streaming-steps {
-    font-size: 0.8rem;
-    color: #9ca3af;
-    margin-top: 0.25rem;
-    font-family: monospace;
-  }
-
-  /* LLM Output container */
-  .streaming-output-container {
-    margin-top: 1rem;
-    text-align: left;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .streaming-output-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: rgba(139, 92, 246, 0.3);
-    font-size: 0.75rem;
-    color: #c4b5fd;
-    font-weight: 500;
-  }
-
-  .streaming-output-length {
-    font-family: monospace;
-    font-size: 0.7rem;
-    color: #9ca3af;
-  }
-
-  .streaming-output {
-    margin: 0;
-    padding: 0.75rem;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.75rem;
-    line-height: 1.5;
-    color: #e9d5ff;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  /* Agent button styles */
-  .btn-agent {
-    background: linear-gradient(135deg, #6d28d9, #8b5cf6) !important;
-    border-color: #7c3aed !important;
-    color: white !important;
-  }
-
-  .btn-agent:hover:not(:disabled) {
-    background: linear-gradient(135deg, #7c3aed, #a78bfa) !important;
-    box-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
-  }
-
-  .btn-agent:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  /* Loading spinner for buttons */
-  .loading-spinner {
-    display: inline-block;
-    width: 1em;
-    height: 1em;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-radius: 50%;
-    border-top-color: white;
-    animation: spin 0.8s linear infinite;
-    margin-right: 0.25em;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 </style>

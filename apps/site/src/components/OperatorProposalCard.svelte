@@ -184,86 +184,90 @@
 </script>
 
 <!-- Compact card design - everything on fewer lines -->
-<div class="proposal-card compact" class:post-feedback={type === 'post-feedback'}>
+<div class="card py-2 px-3 mb-2" class:border-l-2={type === 'post-feedback'} class:border-l-green-500={type === 'post-feedback'}>
   <!-- Single-line header with task and actions -->
-  <div class="card-header-compact">
-    <span class="task-emoji">{taskEmojis[proposal.taskType] || '🤖'}</span>
-    <span class="task-type">{proposal.taskType.replace(/_/g, ' ')}</span>
-    <span class="time-ago">{getTimeAgo(proposal.createdAt)}</span>
+  <div class="flex items-center gap-2 flex-nowrap">
+    <span class="text-base">{taskEmojis[proposal.taskType] || '🤖'}</span>
+    <span class="font-semibold text-[0.85rem] capitalize whitespace-nowrap">{proposal.taskType.replace(/_/g, ' ')}</span>
+    <span class="text-[0.7rem] text-gray-500 dark:text-gray-500 whitespace-nowrap">{getTimeAgo(proposal.createdAt)}</span>
 
     {#if type === 'proposal'}
       <!-- Inline approval buttons -->
-      <div class="inline-actions">
-        <button class="btn-sm approve" on:click={() => respond('approved')} disabled={loading} title="Approve">✅</button>
-        <button class="btn-sm reject" on:click={() => respond('rejected')} disabled={loading} title="Reject">❌</button>
-        <button class="btn-sm modify" on:click={() => showInput = !showInput} disabled={loading} title="Modify">✏️</button>
-        <button class="btn-sm expand" on:click={() => showDetails = !showDetails} title="Details">{showDetails ? '▼' : '▶'}</button>
+      <div class="flex gap-1 ml-auto">
+        <button class="proposal-btn hover:bg-green-500/20" on:click={() => respond('approved')} disabled={loading} title="Approve">✅</button>
+        <button class="proposal-btn hover:bg-red-500/20" on:click={() => respond('rejected')} disabled={loading} title="Reject">❌</button>
+        <button class="proposal-btn hover:bg-blue-500/20" on:click={() => showInput = !showInput} disabled={loading} title="Modify">✏️</button>
+        <button class="proposal-btn text-gray-500 text-[0.7rem]" on:click={() => showDetails = !showDetails} title="Details">{showDetails ? '▼' : '▶'}</button>
       </div>
     {:else}
       <!-- Inline feedback buttons -->
-      <div class="inline-actions">
-        <button class="btn-sm good" on:click={() => submitFeedback('good')} disabled={loading} title="Good">👍</button>
-        <button class="btn-sm neutral" on:click={() => submitFeedback('neutral')} disabled={loading} title="Neutral">🤷</button>
-        <button class="btn-sm bad" on:click={() => submitFeedback('bad')} disabled={loading} title="Bad">👎</button>
-        <button class="btn-sm expand" on:click={() => showDetails = !showDetails} title="Details">{showDetails ? '▼' : '▶'}</button>
+      <div class="flex gap-1 ml-auto">
+        <button class="proposal-btn hover:bg-green-500/20" on:click={() => submitFeedback('good')} disabled={loading} title="Good">👍</button>
+        <button class="proposal-btn hover:bg-yellow-500/20" on:click={() => submitFeedback('neutral')} disabled={loading} title="Neutral">🤷</button>
+        <button class="proposal-btn hover:bg-red-500/20" on:click={() => submitFeedback('bad')} disabled={loading} title="Bad">👎</button>
+        <button class="proposal-btn text-gray-500 text-[0.7rem]" on:click={() => showDetails = !showDetails} title="Details">{showDetails ? '▼' : '▶'}</button>
       </div>
     {/if}
   </div>
 
   <!-- Description - always visible but truncated -->
-  <p class="description-compact">{proposal.taskDescription}</p>
+  <p class="text-[0.8rem] text-gray-400 mt-1 mb-0 ml-6 leading-tight">{proposal.taskDescription}</p>
 
   {#if type === 'post-feedback' && executionResult}
-    <span class="result-badge" class:success={executionResult.success} class:error={!executionResult.success}>
+    <span class="absolute right-2 top-2 text-[0.8rem]">
       {executionResult.success ? '✅' : '❌'}
     </span>
   {/if}
 
   <!-- Expandable details section -->
   {#if showDetails}
-    <div class="details-section">
-      <p class="reasoning"><em>"{proposal.reasoning}"</em></p>
+    <div class="mt-2 pt-2 border-t border-gray-700 dark:border-gray-700 text-[0.8rem]">
+      <p class="text-gray-500 text-[0.75rem] m-0 mb-2 leading-snug"><em>"{proposal.reasoning}"</em></p>
 
       {#if type === 'post-feedback' && executionResult?.summary}
-        <div class="execution-result" class:success={executionResult.success} class:error={!executionResult.success}>
+        <div class="py-1 px-2 rounded text-[0.75rem] mb-2"
+          class:bg-green-500/10={executionResult.success}
+          class:text-green-500={executionResult.success}
+          class:bg-red-500/10={!executionResult.success}
+          class:text-red-500={!executionResult.success}>
           {executionResult.summary}
         </div>
       {/if}
 
       {#if type === 'proposal' && showInput}
-        <div class="input-area">
-          <input type="text" bind:value={userInput} placeholder="Modification..." class="modify-input" />
-          <button class="btn-sm submit" on:click={() => respond('modified')} disabled={loading || !userInput.trim()}>Submit</button>
+        <div class="flex gap-1 mb-2">
+          <input type="text" bind:value={userInput} placeholder="Modification..." class="proposal-input flex-1" />
+          <button class="proposal-btn bg-blue-500 text-white" on:click={() => respond('modified')} disabled={loading || !userInput.trim()}>Submit</button>
         </div>
       {/if}
 
       {#if type === 'post-feedback'}
-        <div class="feedback-extras">
-          <button class="btn-sm comment-toggle" on:click={() => showComment = !showComment}>💬 Comment</button>
-          <button class="btn-sm review" on:click={requestBigBrotherReview} disabled={reviewLoading}>
+        <div class="flex gap-2 mb-2">
+          <button class="proposal-btn text-blue-500" on:click={() => showComment = !showComment}>💬 Comment</button>
+          <button class="proposal-btn text-purple-500" on:click={requestBigBrotherReview} disabled={reviewLoading}>
             {reviewLoading ? '⏳' : '🔍'} AI Review
           </button>
         </div>
 
         {#if showComment}
-          <div class="input-area">
-            <input type="text" bind:value={comment} placeholder="Add a comment..." class="comment-input" />
+          <div class="flex gap-1 mb-2">
+            <input type="text" bind:value={comment} placeholder="Add a comment..." class="proposal-input flex-1" />
           </div>
         {/if}
 
         {#if bigBrotherReview}
-          <div class="review-result-compact" class:error={!bigBrotherReview.success}>
+          <div class="rounded p-2 mt-2" class:bg-purple-500/10={bigBrotherReview.success} class:bg-red-500/10={!bigBrotherReview.success}>
             {#if bigBrotherReview.success}
-              <div class="review-analysis">{bigBrotherReview.analysis}</div>
+              <div class="text-[0.75rem] leading-snug max-h-[100px] overflow-y-auto">{bigBrotherReview.analysis}</div>
               {#if bigBrotherReview.codeChangeRecommended}
-                <button class="btn-sm improve-toggle" on:click={() => showImproveInput = !showImproveInput}>✨ Improve</button>
+                <button class="proposal-btn text-emerald-500 mt-1" on:click={() => showImproveInput = !showImproveInput}>✨ Improve</button>
               {/if}
               {#if showImproveInput}
-                <textarea bind:value={improveInput} placeholder="Describe improvement..." class="improve-input" rows="2"></textarea>
-                <button class="btn-sm submit-improve" on:click={submitImprovement} disabled={improveLoading || !improveInput.trim()}>🚀 Send</button>
+                <textarea bind:value={improveInput} placeholder="Describe improvement..." class="proposal-input w-full mt-1 resize-none" rows="2"></textarea>
+                <button class="proposal-btn bg-emerald-500 text-white mt-1" on:click={submitImprovement} disabled={improveLoading || !improveInput.trim()}>🚀 Send</button>
               {/if}
             {:else}
-              <span class="review-error">❌ {bigBrotherReview.error}</span>
+              <span class="text-red-500 text-[0.75rem]">❌ {bigBrotherReview.error}</span>
             {/if}
           </div>
         {/if}
@@ -273,176 +277,16 @@
 </div>
 
 <style>
-  /* COMPACT CARD DESIGN */
-  .proposal-card.compact {
-    background: var(--bg-secondary, #1e1e1e);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.5rem;
+  /* Proposal button base */
+  .proposal-btn {
+    @apply py-0.5 px-1.5 border-0 rounded cursor-pointer text-[0.85rem] bg-transparent transition-colors;
+  }
+  .proposal-btn:disabled {
+    @apply opacity-40 cursor-not-allowed;
   }
 
-  .proposal-card.compact.post-feedback {
-    border-left: 3px solid #22c55e;
-  }
-
-  .card-header-compact {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: nowrap;
-  }
-
-  .task-emoji {
-    font-size: 1rem;
-  }
-
-  .task-type {
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: var(--text-primary, #fff);
-    text-transform: capitalize;
-    white-space: nowrap;
-  }
-
-  .time-ago {
-    font-size: 0.7rem;
-    color: var(--text-muted, #666);
-    white-space: nowrap;
-  }
-
-  .inline-actions {
-    display: flex;
-    gap: 0.25rem;
-    margin-left: auto;
-  }
-
-  .btn-sm {
-    padding: 0.2rem 0.4rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    background: transparent;
-    transition: background 0.15s;
-  }
-
-  .btn-sm:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .btn-sm:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .btn-sm.approve:hover:not(:disabled) { background: rgba(34, 197, 94, 0.2); }
-  .btn-sm.reject:hover:not(:disabled) { background: rgba(239, 68, 68, 0.2); }
-  .btn-sm.modify:hover:not(:disabled) { background: rgba(59, 130, 246, 0.2); }
-  .btn-sm.good:hover:not(:disabled) { background: rgba(34, 197, 94, 0.2); }
-  .btn-sm.neutral:hover:not(:disabled) { background: rgba(234, 179, 8, 0.2); }
-  .btn-sm.bad:hover:not(:disabled) { background: rgba(239, 68, 68, 0.2); }
-  .btn-sm.expand { color: var(--text-muted, #666); font-size: 0.7rem; }
-  .btn-sm.submit { background: var(--accent-color, #3b82f6); color: white; }
-  .btn-sm.review { color: #8b5cf6; }
-  .btn-sm.comment-toggle { color: #3b82f6; }
-  .btn-sm.improve-toggle { color: #10b981; }
-  .btn-sm.submit-improve { background: #10b981; color: white; }
-
-  .description-compact {
-    font-size: 0.8rem;
-    color: var(--text-muted, #aaa);
-    margin: 0.25rem 0 0 1.5rem;
-    line-height: 1.3;
-  }
-
-  .result-badge {
-    position: absolute;
-    right: 0.5rem;
-    top: 0.5rem;
-    font-size: 0.8rem;
-  }
-
-  .details-section {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid var(--border-color, #333);
-    font-size: 0.8rem;
-  }
-
-  .reasoning {
-    color: var(--text-muted, #888);
-    font-size: 0.75rem;
-    margin: 0 0 0.5rem 0;
-    line-height: 1.4;
-  }
-
-  .execution-result {
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .execution-result.success { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-  .execution-result.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-
-  .feedback-extras {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .input-area {
-    display: flex;
-    gap: 0.25rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .modify-input, .comment-input {
-    flex: 1;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    background: var(--bg-primary, #0a0a0a);
-    color: var(--text-primary, #fff);
-    font-size: 0.75rem;
-  }
-
-  .review-result-compact {
-    background: rgba(139, 92, 246, 0.1);
-    border-radius: 4px;
-    padding: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .review-result-compact.error {
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  .review-analysis {
-    font-size: 0.75rem;
-    line-height: 1.4;
-    color: var(--text-primary, #fff);
-    max-height: 100px;
-    overflow-y: auto;
-  }
-
-  .improve-input {
-    width: 100%;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    background: var(--bg-primary, #0a0a0a);
-    color: var(--text-primary, #fff);
-    font-size: 0.75rem;
-    font-family: inherit;
-    resize: none;
-    margin-top: 0.25rem;
-  }
-
-  .review-error {
-    color: #ef4444;
-    font-size: 0.75rem;
+  /* Proposal input styling */
+  .proposal-input {
+    @apply py-1 px-2 border border-gray-700 rounded bg-gray-900 text-white text-[0.75rem] font-inherit;
   }
 </style>

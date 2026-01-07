@@ -457,69 +457,69 @@
   });
 </script>
 
-<div class="settings-container">
-  <div class="settings-header">
-    <h1>🌐 Network & Server</h1>
-    <p>Configure server connections, network access, and remote connectivity</p>
+<div class="p-8 max-w-[900px] mx-auto h-full overflow-y-auto overflow-x-hidden">
+  <div class="mb-8">
+    <h1 class="text-2xl font-semibold mb-2 text-gray-800 dark:text-gray-50">🌐 Network & Server</h1>
+    <p class="text-gray-500 dark:text-gray-400">Configure server connections, network access, and remote connectivity</p>
   </div>
 
   {#if loading && !serverStatus && !tunnelStatus}
-    <div class="loading">Loading settings...</div>
+    <div class="text-center py-8 text-gray-500">Loading settings...</div>
   {:else}
     <!-- ============ CONNECTION STATUS (Always Shown) ============ -->
-    <div class="section">
-      <h2>📡 Connection Status</h2>
+    <div class="panel mb-6">
+      <h2 class="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-50">📡 Connection Status</h2>
 
-      <div class="status-box" class:status-connected={serverStatus?.connected} class:status-disconnected={!serverStatus?.connected}>
-        <div class="status-indicator">
-          <span class="status-dot" class:dot-connected={serverStatus?.connected} class:dot-disconnected={!serverStatus?.connected}></span>
+      <div class="rounded-md p-4 mb-4 border-2 {serverStatus?.connected ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-red-500 bg-red-50 dark:bg-red-900/50'}">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="w-3 h-3 rounded-full {serverStatus?.connected ? 'bg-emerald-500 shadow-[0_0_8px_theme(colors.emerald.500)]' : 'bg-red-500'}"></span>
           <strong>{serverStatus?.connected ? '✅ Connected' : '❌ Disconnected'}</strong>
           {#if testing}
-            <span class="testing-badge">Testing...</span>
+            <span class="text-xs bg-blue-500 text-white px-2 py-0.5 rounded ml-2">Testing...</span>
           {/if}
         </div>
 
-        <div class="server-info-details">
-          <div class="info-row">
-            <span class="label">Server:</span>
-            <span class="value">{serverStatus?.url || 'Not configured'}</span>
+        <div class="mb-4">
+          <div class="flex gap-2 mb-2 text-sm">
+            <span class="text-gray-500 dark:text-gray-400 min-w-[80px]">Server:</span>
+            <span class="text-gray-900 dark:text-gray-100 break-all">{serverStatus?.url || 'Not configured'}</span>
           </div>
           {#if serverStatus?.connected}
-            <div class="info-row">
-              <span class="label">Latency:</span>
-              <span class="value latency" class:latency-good={serverStatus.latencyMs < 200} class:latency-warn={serverStatus.latencyMs >= 200 && serverStatus.latencyMs < 500} class:latency-bad={serverStatus.latencyMs >= 500}>
+            <div class="flex gap-2 mb-2 text-sm">
+              <span class="text-gray-500 dark:text-gray-400 min-w-[80px]">Latency:</span>
+              <span class="font-semibold {serverStatus.latencyMs < 200 ? 'text-emerald-500' : serverStatus.latencyMs < 500 ? 'text-amber-500' : 'text-red-500'}">
                 {serverStatus.latencyMs}ms
               </span>
             </div>
             {#if serverStatus.version}
-              <div class="info-row">
-                <span class="label">Version:</span>
-                <span class="value">{serverStatus.version}</span>
+              <div class="flex gap-2 mb-2 text-sm">
+                <span class="text-gray-500 dark:text-gray-400 min-w-[80px]">Version:</span>
+                <span class="text-gray-900 dark:text-gray-100">{serverStatus.version}</span>
               </div>
             {/if}
           {:else if serverStatus?.error}
-            <div class="info-row error">
-              <span class="label">Error:</span>
-              <span class="value">{serverStatus.error}</span>
+            <div class="flex gap-2 mb-2 text-sm">
+              <span class="text-gray-500 dark:text-gray-400 min-w-[80px]">Error:</span>
+              <span class="text-red-600 dark:text-red-400">{serverStatus.error}</span>
             </div>
           {/if}
         </div>
 
-        <button class="btn btn-secondary" on:click={testCurrentConnection} disabled={testing}>
+        <button class="btn-secondary" on:click={testCurrentConnection} disabled={testing}>
           {testing ? 'Testing...' : '🔄 Test Connection'}
         </button>
       </div>
     </div>
 
     <!-- ============ LOCAL SERVER INFO (Web Mode) ============ -->
-    <div class="section" class:section-disabled={isMobile}>
-      <div class="section-header-row">
-        <h2>🖥️ Local Server</h2>
+    <div class="panel mb-6 {isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">🖥️ Local Server</h2>
         {#if isMobile}
-          <span class="platform-badge">Desktop Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Desktop Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         {#if isMobile}
           This feature shows local network addresses for connecting from other devices. Available when running from desktop.
         {:else}
@@ -528,16 +528,16 @@
       </p>
 
       {#if loadingServerInfo && !isMobile}
-        <div class="loading-inline">Loading server info...</div>
+        <div class="py-4 text-gray-500 italic">Loading server info...</div>
       {:else if localServerInfo && !isMobile}
         <!-- Primary Connection URL -->
         {#if localServerInfo.primaryIP}
-          <div class="primary-url-box">
-            <div class="url-label">Connect from mobile devices:</div>
-            <div class="url-display">
-              <code>http://{localServerInfo.primaryIP}:{localServerInfo.port}</code>
+          <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg p-5 mb-4">
+            <div class="text-sm text-white/90 mb-2">Connect from mobile devices:</div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <code class="text-lg font-mono text-white bg-black/20 px-3 py-2 rounded-md flex-1 min-w-[200px]">http://{localServerInfo.primaryIP}:{localServerInfo.port}</code>
               <button
-                class="copy-btn"
+                class="px-4 py-2 bg-white/20 border border-white/30 text-white rounded-md text-sm hover:bg-white/30 transition-colors"
                 on:click={() => copyToClipboard(`http://${localServerInfo?.primaryIP}:${localServerInfo?.port}`)}
                 title="Copy to clipboard"
                 disabled={isMobile}
@@ -549,32 +549,34 @@
         {/if}
 
         <!-- Server Details -->
-        <div class="server-details">
-          <div class="detail-row">
-            <span class="detail-label">Hostname:</span>
-            <span class="detail-value">{localServerInfo.hostname}</span>
+        <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md p-4 mb-4">
+          <div class="flex justify-between py-1.5 border-b border-gray-200 dark:border-gray-700">
+            <span class="text-gray-500 dark:text-gray-400">Hostname:</span>
+            <span class="text-gray-900 dark:text-gray-100 font-medium">{localServerInfo.hostname}</span>
           </div>
-          <div class="detail-row">
-            <span class="detail-label">Port:</span>
-            <span class="detail-value">{localServerInfo.port}</span>
+          <div class="flex justify-between py-1.5 border-b border-gray-200 dark:border-gray-700">
+            <span class="text-gray-500 dark:text-gray-400">Port:</span>
+            <span class="text-gray-900 dark:text-gray-100 font-medium">{localServerInfo.port}</span>
           </div>
-          <div class="detail-row">
-            <span class="detail-label">Platform:</span>
-            <span class="detail-value">{localServerInfo.platform} ({localServerInfo.arch})</span>
+          <div class="flex justify-between py-1.5">
+            <span class="text-gray-500 dark:text-gray-400">Platform:</span>
+            <span class="text-gray-900 dark:text-gray-100 font-medium">{localServerInfo.platform} ({localServerInfo.arch})</span>
           </div>
         </div>
 
         <!-- All Network Interfaces -->
-        <details class="interfaces-details">
-          <summary>All Network Interfaces ({localServerInfo.interfaces.length})</summary>
-          <div class="interfaces-list">
+        <details class="mb-4">
+          <summary class="cursor-pointer px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-md text-gray-600 dark:text-gray-300 text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-700">
+            All Network Interfaces ({localServerInfo.interfaces.length})
+          </summary>
+          <div class="mt-2 border border-gray-200 dark:border-gray-700 rounded-md overflow-hidden">
             {#each localServerInfo.interfaces as iface}
-              <div class="interface-item" class:interface-internal={iface.internal}>
-                <div class="interface-name">{iface.name}</div>
-                <div class="interface-url">
-                  <code>{iface.url}</code>
+              <div class="flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 last:border-b-0 {iface.internal ? 'opacity-60' : ''}">
+                <div class="font-semibold text-xs text-gray-500 dark:text-gray-400 min-w-[80px]">{iface.name}</div>
+                <div class="flex-1 flex items-center gap-2">
+                  <code class="text-xs text-blue-500">{iface.url}</code>
                   <button
-                    class="copy-btn-small"
+                    class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
                     on:click={() => copyToClipboard(iface.url)}
                     title="Copy to clipboard"
                     disabled={isMobile}
@@ -583,7 +585,7 @@
                   </button>
                 </div>
                 {#if iface.internal}
-                  <span class="internal-badge">localhost</span>
+                  <span class="text-[0.625rem] bg-gray-400 text-white px-1.5 py-0.5 rounded uppercase">localhost</span>
                 {/if}
               </div>
             {/each}
@@ -591,25 +593,25 @@
         </details>
       {:else}
         <!-- Placeholder for mobile or when no data -->
-        <div class="placeholder-content">
-          <div class="primary-url-box" style="opacity: 0.5;">
-            <div class="url-label">Connect from mobile devices:</div>
-            <div class="url-display">
-              <code>{isMobile ? 'Run MetaHuman on desktop to see server address' : 'http://192.168.x.x:4321'}</code>
+        <div class="opacity-50">
+          <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg p-5 mb-4">
+            <div class="text-sm text-white/90 mb-2">Connect from mobile devices:</div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <code class="text-lg font-mono text-white bg-black/20 px-3 py-2 rounded-md flex-1 min-w-[200px]">{isMobile ? 'Run MetaHuman on desktop to see server address' : 'http://192.168.x.x:4321'}</code>
             </div>
           </div>
-          <div class="server-details" style="opacity: 0.5;">
-            <div class="detail-row">
-              <span class="detail-label">Hostname:</span>
-              <span class="detail-value">{isMobile ? '—' : 'Loading...'}</span>
+          <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md p-4">
+            <div class="flex justify-between py-1.5 border-b border-gray-200 dark:border-gray-700">
+              <span class="text-gray-500 dark:text-gray-400">Hostname:</span>
+              <span class="text-gray-900 dark:text-gray-100 font-medium">{isMobile ? '—' : 'Loading...'}</span>
             </div>
-            <div class="detail-row">
-              <span class="detail-label">Port:</span>
-              <span class="detail-value">{isMobile ? '—' : '4321'}</span>
+            <div class="flex justify-between py-1.5 border-b border-gray-200 dark:border-gray-700">
+              <span class="text-gray-500 dark:text-gray-400">Port:</span>
+              <span class="text-gray-900 dark:text-gray-100 font-medium">{isMobile ? '—' : '4321'}</span>
             </div>
-            <div class="detail-row">
-              <span class="detail-label">Platform:</span>
-              <span class="detail-value">{isMobile ? '—' : 'Loading...'}</span>
+            <div class="flex justify-between py-1.5">
+              <span class="text-gray-500 dark:text-gray-400">Platform:</span>
+              <span class="text-gray-900 dark:text-gray-100 font-medium">{isMobile ? '—' : 'Loading...'}</span>
             </div>
           </div>
         </div>
@@ -617,14 +619,14 @@
     </div>
 
     <!-- ============ WIFI BROADCAST (Mobile) ============ -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>📡 WiFi Broadcasting</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">📡 WiFi Broadcasting</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         {#if isMobile}
           Enable other devices on your local WiFi network to connect to this device.
         {:else}
@@ -632,32 +634,32 @@
         {/if}
       </p>
 
-      <div class="status-box" class:status-running={isMobile && networkInfo?.wifiBroadcastEnabled}>
-        <div class="status-indicator">
-          <span class="status-dot" class:dot-running={isMobile && networkInfo?.wifiBroadcastEnabled} class:dot-stopped={!isMobile || !networkInfo?.wifiBroadcastEnabled}></span>
+      <div class="rounded-md p-4 mb-4 border-2 {isMobile && networkInfo?.wifiBroadcastEnabled ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900'}">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="w-3 h-3 rounded-full {isMobile && networkInfo?.wifiBroadcastEnabled ? 'bg-emerald-500 shadow-[0_0_8px_theme(colors.emerald.500)]' : 'bg-red-500'}"></span>
           <strong>{isMobile ? (networkInfo?.wifiBroadcastEnabled ? '✅ Broadcasting' : '⭕ Local Only') : '—'}</strong>
         </div>
 
         {#if isMobile && networkInfo?.wifiBroadcastEnabled && networkInfo?.networkUrls?.length}
-          <div class="hostname">
+          <div class="mb-4 p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
             <strong>Access from other devices:</strong>
             {#each networkInfo.networkUrls as url}
-              <div style="margin-top: 0.5rem;">
-                <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+              <div class="mt-2">
+                <a href={url} target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline break-all">{url}</a>
               </div>
             {/each}
           </div>
         {:else if !isMobile}
-          <div class="hostname" style="opacity: 0.5;">
+          <div class="mb-4 p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 opacity-50">
             <strong>Access from other devices:</strong>
-            <div style="margin-top: 0.5rem;">
-              <span style="color: #6b7280;">Available on mobile app</span>
+            <div class="mt-2">
+              <span class="text-gray-500">Available on mobile app</span>
             </div>
           </div>
         {/if}
 
-        <div class="tunnel-controls">
-          <label class="toggle-label">
+        <div class="flex flex-col gap-4">
+          <label class="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               checked={isMobile ? (networkInfo?.wifiBroadcastEnabled || false) : false}
@@ -668,8 +670,8 @@
           </label>
 
           {#if isMobile && networkInfo?.wifiBroadcastEnabled}
-            <div class="info-banner" style="background: #d1fae5; border-color: #a7f3d0;">
-              <p><strong>⚠️ Restart Required:</strong> Changes take effect after restarting the app.</p>
+            <div class="p-3 bg-green-100 dark:bg-green-900/50 border border-green-300 dark:border-green-700 rounded">
+              <p class="m-0 text-sm"><strong>⚠️ Restart Required:</strong> Changes take effect after restarting the app.</p>
             </div>
           {/if}
         </div>
@@ -677,14 +679,14 @@
     </div>
 
     <!-- ============ SERVER SELECTION (Mobile) ============ -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>🔧 Server Selection</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">🔧 Server Selection</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         {#if isMobile}
           Choose which server to connect to. Your app will remember this setting.
         {:else}
@@ -692,94 +694,92 @@
         {/if}
       </p>
 
-      <div class="server-options">
+      <div class="flex flex-col gap-3">
         <!-- Local Server -->
         <button
-          class="server-option"
-          class:selected={isMobile && currentServerUrl === defaultServers.local && !showCustomInput}
+          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-900 border-2 rounded-lg text-left w-full transition-all {isMobile && currentServerUrl === defaultServers.local && !showCustomInput ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-gray-200 dark:border-gray-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30'} disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={() => selectPresetServer(defaultServers.local)}
           disabled={!isMobile || saving}
         >
-          <div class="option-icon">🏠</div>
-          <div class="option-details">
-            <strong>Home Server</strong>
-            <span class="option-url">{defaultServers.local || 'http://192.168.x.x:4321'}</span>
-            <span class="option-desc">Local Ollama with full model access</span>
+          <div class="text-3xl flex-shrink-0">🏠</div>
+          <div class="flex-1 flex flex-col gap-1">
+            <strong class="text-gray-900 dark:text-gray-50">Home Server</strong>
+            <span class="font-mono text-xs text-blue-500 break-all">{defaultServers.local || 'http://192.168.x.x:4321'}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Local Ollama with full model access</span>
           </div>
           {#if isMobile && currentServerUrl === defaultServers.local && !showCustomInput}
-            <span class="selected-badge">Active</span>
+            <span class="bg-emerald-500 text-white text-xs px-3 py-1 rounded-full font-semibold">Active</span>
           {/if}
         </button>
 
         <!-- Cloud Server -->
         <button
-          class="server-option"
-          class:selected={isMobile && currentServerUrl === defaultServers.cloud && !showCustomInput}
+          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-900 border-2 rounded-lg text-left w-full transition-all {isMobile && currentServerUrl === defaultServers.cloud && !showCustomInput ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-gray-200 dark:border-gray-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30'} disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={() => selectPresetServer(defaultServers.cloud)}
           disabled={!isMobile || saving}
         >
-          <div class="option-icon">☁️</div>
-          <div class="option-details">
-            <strong>Cloud Server</strong>
-            <span class="option-url">{defaultServers.cloud || 'https://cloud.example.com'}</span>
-            <span class="option-desc">RunPod GPU with Qwen3-Coder-30B</span>
+          <div class="text-3xl flex-shrink-0">☁️</div>
+          <div class="flex-1 flex flex-col gap-1">
+            <strong class="text-gray-900 dark:text-gray-50">Cloud Server</strong>
+            <span class="font-mono text-xs text-blue-500 break-all">{defaultServers.cloud || 'https://cloud.example.com'}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">RunPod GPU with Qwen3-Coder-30B</span>
           </div>
           {#if isMobile && currentServerUrl === defaultServers.cloud && !showCustomInput}
-            <span class="selected-badge">Active</span>
+            <span class="bg-emerald-500 text-white text-xs px-3 py-1 rounded-full font-semibold">Active</span>
           {/if}
         </button>
 
         <!-- Custom Server -->
         <button
-          class="server-option"
-          class:selected={isMobile && (showCustomInput || (currentServerUrl !== defaultServers.local && currentServerUrl !== defaultServers.cloud))}
+          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-900 border-2 rounded-lg text-left w-full transition-all {isMobile && (showCustomInput || (currentServerUrl !== defaultServers.local && currentServerUrl !== defaultServers.cloud)) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-gray-200 dark:border-gray-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30'} disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={enableCustomServer}
           disabled={!isMobile || saving}
         >
-          <div class="option-icon">⚙️</div>
-          <div class="option-details">
-            <strong>Custom Server</strong>
+          <div class="text-3xl flex-shrink-0">⚙️</div>
+          <div class="flex-1 flex flex-col gap-1">
+            <strong class="text-gray-900 dark:text-gray-50">Custom Server</strong>
             {#if isMobile && !showCustomInput && currentServerUrl !== defaultServers.local && currentServerUrl !== defaultServers.cloud}
-              <span class="option-url">{currentServerUrl}</span>
+              <span class="font-mono text-xs text-blue-500 break-all">{currentServerUrl}</span>
             {:else}
-              <span class="option-desc">Enter a custom server URL</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">Enter a custom server URL</span>
             {/if}
           </div>
           {#if isMobile && !showCustomInput && currentServerUrl !== defaultServers.local && currentServerUrl !== defaultServers.cloud}
-            <span class="selected-badge">Active</span>
+            <span class="bg-emerald-500 text-white text-xs px-3 py-1 rounded-full font-semibold">Active</span>
           {/if}
         </button>
       </div>
 
       <!-- Custom URL Input -->
       {#if isMobile && showCustomInput}
-        <div class="custom-input-section">
-          <label for="custom-url">Custom Server URL:</label>
-          <div class="input-group">
+        <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md">
+          <label for="custom-url" class="block mb-2 font-medium text-gray-600 dark:text-gray-300">Custom Server URL:</label>
+          <div class="flex gap-2 mb-4">
             <input
               id="custom-url"
               type="url"
               bind:value={customServerUrl}
               placeholder="https://your-server.example.com"
               disabled={saving || testing}
+              class="input-field flex-1"
             />
             <button
-              class="btn btn-primary"
+              class="btn-primary"
               on:click={() => testServer(customServerUrl)}
               disabled={saving || testing || !customServerUrl}
             >
               Test
             </button>
           </div>
-          <div class="button-row">
+          <div class="flex gap-2">
             <button
-              class="btn btn-success"
+              class="btn-success"
               on:click={() => saveServer(customServerUrl)}
               disabled={saving || testing || !customServerUrl}
             >
               {saving ? 'Saving...' : 'Save & Connect'}
             </button>
-            <button class="btn btn-secondary" on:click={cancelCustom} disabled={saving}>
+            <button class="btn-secondary" on:click={cancelCustom} disabled={saving}>
               Cancel
             </button>
           </div>
@@ -789,44 +789,44 @@
 
     <!-- ============ CLOUDFLARE TUNNEL (Both) ============ -->
     {#if tunnelStatus}
-      <div class="section">
-        <div class="section-header-row">
-          <h2>🌐 Cloudflare Tunnel</h2>
-          <a href="https://github.com/yourusername/metahuman/blob/master/docs/user-guide/17-cloudflare-tunnel-setup.md" target="_blank" rel="noopener noreferrer" class="setup-guide-link">
+      <div class="panel mb-6">
+        <div class="flex items-center gap-4 flex-wrap mb-3">
+          <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">🌐 Cloudflare Tunnel</h2>
+          <a href="https://github.com/yourusername/metahuman/blob/master/docs/user-guide/17-cloudflare-tunnel-setup.md" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500 text-white no-underline rounded-md font-medium text-xs hover:bg-blue-600 transition-colors">
             📖 Setup Guide
           </a>
         </div>
-        <p class="section-description">
+        <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
           Secure remote access to your MetaHuman server from anywhere without port forwarding.
         </p>
 
         {#if !tunnelStatus.installed}
-          <div class="warning-box">
+          <div class="p-4 rounded-md mt-4 bg-amber-100 dark:bg-amber-900/50 border border-amber-300 dark:border-amber-600">
             <strong>⚠️ cloudflared not installed</strong>
             <p>Install cloudflared to enable secure tunneling:</p>
-            <code>wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb</code>
+            <code class="block mt-2 p-2 bg-white dark:bg-gray-800 rounded text-sm overflow-x-auto">wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb</code>
           </div>
         {:else}
-          <div class="status-box" class:status-running={tunnelStatus.running} class:status-stopped={!tunnelStatus.running}>
-            <div class="status-indicator">
-              <span class="status-dot" class:dot-running={tunnelStatus.running} class:dot-stopped={!tunnelStatus.running}></span>
+          <div class="rounded-md p-4 mb-4 border-2 {tunnelStatus.running ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-red-500 bg-red-50 dark:bg-red-900/50'}">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-3 h-3 rounded-full {tunnelStatus.running ? 'bg-emerald-500 shadow-[0_0_8px_theme(colors.emerald.500)]' : 'bg-red-500'}"></span>
               <strong>{tunnelStatus.running ? '✅ Running' : '⭕ Stopped'}</strong>
               {#if tunnelStatus.pid}
-                <span class="pid">(PID: {tunnelStatus.pid})</span>
+                <span class="text-gray-500 text-sm">(PID: {tunnelStatus.pid})</span>
               {/if}
             </div>
 
             {#if tunnelStatus.hostname}
-              <div class="hostname">
+              <div class="mb-4 p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
                 <strong>Public URL:</strong>
-                <a href="https://{tunnelStatus.hostname}" target="_blank" rel="noopener noreferrer">
+                <a href="https://{tunnelStatus.hostname}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline break-all">
                   https://{tunnelStatus.hostname}
                 </a>
               </div>
             {/if}
 
-            <div class="tunnel-controls">
-              <label class="toggle-label">
+            <div class="flex flex-col gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={tunnelStatus.enabled}
@@ -836,16 +836,16 @@
                 <span>Auto-start on boot</span>
               </label>
 
-              <div class="button-group">
+              <div class="flex gap-2">
                 <button
-                  class="btn btn-primary"
+                  class="btn-primary"
                   on:click={startTunnel}
                   disabled={loading || tunnelStatus.running}
                 >
                   Start Tunnel
                 </button>
                 <button
-                  class="btn btn-danger"
+                  class="btn-danger"
                   on:click={stopTunnel}
                   disabled={loading || !tunnelStatus.running}
                 >
@@ -855,13 +855,13 @@
             </div>
           </div>
 
-          <div class="info-box">
-            <h3>ℹ️ How It Works</h3>
-            <ul>
-              <li><strong>Auto-start:</strong> When enabled, the tunnel starts automatically when MetaHuman starts</li>
-              <li><strong>No port forwarding:</strong> Cloudflare tunnel creates a secure connection without opening router ports</li>
-              <li><strong>HTTPS included:</strong> Automatic SSL certificates from Cloudflare</li>
-              <li><strong>Access control:</strong> Configure email whitelisting in Cloudflare Zero Trust dashboard</li>
+          <div class="p-4 rounded-md mt-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700">
+            <h3 class="mb-2 text-gray-900 dark:text-gray-100">ℹ️ How It Works</h3>
+            <ul class="mt-2 ml-6 list-disc">
+              <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>Auto-start:</strong> When enabled, the tunnel starts automatically when MetaHuman starts</li>
+              <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>No port forwarding:</strong> Cloudflare tunnel creates a secure connection without opening router ports</li>
+              <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>HTTPS included:</strong> Automatic SSL certificates from Cloudflare</li>
+              <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>Access control:</strong> Configure email whitelisting in Cloudflare Zero Trust dashboard</li>
             </ul>
           </div>
         {/if}
@@ -870,27 +870,27 @@
 
     <!-- ============ HEADLESS MODE (Both) ============ -->
     {#if runtimeMode}
-      <div class="section">
-        <h2>🖥️ Headless Runtime Mode</h2>
-        <p class="section-description">
+      <div class="panel mb-6">
+        <h2 class="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-50">🖥️ Headless Runtime Mode</h2>
+        <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
           Pause local background agents when running remotely to prevent conflicts and save resources.
         </p>
 
-        <div class="status-box" class:status-headless={runtimeMode.headless}>
-          <div class="status-indicator">
-            <span class="status-dot" class:dot-headless={runtimeMode.headless} class:dot-active={!runtimeMode.headless}></span>
+        <div class="rounded-md p-4 mb-4 border-2 {runtimeMode.headless ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/50' : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900'}">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="w-3 h-3 rounded-full {runtimeMode.headless ? 'bg-amber-500 shadow-[0_0_8px_theme(colors.amber.500)]' : 'bg-emerald-500 shadow-[0_0_8px_theme(colors.emerald.500)]'}"></span>
             <strong>{runtimeMode.headless ? '🟡 Headless Mode Active' : '🟢 Normal Mode'}</strong>
           </div>
 
           {#if runtimeMode.headless}
-            <div class="info-banner">
-              <p><strong>ℹ️ Local agents are paused.</strong></p>
-              <p>The tunnel and web server stay online, but background services (boredom, sleep, organizer, etc.) are stopped.</p>
+            <div class="mb-4 p-3 bg-amber-100 dark:bg-amber-900/50 border border-amber-300 dark:border-amber-700 rounded">
+              <p class="m-0 text-sm"><strong>ℹ️ Local agents are paused.</strong></p>
+              <p class="m-1 text-sm">The tunnel and web server stay online, but background services (boredom, sleep, organizer, etc.) are stopped.</p>
             </div>
           {/if}
 
-          <div class="tunnel-controls">
-            <label class="toggle-label">
+          <div class="flex flex-col gap-4">
+            <label class="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={runtimeMode.headless}
@@ -900,8 +900,8 @@
               <span>Enable Headless Mode</span>
             </label>
 
-            <div class="metadata">
-              <small>Last changed: {new Date(runtimeMode.changedAt).toLocaleString()} ({runtimeMode.lastChangedBy})</small>
+            <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <small class="text-gray-500 dark:text-gray-400 text-xs">Last changed: {new Date(runtimeMode.changedAt).toLocaleString()} ({runtimeMode.lastChangedBy})</small>
             </div>
           </div>
         </div>
@@ -910,104 +910,104 @@
 
     <!-- ============ MOBILE FEATURES (Shown on all platforms) ============ -->
     <!-- Tier Selection -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>⚡ Compute Tier</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">⚡ Compute Tier</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         Automatically select the best compute tier based on connectivity, battery, and task requirements.
       </p>
       {#if isMobile}
         <TierSelector />
       {:else}
-        <div class="placeholder-content" style="opacity: 0.5;">
-          <div class="status-box">
-            <div class="status-indicator">
-              <span class="status-dot dot-stopped"></span>
+        <div class="opacity-50">
+          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-3 h-3 rounded-full bg-red-500"></span>
               <strong>—</strong>
             </div>
-            <p style="font-size: 0.875rem; color: #6b7280;">Use mobile app to select compute tier</p>
+            <p class="text-sm text-gray-500">Use mobile app to select compute tier</p>
           </div>
         </div>
       {/if}
     </div>
 
     <!-- Memory Sync -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>🔄 Memory Sync</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">🔄 Memory Sync</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         Keep your memories synchronized between devices. Changes made offline will sync when reconnected.
       </p>
       {#if isMobile}
         <SyncStatus />
       {:else}
-        <div class="placeholder-content" style="opacity: 0.5;">
-          <div class="status-box">
-            <div class="status-indicator">
-              <span class="status-dot dot-stopped"></span>
+        <div class="opacity-50">
+          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-3 h-3 rounded-full bg-red-500"></span>
               <strong>—</strong>
             </div>
-            <p style="font-size: 0.875rem; color: #6b7280;">Use mobile app to sync memories</p>
+            <p class="text-sm text-gray-500">Use mobile app to sync memories</p>
           </div>
         </div>
       {/if}
     </div>
 
     <!-- App Updates -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>⬇️ App Updates</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">⬇️ App Updates</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         Check for and download new versions of the MetaHuman app from your connected server.
       </p>
       {#if isMobile}
         <UpdateManager />
       {:else}
-        <div class="placeholder-content" style="opacity: 0.5;">
-          <div class="status-box">
-            <div class="status-indicator">
-              <span class="status-dot dot-stopped"></span>
+        <div class="opacity-50">
+          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-3 h-3 rounded-full bg-red-500"></span>
               <strong>—</strong>
             </div>
-            <p style="font-size: 0.875rem; color: #6b7280;">Use mobile app to check for updates</p>
+            <p class="text-sm text-gray-500">Use mobile app to check for updates</p>
           </div>
         </div>
       {/if}
     </div>
 
     <!-- Profile Management -->
-    <div class="section" class:section-disabled={!isMobile}>
-      <div class="section-header-row">
-        <h2>👤 Profile Data</h2>
+    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+      <div class="flex items-center gap-4 flex-wrap mb-3">
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">👤 Profile Data</h2>
         {#if !isMobile}
-          <span class="platform-badge">Mobile Only</span>
+          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
         {/if}
       </div>
-      <p class="section-description">
+      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
         Download your profile for offline use, create local profiles, or sync changes with the server.
       </p>
       {#if isMobile}
         <ProfileManager />
       {:else}
-        <div class="placeholder-content" style="opacity: 0.5;">
-          <div class="status-box">
-            <div class="status-indicator">
-              <span class="status-dot dot-stopped"></span>
+        <div class="opacity-50">
+          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-3 h-3 rounded-full bg-red-500"></span>
               <strong>—</strong>
             </div>
-            <p style="font-size: 0.875rem; color: #6b7280;">Use mobile app to manage profile data</p>
+            <p class="text-sm text-gray-500">Use mobile app to manage profile data</p>
           </div>
         </div>
       {/if}
@@ -1015,852 +1015,18 @@
 
     <!-- ============ MESSAGES ============ -->
     {#if error}
-      <div class="error-message">{error}</div>
+      <div class="p-3 rounded-md mt-4 bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700">{error}</div>
     {/if}
 
     {#if successMessage}
-      <div class="success-message">{successMessage}</div>
+      <div class="p-3 rounded-md mt-4 bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-700">{successMessage}</div>
     {/if}
   {/if}
 </div>
 
 <style>
-  .settings-container {
-    padding: 2rem;
-    max-width: 900px;
-    margin: 0 auto;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  .settings-header {
-    margin-bottom: 2rem;
-  }
-
-  .settings-header h1 {
-    font-size: 2rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #1f2937;
-  }
-
-  :global(.dark) .settings-header h1 {
-    color: #f9fafb;
-  }
-
-  .settings-header p {
-    color: #6b7280;
-  }
-
-  :global(.dark) .settings-header p {
-    color: #9ca3af;
-  }
-
-  .section {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .section {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .section.section-disabled {
-    opacity: 0.6;
-    pointer-events: none;
-  }
-
-  .section.section-info {
-    background: #f0f9ff;
-    border-color: #bae6fd;
-  }
-
-  :global(.dark) .section.section-info {
-    background: #0c4a6e;
-    border-color: #0369a1;
-  }
-
-  .section-header-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.75rem;
-  }
-
-  .section h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin: 0;
-    color: #111827;
-  }
-
-  :global(.dark) .section h2 {
-    color: #f9fafb;
-  }
-
-  .section-description {
-    color: #6b7280;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .section-description {
-    color: #9ca3af;
-  }
-
-  .platform-badge {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.75rem;
-    background: #f3f4f6;
-    color: #6b7280;
-    border-radius: 9999px;
-    font-weight: 500;
-  }
-
-  :global(.dark) .platform-badge {
-    background: #374151;
-    color: #9ca3af;
-  }
-
-  .setup-guide-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.375rem 0.75rem;
-    background: #3b82f6;
-    color: white;
-    text-decoration: none;
-    border-radius: 6px;
-    font-weight: 500;
-    font-size: 0.75rem;
-    transition: background 0.15s;
-  }
-
-  .setup-guide-link:hover {
-    background: #2563eb;
-  }
-
-  .status-box {
-    background: #f9fafb;
-    border: 2px solid #d1d5db;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .status-box {
-    background: #111827;
-    border-color: #4b5563;
-  }
-
-  .status-box.status-connected,
-  .status-box.status-running {
-    border-color: #10b981;
-    background: #ecfdf5;
-  }
-
-  :global(.dark) .status-box.status-connected,
-  :global(.dark) .status-box.status-running {
-    background: #064e3b;
-    border-color: #059669;
-  }
-
-  .status-box.status-disconnected,
-  .status-box.status-stopped {
-    border-color: #ef4444;
-    background: #fef2f2;
-  }
-
-  :global(.dark) .status-box.status-disconnected,
-  :global(.dark) .status-box.status-stopped {
-    background: #7f1d1d;
-    border-color: #dc2626;
-  }
-
-  .status-box.status-headless {
-    border-color: #f59e0b;
-    background: #fffbeb;
-  }
-
-  :global(.dark) .status-box.status-headless {
-    background: #78350f;
-    border-color: #f59e0b;
-  }
-
-  .status-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .status-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-  }
-
-  .dot-connected, .dot-running, .dot-active {
-    background: #10b981;
-    box-shadow: 0 0 8px #10b981;
-  }
-
-  .dot-disconnected, .dot-stopped {
-    background: #ef4444;
-  }
-
-  .dot-headless {
-    background: #f59e0b;
-    box-shadow: 0 0 8px #f59e0b;
-  }
-
-  .testing-badge {
-    font-size: 0.75rem;
-    background: #3b82f6;
-    color: white;
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
-    margin-left: 0.5rem;
-  }
-
-  .pid {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .server-info-details, .server-details {
-    margin-bottom: 1rem;
-  }
-
-  .info-row, .detail-row {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .detail-row {
-    justify-content: space-between;
-    padding: 0.375rem 0;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .detail-row {
-    border-color: #374151;
-  }
-
-  .detail-row:last-child {
-    border-bottom: none;
-  }
-
-  .info-row .label, .detail-label {
-    color: #6b7280;
-    min-width: 80px;
-  }
-
-  :global(.dark) .info-row .label,
-  :global(.dark) .detail-label {
-    color: #9ca3af;
-  }
-
-  .info-row .value, .detail-value {
-    color: #111827;
-    word-break: break-all;
-  }
-
-  :global(.dark) .info-row .value,
-  :global(.dark) .detail-value {
-    color: #f3f4f6;
-  }
-
-  .info-row.error .value {
-    color: #dc2626;
-  }
-
-  :global(.dark) .info-row.error .value {
-    color: #fca5a5;
-  }
-
-  .detail-value {
-    font-weight: 500;
-  }
-
-  .latency {
-    font-weight: 600;
-  }
-
-  .latency-good { color: #10b981 !important; }
-  .latency-warn { color: #f59e0b !important; }
-  .latency-bad { color: #ef4444 !important; }
-
-  /* Primary URL Box */
-  .primary-url-box {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    border-radius: 8px;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-
-  .url-label {
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.9);
-    margin-bottom: 0.5rem;
-  }
-
-  .url-display {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .url-display code {
-    font-size: 1.125rem;
-    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-    color: white;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .copy-btn {
-    padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    transition: all 0.15s;
-  }
-
-  .copy-btn:hover {
-    background: rgba(255, 255, 255, 0.3);
-  }
-
-  /* Server Details */
-  .server-details {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .server-details {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  /* Network Interfaces */
-  .interfaces-details {
-    margin-bottom: 1rem;
-  }
-
-  .interfaces-details summary {
-    cursor: pointer;
-    padding: 0.75rem;
-    background: #f3f4f6;
-    border-radius: 6px;
-    color: #374151;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  :global(.dark) .interfaces-details summary {
-    background: #1f2937;
-    color: #e5e7eb;
-  }
-
-  .interfaces-details summary:hover {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .interfaces-details summary:hover {
-    background: #374151;
-  }
-
-  .interfaces-list {
-    margin-top: 0.5rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .interfaces-list {
-    border-color: #374151;
-  }
-
-  .interface-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .interface-item {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .interface-item:last-child {
-    border-bottom: none;
-  }
-
-  .interface-item.interface-internal {
-    opacity: 0.6;
-  }
-
-  .interface-name {
-    font-weight: 600;
-    font-size: 0.75rem;
-    color: #6b7280;
-    min-width: 80px;
-  }
-
-  :global(.dark) .interface-name {
-    color: #9ca3af;
-  }
-
-  .interface-url {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .interface-url code {
-    font-size: 0.75rem;
-    color: #3b82f6;
-    background: none;
-    padding: 0;
-  }
-
-  .copy-btn-small {
-    padding: 0.25rem 0.5rem;
-    background: #e5e7eb;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.75rem;
-    transition: background 0.15s;
-  }
-
-  :global(.dark) .copy-btn-small {
-    background: #374151;
-  }
-
-  .copy-btn-small:hover {
-    background: #d1d5db;
-  }
-
-  :global(.dark) .copy-btn-small:hover {
-    background: #4b5563;
-  }
-
-  .internal-badge {
-    font-size: 0.625rem;
-    background: #9ca3af;
-    color: white;
-    padding: 0.125rem 0.375rem;
-    border-radius: 4px;
-    text-transform: uppercase;
-  }
-
-  /* Server Options */
-  .server-options {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .server-option {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border: 2px solid #e5e7eb;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-align: left;
-    width: 100%;
-  }
-
-  :global(.dark) .server-option {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .server-option:hover:not(:disabled) {
-    border-color: #3b82f6;
-    background: #eff6ff;
-  }
-
-  :global(.dark) .server-option:hover:not(:disabled) {
-    background: #1e3a8a;
-    border-color: #3b82f6;
-  }
-
-  .server-option.selected {
-    border-color: #10b981;
-    background: #ecfdf5;
-  }
-
-  :global(.dark) .server-option.selected {
-    background: #064e3b;
-    border-color: #059669;
-  }
-
-  .server-option:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .option-icon {
-    font-size: 2rem;
-    flex-shrink: 0;
-  }
-
-  .option-details {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .option-details strong {
-    color: #111827;
-    font-size: 1rem;
-  }
-
-  :global(.dark) .option-details strong {
-    color: #f9fafb;
-  }
-
-  .option-url {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: #3b82f6;
-    word-break: break-all;
-  }
-
-  .option-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .option-desc {
-    color: #9ca3af;
-  }
-
-  .selected-badge {
-    background: #10b981;
-    color: white;
-    font-size: 0.75rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-weight: 600;
-  }
-
-  /* Custom Input */
-  .custom-input-section {
-    margin-top: 1rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-  }
-
-  :global(.dark) .custom-input-section {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .custom-input-section label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  :global(.dark) .custom-input-section label {
-    color: #e5e7eb;
-  }
-
-  .input-group {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .input-group input {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    background: white;
-    color: #111827;
-  }
-
-  :global(.dark) .input-group input {
-    background: #374151;
-    border-color: #4b5563;
-    color: #f9fafb;
-  }
-
-  .input-group input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-  }
-
-  .button-row, .button-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .tunnel-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  /* Buttons */
-  .btn {
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    border: none;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-size: 0.875rem;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: #3b82f6;
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-secondary {
-    background: #e5e7eb;
-    color: #374151;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #4b5563;
-    color: #f9fafb;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #d1d5db;
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: #6b7280;
-  }
-
   .btn-success {
-    background: #10b981;
-    color: white;
-  }
-
-  .btn-success:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .btn-danger {
-    background: #ef4444;
-    color: white;
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  /* Info/Warning Boxes */
-  .info-box, .warning-box {
-    padding: 1rem;
-    border-radius: 6px;
-    margin-top: 1rem;
-  }
-
-  .info-box {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-  }
-
-  :global(.dark) .info-box {
-    background: #1e3a8a;
-    border-color: #3b82f6;
-  }
-
-  .warning-box {
-    background: #fef3c7;
-    border: 1px solid #fde68a;
-  }
-
-  :global(.dark) .warning-box {
-    background: #78350f;
-    border-color: #fbbf24;
-  }
-
-  .info-box h3, .warning-box strong {
-    margin-bottom: 0.5rem;
-  }
-
-  .info-box ul {
-    margin: 0.5rem 0 0 1.5rem;
-  }
-
-  .info-box li {
-    margin-bottom: 0.5rem;
-    color: #1e40af;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .info-box li {
-    color: #bfdbfe;
-  }
-
-  .warning-box code {
-    display: block;
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: #ffffff;
-    border-radius: 4px;
-    overflow-x: auto;
-    font-size: 0.875rem;
-  }
-
-  .info-banner {
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: #fef3c7;
-    border: 1px solid #fde68a;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .info-banner {
-    background: #92400e;
-    border-color: #f59e0b;
-  }
-
-  .info-banner p {
-    margin: 0.25rem 0;
-    font-size: 0.875rem;
-  }
-
-  .hostname {
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: #ffffff;
-    border-radius: 4px;
-    border: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .hostname {
-    background: #374151;
-    border-color: #4b5563;
-  }
-
-  .hostname a {
-    color: #3b82f6;
-    text-decoration: none;
-    word-break: break-all;
-  }
-
-  .hostname a:hover {
-    text-decoration: underline;
-  }
-
-  .metadata {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .metadata {
-    border-color: #4b5563;
-  }
-
-  .metadata small {
-    color: #6b7280;
-    font-size: 0.75rem;
-  }
-
-  :global(.dark) .metadata small {
-    color: #9ca3af;
-  }
-
-  /* Messages */
-  .error-message, .success-message {
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    margin-top: 1rem;
-  }
-
-  .error-message {
-    background: #fee2e2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    color: #fecaca;
-    border-color: #dc2626;
-  }
-
-  .success-message {
-    background: #d1fae5;
-    color: #065f46;
-    border: 1px solid #a7f3d0;
-  }
-
-  :global(.dark) .success-message {
-    background: #064e3b;
-    color: #a7f3d0;
-    border-color: #059669;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 2rem;
-    color: #6b7280;
-  }
-
-  .loading-inline {
-    padding: 1rem;
-    color: #6b7280;
-    font-style: italic;
+    @apply px-4 py-2 rounded-md font-medium text-sm transition-colors;
+    @apply bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 </style>

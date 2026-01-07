@@ -272,202 +272,202 @@
   });
 </script>
 
-<div class="dataset-management">
-  <div class="header">
+<div class="p-6 max-w-[1600px] mx-auto">
+  <div class="flex justify-between items-center mb-6">
     <div>
-      <h2>📊 Dataset Management</h2>
-      <p>Review, approve, and manage LoRA training datasets.</p>
+      <h2 class="m-0 mb-1 text-2xl font-semibold">📊 Dataset Management</h2>
+      <p class="m-0 text-gray-500 text-sm">Review, approve, and manage LoRA training datasets.</p>
     </div>
-    <button class="refresh-btn" on:click={loadData} disabled={loading}>
+    <button class="bg-blue-500 text-white border-none px-4 py-2 rounded-md cursor-pointer font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={loadData} disabled={loading}>
       {loading ? 'Refreshing…' : '↻ Refresh'}
     </button>
   </div>
 
   {#if error}
-    <div class="error-banner">
-      <strong>⚠️ Error:</strong> {error}
-      <button class="error-dismiss" on:click={() => error = null}>×</button>
+    <div class="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-md p-4 mb-6 text-red-700 dark:text-red-400 flex justify-between items-center">
+      <span><strong>⚠️ Error:</strong> {error}</span>
+      <button class="bg-transparent border-none text-2xl cursor-pointer text-red-700 dark:text-red-400 px-2" on:click={() => error = null}>×</button>
     </div>
   {/if}
 
   <!-- Auto-Approval Configuration -->
   {#if autoApproval}
-    <section class="card">
-      <header>
-        <h3>⚙️ Auto-Approval Configuration</h3>
-        <p>Automated dataset approval settings for nightly pipeline.</p>
+    <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+      <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+        <h3 class="m-0 mb-1 text-lg font-semibold">⚙️ Auto-Approval Configuration</h3>
+        <p class="m-0 text-gray-500 text-sm">Automated dataset approval settings for nightly pipeline.</p>
       </header>
-      <div class="config-grid">
-        <label class="switch-row">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-4">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
           <span>Auto-Approval Enabled</span>
-          <input type="checkbox" checked={autoApproval.enabled} disabled={updatingConfig} on:change={onToggleEnabled} />
+          <input type="checkbox" checked={autoApproval.enabled} disabled={updatingConfig} on:change={onToggleEnabled} class="cursor-pointer" />
         </label>
-        <label class="switch-row">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
           <span>Dry Run Mode</span>
-          <input type="checkbox" checked={autoApproval.dryRun} disabled={updatingConfig} on:change={onToggleDryRun} />
+          <input type="checkbox" checked={autoApproval.dryRun} disabled={updatingConfig} on:change={onToggleDryRun} class="cursor-pointer" />
         </label>
-        <label class="switch-row">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
           <span>Auto Train</span>
-          <input type="checkbox" checked={getAutoFlag('autoTrain')} on:change={onToggleAutoTrain} />
+          <input type="checkbox" checked={getAutoFlag('autoTrain')} on:change={onToggleAutoTrain} class="cursor-pointer" />
         </label>
-        <label class="switch-row">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
           <span>Auto Evaluate</span>
-          <input type="checkbox" checked={getAutoFlag('autoEval')} on:change={onToggleAutoEval} />
+          <input type="checkbox" checked={getAutoFlag('autoEval')} on:change={onToggleAutoEval} class="cursor-pointer" />
         </label>
-        <label class="switch-row">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
           <span>Auto Activate</span>
-          <input type="checkbox" checked={getAutoFlag('autoActivate')} on:change={onToggleAutoActivate} />
+          <input type="checkbox" checked={getAutoFlag('autoActivate')} on:change={onToggleAutoActivate} class="cursor-pointer" />
         </label>
       </div>
-      <div class="thresholds">
-        <div class="threshold">Min pairs: <strong>{autoApproval.thresholds.minPairs}</strong></div>
-        <div class="threshold">High confidence ≥ <strong>{Math.round(autoApproval.thresholds.minHighConfidence * 100)}%</strong></div>
-        <div class="threshold">Reflections ≥ <strong>{Math.round(autoApproval.thresholds.minReflectionPct * 100)}%</strong></div>
-        <div class="threshold">Low confidence ≤ <strong>{Math.round(autoApproval.thresholds.maxLowConfidence * 100)}%</strong></div>
+      <div class="flex flex-wrap gap-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-md">
+        <div class="text-sm text-gray-500">Min pairs: <strong class="text-gray-900 dark:text-gray-100">{autoApproval.thresholds.minPairs}</strong></div>
+        <div class="text-sm text-gray-500">High confidence ≥ <strong class="text-gray-900 dark:text-gray-100">{Math.round(autoApproval.thresholds.minHighConfidence * 100)}%</strong></div>
+        <div class="text-sm text-gray-500">Reflections ≥ <strong class="text-gray-900 dark:text-gray-100">{Math.round(autoApproval.thresholds.minReflectionPct * 100)}%</strong></div>
+        <div class="text-sm text-gray-500">Low confidence ≤ <strong class="text-gray-900 dark:text-gray-100">{Math.round(autoApproval.thresholds.maxLowConfidence * 100)}%</strong></div>
       </div>
     </section>
   {/if}
 
   <!-- Active Adapter -->
-  <section class="card">
-    <header>
-      <h3>✨ Active Adapter</h3>
-      <p>Currently loaded LoRA adapter in chat system.</p>
+  <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+    <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+      <h3 class="m-0 mb-1 text-lg font-semibold">✨ Active Adapter</h3>
+      <p class="m-0 text-gray-500 text-sm">Currently loaded LoRA adapter in chat system.</p>
     </header>
     {#if activeAdapter}
-      <div class="meta-grid">
-        <div class="meta-item">
-          <span class="meta-label">Model:</span>
-          <span class="meta-value">{activeAdapter.modelName}</span>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4">
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-gray-500 uppercase">Model:</span>
+          <span class="text-sm text-gray-900 dark:text-gray-100">{activeAdapter.modelName}</span>
         </div>
-        <div class="meta-item">
-          <span class="meta-label">Dataset:</span>
-          <span class="meta-value">{activeAdapter.dataset || 'unknown'}</span>
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-gray-500 uppercase">Dataset:</span>
+          <span class="text-sm text-gray-900 dark:text-gray-100">{activeAdapter.dataset || 'unknown'}</span>
         </div>
-        <div class="meta-item">
-          <span class="meta-label">Activated:</span>
-          <span class="meta-value">{new Date(activeAdapter.activatedAt).toLocaleString()}</span>
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-gray-500 uppercase">Activated:</span>
+          <span class="text-sm text-gray-900 dark:text-gray-100">{new Date(activeAdapter.activatedAt).toLocaleString()}</span>
         </div>
         {#if typeof activeAdapter.evalScore === 'number'}
-          <div class="meta-item">
-            <span class="meta-label">Eval Score:</span>
-            <span class="meta-value">{activeAdapter.evalScore.toFixed(3)}</span>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-gray-500 uppercase">Eval Score:</span>
+            <span class="text-sm text-gray-900 dark:text-gray-100">{activeAdapter.evalScore.toFixed(3)}</span>
           </div>
         {/if}
-        <div class="meta-item">
-          <span class="meta-label">Status:</span>
-          <span class="meta-value status-badge {activeAdapter.status === 'loaded' ? 'status-active' : 'status-pending'}">
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-gray-500 uppercase">Status:</span>
+          <span class="text-sm inline-block px-3 py-1 rounded-md text-xs font-medium {activeAdapter.status === 'loaded' ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}">
             {activeAdapter.status || 'loaded'}
           </span>
         </div>
       </div>
     {:else}
-      <p class="muted">No active adapter. Chat uses base model.</p>
+      <p class="text-gray-500 text-sm">No active adapter. Chat uses base model.</p>
     {/if}
   </section>
 
   <!-- Datasets Table -->
-  <section class="card">
-    <header>
-      <h3>📁 Datasets</h3>
-      <p>All training datasets with approval and training workflow.</p>
+  <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+    <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+      <h3 class="m-0 mb-1 text-lg font-semibold">📁 Datasets</h3>
+      <p class="m-0 text-gray-500 text-sm">All training datasets with approval and training workflow.</p>
     </header>
 
     {#if loading}
-      <div class="loading">Loading datasets…</div>
+      <div class="text-center py-12 px-8 text-gray-500">Loading datasets…</div>
     {:else if datasets.length === 0}
-      <div class="empty">
-        <div class="empty-icon">📊</div>
-        <div class="empty-title">No datasets available</div>
-        <p class="muted">Run adapter-builder or sleep-service to generate instruction pairs.</p>
+      <div class="text-center py-12 px-8 text-gray-500">
+        <div class="text-5xl mb-4">📊</div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No datasets available</div>
+        <p class="text-gray-500 text-sm">Run adapter-builder or sleep-service to generate instruction pairs.</p>
       </div>
     {:else}
-      <table class="dataset-table">
+      <table class="w-full border-collapse">
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Status</th>
-            <th>Pairs</th>
-            <th>Approval</th>
-            <th>Evaluation</th>
-            <th>Actions</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Date</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Status</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Pairs</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Approval</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Evaluation</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Actions</th>
           </tr>
         </thead>
         <tbody>
           {#each datasets as dataset (dataset.date)}
             <tr>
-              <td>
-                <div class="date-cell">
-                  <div class="date-value">{dataset.date}</div>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex flex-col gap-1">
+                  <div class="font-semibold text-sm">{dataset.date}</div>
                   {#if dataset.status === 'active'}
-                    <span class="badge badge-active">Active</span>
+                    <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">Active</span>
                   {/if}
                   {#if dataset.autoApproved}
-                    <span class="badge badge-auto">Auto</span>
+                    <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400">Auto</span>
                   {/if}
                   {#if dataset.dryRun}
-                    <span class="badge badge-dry">Dry</span>
+                    <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400">Dry</span>
                   {/if}
                 </div>
               </td>
-              <td>
-                <span class="status-badge {statusBadge(dataset.status).class}">
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <span class="inline-block px-3 py-1 rounded-md text-xs font-medium {dataset.status === 'pending' ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400' : dataset.status === 'approved' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400' : dataset.status === 'trained' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400' : dataset.status === 'evaluated' ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-400' : 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'}">
                   {statusBadge(dataset.status).label}
                 </span>
               </td>
-              <td>{dataset.pairCount}</td>
-              <td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">{dataset.pairCount}</td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
                 {#if dataset.approvedAt}
-                  <div class="meta-cell">
+                  <div class="flex flex-col gap-1 text-sm">
                     <div>{new Date(dataset.approvedAt).toLocaleString()}</div>
-                    <div class="muted">by {dataset.approvedBy || 'unknown'}</div>
+                    <div class="text-gray-500 text-sm">by {dataset.approvedBy || 'unknown'}</div>
                     {#if dataset.qualityScore}
-                      <div class="muted">Quality: {dataset.qualityScore.toFixed(0)}/100</div>
+                      <div class="text-gray-500 text-sm">Quality: {dataset.qualityScore.toFixed(0)}/100</div>
                     {/if}
                   </div>
                 {:else}
-                  <span class="muted">Pending</span>
+                  <span class="text-gray-500 text-sm">Pending</span>
                 {/if}
               </td>
-              <td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
                 {#if typeof dataset.evalScore === 'number'}
-                  <div class="meta-cell">
+                  <div class="flex flex-col gap-1 text-sm">
                     <div>{dataset.evalScore.toFixed(3)}</div>
-                    <div class="muted {dataset.evalPassed ? 'pass' : 'fail'}">
+                    <div class="text-sm {dataset.evalPassed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}">
                       {dataset.evalPassed ? '✅ Passed' : '❌ Failed'}
                     </div>
                   </div>
                 {:else}
-                  <span class="muted">Not run</span>
+                  <span class="text-gray-500 text-sm">Not run</span>
                 {/if}
               </td>
-              <td>
-                <div class="actions">
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex gap-2 flex-wrap">
                   {#if dataset.status === 'pending'}
-                    <button class="btn-action" on:click={() => handleApprove(dataset.date)} disabled={isWorking(dataset.date, 'approve')}>
+                    <button class="bg-blue-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleApprove(dataset.date)} disabled={isWorking(dataset.date, 'approve')}>
                       {isWorking(dataset.date, 'approve') ? 'Approving…' : '✓ Approve'}
                     </button>
-                    <button class="btn-danger-small" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
+                    <button class="bg-red-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
                       {isWorking(dataset.date, 'reject') ? 'Rejecting…' : '✗ Reject'}
                     </button>
                   {/if}
                   {#if dataset.status === 'approved'}
-                    <button class="btn-action" on:click={() => handleTrain(dataset.date)} disabled={isWorking(dataset.date, 'train')}>
+                    <button class="bg-blue-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleTrain(dataset.date)} disabled={isWorking(dataset.date, 'train')}>
                       {isWorking(dataset.date, 'train') ? 'Starting…' : '🔥 Train'}
                     </button>
                   {/if}
                   {#if dataset.status === 'trained'}
-                    <button class="btn-action" on:click={() => handleEval(dataset.date)} disabled={isWorking(dataset.date, 'eval')}>
+                    <button class="bg-blue-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleEval(dataset.date)} disabled={isWorking(dataset.date, 'eval')}>
                       {isWorking(dataset.date, 'eval') ? 'Evaluating…' : '📊 Evaluate'}
                     </button>
                   {/if}
                   {#if dataset.status === 'evaluated' && dataset.evalPassed}
-                    <button class="btn-action" on:click={() => handleActivate(dataset.date)} disabled={isWorking(dataset.date, 'activate')}>
+                    <button class="bg-blue-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleActivate(dataset.date)} disabled={isWorking(dataset.date, 'activate')}>
                       {isWorking(dataset.date, 'activate') ? 'Activating…' : '✨ Activate'}
                     </button>
                   {/if}
                   {#if dataset.status !== 'pending'}
-                    <button class="btn-danger-small" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
+                    <button class="bg-red-500 text-white border-none px-3 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:enabled:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
                       {isWorking(dataset.date, 'reject') ? 'Archiving…' : '🗄️ Archive'}
                     </button>
                   {/if}
@@ -481,61 +481,61 @@
   </section>
 
   <!-- Fine-Tuned Models -->
-  <section class="card">
-    <header>
-      <h3>🎯 Fine-Tuned Models</h3>
-      <p>Full model fine-tuning runs (not LoRA adapters).</p>
+  <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+    <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+      <h3 class="m-0 mb-1 text-lg font-semibold">🎯 Fine-Tuned Models</h3>
+      <p class="m-0 text-gray-500 text-sm">Full model fine-tuning runs (not LoRA adapters).</p>
     </header>
 
     {#if loading}
-      <div class="loading">Loading fine-tuned models…</div>
+      <div class="text-center py-12 px-8 text-gray-500">Loading fine-tuned models…</div>
     {:else if fineTuneModels.length === 0}
-      <div class="empty">
-        <div class="empty-icon">🎯</div>
-        <div class="empty-title">No fine-tuned models</div>
-        <p class="muted">Run fine-tune training from the Training Wizard to create full fine-tuned models.</p>
+      <div class="text-center py-12 px-8 text-gray-500">
+        <div class="text-5xl mb-4">🎯</div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No fine-tuned models</div>
+        <p class="text-gray-500 text-sm">Run fine-tune training from the Training Wizard to create full fine-tuned models.</p>
       </div>
     {:else}
-      <table class="dataset-table">
+      <table class="w-full border-collapse">
         <thead>
           <tr>
-            <th>Run Label</th>
-            <th>Base Model</th>
-            <th>Samples</th>
-            <th>Dataset Size</th>
-            <th>Created</th>
-            <th>Status</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Run Label</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Base Model</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Samples</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Dataset Size</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Created</th>
+            <th class="text-left p-3 bg-gray-50 dark:bg-gray-900 font-semibold text-sm border-b-2 border-gray-200 dark:border-gray-700">Status</th>
           </tr>
         </thead>
         <tbody>
           {#each fineTuneModels as model (model.runId)}
             <tr>
-              <td>
-                <div class="date-cell">
-                  <div class="date-value">{model.runLabel}</div>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex flex-col gap-1">
+                  <div class="font-semibold text-sm">{model.runLabel}</div>
                   {#if model.isActive}
-                    <span class="badge badge-active">Active</span>
+                    <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">Active</span>
                   {/if}
                 </div>
               </td>
-              <td>{model.baseModel}</td>
-              <td>{model.totalSamples.toLocaleString()}</td>
-              <td>{model.datasetSizeKB.toLocaleString()} KB</td>
-              <td>
-                <div class="meta-cell">
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">{model.baseModel}</td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">{model.totalSamples.toLocaleString()}</td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">{model.datasetSizeKB.toLocaleString()} KB</td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex flex-col gap-1 text-sm">
                   <div>{new Date(model.createdAt).toLocaleString()}</div>
-                  <div class="muted">by {model.username}</div>
+                  <div class="text-gray-500 text-sm">by {model.username}</div>
                 </div>
               </td>
-              <td>
-                <div class="status-cell">
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700">
+                <div class="flex flex-col gap-1">
                   {#if model.status === 'training_complete'}
-                    <span class="status-badge status-active">✅ Complete</span>
+                    <span class="inline-block px-3 py-1 rounded-md text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400">✅ Complete</span>
                   {:else}
-                    <span class="status-badge status-pending">❌ Failed</span>
+                    <span class="inline-block px-3 py-1 rounded-md text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">❌ Failed</span>
                   {/if}
                   {#if model.error}
-                    <div class="muted error">{model.error}</div>
+                    <div class="text-red-600 dark:text-red-400 text-xs">{model.error}</div>
                   {/if}
                 </div>
               </td>
@@ -546,381 +546,3 @@
     {/if}
   </section>
 </div>
-
-<style>
-  .dataset-management {
-    padding: 1.5rem;
-    max-width: 1600px;
-    margin: 0 auto;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .header h2 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
-
-  .header p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .refresh-btn {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-banner {
-    background: #fee;
-    border: 1px solid #fcc;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-    color: #c00;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .error-dismiss {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: #c00;
-    padding: 0 0.5rem;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .card header {
-    margin-bottom: 1rem;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 0.75rem;
-  }
-
-  :global(.dark) .card header {
-    border-bottom-color: #374151;
-  }
-
-  .card h3 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .card p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .switch-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-
-  :global(.dark) .switch-row {
-    background: #111827;
-  }
-
-  .switch-row input[type="checkbox"] {
-    cursor: pointer;
-  }
-
-  .thresholds {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 6px;
-  }
-
-  :global(.dark) .thresholds {
-    background: #111827;
-  }
-
-  .threshold {
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .threshold strong {
-    color: #111827;
-  }
-
-  :global(.dark) .threshold strong {
-    color: #f3f4f6;
-  }
-
-  .meta-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1rem;
-  }
-
-  .meta-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .meta-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #6b7280;
-    text-transform: uppercase;
-  }
-
-  .meta-value {
-    font-size: 0.875rem;
-    color: #111827;
-  }
-
-  :global(.dark) .meta-value {
-    color: #f3f4f6;
-  }
-
-  .muted {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .loading, .empty {
-    text-align: center;
-    padding: 3rem 2rem;
-    color: #6b7280;
-  }
-
-  .empty-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-  }
-
-  .empty-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #111827;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .empty-title {
-    color: #f3f4f6;
-  }
-
-  .dataset-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .dataset-table th {
-    text-align: left;
-    padding: 0.75rem;
-    background: #f9fafb;
-    font-weight: 600;
-    font-size: 0.875rem;
-    border-bottom: 2px solid #e5e7eb;
-  }
-
-  :global(.dark) .dataset-table th {
-    background: #111827;
-    border-bottom-color: #374151;
-  }
-
-  .dataset-table td {
-    padding: 1rem 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .dataset-table td {
-    border-bottom-color: #374151;
-  }
-
-  .date-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .date-value {
-    font-weight: 600;
-    font-size: 0.875rem;
-  }
-
-  .badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .badge-active {
-    background: #dcfce7;
-    color: #166534;
-  }
-
-  .badge-auto {
-    background: #dbeafe;
-    color: #1e40af;
-  }
-
-  .badge-dry {
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  .status-badge {
-    display: inline-block;
-    padding: 0.25rem 0.75rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .status-pending {
-    background: #f3f4f6;
-    color: #6b7280;
-  }
-
-  .status-approved {
-    background: #dbeafe;
-    color: #1e40af;
-  }
-
-  .status-trained {
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  .status-evaluated {
-    background: #e0e7ff;
-    color: #4338ca;
-  }
-
-  .status-active {
-    background: #dcfce7;
-    color: #166534;
-  }
-
-  .meta-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.875rem;
-  }
-
-  .meta-cell .pass {
-    color: #059669;
-  }
-
-  .meta-cell .fail {
-    color: #dc2626;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .btn-action {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 0.375rem 0.75rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .btn-action:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-action:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-danger-small {
-    background: #ef4444;
-    color: white;
-    border: none;
-    padding: 0.375rem 0.75rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .btn-danger-small:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  .btn-danger-small:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .status-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .error {
-    color: #dc2626 !important;
-    font-size: 0.75rem;
-  }
-</style>

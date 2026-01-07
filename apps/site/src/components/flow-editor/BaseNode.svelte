@@ -103,21 +103,21 @@
   {/if}
 
   <!-- Node Header -->
-  <div class="node-header">
-    <span class="category-badge">{categoryBadge}</span>
-    <span class="node-title">{nodeTitle}</span>
+  <div class="node-header flex items-center gap-2 py-2 px-3 bg-black/30 border-b border-white/10 rounded-t-md">
+    <span class="category-badge text-[9px] font-bold py-0.5 px-1.5 rounded-sm tracking-wide">{categoryBadge}</span>
+    <span class="flex-1 font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{nodeTitle}</span>
     {#if isMuted}
-      <span class="muted-badge">MUTED</span>
+      <span class="text-[8px] py-0.5 px-1 bg-gray-600 rounded-sm text-gray-400">MUTED</span>
     {/if}
   </div>
 
   <!-- Node Body - Shows inputs/outputs -->
-  <div class="node-body" style="min-height: {minBodyHeight}px;">
+  <div class="node-body py-2 px-3" style="min-height: {minBodyHeight}px;">
     <!-- Text input for input nodes -->
     {#if hasTextProperty}
-      <div class="text-input-container nodrag">
+      <div class="mb-2 nodrag">
         <textarea
-          class="node-text-input nowheel"
+          class="node-text-input w-full box-border p-2 bg-black/40 border border-white/20 rounded text-white text-[11px] font-inherit resize-y leading-snug focus:outline-none focus:border-[var(--node-color)] focus:bg-black/60 placeholder:text-white/40 nowheel"
           placeholder="Enter text..."
           value={data.properties?.message || ''}
           oninput={handleTextChange}
@@ -128,21 +128,21 @@
 
     <!-- Output display for display nodes -->
     {#if isDisplayNode}
-      <div class="output-display-container nodrag nowheel">
+      <div class="mb-2 nodrag nowheel">
         {#if hasOutput}
-          <div class="output-display">{data.executionOutput}</div>
+          <div class="output-display w-full box-border max-h-[200px] p-2 bg-green-500/15 border border-green-500/40 rounded text-green-100 text-[11px] leading-snug overflow-y-auto whitespace-pre-wrap break-words">{data.executionOutput}</div>
         {:else}
-          <div class="output-placeholder">Output will appear here after execution...</div>
+          <div class="w-full box-border py-3 px-2 bg-black/30 border border-dashed border-white/20 rounded text-white/40 text-[10px] italic text-center">Output will appear here after execution...</div>
         {/if}
       </div>
     {/if}
 
-    <div class="slots-container">
+    <div class="flex justify-between gap-4 pt-1">
       <!-- Inputs column -->
-      <div class="inputs-column">
+      <div class="flex flex-col">
         {#if schema?.inputs}
           {#each schema.inputs as input, index}
-            <div class="slot-label input-label" title={input.description || input.name}>
+            <div class="slot-label text-[10px] text-white/70" title={input.description || input.name}>
               {input.name}
             </div>
           {/each}
@@ -150,10 +150,10 @@
       </div>
 
       <!-- Outputs column -->
-      <div class="outputs-column">
+      <div class="flex flex-col text-right">
         {#if schema?.outputs}
           {#each schema.outputs as output, index}
-            <div class="slot-label output-label" title={output.description || output.name}>
+            <div class="slot-label text-[10px] text-white/70" title={output.description || output.name}>
               {output.name}
             </div>
           {/each}
@@ -176,53 +176,37 @@
 </div>
 
 <style>
+  /* Base node with CSS variable theming */
   .base-node {
+    @apply rounded-lg min-w-[180px] font-sans text-xs text-white transition-all;
     background: var(--node-bg);
     border: 2px solid var(--node-color);
-    border-radius: 8px;
-    min-width: 180px;
-    font-family: system-ui, -apple-system, sans-serif;
-    font-size: 12px;
-    color: #fff;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    transition: all 0.15s ease;
   }
-
   .base-node.selected {
     border-color: #fff;
     box-shadow: 0 0 0 2px var(--node-color), 0 4px 12px rgba(0, 0, 0, 0.4);
   }
-
-  .base-node.muted {
-    opacity: 0.5;
-  }
-
+  .base-node.muted { @apply opacity-50; }
   .base-node.running {
-    border-color: #fbbf24;
+    @apply border-amber-400;
     box-shadow: 0 0 12px rgba(251, 191, 36, 0.5);
     animation: pulse 1s ease-in-out infinite;
   }
-
   .base-node.completed {
-    border-color: #22c55e;
+    @apply border-green-500;
     box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
   }
-
   .base-node.failed {
-    border-color: #ef4444;
+    @apply border-red-500;
     box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
   }
-
   .base-node.unconnected {
-    border-color: #eab308;
-    border-style: dashed;
+    @apply border-yellow-500 border-dashed opacity-80;
     box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
-    opacity: 0.8;
   }
-
   .base-node.expanded {
-    min-width: 280px;
-    width: 280px;
+    @apply min-w-[280px] w-[280px];
   }
 
   @keyframes pulse {
@@ -230,144 +214,20 @@
     50% { opacity: 0.8; }
   }
 
-  .node-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px 6px 0 0;
-  }
-
+  /* Category badge uses CSS variables for dynamic colors */
   .category-badge {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2px 6px;
     background: var(--node-color);
     color: var(--node-bg);
-    border-radius: 3px;
-    letter-spacing: 0.5px;
   }
 
-  .node-title {
-    font-weight: 600;
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .muted-badge {
-    font-size: 8px;
-    padding: 2px 4px;
-    background: #666;
-    border-radius: 2px;
-    color: #ccc;
-  }
-
-  .node-body {
-    padding: 8px 12px;
-    min-height: 40px;
-    /* padding-top accounts for header-to-handle alignment */
-  }
-
-  .text-input-container {
-    margin-bottom: 8px;
-  }
-
-  .node-text-input {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 8px;
-    background: rgba(0, 0, 0, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-    color: #fff;
-    font-size: 11px;
-    font-family: inherit;
-    resize: vertical;
-    line-height: 1.4;
-  }
-
-  .node-text-input:focus {
-    outline: none;
-    border-color: var(--node-color);
-    background: rgba(0, 0, 0, 0.6);
-  }
-
-  .node-text-input::placeholder {
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  .output-display-container {
-    margin-bottom: 8px;
-  }
-
-  .output-display {
-    width: 100%;
-    box-sizing: border-box;
-    max-height: 200px;
-    padding: 8px;
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    border-radius: 4px;
-    color: #d1fae5;
-    font-size: 11px;
-    font-family: inherit;
-    line-height: 1.4;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .output-placeholder {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 12px 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px dashed rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-    color: rgba(255, 255, 255, 0.4);
-    font-size: 10px;
-    font-style: italic;
-    text-align: center;
-  }
-
-  .slots-container {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    /* Small padding to align labels with handles (handleOffset vs header+body padding) */
-    padding-top: 4px;
-  }
-
-  .inputs-column,
-  .outputs-column {
-    display: flex;
-    flex-direction: column;
-    gap: 0; /* No gap - use fixed height for exact alignment with handles */
-  }
-
-  .outputs-column {
-    text-align: right;
-  }
-
+  /* Slot label height must match SLOT_HEIGHT constant in script */
   .slot-label {
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.7);
-    height: 20px; /* Must match SLOT_HEIGHT in script */
-    line-height: 20px;
-    padding: 0;
+    @apply h-5 leading-5 p-0;
   }
 
-  /* Removed visual dots - real handles are on the edges, no need for duplicate indicators */
-
-  /* Handle styling is controlled via the style prop */
+  /* Svelte Flow handle styling */
   :global(.svelte-flow .svelte-flow__handle) {
-    width: 10px;
-    height: 10px;
+    @apply w-2.5 h-2.5 rounded-full;
     border: 2px solid #1a1a1a;
-    border-radius: 50%;
   }
 </style>

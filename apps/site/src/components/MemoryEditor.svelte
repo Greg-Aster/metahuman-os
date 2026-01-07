@@ -95,18 +95,18 @@
 
 {#if isOpen}
   <div class="modal-overlay" on:click={close}>
-    <div class="modal-container" on:click|stopPropagation>
-      <div class="modal-header">
-        <div class="modal-title">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="modal-container bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-5xl w-full h-[80vh] flex flex-col" on:click|stopPropagation>
+      <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center gap-3">
+          <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
           </svg>
           <div>
-            <div class="modal-title-text">{memoryType} Editor</div>
-            <div class="modal-subtitle">{relPath}</div>
+            <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">{memoryType} Editor</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{relPath}</div>
           </div>
         </div>
-        <button class="modal-close" on:click={close} title="Close (Esc)">
+        <button class="p-2 rounded-md text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" on:click={close} title="Close (Esc)">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
@@ -114,17 +114,17 @@
       </div>
 
       {#if error}
-        <div class="error-banner">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="banner banner-error mx-4 mt-4">
+          <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
           {error}
         </div>
       {/if}
 
-      <div class="modal-body">
+      <div class="flex-1 overflow-hidden relative">
         {#if loading}
-          <div class="loading-state">
+          <div class="flex flex-col items-center justify-center h-full gap-4 text-gray-500">
             <div class="spinner"></div>
             Loading memory...
           </div>
@@ -138,16 +138,16 @@
         {/if}
       </div>
 
-      <div class="modal-footer">
-        <div class="footer-info">
+      <div class="flex items-center justify-between p-4 border-t border-gray-200 dark:border-gray-700">
+        <div class="flex items-center gap-4 text-xs">
           {#if isDirty}
-            <span class="unsaved-indicator">Unsaved changes</span>
+            <span class="text-yellow-500 font-medium">Unsaved changes</span>
           {:else}
-            <span class="saved-indicator">All changes saved</span>
+            <span class="text-green-500 font-medium">All changes saved</span>
           {/if}
-          <span class="hint">Ctrl+S to save, Esc to close</span>
+          <span class="text-gray-400">Ctrl+S to save, Esc to close</span>
         </div>
-        <div class="footer-actions">
+        <div class="flex gap-3">
           <button class="btn-secondary" on:click={close} disabled={saving}>
             Close
           </button>
@@ -165,241 +165,29 @@
 {/if}
 
 <style>
+  /* Modal overlay */
   .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1rem;
+    @apply fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4;
   }
 
+  /* Modal container - additional styling handled via Tailwind classes in HTML */
   .modal-container {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-    max-width: 1200px;
-    width: 100%;
-    height: 80vh;
-    display: flex;
-    flex-direction: column;
+    @apply overflow-hidden;
   }
 
-  :global(.dark) .modal-container {
-    background: rgb(17 24 39);
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .modal-header {
-    border-bottom-color: rgb(55 65 81);
-  }
-
-  .modal-title {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .modal-title svg {
-    color: rgb(59 130 246);
-  }
-
-  .modal-title-text {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .modal-title-text {
-    color: rgb(243 244 246);
-  }
-
-  .modal-subtitle {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    font-family: 'Monaco', 'Menlo', monospace;
-  }
-
-  :global(.dark) .modal-subtitle {
-    color: rgb(156 163 175);
-  }
-
-  .modal-close {
-    padding: 0.5rem;
-    border-radius: 6px;
-    border: none;
-    background: transparent;
-    color: rgb(107 114 128);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .modal-close:hover {
-    background: rgb(243 244 246);
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .modal-close:hover {
-    background: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .error-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1.5rem;
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .error-banner {
-    background: rgb(127 29 29);
-    color: rgb(254 202 202);
-  }
-
-  .modal-body {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
-  }
-
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 1rem;
-    color: rgb(107 114 128);
-  }
-
+  /* Spinner animation */
   .spinner {
-    width: 2rem;
-    height: 2rem;
-    border: 3px solid rgb(229 231 235);
-    border-top-color: rgb(59 130 246);
-    border-radius: 50%;
+    @apply w-8 h-8 border-[3px] border-gray-200 dark:border-gray-700 border-t-blue-500 rounded-full;
     animation: spin 0.8s linear infinite;
   }
-
-  :global(.dark) .spinner {
-    border-color: rgb(55 65 81);
-    border-top-color: rgb(59 130 246);
-  }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
+  /* Editor textarea */
   .editor-textarea {
-    width: 100%;
-    height: 100%;
-    padding: 1.5rem;
-    border: none;
-    outline: none;
-    resize: none;
-    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-    font-size: 0.875rem;
-    line-height: 1.6;
-    background: rgb(249 250 251);
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .editor-textarea {
-    background: rgb(31 41 55);
-    color: rgb(243 244 246);
-  }
-
-  .modal-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
-    border-top: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .modal-footer {
-    border-top-color: rgb(55 65 81);
-  }
-
-  .footer-info {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    font-size: 0.75rem;
-  }
-
-  .unsaved-indicator {
-    color: rgb(234 179 8);
-    font-weight: 500;
-  }
-
-  .saved-indicator {
-    color: rgb(34 197 94);
-    font-weight: 500;
-  }
-
-  .hint {
-    color: rgb(156 163 175);
-  }
-
-  .footer-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .btn-secondary,
-  .btn-primary {
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    border: none;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-secondary {
-    background: rgb(243 244 246);
-    color: rgb(17 24 39);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: rgb(229 231 235);
-  }
-
-  :global(.dark) .btn-secondary {
-    background: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: rgb(75 85 99);
-  }
-
-  .btn-primary {
-    background: rgb(59 130 246);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: rgb(37 99 235);
-  }
-
-  .btn-primary:disabled,
-  .btn-secondary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    @apply w-full h-full p-6 border-0 outline-none resize-none
+           font-mono text-sm leading-relaxed
+           bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100;
   }
 </style>

@@ -17,6 +17,7 @@
   let isCreating = false;
   let bigBrotherTabId: string | null = null;
   let servicesTabId: string | null = null;
+  let terminalEventsSource: EventSource | null = null;
 
   // Subscribe to Big Brother terminal requests
   const unsubscribe = bigBrotherTerminal.subscribe(state => {
@@ -231,12 +232,50 @@
     } catch (error) {
       console.warn('[TerminalManager] Could not check Claude session status:', error);
     }
+
+    // Subscribe to Big Brother terminal events for auto-open
+    try {
+      terminalEventsSource = new EventSource('/api/big-brother/terminal-events');
+
+      terminalEventsSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'open_tab' || data.type === 'terminal_ready') {
+            console.log('[TerminalManager] Big Brother terminal event:', data.type);
+
+            // Auto-open Big Brother tab if not already open
+            if (!bigBrotherTabId) {
+              openBigBrotherTerminal(data.port || 3099, data.url || 'http://localhost:3099');
+            } else {
+              // Switch to Big Brother tab
+              activeTabId = bigBrotherTabId;
+              updatePersistedState();
+            }
+          }
+        } catch (e) {
+          console.warn('[TerminalManager] Failed to parse terminal event:', e);
+        }
+      };
+
+      terminalEventsSource.onerror = () => {
+        console.warn('[TerminalManager] Terminal events SSE connection error');
+      };
+    } catch (error) {
+      console.warn('[TerminalManager] Could not connect to terminal events:', error);
+    }
   });
 
   onDestroy(async () => {
     // Don't kill terminals on destroy - let them persist for reconnection
-    // Only clean up the store subscription
+    // Only clean up subscriptions
     unsubscribe();
+
+    // Close SSE connection
+    if (terminalEventsSource) {
+      terminalEventsSource.close();
+      terminalEventsSource = null;
+    }
     
     // Save current tab state for restoration
     if (typeof localStorage !== 'undefined') {
@@ -384,13 +423,13 @@
   }
 </script>
 
-<div class="terminal-manager">
+<div class="flex flex-col h-full w-full bg-black">
   <!-- Tab Bar -->
-  <div class="tab-bar">
-    <div class="tabs-list">
+  <div class="flex items-center bg-[#0a0a0a] border-b border-gray-800 px-1 gap-1 min-h-[24px] flex-shrink-0">
+    <div class="tabs-list flex gap-0.5 flex-1 overflow-x-auto">
       {#each tabs as tab}
         <div
-          class="tab"
+          class="terminal-tab flex items-center gap-1 py-0.5 px-1.5 bg-[#1a1a1a] cursor-pointer whitespace-nowrap transition-colors min-w-[60px] max-w-[120px] rounded-sm hover:bg-[#252525] focus-visible:outline focus-visible:outline-1 focus-visible:outline-blue-500 focus-visible:-outline-offset-1"
           class:active={tab.id === activeTabId}
           role="tab"
           tabindex={tab.id === activeTabId ? 0 : -1}
@@ -398,9 +437,9 @@
           on:click={() => switchTab(tab.id)}
           on:keydown={(e) => handleTabKeydown(e, tab.id)}
         >
-          <span class="tab-title">{tab.title}</span>
+          <span class="flex-1 overflow-hidden text-ellipsis text-gray-500 text-[0.7rem] font-mono" class:text-gray-400={tab.id === activeTabId}>{tab.title}</span>
           <button
-            class="tab-close"
+            class="tab-close flex items-center justify-center w-3 h-3 border-0 bg-transparent text-gray-600 cursor-pointer text-sm leading-none p-0 transition-all rounded-sm hover:bg-red-500 hover:text-white focus-visible:outline focus-visible:outline-1 focus-visible:outline-blue-500 focus-visible:-outline-offset-1"
             aria-label="Close tab"
             on:click|stopPropagation={() => closeTerminal(tab)}
             on:keydown|stopPropagation={(e) => handleCloseKeydown(e, tab)}
@@ -411,7 +450,7 @@
       {/each}
     </div>
     <button
-      class="new-tab-btn"
+      class="flex items-center gap-1 py-0.5 px-1.5 bg-[#1a1a1a] text-gray-500 border-0 rounded-sm cursor-pointer text-[0.7rem] font-mono transition-all whitespace-nowrap hover:bg-[#252525] hover:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-1 focus-visible:outline-blue-500 focus-visible:outline-offset-1"
       on:click={createNewTerminal}
       disabled={isCreating || tabs.length >= 10}
       aria-label="New terminal tab"
@@ -420,18 +459,18 @@
         <line x1="8" y1="4" x2="8" y2="12"/>
         <line x1="4" y1="8" x2="12" y2="8"/>
       </svg>
-      <span class="new-tab-text">New</span>
+      <span class="font-normal">New</span>
     </button>
   </div>
 
   <!-- Terminal Iframes -->
-  <div class="terminals-content">
+  <div class="flex-1 relative overflow-hidden">
     {#each tabs as tab (tab.id)}
-      <div class="terminal-pane" class:active={tab.id === activeTabId}>
+      <div class="terminal-pane absolute inset-0 hidden" class:active={tab.id === activeTabId}>
         <iframe
           src={tab.url}
           title={tab.title}
-          class="terminal-iframe"
+          class="w-full h-full border-0 bg-black"
         ></iframe>
       </div>
     {/each}
@@ -439,173 +478,22 @@
 </div>
 
 <style>
-  .terminal-manager {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    width: 100%;
-    background: #000;
-  }
-
-  .tab-bar {
-    display: flex;
-    align-items: center;
-    background: #0a0a0a;
-    border-bottom: 1px solid #222;
-    padding: 0 0.25rem;
-    gap: 0.25rem;
-    min-height: 24px;
-    flex-shrink: 0;
-  }
-
+  /* Tabs list scrollbar styling */
   .tabs-list {
-    display: flex;
-    gap: 2px;
-    flex: 1;
-    overflow-x: auto;
     scrollbar-width: thin;
     scrollbar-color: #333 transparent;
   }
+  .tabs-list::-webkit-scrollbar { height: 2px; }
+  .tabs-list::-webkit-scrollbar-track { background: transparent; }
+  .tabs-list::-webkit-scrollbar-thumb { background: #333; border-radius: 1px; }
 
-  .tabs-list::-webkit-scrollbar {
-    height: 2px;
+  /* Active terminal tab state */
+  .terminal-tab.active {
+    @apply bg-[#2a2a2a];
   }
 
-  .tabs-list::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .tabs-list::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 1px;
-  }
-
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.375rem;
-    background: #1a1a1a;
-    border: none;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s;
-    min-width: 60px;
-    max-width: 120px;
-    border-radius: 2px;
-  }
-
-  .tab:hover {
-    background: #252525;
-  }
-
-  .tab.active {
-    background: #2a2a2a;
-  }
-
-  .tab:focus-visible {
-    outline: 1px solid #0078d4;
-    outline-offset: -1px;
-  }
-
-  .tab-title {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #888;
-    font-size: 0.7rem;
-    font-family: monospace;
-  }
-
-  .tab.active .tab-title {
-    color: #ccc;
-  }
-
-  .tab-close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-    border: none;
-    background: transparent;
-    color: #666;
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 0;
-    transition: all 0.15s;
-    border-radius: 2px;
-  }
-
-  .tab-close:hover {
-    background: #ff5555;
-    color: #fff;
-  }
-
-  .tab-close:focus-visible {
-    outline: 1px solid #0078d4;
-    outline-offset: -1px;
-  }
-
-  .new-tab-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.375rem;
-    background: #1a1a1a;
-    color: #888;
-    border: none;
-    border-radius: 2px;
-    cursor: pointer;
-    font-size: 0.7rem;
-    font-family: monospace;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-
-  .new-tab-btn:hover:not(:disabled) {
-    background: #252525;
-    color: #ccc;
-  }
-
-  .new-tab-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .new-tab-btn:focus-visible {
-    outline: 1px solid #0078d4;
-    outline-offset: 1px;
-  }
-
-  .new-tab-text {
-    font-weight: 400;
-  }
-
-  .terminals-content {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .terminal-pane {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: none;
-  }
-
+  /* Terminal pane visibility */
   .terminal-pane.active {
-    display: block;
-  }
-
-  .terminal-iframe {
-    width: 100%;
-    height: 100%;
-    border: none;
-    background: #000;
+    @apply block;
   }
 </style>

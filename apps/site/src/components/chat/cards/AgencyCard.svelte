@@ -210,30 +210,29 @@
   on:speakMessage
 >
   <svelte:fragment slot="content">
-    <p class="card-text">{message.content}</p>
+    <p class="m-0 whitespace-pre-wrap break-words">{message.content}</p>
   </svelte:fragment>
 
   <svelte:fragment slot="footer">
     {#if showApprovalButtons}
-      <div class="approval-section">
-        <div class="approval-buttons">
+      <div class="mt-3 pt-3 border-t border-white/10 dark:border-white/10">
+        <div class="flex gap-2 flex-wrap">
           <button
-            class="btn approve"
+            class="agency-btn bg-green-500 text-white hover:bg-green-600"
             disabled={!!processingDesireId || !!regeneratingDesireId}
             on:click={handleApprove}
           >
             {processingDesireId === desireId ? '...' : 'Approve'}
           </button>
           <button
-            class="btn reject"
+            class="agency-btn bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
             disabled={!!processingDesireId || !!regeneratingDesireId}
             on:click={handleReject}
           >
             Reject
           </button>
           <button
-            class="btn feedback"
-            class:active={feedbackDesireId === desireId}
+            class="agency-btn text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 {feedbackDesireId === desireId ? 'bg-blue-500/40' : 'bg-blue-500/20'}"
             disabled={!!processingDesireId || !!regeneratingDesireId}
             on:click={toggleFeedback}
           >
@@ -242,28 +241,29 @@
         </div>
 
         {#if approvalError}
-          <span class="status-error">{approvalError}</span>
+          <span class="block text-red-400 text-xs mt-2">{approvalError}</span>
         {/if}
         {#if approvalSuccess}
-          <span class="status-success">{approvalSuccess}</span>
+          <span class="block text-green-500 text-xs mt-2">{approvalSuccess}</span>
         {/if}
 
         {#if feedbackDesireId === desireId}
-          <div class="feedback-form">
+          <div class="mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
             <textarea
               bind:value={feedbackText}
               placeholder="What should be changed about this plan?"
               rows="3"
+              class="w-full p-2 border border-white/15 rounded-md bg-black/30 text-inherit text-[0.8125rem] font-inherit resize-y min-h-[60px] focus:outline-none focus:border-blue-500"
             ></textarea>
-            <div class="feedback-actions">
+            <div class="flex gap-2 mt-2 justify-end">
               <button
-                class="btn submit"
+                class="agency-btn bg-blue-500 text-white hover:bg-blue-600"
                 disabled={!feedbackText.trim() || !!regeneratingDesireId}
                 on:click={submitFeedback}
               >
                 {regeneratingDesireId === desireId ? 'Submitting...' : 'Submit Feedback'}
               </button>
-              <button class="btn cancel" on:click={cancelFeedback}>
+              <button class="agency-btn bg-transparent text-gray-400 border border-gray-600 hover:bg-white/5" on:click={cancelFeedback}>
                 Cancel
               </button>
             </div>
@@ -273,36 +273,36 @@
     {/if}
 
     {#if showExecuteButton}
-      <div class="execute-section">
+      <div class="mt-3 pt-3 border-t border-white/10 dark:border-white/10">
         <button
-          class="btn execute"
+          class="execute-btn"
           disabled={!!executingDesireId}
           on:click={handleExecute}
         >
           {executingDesireId === desireId ? 'Starting...' : '▶ Execute Now'}
         </button>
         {#if approvalError}
-          <span class="status-error">{approvalError}</span>
+          <span class="block text-red-400 text-xs mt-2">{approvalError}</span>
         {/if}
         {#if approvalSuccess}
-          <span class="status-success">{approvalSuccess}</span>
+          <span class="block text-green-500 text-xs mt-2">{approvalSuccess}</span>
         {/if}
       </div>
     {/if}
 
     {#if showStatusBadge}
-      <div class="status-badge-section">
+      <div class="mt-3 pt-3 border-t border-white/10 dark:border-white/10">
         {#if desireStatus === 'executing'}
-          <span class="status-badge executing">
+          <span class="status-badge bg-blue-500/20 text-blue-400 border border-blue-500/30">
             <span class="spinner"></span> Executing...
           </span>
         {:else if desireStatus === 'completed'}
-          <span class="status-badge completed">✓ Completed</span>
+          <span class="status-badge bg-green-500/20 text-green-500 border border-green-500/30">✓ Completed</span>
         {:else if desireStatus === 'rejected'}
-          <span class="status-badge rejected">✗ Rejected</span>
+          <span class="status-badge bg-red-500/20 text-red-400 border border-red-500/30">✗ Rejected</span>
         {/if}
         {#if approvalSuccess}
-          <span class="status-success">{approvalSuccess}</span>
+          <span class="block text-green-500 text-xs mt-2">{approvalSuccess}</span>
         {/if}
       </div>
     {/if}
@@ -310,233 +310,47 @@
 </BaseMessageCard>
 
 <style>
-  .card-text {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+  /* Agency button base */
+  .agency-btn {
+    @apply py-2 px-4 rounded-md border-0 text-[0.8125rem] font-medium cursor-pointer transition-all;
+  }
+  .agency-btn:disabled {
+    @apply opacity-60 cursor-not-allowed;
   }
 
-  .approval-section {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .approval-buttons {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .btn {
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    border: none;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .btn.approve {
-    background: #22c55e;
-    color: white;
-  }
-
-  .btn.approve:hover:not(:disabled) {
-    background: #16a34a;
-  }
-
-  .btn.reject {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  .btn.reject:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.3);
-  }
-
-  .btn.feedback {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
-  }
-
-  .btn.feedback:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.3);
-  }
-
-  .btn.feedback.active {
-    background: rgba(59, 130, 246, 0.4);
-  }
-
-  .btn.submit {
-    background: #3b82f6;
-    color: white;
-  }
-
-  .btn.submit:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn.cancel {
-    background: transparent;
-    color: var(--text-muted, #9ca3af);
-    border: 1px solid var(--border-color, #333);
-  }
-
-  .btn.cancel:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .feedback-form {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: 8px;
-  }
-
-  .feedback-form textarea {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.3);
-    color: inherit;
-    font-size: 0.8125rem;
-    font-family: inherit;
-    resize: vertical;
-    min-height: 60px;
-  }
-
-  .feedback-form textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-
-  .feedback-actions {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    justify-content: flex-end;
-  }
-
-  .status-error {
-    display: block;
-    color: #f87171;
-    font-size: 0.75rem;
-    margin-top: 0.5rem;
-  }
-
-  .status-success {
-    display: block;
-    color: #22c55e;
-    font-size: 0.75rem;
-    margin-top: 0.5rem;
-  }
-
-  .execute-section {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .btn.execute {
+  /* Execute button with gradient */
+  .execute-btn {
+    @apply py-2.5 px-5 rounded-md border-0 text-white font-semibold cursor-pointer transition-all;
     background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-    color: white;
-    font-weight: 600;
-    padding: 0.625rem 1.25rem;
     box-shadow: 0 2px 4px rgba(34, 197, 94, 0.3);
   }
-
-  .btn.execute:hover:not(:disabled) {
+  .execute-btn:hover:not(:disabled) {
     background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
     box-shadow: 0 3px 6px rgba(34, 197, 94, 0.4);
     transform: translateY(-1px);
   }
-
-  .btn.execute:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow: 0 1px 2px rgba(34, 197, 94, 0.3);
+  .execute-btn:disabled {
+    @apply opacity-60 cursor-not-allowed;
   }
 
-  .status-badge-section {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
+  /* Status badge */
   .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    @apply inline-flex items-center gap-2 py-2 px-4 rounded-md text-[0.8125rem] font-medium;
   }
 
-  .status-badge.executing {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
-  }
-
-  .status-badge.completed {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-
-  .status-badge.rejected {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
+  /* Spinner animation */
   .spinner {
-    width: 12px;
-    height: 12px;
+    @apply w-3 h-3 rounded-full;
     border: 2px solid rgba(96, 165, 250, 0.3);
     border-top-color: #60a5fa;
-    border-radius: 50%;
     animation: spin 1s linear infinite;
   }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  /* Light mode adjustments */
-  :global(.light) .approval-section,
-  :global(.light) .execute-section,
-  :global(.light) .status-badge-section {
-    border-top-color: rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.light) .feedback-form {
-    background: rgba(59, 130, 246, 0.05);
-  }
-
-  :global(.light) .feedback-form textarea {
-    background: white;
-    border-color: #e5e7eb;
-    color: #1f2937;
-  }
-
-  :global(.light) .btn.cancel {
-    border-color: #e5e7eb;
-    color: #6b7280;
-  }
-
-  :global(.light) .btn.cancel:hover {
-    background: rgba(0, 0, 0, 0.05);
+  /* Light mode border adjustments */
+  :global(.light) .border-white\/10 {
+    border-color: rgba(0, 0, 0, 0.1);
   }
 </style>

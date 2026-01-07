@@ -13,8 +13,11 @@ import {
   loadBackendConfig,
   isVLLMRunning,
   autoStartLocalModelService,
+  bigBrotherTerminal,
+  isTmuxAvailable,
 } from '@metahuman/core'
 import { loadCognitiveMode } from '@metahuman/core/cognitive-mode'
+import { loadOperatorConfig } from '@metahuman/core/config'
 
 // Minimal, idempotent agent boot endpoint used by the UI to ensure
 // core autonomous services are running. Safe to call multiple times.
@@ -172,6 +175,66 @@ export const GET: APIRoute = async ({ cookies }) => {
     }
   }
 
+  // Auto-start Big Brother terminal if enabled in operator config
+  let bigBrotherStatus = null
+  try {
+    const operatorConfig = loadOperatorConfig()
+    if (operatorConfig.bigBrotherMode?.enabled && !headlessMode) {
+      const currentState = bigBrotherTerminal.getState()
+
+      if (currentState.isRunning) {
+        bigBrotherStatus = {
+          attempted: false,
+          running: true,
+          alreadyRunning: true,
+          port: currentState.port,
+          pid: currentState.pid
+        }
+      } else {
+        audit({
+          level: 'info',
+          category: 'system',
+          event: 'big_brother_terminal_auto_starting',
+          details: { source: 'api/boot' },
+          actor: 'system',
+        })
+
+        const started = await bigBrotherTerminal.start()
+        const newState = bigBrotherTerminal.getState()
+
+        bigBrotherStatus = {
+          attempted: true,
+          running: started,
+          alreadyRunning: false,
+          port: newState.port,
+          pid: newState.pid
+        }
+
+        if (started) {
+          audit({
+            level: 'info',
+            category: 'system',
+            event: 'big_brother_terminal_auto_started',
+            details: { port: newState.port, pid: newState.pid, source: 'api/boot' },
+            actor: 'system',
+          })
+        }
+      }
+    } else {
+      bigBrotherStatus = {
+        attempted: false,
+        running: false,
+        reason: headlessMode ? 'headless_mode' : 'disabled_in_config'
+      }
+    }
+  } catch (e) {
+    bigBrotherStatus = {
+      attempted: true,
+      running: false,
+      error: String(e)
+    }
+  }
+
   // Load persona data for splash screen
   let persona = null
   let version = '1.0.0'
@@ -277,7 +340,8 @@ export const GET: APIRoute = async ({ cookies }) => {
       headlessMode,
       ollamaStatus,
       backendStatus,
-      localModelServiceStatus
+      localModelServiceStatus,
+      bigBrotherStatus
     }),
     { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
   )

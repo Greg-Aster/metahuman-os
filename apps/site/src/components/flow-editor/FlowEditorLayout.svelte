@@ -372,36 +372,45 @@
   }
 </script>
 
-<div class="flow-editor-layout">
+<div class="w-screen h-screen flex flex-col bg-[#0a0a0a]">
   <!-- Header -->
-  <header class="flow-editor-header">
-    <div class="header-left">
-      <button class="exit-button" onclick={exitNodeEditor}>
+  <header class="h-[60px] bg-[#1a1a1a] border-b border-neutral-700 flex items-center justify-between px-6 gap-4 flex-shrink-0">
+    <div class="flex items-center gap-6">
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-transparent border border-neutral-600 text-neutral-400 rounded-md cursor-pointer transition-all text-sm hover:bg-neutral-800 hover:border-neutral-500 hover:text-white"
+        onclick={exitNodeEditor}
+      >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
         </svg>
         <span>Exit</span>
       </button>
 
-      <div class="graph-name">
+      <div class="flex items-center gap-2 text-white font-medium text-lg">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
         </svg>
         <span>{graphName}</span>
-        <span class="svelte-flow-badge">Svelte Flow</span>
+        <span class="text-[10px] px-1.5 py-0.5 bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded font-semibold">Svelte Flow</span>
       </div>
     </div>
 
-    <div class="header-actions">
-      <button class="action-button" onclick={newGraph}>
+    <div class="flex items-center gap-3">
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-600 text-neutral-300 rounded-md cursor-pointer transition-all text-sm hover:bg-neutral-700 hover:border-neutral-500 hover:text-white"
+        onclick={newGraph}
+      >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
         </svg>
         New
       </button>
 
-      <div class="dropdown">
-        <button class="action-button" onclick={() => (showLoadMenu = !showLoadMenu)}>
+      <div class="relative">
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-600 text-neutral-300 rounded-md cursor-pointer transition-all text-sm hover:bg-neutral-700 hover:border-neutral-500 hover:text-white"
+          onclick={() => (showLoadMenu = !showLoadMenu)}
+        >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
           </svg>
@@ -409,33 +418,33 @@
         </button>
         {#if showLoadMenu}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="dropdown-menu" onclick={(e) => e.stopPropagation()}>
-            <div class="dropdown-header">Cognitive Mode Templates</div>
-            <button class="dropdown-item" onclick={() => loadTemplate('dual-mode')}>
+          <div class="absolute top-full left-0 mt-2 min-w-[250px] bg-[#1a1a1a] border border-neutral-600 rounded-md shadow-2xl z-[1000] overflow-hidden" onclick={(e) => e.stopPropagation()}>
+            <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">Cognitive Mode Templates</div>
+            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('dual-mode')}>
               Dual Consciousness Mode
             </button>
-            <button class="dropdown-item" onclick={() => loadTemplate('agent-mode')}>
+            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('agent-mode')}>
               Agent Mode
             </button>
-            <button class="dropdown-item" onclick={() => loadTemplate('emulation-mode')}>
+            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadTemplate('emulation-mode')}>
               Emulation Mode
             </button>
 
             {#if savedGraphs.length > 0}
-              <div class="dropdown-divider"></div>
-              <div class="dropdown-header">All Graphs</div>
+              <div class="h-px bg-neutral-700 my-2"></div>
+              <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">All Graphs</div>
               {#each savedGraphs as graph}
-                <button class="dropdown-item" onclick={() => loadGraph(graph.name)}>
+                <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadGraph(graph.name)}>
                   {graph.title || graph.name}
                 </button>
               {/each}
             {/if}
 
             {#if backupGraphs.length > 0}
-              <div class="dropdown-divider"></div>
-              <div class="dropdown-header">Backups</div>
+              <div class="h-px bg-neutral-700 my-2"></div>
+              <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">Backups</div>
               {#each backupGraphs.slice(0, 10) as backup}
-                <button class="dropdown-item backup-item" onclick={() => loadBackup(backup.name)}>
+                <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-400 text-left cursor-pointer text-[0.8rem] hover:bg-neutral-800 last:border-b-0" onclick={() => loadBackup(backup.name)}>
                   {backup.title}
                 </button>
               {/each}
@@ -445,7 +454,7 @@
       </div>
 
       <button
-        class="action-button execute"
+        class="flex items-center gap-2 px-4 py-2 bg-emerald-500 border border-emerald-500 text-white rounded-md cursor-pointer transition-all text-sm hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed"
         disabled={isExecuting}
         onclick={executeGraph}
       >
@@ -464,7 +473,10 @@
         {/if}
       </button>
 
-      <button class="action-button primary" onclick={openSaveDialog}>
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-blue-500 border border-blue-500 text-white rounded-md cursor-pointer transition-all text-sm hover:bg-blue-600"
+        onclick={openSaveDialog}
+      >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
         </svg>
@@ -472,8 +484,7 @@
       </button>
 
       <button
-        class="action-button"
-        class:active={showPropertyInspector}
+        class="flex items-center gap-2 px-4 py-2 rounded-md cursor-pointer transition-all text-sm {showPropertyInspector ? 'bg-blue-500 border border-blue-500 text-white' : 'bg-neutral-800 border border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:border-neutral-500 hover:text-white'}"
         onclick={togglePropertyInspector}
         title="Toggle Property Inspector"
       >
@@ -487,17 +498,17 @@
 
   <!-- Error Banner -->
   {#if executionError}
-    <div class="error-banner">
+    <div class="flex items-center justify-between px-6 py-3 bg-red-900 border-b border-red-800 text-red-200">
       <span>Execution failed: {executionError}</span>
-      <button onclick={() => (executionError = '')}>Dismiss</button>
+      <button class="px-3 py-1 bg-transparent border border-red-200 text-red-200 rounded cursor-pointer" onclick={() => (executionError = '')}>Dismiss</button>
     </div>
   {/if}
 
   <!-- Main Content -->
-  <div class="main-content">
+  <div class="flex-1 flex overflow-hidden">
     <NodePalette onNodeSelected={handleNodeSelected} />
 
-    <div class="editor-area">
+    <div class="flex-1 overflow-hidden">
       <FlowEditor
         bind:this={flowEditorRef}
         {cognitiveMode}
@@ -507,7 +518,7 @@
     </div>
 
     {#if showPropertyInspector}
-      <div class="property-panel">
+      <div class="w-[280px] flex-shrink-0 overflow-hidden">
         <PropertyInspector
           {selectedNode}
           onUpdateNodeData={handleUpdateNodeData}
@@ -519,37 +530,37 @@
   <!-- Save Dialog -->
   {#if showSaveDialog}
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal-overlay" onclick={() => (showSaveDialog = false)}>
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]" onclick={() => (showSaveDialog = false)}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
-        <h3>Save Graph</h3>
-        <div class="save-info">
-          <span class="save-label">Graph:</span>
-          <span class="save-value">{graphName}</span>
+      <div class="bg-[#1a1a1a] border border-neutral-700 rounded-lg p-8 min-w-[400px]" onclick={(e) => e.stopPropagation()}>
+        <h3 class="m-0 mb-6 text-white text-xl">Save Graph</h3>
+        <div class="flex items-center gap-2 mb-4 p-3 bg-[#0a0a0a] rounded-md">
+          <span class="text-neutral-500 text-sm">Graph:</span>
+          <span class="text-white font-medium">{graphName}</span>
         </div>
-        <div class="save-field">
-          <label for="save-filename">Filename:</label>
-          <div class="filename-input-wrapper">
+        <div class="mb-4">
+          <label for="save-filename" class="block mb-2 text-neutral-500 text-sm">Filename:</label>
+          <div class="flex items-center">
             <input
               id="save-filename"
               type="text"
               bind:value={saveFileName}
               placeholder="filename"
-              class="graph-name-input"
+              class="flex-1 px-3 py-3 bg-[#0a0a0a] border border-neutral-600 rounded-l-md text-white text-base focus:outline-none focus:border-blue-500"
             />
-            <span class="filename-ext">.json</span>
+            <span class="px-3 py-3 bg-neutral-700 border border-neutral-600 border-l-0 rounded-r-md text-neutral-500 text-sm">.json</span>
           </div>
-          <p class="save-hint">Change the filename to save as a new graph, or keep it to overwrite (backup created automatically)</p>
+          <p class="mt-2 text-neutral-600 text-xs leading-relaxed">Change the filename to save as a new graph, or keep it to overwrite (backup created automatically)</p>
         </div>
         {#if saveError}
-          <div class="save-error">{saveError}</div>
+          <div class="p-2 mb-4 bg-red-500/10 border border-red-600 rounded text-red-300 text-sm">{saveError}</div>
         {/if}
         {#if saveSuccess}
-          <div class="save-success">Saved! Backup created.</div>
+          <div class="p-2 mb-4 bg-green-500/10 border border-green-600 rounded text-green-300 text-sm">Saved! Backup created.</div>
         {/if}
-        <div class="modal-actions">
-          <button class="cancel-button" onclick={() => (showSaveDialog = false)}>Cancel</button>
-          <button class="save-button" onclick={saveGraph} disabled={saveSuccess}>
+        <div class="flex gap-3 justify-end">
+          <button class="px-5 py-2.5 rounded-md cursor-pointer text-sm border-none bg-neutral-700 text-neutral-300 hover:bg-neutral-600" onclick={() => (showSaveDialog = false)}>Cancel</button>
+          <button class="px-5 py-2.5 rounded-md cursor-pointer text-sm border-none bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" onclick={saveGraph} disabled={saveSuccess}>
             {saveSuccess ? 'Saved!' : 'Save'}
           </button>
         </div>
@@ -558,398 +569,3 @@
   {/if}
 </div>
 
-<style>
-  .flow-editor-layout {
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background: #0a0a0a;
-  }
-
-  .flow-editor-header {
-    height: 60px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #333;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 1.5rem;
-    gap: 1rem;
-    flex-shrink: 0;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-  }
-
-  .exit-button {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: transparent;
-    border: 1px solid #444;
-    color: #aaa;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 0.875rem;
-  }
-
-  .exit-button:hover {
-    background: #2a2a2a;
-    border-color: #666;
-    color: #fff;
-  }
-
-  .graph-name {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: #fff;
-    font-weight: 500;
-    font-size: 1.125rem;
-  }
-
-  .svelte-flow-badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: linear-gradient(135deg, #ff3e00, #ff6b35);
-    color: #fff;
-    border-radius: 4px;
-    font-weight: 600;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .action-button {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: #2a2a2a;
-    border: 1px solid #444;
-    color: #ddd;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 0.875rem;
-  }
-
-  .action-button:hover {
-    background: #333;
-    border-color: #666;
-    color: #fff;
-  }
-
-  .action-button.primary {
-    background: #3b82f6;
-    border-color: #3b82f6;
-    color: #fff;
-  }
-
-  .action-button.primary:hover {
-    background: #2563eb;
-  }
-
-  .action-button.execute {
-    background: #10b981;
-    border-color: #10b981;
-    color: #fff;
-  }
-
-  .action-button.execute:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .action-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .animate-spin {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .dropdown {
-    position: relative;
-  }
-
-  .dropdown-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 0.5rem;
-    min-width: 250px;
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 6px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-    z-index: 1000;
-    overflow: hidden;
-  }
-
-  .dropdown-header {
-    padding: 0.75rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #888;
-    text-transform: uppercase;
-    background: #151515;
-    border-bottom: 1px solid #333;
-  }
-
-  .dropdown-item {
-    display: block;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid #2a2a2a;
-    color: #ddd;
-    text-align: left;
-    cursor: pointer;
-    font-size: 0.875rem;
-  }
-
-  .dropdown-item:last-child {
-    border-bottom: none;
-  }
-
-  .dropdown-item:hover {
-    background: #2a2a2a;
-  }
-
-  .dropdown-divider {
-    height: 1px;
-    background: #333;
-    margin: 0.5rem 0;
-  }
-
-  .error-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1.5rem;
-    background: #7f1d1d;
-    border-bottom: 1px solid #991b1b;
-    color: #fecaca;
-  }
-
-  .error-banner button {
-    padding: 0.25rem 0.75rem;
-    background: transparent;
-    border: 1px solid #fecaca;
-    color: #fecaca;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
-  .main-content {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-  }
-
-  .editor-area {
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .property-panel {
-    width: 280px;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-
-  .action-button.active {
-    background: #3b82f6;
-    border-color: #3b82f6;
-    color: #fff;
-  }
-
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 2rem;
-    min-width: 400px;
-  }
-
-  .modal h3 {
-    margin: 0 0 1.5rem 0;
-    color: #fff;
-    font-size: 1.25rem;
-  }
-
-  .graph-name-input {
-    width: 100%;
-    padding: 0.75rem;
-    background: #0a0a0a;
-    border: 1px solid #444;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .graph-name-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-
-  .save-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: #0a0a0a;
-    border-radius: 6px;
-  }
-
-  .save-label {
-    color: #888;
-    font-size: 0.875rem;
-  }
-
-  .save-value {
-    color: #fff;
-    font-weight: 500;
-  }
-
-  .save-field {
-    margin-bottom: 1rem;
-  }
-
-  .save-field label {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #888;
-    font-size: 0.875rem;
-  }
-
-  .filename-input-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 0;
-  }
-
-  .filename-input-wrapper .graph-name-input {
-    flex: 1;
-    border-radius: 6px 0 0 6px;
-    margin-bottom: 0;
-  }
-
-  .filename-ext {
-    padding: 0.75rem;
-    background: #333;
-    border: 1px solid #444;
-    border-left: none;
-    border-radius: 0 6px 6px 0;
-    color: #888;
-    font-size: 0.875rem;
-  }
-
-  .save-hint {
-    margin-top: 0.5rem;
-    color: #666;
-    font-size: 0.75rem;
-    line-height: 1.4;
-  }
-
-  .backup-item {
-    color: #a5a5a5;
-    font-size: 0.8rem;
-  }
-
-  .save-error {
-    padding: 0.5rem;
-    margin-bottom: 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid #dc2626;
-    border-radius: 4px;
-    color: #fca5a5;
-    font-size: 0.875rem;
-  }
-
-  .save-success {
-    padding: 0.5rem;
-    margin-bottom: 1rem;
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid #16a34a;
-    border-radius: 4px;
-    color: #86efac;
-    font-size: 0.875rem;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-  }
-
-  .cancel-button,
-  .save-button {
-    padding: 0.625rem 1.25rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    border: none;
-  }
-
-  .cancel-button {
-    background: #333;
-    color: #ddd;
-  }
-
-  .cancel-button:hover {
-    background: #444;
-  }
-
-  .save-button {
-    background: #3b82f6;
-    color: #fff;
-  }
-
-  .save-button:hover {
-    background: #2563eb;
-  }
-
-  .save-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .w-5 {
-    width: 1.25rem;
-  }
-
-  .h-5 {
-    height: 1.25rem;
-  }
-</style>

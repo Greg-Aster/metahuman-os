@@ -155,44 +155,44 @@
   }
 </script>
 
-<div class="step-personality">
-  <div class="step-header">
-    <h2>Let's Talk About You</h2>
-    <p class="step-description">
+<div class="flex flex-col gap-6 max-w-[800px] mx-auto p-8 md:p-4 h-full">
+  <div>
+    <h2 class="text-3xl font-semibold m-0 mb-2 text-gray-900 dark:text-gray-50">Let's Talk About You</h2>
+    <p class="text-base leading-relaxed text-gray-500 dark:text-gray-400 m-0">
       Answer a few conversational questions so your MetaHuman can understand your personality,
       values, and communication style. This takes about 5 minutes.
     </p>
   </div>
 
-  <div class="conversation-container">
-    <div class="messages">
+  <div class="conversation-container flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg min-h-[400px] max-h-[500px]">
+    <div class="flex flex-col gap-4">
       {#each messages as message, i}
-        <div class="message {message.role}">
-          <div class="message-avatar">
+        <div class="flex gap-3 items-start {message.role === 'user' ? 'flex-row-reverse' : ''}">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-2xl flex-shrink-0 {message.role === 'assistant' ? 'bg-gradient-to-br from-indigo-500 to-purple-600' : 'bg-gradient-to-br from-emerald-500 to-emerald-600'}">
             {#if message.role === 'assistant'}
               🧠
             {:else}
               👤
             {/if}
           </div>
-          <div class="message-bubble">
+          <div class="max-w-[70%] md:max-w-[85%] p-4 rounded-xl shadow-sm {message.role === 'assistant' ? 'bg-white dark:bg-gray-700 rounded-tl-sm' : 'bg-blue-50 dark:bg-blue-900 rounded-tr-sm'}">
             {#each message.content.split('\n') as line}
-              <p>{line}</p>
+              <p class="m-0 text-[0.95rem] leading-relaxed {message.role === 'assistant' ? 'text-gray-700 dark:text-gray-300' : 'text-blue-800 dark:text-blue-200'} [&+p]:mt-2">{line}</p>
             {/each}
           </div>
         </div>
       {/each}
 
       {#if extracting}
-        <div class="message assistant">
-          <div class="message-avatar">🧠</div>
-          <div class="message-bubble processing">
-            <div class="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+        <div class="flex gap-3 items-start">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-2xl flex-shrink-0 bg-gradient-to-br from-indigo-500 to-purple-600">🧠</div>
+          <div class="max-w-[70%] p-4 rounded-xl rounded-tl-sm shadow-sm bg-white dark:bg-gray-700 flex flex-col gap-3">
+            <div class="typing-indicator flex gap-1">
+              <span class="w-2 h-2 rounded-full bg-indigo-500 animate-typing"></span>
+              <span class="w-2 h-2 rounded-full bg-indigo-500 animate-typing [animation-delay:0.2s]"></span>
+              <span class="w-2 h-2 rounded-full bg-indigo-500 animate-typing [animation-delay:0.4s]"></span>
             </div>
-            <p>Analyzing personality traits...</p>
+            <p class="m-0 text-[0.95rem] leading-relaxed text-gray-700 dark:text-gray-300">Analyzing personality traits...</p>
           </div>
         </div>
       {/if}
@@ -200,16 +200,17 @@
   </div>
 
   {#if currentQuestion < questions.length || extracting}
-    <div class="input-container">
+    <div class="flex gap-4 items-end md:flex-col md:items-stretch">
       <textarea
         bind:value={userResponse}
         on:keypress={handleKeyPress}
         placeholder="Type your response here... (Press Enter to send, Shift+Enter for new line)"
         rows="3"
         disabled={processing || extracting}
+        class="flex-1 p-3 text-base font-inherit border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-50 resize-y min-h-[80px] focus:outline-none focus:border-indigo-500 focus:ring-[3px] focus:ring-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
       />
       <button
-        class="btn btn-send"
+        class="px-6 py-3 text-base font-semibold border-none rounded-lg cursor-pointer bg-gradient-to-br from-indigo-500 to-purple-600 text-white whitespace-nowrap transition-all hover:enabled:-translate-y-0.5 hover:enabled:shadow-lg hover:enabled:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed md:w-full"
         on:click={handleSendResponse}
         disabled={!userResponse.trim() || processing || extracting}
       >
@@ -219,31 +220,31 @@
   {/if}
 
   {#if error}
-    <div class="error-message">
-      <span class="error-icon">⚠️</span>
+    <div class="flex items-center gap-2 px-4 py-3 bg-red-100 dark:bg-red-900 border border-red-500 rounded-md text-red-800 dark:text-red-200 text-sm">
+      <span>⚠️</span>
       {error}
     </div>
   {/if}
 
-  <div class="progress-indicator">
-    <span class="progress-label">Question {Math.min(currentQuestion + 1, questions.length)} of {questions.length}</span>
-    <div class="progress-bar">
+  <div class="flex flex-col gap-2">
+    <span class="text-sm text-gray-500 dark:text-gray-400 text-center">Question {Math.min(currentQuestion + 1, questions.length)} of {questions.length}</span>
+    <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden">
       <div
-        class="progress-fill"
+        class="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-[width] duration-300"
         style="width: {((currentQuestion + 1) / questions.length) * 100}%"
       ></div>
     </div>
   </div>
 
-  <div class="step-actions">
-    <button class="btn btn-secondary" on:click={onBack} disabled={processing || extracting}>
+  <div class="flex justify-between gap-4 pt-4 border-t border-gray-200 dark:border-gray-700 md:flex-col">
+    <button class="px-6 py-3 text-base font-semibold rounded-lg cursor-pointer transition-all bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:enabled:bg-gray-200 dark:hover:enabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={onBack} disabled={processing || extracting}>
       ← Back
     </button>
-    <button class="btn btn-ghost" on:click={handleSkipPersonality} disabled={processing || extracting}>
+    <button class="px-6 py-3 text-base font-semibold rounded-lg cursor-pointer transition-all bg-transparent text-gray-500 dark:text-gray-400 border-none hover:enabled:text-gray-900 dark:hover:enabled:text-gray-50 hover:enabled:bg-gray-100 dark:hover:enabled:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed" on:click={handleSkipPersonality} disabled={processing || extracting}>
       Skip
     </button>
     <button
-      class="btn btn-primary"
+      class="px-6 py-3 text-base font-semibold rounded-lg cursor-pointer transition-all bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-none hover:enabled:-translate-y-0.5 hover:enabled:shadow-lg hover:enabled:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
       on:click={onNext}
       disabled={currentQuestion < questions.length || extracting}
     >
@@ -253,170 +254,7 @@
 </div>
 
 <style>
-  .step-personality {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem;
-    height: 100%;
-  }
-
-  .step-header h2 {
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin: 0 0 0.5rem 0;
-    color: #111827;
-  }
-
-  :global(.dark) .step-header h2 {
-    color: #f9fafb;
-  }
-
-  .step-description {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .step-description {
-    color: #9ca3af;
-  }
-
-  .conversation-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 1rem;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    min-height: 400px;
-    max-height: 500px;
-  }
-
-  :global(.dark) .conversation-container {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .messages {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .message {
-    display: flex;
-    gap: 0.75rem;
-    align-items: start;
-  }
-
-  .message.user {
-    flex-direction: row-reverse;
-  }
-
-  .message-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    flex-shrink: 0;
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .message-avatar {
-    background: #374151;
-  }
-
-  .message.assistant .message-avatar {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  }
-
-  .message.user .message-avatar {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  }
-
-  .message-bubble {
-    max-width: 70%;
-    padding: 1rem;
-    border-radius: 12px;
-    background: white;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .message-bubble {
-    background: #374151;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  }
-
-  .message.assistant .message-bubble {
-    border-top-left-radius: 4px;
-  }
-
-  .message.user .message-bubble {
-    border-top-right-radius: 4px;
-    background: #eff6ff;
-  }
-
-  :global(.dark) .message.user .message-bubble {
-    background: #1e3a8a;
-  }
-
-  .message-bubble p {
-    margin: 0;
-    font-size: 0.95rem;
-    line-height: 1.5;
-    color: #374151;
-  }
-
-  :global(.dark) .message-bubble p {
-    color: #d1d5db;
-  }
-
-  .message.user .message-bubble p {
-    color: #1e40af;
-  }
-
-  :global(.dark) .message.user .message-bubble p {
-    color: #bfdbfe;
-  }
-
-  .message-bubble p + p {
-    margin-top: 0.5rem;
-  }
-
-  .message-bubble.processing {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .typing-indicator {
-    display: flex;
-    gap: 0.25rem;
-  }
-
-  .typing-indicator span {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #667eea;
-    animation: typing 1.4s infinite;
-  }
-
-  .typing-indicator span:nth-child(2) {
-    animation-delay: 0.2s;
-  }
-
-  .typing-indicator span:nth-child(3) {
-    animation-delay: 0.4s;
-  }
-
+  /* Custom typing animation for chat bubbles */
   @keyframes typing {
     0%, 60%, 100% {
       opacity: 0.3;
@@ -428,212 +266,7 @@
     }
   }
 
-  .input-container {
-    display: flex;
-    gap: 1rem;
-    align-items: flex-end;
-  }
-
-  textarea {
-    flex: 1;
-    padding: 0.75rem;
-    font-size: 1rem;
-    font-family: inherit;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    background: white;
-    color: #111827;
-    resize: vertical;
-    min-height: 80px;
-  }
-
-  :global(.dark) textarea {
-    background: #1f2937;
-    border-color: #4b5563;
-    color: #f9fafb;
-  }
-
-  textarea:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-  }
-
-  textarea:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-send {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-  }
-
-  .btn-send:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-send:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-message {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: #fee2e2;
-    border: 1px solid #ef4444;
-    border-radius: 6px;
-    color: #991b1b;
-    font-size: 0.9rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #ef4444;
-    color: #fecaca;
-  }
-
-  .progress-indicator {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .progress-label {
-    font-size: 0.9rem;
-    color: #6b7280;
-    text-align: center;
-  }
-
-  :global(.dark) .progress-label {
-    color: #9ca3af;
-  }
-
-  .progress-bar {
-    height: 8px;
-    background: #e5e7eb;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: #374151;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    transition: width 0.3s ease;
-  }
-
-  .step-actions {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .step-actions {
-    border-color: #374151;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-secondary {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #374151;
-    color: #d1d5db;
-    border-color: #4b5563;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: #6b7280;
-  }
-
-  :global(.dark) .btn-ghost {
-    color: #9ca3af;
-  }
-
-  .btn-ghost:hover:not(:disabled) {
-    color: #111827;
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .btn-ghost:hover:not(:disabled) {
-    color: #f9fafb;
-    background: #374151;
-  }
-
-  @media (max-width: 768px) {
-    .step-personality {
-      padding: 1rem;
-    }
-
-    .message-bubble {
-      max-width: 85%;
-    }
-
-    .input-container {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .btn-send {
-      width: 100%;
-    }
-
-    .step-actions {
-      flex-direction: column;
-    }
+  .animate-typing {
+    animation: typing 1.4s infinite;
   }
 </style>

@@ -138,20 +138,20 @@
   }
 </script>
 
-<div class="step-goals">
-  <div class="step-header">
-    <h2>What Are Your Goals?</h2>
-    <p class="step-description">
+<div class="flex flex-col gap-8 max-w-3xl mx-auto p-8 md:p-4">
+  <div>
+    <h2 class="text-3xl font-semibold mb-2 text-gray-900 dark:text-gray-50">What Are Your Goals?</h2>
+    <p class="text-base leading-relaxed text-gray-500 dark:text-gray-400">
       Tell your MetaHuman what you want to achieve. These goals will guide its autonomous actions
       and help it prioritize tasks that align with your objectives.
     </p>
   </div>
 
-  <div class="goal-form">
-    <div class="form-group">
-      <label for="title">
+  <div class="flex flex-col gap-6 p-6 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl">
+    <div class="flex flex-col gap-2">
+      <label for="title" class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1">
         Goal Title
-        <span class="required-indicator">*</span>
+        <span class="text-red-500 font-bold">*</span>
       </label>
       <input
         id="title"
@@ -159,40 +159,41 @@
         bind:value={currentGoal.title}
         placeholder="What do you want to achieve?"
         maxlength="200"
+        class="p-3 text-base font-inherit border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-50 transition-all focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
       />
     </div>
 
-    <div class="form-group">
-      <label for="category">Timeframe</label>
-      <div class="category-buttons">
+    <div class="flex flex-col gap-2">
+      <label for="category" class="text-sm font-semibold text-gray-700 dark:text-gray-300">Timeframe</label>
+      <div class="flex gap-3 flex-wrap md:flex-col">
         {#each categories as cat}
           <button
             type="button"
-            class="category-btn"
-            class:active={currentGoal.category === cat.value}
+            class="flex-1 min-w-[150px] md:min-w-full flex flex-col items-center gap-2 p-4 bg-white dark:bg-gray-700 border-2 rounded-lg cursor-pointer transition-all hover:border-indigo-500 hover:-translate-y-0.5 {currentGoal.category === cat.value ? 'border-indigo-500 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 dark:from-indigo-400/10 dark:to-purple-400/10' : 'border-gray-300 dark:border-gray-600'}"
             on:click={() => currentGoal.category = cat.value}
           >
-            <span class="category-icon">{cat.icon}</span>
-            <span class="category-label">{cat.label}</span>
+            <span class="text-3xl">{cat.icon}</span>
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300 text-center">{cat.label}</span>
           </button>
         {/each}
       </div>
     </div>
 
-    <div class="form-group">
-      <label for="description">Description (optional)</label>
+    <div class="flex flex-col gap-2">
+      <label for="description" class="text-sm font-semibold text-gray-700 dark:text-gray-300">Description (optional)</label>
       <textarea
         id="description"
         bind:value={currentGoal.description}
         placeholder="Add more details about this goal..."
         rows="3"
         maxlength="500"
+        class="p-3 text-base font-inherit border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-50 transition-all focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 resize-y min-h-[80px]"
       />
-      <div class="char-count">{currentGoal.description.length}/500</div>
+      <div class="self-end text-xs text-gray-400 dark:text-gray-500 -mt-1">{currentGoal.description.length}/500</div>
     </div>
 
     <button
-      class="btn btn-add"
+      class="px-6 py-3 text-base font-semibold bg-gradient-to-br from-emerald-500 to-emerald-600 text-white border-none rounded-lg cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-lg hover:shadow-emerald-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none disabled:hover:shadow-none"
       on:click={addGoal}
       disabled={!currentGoal.title.trim()}
     >
@@ -200,36 +201,36 @@
     </button>
 
     {#if error}
-      <div class="error-message">
-        <span class="error-icon">⚠️</span>
+      <div class="flex items-center gap-2 px-4 py-3 bg-red-100 dark:bg-red-900 border border-red-500 rounded-md text-red-800 dark:text-red-200 text-sm">
+        <span>⚠️</span>
         {error}
       </div>
     {/if}
   </div>
 
   {#if goals.length > 0}
-    <div class="goals-list">
-      <h3>Your Goals ({goals.length})</h3>
-      <div class="goals">
+    <div class="flex flex-col gap-4">
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-50">Your Goals ({goals.length})</h3>
+      <div class="flex flex-col gap-3">
         {#each goals as goal}
-          <div class="goal-card">
-            <div class="goal-header">
-              <div class="goal-category">
-                <span class="category-icon">{getCategoryIcon(goal.category)}</span>
-                <span class="category-text">{getCategoryLabel(goal.category)}</span>
+          <div class="flex flex-col gap-3 p-4 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg transition-all hover:shadow-lg hover:shadow-black/10">
+            <div class="flex justify-between items-center">
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-md">
+                <span>{getCategoryIcon(goal.category)}</span>
+                <span class="text-sm font-medium text-gray-500 dark:text-gray-400">{getCategoryLabel(goal.category)}</span>
               </div>
               <button
-                class="btn-remove"
+                class="px-2 py-1 text-xl text-red-500 bg-transparent border-none rounded cursor-pointer transition-all hover:bg-red-100 dark:hover:bg-red-900 hover:text-red-600"
                 on:click={() => removeGoal(goal.id)}
                 aria-label="Remove goal"
               >
                 ✕
               </button>
             </div>
-            <div class="goal-content">
-              <h4 class="goal-title">{goal.title}</h4>
+            <div class="flex flex-col gap-2">
+              <h4 class="text-lg font-semibold text-gray-900 dark:text-gray-50">{goal.title}</h4>
               {#if goal.description}
-                <p class="goal-description">{goal.description}</p>
+                <p class="text-sm leading-relaxed text-gray-500 dark:text-gray-400">{goal.description}</p>
               {/if}
             </div>
           </div>
@@ -237,45 +238,45 @@
       </div>
     </div>
   {:else}
-    <div class="empty-state">
-      <div class="empty-icon">🎯</div>
-      <h3>No goals yet</h3>
-      <p>Add your first goal above to get started</p>
+    <div class="flex flex-col items-center gap-4 py-12 px-8 text-center">
+      <div class="text-6xl opacity-50">🎯</div>
+      <h3 class="text-xl font-semibold text-gray-700 dark:text-gray-300">No goals yet</h3>
+      <p class="text-base text-gray-500 dark:text-gray-400">Add your first goal above to get started</p>
     </div>
   {/if}
 
-  <div class="goals-info">
-    <div class="info-icon">💡</div>
-    <div class="info-text">
-      <strong>Why set goals?</strong>
-      <ul>
+  <div class="flex items-start gap-3 p-4 bg-blue-50 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-400 rounded">
+    <div class="text-2xl flex-shrink-0">💡</div>
+    <div class="text-sm leading-relaxed text-blue-800 dark:text-blue-100">
+      <strong class="text-blue-900 dark:text-blue-200">Why set goals?</strong>
+      <ul class="my-2 pl-6">
         <li>Your MetaHuman will prioritize actions that align with your objectives</li>
         <li>Short-term goals will be automatically converted into actionable tasks</li>
         <li>The system will track progress and suggest next steps</li>
         <li>Autonomous agents will work towards these goals in the background</li>
       </ul>
-      <p>
+      <p class="mt-2">
         You can always add, edit, or remove goals later through the Task Manager or Persona Editor.
       </p>
     </div>
   </div>
 
-  <div class="skip-notice">
-    <p>
-      <strong>Not sure what goals to add?</strong> No problem! You can skip this step
+  <div class="p-4 px-6 bg-amber-100 dark:bg-amber-900 border-l-4 border-amber-400 dark:border-amber-500 rounded">
+    <p class="text-sm leading-relaxed text-amber-800 dark:text-amber-200">
+      <strong class="text-amber-900 dark:text-amber-300">Not sure what goals to add?</strong> No problem! You can skip this step
       and define goals later as you use the system.
     </p>
   </div>
 
-  <div class="step-actions">
-    <button class="btn btn-secondary" on:click={onBack} disabled={saving}>
+  <div class="flex justify-between gap-4 pt-4 border-t border-gray-200 dark:border-gray-700 md:flex-col">
+    <button class="px-6 py-3 text-base font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer transition-all hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={onBack} disabled={saving}>
       ← Back
     </button>
-    <button class="btn btn-ghost" on:click={onSkip} disabled={saving}>
+    <button class="px-6 py-3 text-base font-semibold bg-transparent text-gray-500 dark:text-gray-400 border-none rounded-lg cursor-pointer transition-all hover:text-gray-900 dark:hover:text-gray-50 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed" on:click={onSkip} disabled={saving}>
       Skip
     </button>
     <button
-      class="btn btn-primary"
+      class="px-6 py-3 text-base font-semibold bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-none rounded-lg cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none disabled:hover:shadow-none"
       on:click={handleNext}
       disabled={saving}
     >
@@ -284,538 +285,3 @@
   </div>
 </div>
 
-<style>
-  .step-goals {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .step-header h2 {
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin: 0 0 0.5rem 0;
-    color: #111827;
-  }
-
-  :global(.dark) .step-header h2 {
-    color: #f9fafb;
-  }
-
-  .step-description {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .step-description {
-    color: #9ca3af;
-  }
-
-  .goal-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    padding: 1.5rem;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-  }
-
-  :global(.dark) .goal-form {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  label {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #374151;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  :global(.dark) label {
-    color: #d1d5db;
-  }
-
-  .required-indicator {
-    color: #ef4444;
-    font-weight: 700;
-  }
-
-  input,
-  textarea {
-    padding: 0.75rem;
-    font-size: 1rem;
-    font-family: inherit;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: white;
-    color: #111827;
-    transition: all 0.2s ease;
-  }
-
-  :global(.dark) input,
-  :global(.dark) textarea {
-    background: #374151;
-    border-color: #4b5563;
-    color: #f9fafb;
-  }
-
-  input:focus,
-  textarea:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-  }
-
-  textarea {
-    resize: vertical;
-    min-height: 80px;
-  }
-
-  .char-count {
-    align-self: flex-end;
-    font-size: 0.8rem;
-    color: #9ca3af;
-    margin-top: -0.25rem;
-  }
-
-  :global(.dark) .char-count {
-    color: #6b7280;
-  }
-
-  .category-buttons {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .category-btn {
-    flex: 1;
-    min-width: 150px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 1rem;
-    background: white;
-    border: 2px solid #d1d5db;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  :global(.dark) .category-btn {
-    background: #374151;
-    border-color: #4b5563;
-  }
-
-  .category-btn:hover {
-    border-color: #667eea;
-    transform: translateY(-2px);
-  }
-
-  .category-btn.active {
-    border-color: #667eea;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
-  }
-
-  :global(.dark) .category-btn.active {
-    background: linear-gradient(135deg, rgba(129, 140, 248, 0.1) 0%, rgba(167, 139, 250, 0.1) 100%);
-  }
-
-  .category-icon {
-    font-size: 2rem;
-  }
-
-  .category-label {
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: #374151;
-    text-align: center;
-  }
-
-  :global(.dark) .category-label {
-    color: #d1d5db;
-  }
-
-  .btn-add {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-add:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-  }
-
-  .btn-add:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-message {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: #fee2e2;
-    border: 1px solid #ef4444;
-    border-radius: 6px;
-    color: #991b1b;
-    font-size: 0.9rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #ef4444;
-    color: #fecaca;
-  }
-
-  .goals-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .goals-list h3 {
-    font-size: 1.2rem;
-    font-weight: 600;
-    margin: 0;
-    color: #111827;
-  }
-
-  :global(.dark) .goals-list h3 {
-    color: #f9fafb;
-  }
-
-  .goals {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .goal-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-  }
-
-  :global(.dark) .goal-card {
-    background: #374151;
-    border-color: #4b5563;
-  }
-
-  .goal-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .goal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .goal-category {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.375rem 0.75rem;
-    background: #f3f4f6;
-    border-radius: 6px;
-  }
-
-  :global(.dark) .goal-category {
-    background: #1f2937;
-  }
-
-  .category-text {
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: #6b7280;
-  }
-
-  :global(.dark) .category-text {
-    color: #9ca3af;
-  }
-
-  .btn-remove {
-    padding: 0.25rem 0.5rem;
-    font-size: 1.2rem;
-    color: #ef4444;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-remove:hover {
-    background: #fee2e2;
-    color: #dc2626;
-  }
-
-  :global(.dark) .btn-remove:hover {
-    background: #7f1d1d;
-  }
-
-  .goal-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .goal-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 0;
-    color: #111827;
-  }
-
-  :global(.dark) .goal-title {
-    color: #f9fafb;
-  }
-
-  .goal-description {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #6b7280;
-  }
-
-  :global(.dark) .goal-description {
-    color: #9ca3af;
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    padding: 3rem 2rem;
-    text-align: center;
-  }
-
-  .empty-icon {
-    font-size: 4rem;
-    opacity: 0.5;
-  }
-
-  .empty-state h3 {
-    font-size: 1.2rem;
-    font-weight: 600;
-    margin: 0;
-    color: #374151;
-  }
-
-  :global(.dark) .empty-state h3 {
-    color: #d1d5db;
-  }
-
-  .empty-state p {
-    margin: 0;
-    font-size: 0.95rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .empty-state p {
-    color: #9ca3af;
-  }
-
-  .goals-info {
-    display: flex;
-    align-items: start;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: #eff6ff;
-    border-left: 4px solid #3b82f6;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .goals-info {
-    background: #1e3a8a;
-    border-color: #60a5fa;
-  }
-
-  .info-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .info-text {
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #1e40af;
-  }
-
-  :global(.dark) .info-text {
-    color: #bfdbfe;
-  }
-
-  .info-text strong {
-    color: #1e3a8a;
-  }
-
-  :global(.dark) .info-text strong {
-    color: #93c5fd;
-  }
-
-  .info-text ul {
-    margin: 0.5rem 0;
-    padding-left: 1.5rem;
-  }
-
-  .info-text p {
-    margin: 0.5rem 0 0 0;
-  }
-
-  .skip-notice {
-    padding: 1rem 1.5rem;
-    background: #fef3c7;
-    border-left: 4px solid #fbbf24;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .skip-notice {
-    background: #451a03;
-    border-color: #f59e0b;
-  }
-
-  .skip-notice p {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: #92400e;
-  }
-
-  :global(.dark) .skip-notice p {
-    color: #fcd34d;
-  }
-
-  .skip-notice strong {
-    color: #78350f;
-  }
-
-  :global(.dark) .skip-notice strong {
-    color: #fbbf24;
-  }
-
-  .step-actions {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .step-actions {
-    border-color: #374151;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-secondary {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #374151;
-    color: #d1d5db;
-    border-color: #4b5563;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: #6b7280;
-  }
-
-  :global(.dark) .btn-ghost {
-    color: #9ca3af;
-  }
-
-  .btn-ghost:hover:not(:disabled) {
-    color: #111827;
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .btn-ghost:hover:not(:disabled) {
-    color: #f9fafb;
-    background: #374151;
-  }
-
-  @media (max-width: 768px) {
-    .step-goals {
-      padding: 1rem;
-    }
-
-    .category-buttons {
-      flex-direction: column;
-    }
-
-    .category-btn {
-      min-width: 100%;
-    }
-
-    .step-actions {
-      flex-direction: column;
-    }
-  }
-</style>

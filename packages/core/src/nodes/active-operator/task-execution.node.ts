@@ -234,8 +234,22 @@ const execute: NodeExecutor = async (inputs, context) => {
         isWriteOperation: taskSpec?.isWriteOperation,
       });
 
-      // Escalate to Big Brother
-      const escalationResult = await escalateToBigBrother(escalationRequest, operatorConfig);
+      // Set up streaming callbacks if emitEvent is available (for real-time UI display)
+      const streamingCallbacks = context.emitEvent ? {
+        onChunk: (chunk: string) => {
+          context.emitEvent?.('big_brother_output', { chunk });
+        },
+        onWaitingForInput: (question: string) => {
+          context.emitEvent?.('big_brother_waiting', { question });
+        },
+      } : undefined;
+
+      if (streamingCallbacks) {
+        console.log('[TaskExecution] Streaming callbacks configured for Big Brother UI display');
+      }
+
+      // Escalate to Big Brother with streaming
+      const escalationResult = await escalateToBigBrother(escalationRequest, operatorConfig, streamingCallbacks);
       const durationMs = Date.now() - startTime;
 
       // Stream reasoning steps to UI buffer for visibility
@@ -352,6 +366,11 @@ const execute: NodeExecutor = async (inputs, context) => {
 
       console.log(`[TaskExecution] Task ${task} delegated to Big Brother: success=${actualSuccess} (raw=${escalationResult.success}, validated=${validationPassed})`);
 
+      // Emit completion event to close the terminal panel in UI
+      if (context.emitEvent) {
+        context.emitEvent('big_brother_complete', { success: actualSuccess });
+      }
+
       return {
         executed: true,
         success: actualSuccess,
@@ -403,6 +422,11 @@ const execute: NodeExecutor = async (inputs, context) => {
         await logLizardBrainCycle(logEntry, username);
       } catch (logError) {
         console.warn('[TaskExecution] Failed to log delegation failure:', logError);
+      }
+
+      // Emit completion event even on error to close the terminal panel
+      if (context.emitEvent) {
+        context.emitEvent('big_brother_complete', { success: false, error: (error as Error).message });
       }
 
       return {

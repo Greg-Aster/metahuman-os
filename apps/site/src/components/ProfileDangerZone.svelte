@@ -192,9 +192,9 @@
   }
 </script>
 
-<div class="danger-zone">
-  <h2>⚠️ Danger Zone</h2>
-  <p class="warning-text">
+<div class="mt-8 p-6 border-2 border-red-600 rounded-lg bg-red-50 dark:bg-red-950 dark:border-red-800">
+  <h2 class="m-0 mb-2 text-xl font-semibold text-red-600 dark:text-red-300">⚠️ Danger Zone</h2>
+  <p class="m-0 mb-4 text-sm text-red-800 dark:text-red-300">
     {#if currentUser?.role === 'standard'}
       Delete your account and all associated data. This action is irreversible.
     {:else}
@@ -203,53 +203,53 @@
   </p>
 
   {#if loading}
-    <div class="loading">Loading profiles...</div>
+    <div class="p-4 text-center text-gray-500">Loading profiles...</div>
   {:else if error && !success}
-    <div class="error-message">{error}</div>
+    <div class="p-3 mb-4 bg-red-100 dark:bg-red-900 border border-red-200 dark:border-red-800 rounded text-red-800 dark:text-red-200 text-sm">{error}</div>
   {/if}
 
   {#if success}
-    <div class="success-message">{success}</div>
+    <div class="p-3 mb-4 bg-green-100 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded text-green-800 dark:text-green-200 text-sm">{success}</div>
   {/if}
 
   {#if !loading && profiles.length > 0}
-    <div class="profile-table-container">
-      <table class="profile-table">
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse bg-white dark:bg-gray-800 rounded">
         <thead>
           <tr>
-            <th>Username</th>
-            <th>Display Name</th>
-            <th>Role</th>
-            <th>Visibility</th>
-            <th>Actions</th>
+            <th class="p-3 text-left bg-gray-50 dark:bg-gray-900 border-b-2 border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300">Username</th>
+            <th class="p-3 text-left bg-gray-50 dark:bg-gray-900 border-b-2 border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300">Display Name</th>
+            <th class="p-3 text-left bg-gray-50 dark:bg-gray-900 border-b-2 border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300">Role</th>
+            <th class="p-3 text-left bg-gray-50 dark:bg-gray-900 border-b-2 border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300">Visibility</th>
+            <th class="p-3 text-left bg-gray-50 dark:bg-gray-900 border-b-2 border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-700 dark:text-gray-300">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {#each profiles as profile}
+          {#each profiles as profile, i}
             <tr>
-              <td><strong>{profile.username}</strong></td>
-              <td>{profile.displayName}</td>
-              <td>
-                <span class="role-badge" class:role-owner={profile.role === 'owner'}>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700 text-sm dark:text-gray-300 {i === profiles.length - 1 ? 'border-b-0' : ''}"><strong>{profile.username}</strong></td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700 text-sm dark:text-gray-300 {i === profiles.length - 1 ? 'border-b-0' : ''}">{profile.displayName}</td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700 text-sm {i === profiles.length - 1 ? 'border-b-0' : ''}">
+                <span class="inline-block px-2 py-1 rounded text-xs font-semibold uppercase {profile.role === 'owner' ? 'bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200' : 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200'}">
                   {profile.role}
                 </span>
               </td>
-              <td>
-                <span class="visibility-badge" class:visibility-public={profile.visibility === 'public'}>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700 text-sm {i === profiles.length - 1 ? 'border-b-0' : ''}">
+                <span class="inline-block px-2 py-1 rounded text-xs font-semibold uppercase {profile.visibility === 'public' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}">
                   {profile.visibility}
                 </span>
               </td>
-              <td>
+              <td class="p-3 border-b border-gray-200 dark:border-gray-700 text-sm {i === profiles.length - 1 ? 'border-b-0' : ''}">
                 {#if canDeleteProfile(profile)}
                   <button
-                    class="delete-btn"
+                    class="px-3 py-1.5 bg-red-600 text-white border-none rounded text-sm cursor-pointer transition-colors hover:enabled:bg-red-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:text-gray-400 dark:disabled:text-gray-500 disabled:cursor-not-allowed"
                     on:click={() => openDeleteModal(profile)}
                   >
                     {profile.username === currentUser?.username ? 'Delete My Account' : 'Delete Profile'}
                   </button>
                 {:else}
                   <button
-                    class="delete-btn"
+                    class="px-3 py-1.5 bg-red-600 text-white border-none rounded text-sm cursor-pointer transition-colors hover:enabled:bg-red-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:text-gray-400 dark:disabled:text-gray-500 disabled:cursor-not-allowed"
                     disabled
                     title={getDeleteDisabledReason(profile)}
                   >
@@ -267,27 +267,27 @@
 
 <!-- Delete Confirmation Modal -->
 {#if showDeleteModal && profileToDelete}
-  <div class="modal-overlay" on:click={closeDeleteModal}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>⚠️ Delete Profile</h3>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={closeDeleteModal}>
+    <div class="bg-white dark:bg-gray-800 dark:text-gray-300 rounded-lg p-6 max-w-[600px] w-[90%] max-h-[80vh] overflow-y-auto" on:click|stopPropagation>
+      <h3 class="m-0 mb-4 text-xl font-semibold text-red-600 dark:text-red-300">⚠️ Delete Profile</h3>
 
-      <p class="modal-warning">
+      <p class="m-0 mb-4 text-sm">
         You are about to permanently delete the profile for <strong>{profileToDelete.username}</strong>.
       </p>
 
-      <div class="modal-details">
-        <p><strong>This action will:</strong></p>
-        <ul>
-          <li>Terminate all active sessions for this user</li>
-          <li>Remove the user account from the system</li>
-          <li>Permanently delete the <code>profiles/{profileToDelete.username}/</code> directory</li>
-          <li>Delete all memories, tasks, configurations, and persona data</li>
+      <div class="p-4 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded mb-4">
+        <p class="m-0 mb-2 text-sm font-semibold"><strong>This action will:</strong></p>
+        <ul class="m-0 mb-2 pl-6 text-sm">
+          <li class="mb-1">Terminate all active sessions for this user</li>
+          <li class="mb-1">Remove the user account from the system</li>
+          <li class="mb-1">Permanently delete the <code class="bg-red-100 dark:bg-red-900 px-1 py-0.5 rounded font-mono text-[0.8em]">profiles/{profileToDelete.username}/</code> directory</li>
+          <li class="mb-1">Delete all memories, tasks, configurations, and persona data</li>
         </ul>
-        <p class="irreversible-warning">⚠️ <strong>This action is irreversible</strong></p>
+        <p class="mt-2 mb-0 text-red-600 dark:text-red-300 font-bold">⚠️ <strong>This action is irreversible</strong></p>
       </div>
 
-      <div class="confirmation-section">
-        <label for="confirm-username">
+      <div class="mb-4">
+        <label for="confirm-username" class="block mb-2 text-sm font-semibold">
           Type <strong>{profileToDelete.username}</strong> to confirm:
         </label>
         <input
@@ -296,23 +296,24 @@
           bind:value={confirmUsername}
           placeholder="Enter username to confirm"
           disabled={deleting}
+          class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
         />
       </div>
 
       {#if error}
-        <div class="error-message">{error}</div>
+        <div class="p-3 mb-4 bg-red-100 dark:bg-red-900 border border-red-200 dark:border-red-800 rounded text-red-800 dark:text-red-200 text-sm">{error}</div>
       {/if}
 
-      <div class="modal-actions">
+      <div class="flex gap-3 justify-end">
         <button
-          class="btn-cancel"
+          class="px-4 py-2 border-none rounded text-sm cursor-pointer transition-colors bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:enabled:bg-gray-300 dark:hover:enabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={closeDeleteModal}
           disabled={deleting}
         >
           Cancel
         </button>
         <button
-          class="btn-delete-confirm"
+          class="px-4 py-2 border-none rounded text-sm cursor-pointer transition-colors bg-red-600 text-white hover:enabled:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={handleDelete}
           disabled={deleting || confirmUsername !== profileToDelete.username}
         >
@@ -322,373 +323,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  .danger-zone {
-    margin-top: 2rem;
-    padding: 1.5rem;
-    border: 2px solid #dc2626;
-    border-radius: 8px;
-    background: #fef2f2;
-  }
-
-  :global(.dark) .danger-zone {
-    background: #450a0a;
-    border-color: #991b1b;
-  }
-
-  .danger-zone h2 {
-    margin: 0 0 0.5rem 0;
-    color: #dc2626;
-    font-size: 1.25rem;
-  }
-
-  :global(.dark) .danger-zone h2 {
-    color: #fca5a5;
-  }
-
-  .warning-text {
-    margin: 0 0 1rem 0;
-    color: #991b1b;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .warning-text {
-    color: #fca5a5;
-  }
-
-  .loading {
-    padding: 1rem;
-    text-align: center;
-    color: #6b7280;
-  }
-
-  .error-message {
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    border-radius: 4px;
-    color: #991b1b;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #991b1b;
-    color: #fecaca;
-  }
-
-  .success-message {
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-    background: #d1fae5;
-    border: 1px solid #a7f3d0;
-    border-radius: 4px;
-    color: #065f46;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .success-message {
-    background: #064e3b;
-    border-color: #059669;
-    color: #a7f3d0;
-  }
-
-  .profile-table-container {
-    overflow-x: auto;
-  }
-
-  .profile-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .profile-table {
-    background: #1f2937;
-  }
-
-  .profile-table th {
-    padding: 0.75rem;
-    text-align: left;
-    background: #f9fafb;
-    border-bottom: 2px solid #e5e7eb;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) .profile-table th {
-    background: #111827;
-    border-color: #374151;
-    color: #d1d5db;
-  }
-
-  .profile-table td {
-    padding: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .profile-table td {
-    border-color: #374151;
-    color: #d1d5db;
-  }
-
-  .profile-table tr:last-child td {
-    border-bottom: none;
-  }
-
-  .role-badge,
-  .visibility-badge {
-    display: inline-block;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .role-badge {
-    background: #dbeafe;
-    color: #1e40af;
-  }
-
-  .role-badge.role-owner {
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  :global(.dark) .role-badge {
-    background: #1e3a8a;
-    color: #bfdbfe;
-  }
-
-  :global(.dark) .role-badge.role-owner {
-    background: #78350f;
-    color: #fde68a;
-  }
-
-  .visibility-badge {
-    background: #e5e7eb;
-    color: #374151;
-  }
-
-  .visibility-badge.visibility-public {
-    background: #d1fae5;
-    color: #065f46;
-  }
-
-  :global(.dark) .visibility-badge {
-    background: #374151;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .visibility-badge.visibility-public {
-    background: #064e3b;
-    color: #a7f3d0;
-  }
-
-  .delete-btn {
-    padding: 0.375rem 0.75rem;
-    background: #dc2626;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .delete-btn:hover:not(:disabled) {
-    background: #b91c1c;
-  }
-
-  .delete-btn:disabled {
-    background: #d1d5db;
-    cursor: not-allowed;
-    color: #9ca3af;
-  }
-
-  :global(.dark) .delete-btn:disabled {
-    background: #374151;
-    color: #6b7280;
-  }
-
-  /* Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 8px;
-    padding: 1.5rem;
-    max-width: 600px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-  :global(.dark) .modal-content {
-    background: #1f2937;
-    color: #d1d5db;
-  }
-
-  .modal-content h3 {
-    margin: 0 0 1rem 0;
-    color: #dc2626;
-    font-size: 1.25rem;
-  }
-
-  :global(.dark) .modal-content h3 {
-    color: #fca5a5;
-  }
-
-  .modal-warning {
-    margin: 0 0 1rem 0;
-    font-size: 0.875rem;
-  }
-
-  .modal-details {
-    padding: 1rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .modal-details {
-    background: #450a0a;
-    border-color: #991b1b;
-  }
-
-  .modal-details p {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .modal-details ul {
-    margin: 0 0 0.5rem 0;
-    padding-left: 1.5rem;
-    font-size: 0.875rem;
-  }
-
-  .modal-details li {
-    margin-bottom: 0.25rem;
-  }
-
-  .modal-details code {
-    background: #fee2e2;
-    padding: 0.125rem 0.25rem;
-    border-radius: 3px;
-    font-family: monospace;
-    font-size: 0.8em;
-  }
-
-  :global(.dark) .modal-details code {
-    background: #7f1d1d;
-  }
-
-  .irreversible-warning {
-    margin: 0.5rem 0 0 0;
-    color: #dc2626;
-    font-weight: 700;
-  }
-
-  :global(.dark) .irreversible-warning {
-    color: #fca5a5;
-  }
-
-  .confirmation-section {
-    margin-bottom: 1rem;
-  }
-
-  .confirmation-section label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .confirmation-section input {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .confirmation-section input {
-    background: #374151;
-    border-color: #4b5563;
-    color: #f3f4f6;
-  }
-
-  .confirmation-section input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-  }
-
-  .btn-cancel,
-  .btn-delete-confirm {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-cancel {
-    background: #e5e7eb;
-    color: #374151;
-  }
-
-  .btn-cancel:hover:not(:disabled) {
-    background: #d1d5db;
-  }
-
-  :global(.dark) .btn-cancel {
-    background: #374151;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .btn-cancel:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-delete-confirm {
-    background: #dc2626;
-    color: white;
-  }
-
-  .btn-delete-confirm:hover:not(:disabled) {
-    background: #b91c1c;
-  }
-
-  .btn-delete-confirm:disabled,
-  .btn-cancel:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-</style>

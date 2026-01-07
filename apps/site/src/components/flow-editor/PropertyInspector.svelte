@@ -66,24 +66,24 @@
   }
 </script>
 
-<div class="property-inspector">
+<div class="bg-slate-800 border-l border-slate-700 h-full overflow-y-auto text-slate-200 text-[13px]">
   {#if selectedNode}
-    <div class="inspector-header">
-      <h3 class="inspector-title">{nodeTitle}</h3>
-      <span class="node-id">ID: {selectedNode.id}</span>
+    <div class="p-4 border-b border-slate-700 bg-slate-900">
+      <h3 class="m-0 mb-1 text-base font-semibold text-slate-50">{nodeTitle}</h3>
+      <span class="text-[11px] text-slate-500 font-mono">ID: {selectedNode.id}</span>
     </div>
 
     {#if nodeDescription}
-      <p class="inspector-description">{nodeDescription}</p>
+      <p class="py-3 px-4 m-0 text-xs text-slate-400 border-b border-slate-700 leading-relaxed">{nodeDescription}</p>
     {/if}
 
-    <div class="properties-list">
+    <div class="p-4">
       {#each Object.entries(propertySchemas) as [key, schema]}
         {@const schemaTyped = schema as PropertySchema}
         {@const currentValue = properties[key] ?? schemaTyped.default}
 
-        <div class="property-row">
-          <label class="property-label" for={`prop-${key}`}>
+        <div class="mb-4">
+          <label class="block mb-1.5 font-medium text-slate-300 text-xs" for={`prop-${key}`}>
             {schemaTyped.label || key}
           </label>
 
@@ -107,7 +107,7 @@
               oninput={(e) => updateProperty(key, parseFloat((e.target as HTMLInputElement).value))}
             />
           {:else if schemaTyped.type === 'slider'}
-            <div class="slider-container">
+            <div class="flex items-center gap-3">
               <input
                 id={`prop-${key}`}
                 type="range"
@@ -118,12 +118,12 @@
                 step={schemaTyped.step ?? 0.1}
                 oninput={(e) => updateProperty(key, parseFloat((e.target as HTMLInputElement).value))}
               />
-              <span class="slider-value">{currentValue ?? schemaTyped.default ?? 0}</span>
+              <span class="min-w-[40px] text-right font-mono text-xs text-slate-400">{currentValue ?? schemaTyped.default ?? 0}</span>
             </div>
           {:else if schemaTyped.type === 'select'}
             <select
               id={`prop-${key}`}
-              class="property-select"
+              class="property-input"
               value={currentValue || schemaTyped.options?.[0] || ''}
               onchange={(e) => updateProperty(key, (e.target as HTMLSelectElement).value)}
             >
@@ -132,7 +132,7 @@
               {/each}
             </select>
           {:else if schemaTyped.type === 'color'}
-            <div class="color-container">
+            <div class="flex gap-2 items-center">
               <input
                 id={`prop-${key}`}
                 type="color"
@@ -142,7 +142,7 @@
               />
               <input
                 type="text"
-                class="property-input color-text"
+                class="property-input flex-1"
                 value={currentValue || ''}
                 placeholder="#000000"
                 oninput={(e) => updateProperty(key, (e.target as HTMLInputElement).value)}
@@ -152,14 +152,14 @@
             <input
               id={`prop-${key}`}
               type="checkbox"
-              class="property-checkbox"
+              class="w-[18px] h-[18px] cursor-pointer accent-blue-500"
               checked={currentValue || false}
               onchange={(e) => updateProperty(key, (e.target as HTMLInputElement).checked)}
             />
           {:else if schemaTyped.type === 'json'}
             <textarea
               id={`prop-${key}`}
-              class="property-textarea"
+              class="property-input font-mono text-xs resize-y min-h-[60px]"
               value={stringifyJson(currentValue)}
               oninput={(e) => updateProperty(key, parseJsonSafe((e.target as HTMLTextAreaElement).value))}
               rows="3"
@@ -176,198 +176,54 @@
           {/if}
 
           {#if schemaTyped.description}
-            <p class="property-description">{schemaTyped.description}</p>
+            <p class="mt-1.5 mb-0 text-[11px] text-slate-500 leading-snug">{schemaTyped.description}</p>
           {/if}
         </div>
       {/each}
 
       {#if Object.keys(propertySchemas).length === 0}
-        <p class="no-properties">No editable properties for this node.</p>
+        <p class="text-slate-500 italic text-center p-5">No editable properties for this node.</p>
       {/if}
     </div>
   {:else}
-    <div class="no-selection">
-      <p>Select a node to view its properties</p>
+    <div class="flex items-center justify-center h-full text-slate-500 text-center p-5">
+      <p class="m-0">Select a node to view its properties</p>
     </div>
   {/if}
 </div>
 
 <style>
-  .property-inspector {
-    background: #1e293b;
-    border-left: 1px solid #334155;
-    height: 100%;
-    overflow-y: auto;
-    color: #e2e8f0;
-    font-size: 13px;
-  }
-
-  .inspector-header {
-    padding: 16px;
-    border-bottom: 1px solid #334155;
-    background: #0f172a;
-  }
-
-  .inspector-title {
-    margin: 0 0 4px 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #f8fafc;
-  }
-
-  .node-id {
-    font-size: 11px;
-    color: #64748b;
-    font-family: monospace;
-  }
-
-  .inspector-description {
-    padding: 12px 16px;
-    margin: 0;
-    font-size: 12px;
-    color: #94a3b8;
-    border-bottom: 1px solid #334155;
-    line-height: 1.5;
-  }
-
-  .properties-list {
-    padding: 16px;
-  }
-
-  .property-row {
-    margin-bottom: 16px;
-  }
-
-  .property-label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 500;
-    color: #cbd5e1;
-    font-size: 12px;
-  }
-
-  .property-input,
-  .property-select,
-  .property-textarea {
-    width: 100%;
-    padding: 8px 10px;
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    color: #e2e8f0;
-    font-size: 13px;
+  /* Shared input styling */
+  .property-input {
+    @apply w-full py-2 px-2.5 bg-slate-900 border border-slate-700 rounded-md text-slate-200 text-[13px] box-border;
     font-family: inherit;
-    box-sizing: border-box;
   }
-
-  .property-input:focus,
-  .property-select:focus,
-  .property-textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
+  .property-input:focus {
+    @apply outline-none border-blue-500;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
   }
 
-  .property-textarea {
-    resize: vertical;
-    min-height: 60px;
-    font-family: monospace;
-    font-size: 12px;
-  }
-
-  .slider-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
+  /* Slider styling */
   .property-slider {
-    flex: 1;
-    height: 6px;
-    background: #334155;
-    border-radius: 3px;
+    @apply flex-1 h-1.5 bg-slate-700 rounded cursor-pointer;
     appearance: none;
-    cursor: pointer;
   }
-
   .property-slider::-webkit-slider-thumb {
+    @apply w-4 h-4 bg-blue-500 rounded-full cursor-pointer;
     appearance: none;
-    width: 16px;
-    height: 16px;
-    background: #3b82f6;
-    border-radius: 50%;
-    cursor: pointer;
+  }
+  .property-slider::-moz-range-thumb {
+    @apply w-4 h-4 bg-blue-500 rounded-full cursor-pointer border-0;
   }
 
-  .slider-value {
-    min-width: 40px;
-    text-align: right;
-    font-family: monospace;
-    font-size: 12px;
-    color: #94a3b8;
-  }
-
-  .color-container {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
+  /* Color picker styling */
   .property-color {
-    width: 40px;
-    height: 36px;
-    padding: 2px;
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    cursor: pointer;
+    @apply w-10 h-9 p-0.5 bg-slate-900 border border-slate-700 rounded-md cursor-pointer;
   }
-
   .property-color::-webkit-color-swatch-wrapper {
     padding: 2px;
   }
-
   .property-color::-webkit-color-swatch {
-    border-radius: 4px;
-    border: none;
-  }
-
-  .color-text {
-    flex: 1;
-  }
-
-  .property-checkbox {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-    accent-color: #3b82f6;
-  }
-
-  .property-description {
-    margin: 6px 0 0 0;
-    font-size: 11px;
-    color: #64748b;
-    line-height: 1.4;
-  }
-
-  .no-properties {
-    color: #64748b;
-    font-style: italic;
-    text-align: center;
-    padding: 20px;
-  }
-
-  .no-selection {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: #64748b;
-    text-align: center;
-    padding: 20px;
-  }
-
-  .no-selection p {
-    margin: 0;
+    @apply rounded border-0;
   }
 </style>

@@ -77,26 +77,26 @@
 </script>
 
 {#if showBanner}
-  <div class="claim-banner">
-    <div class="banner-content">
-      <div class="banner-icon">🖥️</div>
-      <div class="banner-text">
-        <h3>Headless Mode Active</h3>
-        <p>
+  <div class="fixed top-20 left-1/2 -translate-x-1/2 z-[1000] max-w-[600px] w-[90%] bg-gradient-to-br from-amber-400 to-amber-500 text-amber-900 p-6 rounded-xl shadow-2xl animate-slide-down sm:top-[60px] sm:w-[95%] sm:p-4">
+    <div class="flex items-start gap-4 sm:flex-col">
+      <div class="text-3xl shrink-0">🖥️</div>
+      <div class="flex-1">
+        <h3 class="m-0 mb-2 text-lg font-bold text-amber-900">Headless Mode Active</h3>
+        <p class="m-0 text-sm leading-relaxed text-amber-800">
           Local agents are paused. Click "Claim Runtime" to resume full system
           operations and dedicate all resources to your remote session.
         </p>
       </div>
-      <div class="banner-actions">
+      <div class="flex flex-col gap-2 shrink-0 sm:w-full">
         <button
-          class="btn-claim"
+          class="px-4 py-2 rounded-md border-0 font-semibold text-sm cursor-pointer transition-all whitespace-nowrap bg-amber-900 text-amber-100 hover:bg-amber-800 disabled:opacity-60 disabled:cursor-not-allowed sm:w-full"
           on:click={claimRuntime}
           disabled={claiming}
         >
           {claiming ? 'Claiming...' : 'Claim Runtime'}
         </button>
         <button
-          class="btn-dismiss"
+          class="px-4 py-2 rounded-md font-semibold text-sm cursor-pointer transition-all whitespace-nowrap bg-transparent text-amber-900 border border-amber-800 hover:bg-amber-800/10 disabled:opacity-60 disabled:cursor-not-allowed sm:w-full"
           on:click={dismiss}
           disabled={claiming}
         >
@@ -106,140 +106,7 @@
     </div>
 
     {#if error}
-      <div class="banner-error">{error}</div>
+      <div class="mt-4 p-3 bg-red-900/20 border border-red-900 rounded-md text-red-900 text-sm">{error}</div>
     {/if}
   </div>
 {/if}
-
-<style>
-  .claim-banner {
-    position: fixed;
-    top: 80px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    max-width: 600px;
-    width: 90%;
-    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-    color: #78350f;
-    padding: 1.5rem;
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    animation: slideDown 0.3s ease-out;
-  }
-
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateX(-50%) translateY(-20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-  }
-
-  .banner-content {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .banner-icon {
-    font-size: 2rem;
-    flex-shrink: 0;
-  }
-
-  .banner-text {
-    flex: 1;
-  }
-
-  .banner-text h3 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: #78350f;
-  }
-
-  .banner-text p {
-    margin: 0;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    color: #92400e;
-  }
-
-  .banner-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    flex-shrink: 0;
-  }
-
-  .btn-claim,
-  .btn-dismiss {
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    border: none;
-    font-weight: 600;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-
-  .btn-claim {
-    background: #78350f;
-    color: #fef3c7;
-  }
-
-  .btn-claim:hover:not(:disabled) {
-    background: #92400e;
-  }
-
-  .btn-claim:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .btn-dismiss {
-    background: transparent;
-    color: #78350f;
-    border: 1px solid #92400e;
-  }
-
-  .btn-dismiss:hover:not(:disabled) {
-    background: rgba(146, 64, 14, 0.1);
-  }
-
-  .banner-error {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: rgba(127, 29, 29, 0.2);
-    border: 1px solid #7f1d1d;
-    border-radius: 6px;
-    color: #7f1d1d;
-    font-size: 0.875rem;
-  }
-
-  /* Responsive adjustments */
-  @media (max-width: 640px) {
-    .claim-banner {
-      top: 60px;
-      width: 95%;
-      padding: 1rem;
-    }
-
-    .banner-content {
-      flex-direction: column;
-    }
-
-    .banner-actions {
-      width: 100%;
-    }
-
-    .btn-claim,
-    .btn-dismiss {
-      width: 100%;
-    }
-  }
-</style>

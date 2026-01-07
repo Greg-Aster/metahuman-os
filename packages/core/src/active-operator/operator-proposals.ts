@@ -244,6 +244,14 @@ export function createProposal(
     },
   });
 
+  // Emit event to notify UI immediately (no polling needed)
+  proposalEvents.emit('proposal-created', {
+    username,
+    proposalId: proposal.id,
+    taskType,
+    proposal,
+  });
+
   return proposal;
 }
 

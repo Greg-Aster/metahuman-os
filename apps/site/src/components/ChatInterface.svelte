@@ -7,7 +7,7 @@
   import ApprovalPrompt from './ApprovalPrompt.svelte';
   // OperatorProposalPrompt removed - proposals now shown inline in LizardBrainCard
   import TerminalManager from './TerminalManager.svelte';
-  import ClaudeTerminalPanel from './ClaudeTerminalPanel.svelte';
+  import BigBrotherTerminalPanel from './BigBrotherTerminalPanel.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
@@ -21,6 +21,7 @@
   import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
   import { apiEventSource, apiFetch, isMobileApp } from '../lib/client/api-config';
+  import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
 
   // Component state
   let input = '';
@@ -83,12 +84,12 @@
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
 
-  // Claude CLI streaming state (for Big Brother)
-  let claudeCliOutput: string[] = [];
-  let claudeCliActive = false;
-  let claudeCliWaiting = false;
-  let claudeCliQuestion = '';
-  let showClaudeTerminal = false;
+  // Big Brother streaming state (provider-agnostic)
+  let bigBrotherOutput: string[] = [];
+  let bigBrotherActive = false;
+  let bigBrotherWaiting = false;
+  let bigBrotherQuestion = '';
+  let showBigBrotherTerminal = false;
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -324,6 +325,9 @@
     loadThinkingMode(); // Load vLLM thinking mode setting
     loadActiveOperatorStatus(); // Load active operator status
     mic.loadVADSettings(); // Load VAD settings from voice config
+
+    // Connect to proposals SSE stream for real-time updates (no polling)
+    connectProposalsStream();
 
     // Enable hardware button capture only if user opted in via Voice Settings
     // This creates a background audio session for earbud/headphone button support
@@ -652,6 +656,7 @@
     chatResponseStream?.close();
     disconnectAllBufferStreams();
     disconnectTTSQueueStream();
+    disconnectProposalsStream(); // Clean up proposals SSE stream
     activityApi.clearActivity();
     ttsApi.cleanup();
     thinkingTraceApi.cleanup();
@@ -891,6 +896,22 @@
                 // Graph execution completed, waiting for final answer
                 thinkingTraceApi.setStatusLabel('✓ Completed, finalizing...');
                 thinkingTraceApi.appendTrace(progressMsg, 10);
+              } else if (data.step?.startsWith('big_brother_')) {
+                // Big Brother status updates - show prominent status
+                if (data.step === 'big_brother_init') {
+                  thinkingTraceApi.setStatusLabel('🤖 Big Brother initializing...');
+                } else if (data.step === 'big_brother_ready') {
+                  thinkingTraceApi.setStatusLabel('🤖 Big Brother ready');
+                } else if (data.step === 'big_brother_sending') {
+                  thinkingTraceApi.setStatusLabel('📤 Sending to Big Brother...');
+                } else if (data.step === 'big_brother_executing') {
+                  thinkingTraceApi.setStatusLabel('⚙️ Big Brother working...');
+                } else if (data.step === 'big_brother_complete') {
+                  thinkingTraceApi.setStatusLabel('✅ Big Brother complete');
+                } else if (data.step === 'big_brother_error') {
+                  thinkingTraceApi.setStatusLabel('❌ Big Brother error');
+                }
+                thinkingTraceApi.appendTrace(progressMsg, 10);
               } else {
                 // Generic progress update
                 thinkingTraceApi.appendTrace(progressMsg, 10);
@@ -970,25 +991,25 @@
             reasoningStages = [];
             chatResponseStream?.close();
             return; // Don't throw, we handled it
-          } else if (type === 'claude_cli_output') {
-            // Real-time Claude CLI output - show terminal panel
-            if (!showClaudeTerminal) {
-              showClaudeTerminal = true;
-              claudeCliActive = true;
-              claudeCliOutput = [];
+          } else if (type === 'big_brother_output') {
+            // Real-time Big Brother output - show terminal panel
+            if (!showBigBrotherTerminal) {
+              showBigBrotherTerminal = true;
+              bigBrotherActive = true;
+              bigBrotherOutput = [];
             }
-            claudeCliOutput = [...claudeCliOutput, data.chunk || ''];
-            console.log('[ClaudeCLI] Output chunk received:', (data.chunk || '').substring(0, 50));
-          } else if (type === 'claude_cli_waiting') {
-            // Claude is waiting for user input
-            claudeCliWaiting = true;
-            claudeCliQuestion = data.question || '';
-            console.log('[ClaudeCLI] Waiting for input:', claudeCliQuestion.substring(0, 100));
-          } else if (type === 'claude_cli_complete') {
-            // Claude CLI session completed
-            claudeCliActive = false;
-            claudeCliWaiting = false;
-            console.log('[ClaudeCLI] Session complete, success:', data.success);
+            bigBrotherOutput = [...bigBrotherOutput, data.chunk || ''];
+            console.log('[BigBrother] Output chunk received:', (data.chunk || '').substring(0, 50));
+          } else if (type === 'big_brother_waiting') {
+            // Big Brother is waiting for user input
+            bigBrotherWaiting = true;
+            bigBrotherQuestion = data.question || '';
+            console.log('[BigBrother] Waiting for input:', bigBrotherQuestion.substring(0, 100));
+          } else if (type === 'big_brother_complete') {
+            // Big Brother session completed
+            bigBrotherActive = false;
+            bigBrotherWaiting = false;
+            console.log('[BigBrother] Session complete, success:', data.success);
           }
         } catch (err) {
           console.error('Chat stream error:', err);
@@ -1772,24 +1793,24 @@
       on:clearSelection={() => messagesApi.clearSelection()}
     />
 
-    <!-- Claude CLI Terminal Panel (shows when Big Brother is streaming) -->
-    {#if showClaudeTerminal}
-      <div class="claude-terminal-container">
-        <ClaudeTerminalPanel
-          output={claudeCliOutput}
-          active={claudeCliActive}
-          waiting={claudeCliWaiting}
-          question={claudeCliQuestion}
+    <!-- Big Brother Terminal Panel (shows when Big Brother is streaming) -->
+    {#if showBigBrotherTerminal}
+      <div class="big-brother-terminal-container">
+        <BigBrotherTerminalPanel
+          output={bigBrotherOutput}
+          active={bigBrotherActive}
+          waiting={bigBrotherWaiting}
+          question={bigBrotherQuestion}
           on:sendInput={(e) => {
-            console.log('[ClaudeCLI] User sent input:', e.detail.text.substring(0, 50));
+            console.log('[BigBrother] User sent input:', e.detail.text.substring(0, 50));
             // After sending, reset waiting state
-            claudeCliWaiting = false;
+            bigBrotherWaiting = false;
           }}
           on:close={() => {
-            showClaudeTerminal = false;
-            claudeCliOutput = [];
-            claudeCliActive = false;
-            claudeCliWaiting = false;
+            showBigBrotherTerminal = false;
+            bigBrotherOutput = [];
+            bigBrotherActive = false;
+            bigBrotherWaiting = false;
           }}
         />
       </div>

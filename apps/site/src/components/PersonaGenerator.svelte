@@ -106,7 +106,7 @@
     loadingMessageIndex = 0;
     loadingInterval = setInterval(() => {
       loadingMessageIndex = (loadingMessageIndex + 1) % THINKING_MESSAGES.length;
-    }, 3000); // Change message every 3 seconds
+    }, 3000);
   }
 
   function stopLoadingMessages() {
@@ -154,7 +154,6 @@
       editingAnswerId = null;
       editedAnswerText = '';
 
-      // Save to localStorage for resume
       localStorage.setItem('persona-generator-session', data.sessionId);
     } catch (err: any) {
       error = err.message;
@@ -253,7 +252,7 @@
 
     loading = true;
     error = '';
-    startLoadingMessages(); // Start cycling fun messages
+    startLoadingMessages();
 
     const lastQuestion = currentSession.questions[currentSession.questions.length - 1];
 
@@ -275,7 +274,6 @@
 
       const data = await response.json();
 
-      // Add answer to current session
       currentSession.answers = [
         ...currentSession.answers,
         {
@@ -287,17 +285,14 @@
 
       currentAnswer = '';
 
-      // Check if interview is complete
       if (data.isComplete) {
         currentSession.status = 'completed';
         await finalizeSession();
       } else if (data.nextQuestion) {
-        // Add next question
         currentSession.questions = [...currentSession.questions, data.nextQuestion];
         currentSession.categoryCoverage = data.progress;
       }
 
-      // Auto-scroll
       setTimeout(() => {
         if (messagesContainer) {
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -307,7 +302,7 @@
       error = err.message;
     } finally {
       loading = false;
-      stopLoadingMessages(); // Stop cycling messages
+      stopLoadingMessages();
     }
   }
 
@@ -362,16 +357,13 @@
         throw new Error(data.error || 'Failed to apply persona');
       }
 
-      // Success - clear session and refresh
       localStorage.removeItem('persona-generator-session');
       currentSession.status = 'applied';
       showReviewDialog = false;
       await loadSessionHistory();
 
-      // Show success message
       alert('Persona updated successfully! Your changes have been applied.');
 
-      // Clear session after short delay
       setTimeout(() => {
         currentSession = null;
       }, 2000);
@@ -406,14 +398,13 @@
   }
 
   function pauseSession() {
-    // Session is already saved server-side, just clear UI
     currentSession = null;
   }
 
   function getCategoryColor(percentage: number): string {
-    if (percentage >= 80) return '#10b981'; // green
-    if (percentage >= 60) return '#f59e0b'; // orange
-    return '#6b7280'; // gray
+    if (percentage >= 80) return '#10b981';
+    if (percentage >= 60) return '#f59e0b';
+    return '#6b7280';
   }
 
   async function handleQuickNotes() {
@@ -442,7 +433,6 @@
       quickNotesSuccess = 'Notes processed and merged with your persona!';
       quickNotesText = '';
 
-      // Hide success message after 3 seconds
       setTimeout(() => {
         quickNotesSuccess = '';
         showQuickNotes = false;
@@ -511,37 +501,37 @@
   }
 </script>
 
-<div class="persona-generator">
-  <div class="header">
-    <h2>Persona Generator</h2>
-    <p class="subtitle">
+<div class="h-full flex flex-col p-6 text-gray-200">
+  <div class="mb-6">
+    <h2 class="m-0 mb-2 text-gray-50">Persona Generator</h2>
+    <p class="m-0 text-gray-400 text-sm">
       Interactive personality interview to build your digital persona
     </p>
   </div>
 
   {#if error}
-    <div class="error-banner">
+    <div class="bg-red-900 border border-red-800 p-4 rounded-md mb-4">
       <strong>Error:</strong> {error}
     </div>
   {/if}
 
   {#if showResumeNotification && !currentSession}
-    <div class="resume-notification">
-      <div class="notification-content">
-        <span class="notification-icon">💭</span>
-        <div class="notification-text">
-          <strong>You have an unfinished interview</strong>
-          <p>Would you like to continue where you left off?</p>
+    <div class="bg-blue-900 border border-blue-500 rounded-lg p-6 mb-6 flex flex-col gap-4">
+      <div class="flex items-start gap-4">
+        <span class="text-3xl leading-none">💭</span>
+        <div class="flex-1">
+          <strong class="block mb-2 text-gray-50">You have an unfinished interview</strong>
+          <p class="m-0 text-gray-200">Would you like to continue where you left off?</p>
         </div>
       </div>
-      <div class="notification-actions">
-        <button class="primary" on:click={() => {
+      <div class="flex gap-3">
+        <button class="btn-primary" on:click={() => {
           resumeSession(resumableSessionId);
           showResumeNotification = false;
         }}>
           Resume Interview
         </button>
-        <button class="secondary" on:click={() => {
+        <button class="btn-secondary" on:click={() => {
           localStorage.removeItem('persona-generator-session');
           showResumeNotification = false;
         }}>
@@ -552,14 +542,14 @@
   {/if}
 
   {#if !currentSession}
-    <div class="start-screen">
-      <div class="intro">
-        <h3>Welcome to the Persona Generator</h3>
-        <p>
+    <div class="flex flex-col gap-6">
+      <div>
+        <h3 class="m-0 mb-4 text-gray-50">Welcome to the Persona Generator</h3>
+        <p class="m-0 mb-4 leading-relaxed">
           This guided interview uses motivational interviewing techniques to understand
           your authentic personality, values, goals, and communication style.
         </p>
-        <ul>
+        <ul class="m-0 pl-6 leading-loose">
           <li>7-15 thoughtful questions adapted to your answers</li>
           <li>Tracks coverage across 5 personality categories</li>
           <li>Generates structured persona data from your responses</li>
@@ -569,38 +559,39 @@
       </div>
 
       <!-- Quick Add Notes Section -->
-      <div class="quick-notes-section">
-        <div class="quick-notes-header">
-          <h4>📝 Quick Add Notes</h4>
-          <p class="quick-notes-description">
+      <div class="bg-gray-800 border-2 border-blue-500 rounded-lg p-6 mt-6">
+        <div>
+          <h4 class="m-0 mb-2 text-blue-400 text-base">📝 Quick Add Notes</h4>
+          <p class="m-0 mb-4 text-gray-400 text-sm leading-relaxed">
             Add observations, thoughts, or details about yourself. The system will extract personality traits and merge them with your existing persona.
           </p>
         </div>
 
         {#if !showQuickNotes}
-          <button class="secondary" on:click={() => showQuickNotes = true}>
+          <button class="btn-secondary" on:click={() => showQuickNotes = true}>
             Add Notes to Persona
           </button>
         {:else}
-          <div class="quick-notes-input">
+          <div class="mt-4">
             <textarea
               bind:value={quickNotesText}
               placeholder="Example: I've realized I'm more introverted than I thought. I prefer deep one-on-one conversations over group settings. I value authenticity and directness in communication..."
               rows="5"
               disabled={quickNotesLoading}
+              class="w-full bg-gray-900 border border-gray-700 rounded-md p-3 text-gray-200 text-sm resize-y mb-3 min-h-[120px] focus:outline-none focus:border-blue-500 placeholder:text-gray-500"
             ></textarea>
 
             {#if quickNotesError}
-              <div class="quick-notes-error">{quickNotesError}</div>
+              <div class="p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm mb-3">{quickNotesError}</div>
             {/if}
 
             {#if quickNotesSuccess}
-              <div class="quick-notes-success">{quickNotesSuccess}</div>
+              <div class="p-3 bg-emerald-900 border border-emerald-700 rounded-md text-emerald-200 text-sm mb-3">{quickNotesSuccess}</div>
             {/if}
 
-            <div class="quick-notes-actions">
+            <div class="flex gap-3 justify-end">
               <button
-                class="secondary"
+                class="btn-secondary"
                 on:click={() => {
                   showQuickNotes = false;
                   quickNotesText = '';
@@ -611,7 +602,7 @@
                 Cancel
               </button>
               <button
-                class="primary"
+                class="btn-primary"
                 on:click={handleQuickNotes}
                 disabled={quickNotesLoading || !quickNotesText.trim()}
               >
@@ -622,43 +613,49 @@
         {/if}
       </div>
 
-      <div class="actions">
-        <button class="primary" on:click={startNewSession} disabled={loading}>
+      <div class="flex gap-4 flex-wrap">
+        <button class="btn-primary" on:click={startNewSession} disabled={loading}>
           {loading ? 'Starting...' : 'Start New Interview'}
         </button>
 
         {#if sessions.length > 0}
-          <button class="secondary" on:click={() => (showHistory = !showHistory)}>
+          <button class="btn-secondary" on:click={() => (showHistory = !showHistory)}>
             {showHistory ? 'Hide' : 'Show'} Session History ({sessions.length})
           </button>
         {/if}
       </div>
 
       {#if showHistory && sessions.length > 0}
-        <div class="session-history">
-          <h4>Previous Sessions</h4>
-          <div class="session-list">
+        <div class="bg-gray-800 rounded-lg p-6">
+          <h4 class="m-0 mb-4 text-gray-50">Previous Sessions</h4>
+          <div class="flex flex-col gap-3">
             {#each sessions as session}
-              <div class="session-card">
-                <div class="session-meta">
-                  <span class="session-id">{session.sessionId.slice(0, 8)}...</span>
-                  <span class="session-status status-{session.status}">{session.status}</span>
+              <div class="bg-gray-900 p-4 rounded-md flex flex-col gap-2">
+                <div class="flex justify-between items-center">
+                  <span class="font-mono text-gray-400 text-sm">{session.sessionId.slice(0, 8)}...</span>
+                  <span class="px-3 py-1 rounded-full text-xs font-semibold
+                    {session.status === 'active' ? 'bg-emerald-900 text-emerald-300' : ''}
+                    {session.status === 'completed' ? 'bg-blue-900 text-blue-300' : ''}
+                    {session.status === 'finalized' ? 'bg-amber-900 text-amber-200' : ''}
+                    {session.status === 'applied' ? 'bg-green-900 text-green-300' : ''}
+                    {session.status === 'aborted' ? 'bg-gray-700 text-gray-400' : ''}
+                  ">{session.status}</span>
                 </div>
-                <div class="session-details">
+                <div class="flex gap-4 text-sm text-gray-400">
                   <span>{session.questionCount} questions</span>
                   <span>{session.answerCount} answers</span>
                   <span>{new Date(session.createdAt).toLocaleDateString()}</span>
                 </div>
                 {#if session.status === 'active'}
-                  <button class="resume-btn" on:click={() => resumeSession(session.sessionId)}>
+                  <button class="btn-primary btn-sm" on:click={() => resumeSession(session.sessionId)}>
                     Resume
                   </button>
                 {:else if session.status === 'completed'}
-                  <button class="resume-btn" on:click={() => reviewSession(session.sessionId)}>
+                  <button class="btn-primary btn-sm" on:click={() => reviewSession(session.sessionId)}>
                     Edit Session
                   </button>
                 {:else if session.status === 'finalized' || session.status === 'applied'}
-                  <button class="resume-btn secondary" on:click={() => reviewSession(session.sessionId)}>
+                  <button class="btn-secondary btn-sm" on:click={() => reviewSession(session.sessionId)}>
                     View
                   </button>
                 {/if}
@@ -669,80 +666,80 @@
       {/if}
 
       <!-- Admin Section -->
-      <div class="admin-section">
-        <h4>⚠️ Administrative Actions</h4>
-        <p class="admin-warning">
+      <div class="bg-gray-800 border-2 border-red-900 rounded-lg p-6 mt-6">
+        <h4 class="m-0 mb-3 text-red-300 text-base">⚠️ Administrative Actions</h4>
+        <p class="m-0 mb-4 text-red-300 text-sm">
           These actions are irreversible. Use with caution.
         </p>
-        <div class="admin-actions">
-          <button class="danger" on:click={() => showPurgeConfirm = true}>
+        <div class="flex gap-3 flex-wrap">
+          <button class="btn-danger" on:click={() => showPurgeConfirm = true}>
             Purge All Sessions
           </button>
-          <button class="danger" on:click={() => showResetConfirm = true}>
+          <button class="btn-danger" on:click={() => showResetConfirm = true}>
             Reset Persona File
           </button>
         </div>
       </div>
     </div>
   {:else}
-    <div class="interview-screen">
+    <div class="flex flex-col gap-4 flex-1 min-h-0">
       <!-- Compact Progress Meter -->
-      <div class="progress-section-compact">
-        <div class="progress-header">
-          <span class="progress-label">Progress:</span>
+      <div class="bg-gray-800 rounded-lg px-4 py-3 shrink-0">
+        <div class="flex items-center gap-4 flex-wrap">
+          <span class="text-sm text-gray-400 font-semibold">Progress:</span>
           {#each Object.entries(currentSession?.categoryCoverage || {}) as [category, percentage]}
-            <div class="progress-pill">
-              <span class="pill-category">{category.charAt(0).toUpperCase() + category.slice(1, 4)}</span>
-              <span class="pill-percentage" style="color: {getCategoryColor(percentage)}">{percentage}%</span>
+            <div class="flex items-center gap-2 bg-gray-700 px-3 py-1.5 rounded-full text-sm">
+              <span class="text-gray-400 uppercase font-semibold tracking-wide">{category.charAt(0).toUpperCase() + category.slice(1, 4)}</span>
+              <span class="font-bold tabular-nums" style="color: {getCategoryColor(percentage)}">{percentage}%</span>
             </div>
           {/each}
         </div>
       </div>
 
       <!-- Conversation -->
-      <div class="conversation" bind:this={messagesContainer}>
+      <div class="flex-1 overflow-y-auto bg-gray-800 rounded-lg p-4 flex flex-col gap-4 min-h-0" bind:this={messagesContainer}>
         {#each currentSession?.questions || [] as question, i}
-          <div class="message assistant">
-            <div class="message-content">
-              <strong>Psychotherapist:</strong>
-              <p>{question.prompt}</p>
-              <span class="message-meta">{question.category}</span>
+          <div class="flex justify-start">
+            <div class="max-w-[75%] p-4 rounded-lg leading-relaxed bg-gray-700">
+              <strong class="block mb-2 text-gray-50">Psychotherapist:</strong>
+              <p class="m-0 text-gray-200">{question.prompt}</p>
+              <span class="block mt-2 text-xs text-gray-400 italic">{question.category}</span>
             </div>
           </div>
 
           {#if currentSession?.answers?.[i]}
-            <div class="message user">
-              <div class="message-content">
-                <strong>You:</strong>
+            <div class="flex justify-end">
+              <div class="max-w-[75%] p-4 rounded-lg leading-relaxed bg-blue-900">
+                <strong class="block mb-2 text-gray-50">You:</strong>
                 {#if editingAnswerId === question.id}
                   <textarea
-                    class="answer-edit-input"
+                    class="w-full mt-2 bg-gray-900 border border-gray-600 text-gray-50 rounded-md p-3 font-inherit resize-y"
                     bind:value={editedAnswerText}
                     rows="4"
                     disabled={editLoading}
                   ></textarea>
-                  <div class="edit-actions">
+                  <div class="flex gap-3 mt-3">
                     <button
-                      class="primary"
+                      class="btn-primary"
                       on:click={() => saveEditedAnswer(question.id)}
                       disabled={editLoading}
                     >
                       {editLoading ? 'Saving...' : 'Save Changes'}
                     </button>
-                    <button class="secondary" on:click={cancelEditAnswer} disabled={editLoading}>
+                    <button class="btn-secondary" on:click={cancelEditAnswer} disabled={editLoading}>
                       Cancel
                     </button>
                   </div>
                 {:else}
-                  <p>{currentSession.answers[i].content}</p>
-                  <div class="message-footer">
+                  <p class="m-0 text-gray-200">{currentSession.answers[i].content}</p>
+                  <div class="mt-3 flex justify-between items-center gap-2 flex-wrap">
                     {#if currentSession.answers[i].editedAt}
-                      <span class="message-meta">
+                      <span class="text-xs text-gray-400 italic">
                         Edited {new Date(currentSession.answers[i].editedAt).toLocaleString()}
                       </span>
                     {/if}
                     <button
-                      class="link-button"
+                      class="bg-transparent border-none text-blue-300 p-0 text-sm underline cursor-pointer hover:text-blue-200"
                       on:click={() => startEditAnswer(question.id, currentSession.answers[i].content)}
                     >
                       Edit Response
@@ -755,10 +752,10 @@
         {/each}
 
         {#if loading}
-          <div class="message assistant">
-            <div class="message-content thinking-message">
-              <div class="thinking-icon">🤔</div>
-              <em class="thinking-text">{THINKING_MESSAGES[loadingMessageIndex]}</em>
+          <div class="flex justify-start">
+            <div class="flex items-center gap-4 p-6 bg-gray-700 rounded-lg">
+              <div class="text-3xl animate-pulse">🤔</div>
+              <em class="flex-1 text-sm italic text-gray-400 leading-relaxed">{THINKING_MESSAGES[loadingMessageIndex]}</em>
             </div>
           </div>
         {/if}
@@ -766,7 +763,7 @@
 
       <!-- Input Area -->
       {#if currentSession?.status === 'active' && (currentSession?.questions?.length || 0) > (currentSession?.answers?.length || 0)}
-        <div class="input-area">
+        <div class="bg-gray-800 rounded-lg p-4 shrink-0">
           <textarea
             bind:value={currentAnswer}
             placeholder="Type your answer here..."
@@ -777,30 +774,31 @@
                 submitAnswer();
               }
             }}
+            class="w-full bg-gray-900 border border-gray-700 rounded-md p-3 text-gray-200 text-sm resize-y mb-3 focus:outline-none focus:border-blue-500 placeholder:text-gray-500"
           />
-          <div class="input-actions">
-            <button class="primary" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
+          <div class="flex gap-3">
+            <button class="btn-primary" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
               {loading ? 'Submitting...' : 'Submit Answer'}
             </button>
-            <button class="secondary" on:click={pauseSession} disabled={loading}>
+            <button class="btn-secondary" on:click={pauseSession} disabled={loading}>
               Pause
             </button>
-            <button class="danger" on:click={discardSession} disabled={loading}>
+            <button class="btn-danger" on:click={discardSession} disabled={loading}>
               Discard
             </button>
           </div>
-          <p class="hint">Press Ctrl+Enter to submit</p>
+          <p class="mt-2 text-xs text-gray-500">Press Ctrl+Enter to submit</p>
         </div>
       {/if}
 
       {#if currentSession?.status === 'completed'}
-        <div class="completion-message">
-          <h3>Interview Complete!</h3>
+        <div class="bg-gray-800 rounded-lg p-8 text-center">
+          <h3 class="m-0 mb-2 text-gray-50">Interview Complete!</h3>
           {#if loading}
-            <p>Finalizing your persona data...</p>
+            <p class="m-0 text-gray-400">Finalizing your persona data...</p>
           {:else}
-            <p>You can finalize again if the previous attempt failed.</p>
-            <button class="primary" on:click={finalizeSession}>
+            <p class="m-0 text-gray-400">You can finalize again if the previous attempt failed.</p>
+            <button class="btn-primary mt-4" on:click={finalizeSession}>
               Retry Finalize
             </button>
           {/if}
@@ -808,9 +806,9 @@
       {/if}
 
       {#if currentSession?.status === 'applied'}
-        <div class="success-message">
-          <h3>✓ Persona Applied Successfully</h3>
-          <p>Your personality profile has been updated.</p>
+        <div class="bg-gray-800 rounded-lg p-8 text-center">
+          <h3 class="m-0 mb-2 text-emerald-500">✓ Persona Applied Successfully</h3>
+          <p class="m-0 text-gray-400">Your personality profile has been updated.</p>
         </div>
       {/if}
     </div>
@@ -827,26 +825,26 @@
 
 <!-- Purge Confirmation Modal -->
 {#if showPurgeConfirm}
-  <div class="modal-backdrop" on:click={() => showPurgeConfirm = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>⚠️ Purge All Sessions</h3>
-      <p class="modal-description">
-        This will permanently delete <strong>all interview sessions</strong> ({sessions.length} total)
+  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4" on:click={() => showPurgeConfirm = false}>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" on:click|stopPropagation>
+      <h3 class="m-0 mb-4 text-red-300">⚠️ Purge All Sessions</h3>
+      <p class="m-0 mb-4 text-gray-200 leading-relaxed">
+        This will permanently delete <strong class="text-gray-50">all interview sessions</strong> ({sessions.length} total)
         from your profile directory.
       </p>
-      <p class="modal-warning">
+      <p class="m-0 mb-6 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm leading-relaxed">
         This action cannot be undone. Session transcripts will be lost forever.
       </p>
 
       {#if adminError}
-        <div class="modal-error">{adminError}</div>
+        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{adminError}</div>
       {/if}
 
-      <div class="modal-actions">
-        <button class="secondary" on:click={() => { showPurgeConfirm = false; adminError = ''; }} disabled={adminLoading}>
+      <div class="flex gap-3 justify-end">
+        <button class="btn-secondary" on:click={() => { showPurgeConfirm = false; adminError = ''; }} disabled={adminLoading}>
           Cancel
         </button>
-        <button class="danger" on:click={handlePurgeSessions} disabled={adminLoading}>
+        <button class="btn-danger" on:click={handlePurgeSessions} disabled={adminLoading}>
           {adminLoading ? 'Purging...' : 'Purge All Sessions'}
         </button>
       </div>
@@ -856,37 +854,38 @@
 
 <!-- Reset Persona Confirmation Modal -->
 {#if showResetConfirm}
-  <div class="modal-backdrop" on:click={() => showResetConfirm = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>⚠️ Reset Persona File</h3>
-      <p class="modal-description">
-        This will reset your <code>persona/core.json</code> file to default settings.
+  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4" on:click={() => showResetConfirm = false}>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" on:click|stopPropagation>
+      <h3 class="m-0 mb-4 text-red-300">⚠️ Reset Persona File</h3>
+      <p class="m-0 mb-4 text-gray-200 leading-relaxed">
+        This will reset your <code class="bg-gray-900 px-1.5 py-0.5 rounded text-gray-50 font-mono text-sm">persona/core.json</code> file to default settings.
       </p>
-      <p class="modal-warning">
+      <p class="m-0 mb-6 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm leading-relaxed">
         All personality traits, values, goals, and preferences will be lost.
         A backup will be created before resetting.
       </p>
 
-      <div class="confirmation-input">
-        <label for="reset-confirm">Type <strong>RESET</strong> to confirm:</label>
+      <div class="mb-6">
+        <label for="reset-confirm" class="block mb-2 text-gray-200 text-sm">Type <strong class="text-red-300 font-mono">RESET</strong> to confirm:</label>
         <input
           id="reset-confirm"
           type="text"
           bind:value={resetConfirmText}
           placeholder="RESET"
           disabled={adminLoading}
+          class="w-full p-3 bg-gray-900 border border-gray-700 rounded-md text-gray-200 font-mono focus:outline-none focus:border-red-900"
         />
       </div>
 
       {#if adminError}
-        <div class="modal-error">{adminError}</div>
+        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{adminError}</div>
       {/if}
 
-      <div class="modal-actions">
-        <button class="secondary" on:click={() => { showResetConfirm = false; resetConfirmText = ''; adminError = ''; }} disabled={adminLoading}>
+      <div class="flex gap-3 justify-end">
+        <button class="btn-secondary" on:click={() => { showResetConfirm = false; resetConfirmText = ''; adminError = ''; }} disabled={adminLoading}>
           Cancel
         </button>
-        <button class="danger" on:click={handleResetPersona} disabled={adminLoading || resetConfirmText !== 'RESET'}>
+        <button class="btn-danger" on:click={handleResetPersona} disabled={adminLoading || resetConfirmText !== 'RESET'}>
           {adminLoading ? 'Resetting...' : 'Reset Persona'}
         </button>
       </div>
@@ -895,678 +894,11 @@
 {/if}
 
 <style>
-  .persona-generator {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    padding: 1.5rem;
-    color: #e5e7eb;
-  }
-
-  .header {
-    margin-bottom: 1.5rem;
-  }
-
-  .header h2 {
-    margin: 0 0 0.5rem 0;
-    color: #f9fafb;
-  }
-
-  .subtitle {
-    margin: 0;
-    color: #9ca3af;
-    font-size: 0.9rem;
-  }
-
-  .error-banner {
-    background: #7f1d1d;
-    border: 1px solid #991b1b;
-    padding: 1rem;
-    border-radius: 0.375rem;
-    margin-bottom: 1rem;
-  }
-
-  .resume-notification {
-    background: #1e3a8a;
-    border: 1px solid #3b82f6;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .notification-content {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .notification-icon {
-    font-size: 2rem;
-    line-height: 1;
-  }
-
-  .notification-text {
-    flex: 1;
-  }
-
-  .notification-text strong {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #f9fafb;
-  }
-
-  .notification-text p {
-    margin: 0;
-    color: #e5e7eb;
-  }
-
-  .notification-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .start-screen {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .intro h3 {
-    margin: 0 0 1rem 0;
-    color: #f9fafb;
-  }
-
-  .intro p {
-    margin: 0 0 1rem 0;
-    line-height: 1.6;
-  }
-
-  .intro ul {
-    margin: 0;
-    padding-left: 1.5rem;
-    line-height: 1.8;
-  }
-
-  .actions {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  button {
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.375rem;
-    border: none;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  button.primary {
-    background: #3b82f6;
-    color: white;
-  }
-
-  button.primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  button.secondary {
-    background: #374151;
-    color: #e5e7eb;
-  }
-
-  button.secondary:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  button.danger {
-    background: #7f1d1d;
-    color: #fecaca;
-  }
-
-  button.danger:hover:not(:disabled) {
-    background: #991b1b;
-  }
-
-  .session-history {
-    background: #1f2937;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-  }
-
-  .session-history h4 {
-    margin: 0 0 1rem 0;
-    color: #f9fafb;
-  }
-
-  .session-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .session-card {
-    background: #111827;
-    padding: 1rem;
-    border-radius: 0.375rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .session-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .session-id {
-    font-family: monospace;
-    color: #9ca3af;
-    font-size: 0.85rem;
-  }
-
-  .session-status {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .status-active {
-    background: #065f46;
-    color: #6ee7b7;
-  }
-
-  .status-completed {
-    background: #1e3a8a;
-    color: #93c5fd;
-  }
-
-  .status-finalized {
-    background: #713f12;
-    color: #fde68a;
-  }
-
-  .status-applied {
-    background: #14532d;
-    color: #86efac;
-  }
-
-  .status-aborted {
-    background: #374151;
-    color: #9ca3af;
-  }
-
-  .session-details {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.85rem;
-    color: #9ca3af;
-  }
-
-  .resume-btn {
-    padding: 0.5rem 1rem;
-    background: #3b82f6;
-    color: white;
-    font-size: 0.85rem;
-  }
-
-  .interview-screen {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* Compact horizontal progress meter */
-  .progress-section-compact {
-    background: #1f2937;
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    flex-shrink: 0;
-  }
-
-  .progress-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .progress-label {
-    font-size: 0.875rem;
-    color: #9ca3af;
-    font-weight: 600;
-  }
-
-  .progress-pill {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: #374151;
-    padding: 0.375rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.8125rem;
-  }
-
-  .pill-category {
-    color: #9ca3af;
-    text-transform: uppercase;
-    font-weight: 600;
-    letter-spacing: 0.025em;
-  }
-
-  .pill-percentage {
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .conversation {
-    flex: 1;
-    overflow-y: auto;
-    background: #1f2937;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    min-height: 0;
-  }
-
-  .message {
-    display: flex;
-  }
-
-  .message.assistant {
-    justify-content: flex-start;
-  }
-
-  .message.user {
-    justify-content: flex-end;
-  }
-
-  .message-content {
-    max-width: 75%;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    line-height: 1.6;
-  }
-
-  .message.assistant .message-content {
-    background: #374151;
-  }
-
-  .message.user .message-content {
-    background: #1e3a8a;
-  }
-
-  .message-content strong {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #f9fafb;
-  }
-
-  .message-content p {
-    margin: 0;
-    color: #e5e7eb;
-  }
-
-  .answer-edit-input {
-    width: 100%;
-    margin-top: 0.5rem;
-    background: #111827;
-    border: 1px solid #4b5563;
-    color: #f9fafb;
-    border-radius: 0.375rem;
-    padding: 0.75rem;
-    font-family: inherit;
-    resize: vertical;
-  }
-
-  .edit-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-  }
-
-  .message-footer {
-    margin-top: 0.75rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .link-button {
-    background: transparent;
-    border: none;
-    color: #93c5fd;
-    padding: 0;
-    font-size: 0.85rem;
-    text-decoration: underline;
-    cursor: pointer;
-  }
-
-  .link-button:hover:not(:disabled) {
-    color: #bfdbfe;
-  }
-
-  .thinking-message {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1.5rem;
-  }
-
-  .thinking-icon {
-    font-size: 2rem;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
   @keyframes pulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.1); }
   }
-
-  .thinking-text {
-    flex: 1;
-    font-size: 0.95rem;
-    font-style: italic;
-    color: #9ca3af;
-    line-height: 1.6;
-  }
-
-  .message-meta {
-    display: block;
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: #9ca3af;
-    font-style: italic;
-  }
-
-  .input-area {
-    background: #1f2937;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    flex-shrink: 0;
-  }
-
-  textarea {
-    width: 100%;
-    background: #111827;
-    border: 1px solid #374151;
-    border-radius: 0.375rem;
-    padding: 0.75rem;
-    color: #e5e7eb;
-    font-family: inherit;
-    font-size: 0.95rem;
-    resize: vertical;
-    margin-bottom: 0.75rem;
-  }
-
-  textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-
-  textarea::placeholder {
-    color: #6b7280;
-  }
-
-  .input-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .hint {
-    margin: 0.5rem 0 0 0;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .completion-message,
-  .success-message {
-    background: #1f2937;
-    border-radius: 0.5rem;
-    padding: 2rem;
-    text-align: center;
-  }
-
-  .completion-message h3,
-  .success-message h3 {
-    margin: 0 0 0.5rem 0;
-    color: #f9fafb;
-  }
-
-  .success-message h3 {
-    color: #10b981;
-  }
-
-  .completion-message p,
-  .success-message p {
-    margin: 0;
-    color: #9ca3af;
-  }
-
-  /* Quick Add Notes Section */
-  .quick-notes-section {
-    background: #1f2937;
-    border: 2px solid #3b82f6;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-top: 1.5rem;
-  }
-
-  .quick-notes-header h4 {
-    margin: 0 0 0.5rem 0;
-    color: #60a5fa;
-    font-size: 1rem;
-  }
-
-  .quick-notes-description {
-    margin: 0 0 1rem 0;
-    color: #9ca3af;
-    font-size: 0.875rem;
-    line-height: 1.5;
-  }
-
-  .quick-notes-input {
-    margin-top: 1rem;
-  }
-
-  .quick-notes-input textarea {
-    width: 100%;
-    background: #111827;
-    border: 1px solid #374151;
-    border-radius: 0.375rem;
-    padding: 0.75rem;
-    color: #e5e7eb;
-    font-family: inherit;
-    font-size: 0.95rem;
-    resize: vertical;
-    margin-bottom: 0.75rem;
-    min-height: 120px;
-  }
-
-  .quick-notes-input textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-
-  .quick-notes-input textarea::placeholder {
-    color: #6b7280;
-  }
-
-  .quick-notes-error {
-    padding: 0.75rem;
-    background: #7f1d1d;
-    border: 1px solid #991b1b;
-    border-radius: 0.375rem;
-    color: #fecaca;
-    font-size: 0.85rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .quick-notes-success {
-    padding: 0.75rem;
-    background: #065f46;
-    border: 1px solid #047857;
-    border-radius: 0.375rem;
-    color: #a7f3d0;
-    font-size: 0.85rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .quick-notes-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-  }
-
-  /* Admin Section */
-  .admin-section {
-    background: #1f2937;
-    border: 2px solid #7f1d1d;
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-top: 1.5rem;
-  }
-
-  .admin-section h4 {
-    margin: 0 0 0.75rem 0;
-    color: #fca5a5;
-    font-size: 1rem;
-  }
-
-  .admin-warning {
-    margin: 0 0 1rem 0;
-    color: #fca5a5;
-    font-size: 0.85rem;
-  }
-
-  .admin-actions {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  /* Confirmation Modals */
-  .modal-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
-    padding: 1rem;
-  }
-
-  .modal-content {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 0.5rem;
-    max-width: 500px;
-    width: 100%;
-    padding: 2rem;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  }
-
-  .modal-content h3 {
-    margin: 0 0 1rem 0;
-    color: #fca5a5;
-  }
-
-  .modal-description {
-    margin: 0 0 1rem 0;
-    color: #e5e7eb;
-    line-height: 1.6;
-  }
-
-  .modal-description strong,
-  .modal-description code {
-    color: #f9fafb;
-  }
-
-  .modal-description code {
-    background: #111827;
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-family: monospace;
-    font-size: 0.9em;
-  }
-
-  .modal-warning {
-    margin: 0 0 1.5rem 0;
-    padding: 0.75rem 1rem;
-    background: #7f1d1d;
-    border: 1px solid #991b1b;
-    border-radius: 0.375rem;
-    color: #fecaca;
-    font-size: 0.85rem;
-    line-height: 1.5;
-  }
-
-  .modal-error {
-    margin: 0 0 1rem 0;
-    padding: 0.75rem 1rem;
-    background: #7f1d1d;
-    border: 1px solid #991b1b;
-    border-radius: 0.375rem;
-    color: #fecaca;
-    font-size: 0.85rem;
-  }
-
-  .confirmation-input {
-    margin-bottom: 1.5rem;
-  }
-
-  .confirmation-input label {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #e5e7eb;
-    font-size: 0.9rem;
-  }
-
-  .confirmation-input strong {
-    color: #fca5a5;
-    font-family: monospace;
-  }
-
-  .confirmation-input input {
-    width: 100%;
-    padding: 0.75rem;
-    background: #111827;
-    border: 1px solid #374151;
-    border-radius: 0.375rem;
-    color: #e5e7eb;
-    font-size: 1rem;
-    font-family: monospace;
-  }
-
-  .confirmation-input input:focus {
-    outline: none;
-    border-color: #7f1d1d;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
+  .animate-pulse {
+    animation: pulse 2s ease-in-out infinite;
   }
 </style>

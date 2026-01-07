@@ -165,26 +165,26 @@
   }
 </script>
 
-<div class="setting-group">
-  <div class="section-header">
-    <span class="setting-label">🧠 Active Operator</span>
+<div class="card p-4 mb-4">
+  <div class="flex items-center justify-between mb-2">
+    <span class="font-semibold text-base text-white">🧠 Active Operator</span>
     <span class="mode-badge" class:active={mode === 'active'} class:passive={mode === 'passive'}>
       {mode.toUpperCase()}
     </span>
   </div>
 
-  <p class="setting-description">
+  <p class="text-sm text-gray-500 mb-4">
     Transform MetaHuman OS from passive responses to proactive, LLM-controlled continuous thinking.
   </p>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="banner banner-error mb-4">{error}</div>
   {/if}
 
   <!-- Mode Toggle -->
-  <div class="toggle-container">
-    <div class="toggle-header">
-      <span class="toggle-label">Enable Active Mode</span>
+  <div class="bg-white/5 p-3 rounded-md mb-4">
+    <div class="flex items-center justify-between">
+      <span class="text-sm text-white">Enable Active Mode</span>
       <label class="toggle-switch" for="active-operator-toggle">
         <input
           id="active-operator-toggle"
@@ -196,7 +196,7 @@
         <span class="toggle-slider"></span>
       </label>
     </div>
-    <p class="toggle-description">
+    <p class="text-sm text-gray-500 mt-2">
       {#if enabled}
         ⚡ System continuously decides what to think about
       {:else}
@@ -206,382 +206,131 @@
   </div>
 
   {#if enabled}
-    <!-- Emergency Stop -->
-    <button class="emergency-stop-button" on:click={emergencyStop} disabled={saving}>
+    <button class="danger-button mb-4" on:click={emergencyStop} disabled={saving}>
       🛑 Emergency Stop
     </button>
   {/if}
 
-  <!-- Status Panel (when active) -->
   {#if status && enabled}
-    <div class="status-panel">
-      <div class="status-row">
-        <span class="status-key">Health:</span>
-        <span class="status-value health-{status.health}">{status.health}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-key">Queue:</span>
-        <span class="status-value">{status.queue?.length || 0} tasks</span>
-      </div>
-      <div class="status-row">
-        <span class="status-key">Tasks Executed:</span>
-        <span class="status-value">{status.metrics?.totalTasksExecuted || 0}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-key">Success Rate:</span>
-        <span class="status-value">{status.metrics?.successRate || 'N/A'}</span>
-      </div>
+    <div class="bg-white/5 p-3 rounded-md mb-4">
+      {#each [
+        { key: 'Health:', value: status.health, class: `health-${status.health}` },
+        { key: 'Queue:', value: `${status.queue?.length || 0} tasks` },
+        { key: 'Tasks Executed:', value: status.metrics?.totalTasksExecuted || 0 },
+        { key: 'Success Rate:', value: status.metrics?.successRate || 'N/A' },
+      ] as row}
+        <div class="flex justify-between py-1">
+          <span class="text-sm text-gray-500">{row.key}</span>
+          <span class="text-sm font-medium text-white {row.class || ''}">{row.value}</span>
+        </div>
+      {/each}
       {#if status.scratchpad?.lastDecision}
-        <div class="status-row">
-          <span class="status-key">Last Decision:</span>
-          <span class="status-value">{status.scratchpad.lastDecision.task}</span>
+        <div class="flex justify-between py-1">
+          <span class="text-sm text-gray-500">Last Decision:</span>
+          <span class="text-sm font-medium text-white">{status.scratchpad.lastDecision.task}</span>
         </div>
       {/if}
     </div>
   {/if}
 
-  <!-- Configuration -->
-  <details class="config-details">
-    <summary>Configuration</summary>
+  <details class="mt-4">
+    <summary class="cursor-pointer text-white font-medium py-2">Configuration</summary>
 
-    <div class="config-section">
-      <label class="config-label" for="decision-model">Decision Model</label>
-      <select id="decision-model" bind:value={decisionModel} class="config-select">
+    <div class="mt-4">
+      <label class="form-label" for="decision-model">Decision Model</label>
+      <select id="decision-model" bind:value={decisionModel} class="form-input">
         <option value="default">Default (Orchestrator)</option>
         <option value="persona">Persona Model</option>
         <option value="fast">Fast (Fallback)</option>
       </select>
     </div>
 
-    <div class="config-section">
-      <label class="config-label" for="cooldown">Cooldown (ms)</label>
-      <input
-        id="cooldown"
-        type="number"
-        bind:value={cooldownMs}
-        min="1000"
-        max="60000"
-        step="1000"
-        class="config-input"
-      />
+    <div class="mt-4">
+      <label class="form-label" for="cooldown">Cooldown (ms)</label>
+      <input id="cooldown" type="number" bind:value={cooldownMs} min="1000" max="60000" step="1000" class="form-input" />
     </div>
 
-    <div class="config-section">
-      <label class="config-label" for="max-tasks">Max Consecutive Tasks</label>
-      <input
-        id="max-tasks"
-        type="number"
-        bind:value={maxConsecutiveTasks}
-        min="5"
-        max="100"
-        class="config-input"
-      />
+    <div class="mt-4">
+      <label class="form-label" for="max-tasks">Max Consecutive Tasks</label>
+      <input id="max-tasks" type="number" bind:value={maxConsecutiveTasks} min="5" max="100" class="form-input" />
     </div>
 
-    <div class="config-section">
-      <label class="checkbox-label">
+    <div class="mt-4">
+      <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
         <input type="checkbox" bind:checked={enableSelfHealing} />
         <span>Enable Self-Healing (code analysis)</span>
       </label>
     </div>
 
-    <!-- Energy Budget -->
-    <div class="config-section">
-      <label class="checkbox-label">
+    <div class="mt-4">
+      <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
         <input type="checkbox" bind:checked={energyBudgetEnabled} />
         <span>Enable Energy Budget</span>
       </label>
       {#if energyBudgetEnabled}
-        <div style="margin-top: 0.5rem;">
-          <label class="config-label" for="tokens-per-hour">Tokens per Hour (0 = unlimited)</label>
-          <input
-            id="tokens-per-hour"
-            type="number"
-            bind:value={tokensPerHour}
-            min="0"
-            step="1000"
-            class="config-input"
-          />
+        <div class="mt-2">
+          <label class="form-label" for="tokens-per-hour">Tokens per Hour (0 = unlimited)</label>
+          <input id="tokens-per-hour" type="number" bind:value={tokensPerHour} min="0" step="1000" class="form-input" />
         </div>
       {/if}
     </div>
 
-    <!-- Enabled Task Types -->
-    <div class="config-section">
-      <label class="config-label">Enabled Task Types</label>
-      <div class="task-types-grid">
+    <div class="mt-4">
+      <label class="form-label">Enabled Task Types</label>
+      <div class="grid grid-cols-2 gap-2 mt-2">
         {#each allTaskTypes as task}
-          <label class="task-type-checkbox">
+          <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
             <input
               type="checkbox"
               checked={enabledTaskTypes.includes(task.id)}
               on:change={() => toggleTaskType(task.id)}
             />
-            <span class="task-type-label">{task.label}</span>
+            <span>{task.label}</span>
           </label>
         {/each}
       </div>
     </div>
 
-    <button class="save-button" on:click={saveConfig} disabled={saving}>
+    <button class="btn-primary mt-4" on:click={saveConfig} disabled={saving}>
       {saving ? 'Saving...' : 'Save Configuration'}
     </button>
   </details>
 </div>
 
 <style>
-  .setting-group {
-    background: var(--card-bg, #1a1a1a);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-  }
-
-  .setting-label {
-    font-weight: 600;
-    font-size: 1rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .setting-description {
-    font-size: 0.85rem;
-    color: var(--text-muted, #999);
-    margin-bottom: 1rem;
-  }
-
+  /* Mode badge */
   .mode-badge {
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    @apply px-2 py-1 rounded text-xs font-semibold;
   }
-
   .mode-badge.active {
-    background: #22c55e;
-    color: white;
+    @apply bg-green-500 text-white;
   }
-
   .mode-badge.passive {
-    background: #6b7280;
-    color: white;
+    @apply bg-gray-500 text-white;
   }
 
-  .error-message {
-    background: #ef4444;
-    color: white;
-    padding: 0.5rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    margin-bottom: 1rem;
-  }
-
-  .toggle-container {
-    background: var(--bg-secondary, #252525);
-    padding: 0.75rem;
-    border-radius: 6px;
-    margin-bottom: 1rem;
-  }
-
-  .toggle-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .toggle-label {
-    font-size: 0.9rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .toggle-description {
-    font-size: 0.8rem;
-    color: var(--text-muted, #999);
-    margin-top: 0.5rem;
-  }
-
+  /* Toggle switch */
   .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 48px;
-    height: 24px;
+    @apply relative inline-block w-12 h-6;
   }
-
   .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
+    @apply opacity-0 w-0 h-0;
   }
-
   .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #4b5563;
-    transition: 0.3s;
-    border-radius: 24px;
+    @apply absolute cursor-pointer inset-0 bg-gray-600 transition-all rounded-full;
   }
-
   .toggle-slider:before {
-    position: absolute;
-    content: '';
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
-    border-radius: 50%;
+    @apply absolute content-[''] h-[18px] w-[18px] left-[3px] bottom-[3px] bg-white transition-all rounded-full;
   }
-
   input:checked + .toggle-slider {
-    background-color: #22c55e;
+    @apply bg-green-500;
   }
-
   input:checked + .toggle-slider:before {
     transform: translateX(24px);
   }
 
-  .emergency-stop-button {
-    background: #dc2626;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
-
-  .emergency-stop-button:hover {
-    background: #b91c1c;
-  }
-
-  .emergency-stop-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .status-panel {
-    background: var(--bg-secondary, #252525);
-    padding: 0.75rem;
-    border-radius: 6px;
-    margin-bottom: 1rem;
-  }
-
-  .status-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.25rem 0;
-  }
-
-  .status-key {
-    color: var(--text-muted, #999);
-    font-size: 0.85rem;
-  }
-
-  .status-value {
-    color: var(--text-primary, #fff);
-    font-size: 0.85rem;
-    font-weight: 500;
-  }
-
-  .health-healthy {
-    color: #22c55e;
-  }
-
-  .health-degraded {
-    color: #eab308;
-  }
-
-  .health-error {
-    color: #ef4444;
-  }
-
-  .config-details {
-    margin-top: 1rem;
-  }
-
-  .config-details summary {
-    cursor: pointer;
-    color: var(--text-primary, #fff);
-    font-weight: 500;
-    padding: 0.5rem 0;
-  }
-
-  .config-section {
-    margin-top: 1rem;
-  }
-
-  .config-label {
-    display: block;
-    font-size: 0.85rem;
-    color: var(--text-muted, #999);
-    margin-bottom: 0.25rem;
-  }
-
-  .config-select,
-  .config-input {
-    width: 100%;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #252525);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    color: var(--text-primary, #fff);
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-    color: var(--text-primary, #fff);
-    cursor: pointer;
-  }
-
-  .task-types-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .task-type-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8rem;
-    color: var(--text-primary, #fff);
-    cursor: pointer;
-  }
-
-  .save-button {
-    margin-top: 1rem;
-    background: var(--accent-color, #3b82f6);
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .save-button:hover {
-    background: #2563eb;
-  }
-
-  .save-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  /* Health status colors */
+  :global(.health-healthy) { @apply text-green-500; }
+  :global(.health-degraded) { @apply text-yellow-500; }
+  :global(.health-error) { @apply text-red-500; }
 </style>

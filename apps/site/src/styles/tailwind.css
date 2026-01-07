@@ -159,26 +159,6 @@
            text-violet-700 dark:text-violet-300 font-medium;
   }
 
-  .tag-blue {
-    @apply text-xs px-1.5 py-0.5 rounded bg-blue-500/10 dark:bg-blue-400/20
-           text-blue-600 dark:text-blue-400 font-medium;
-  }
-
-  .tag-yellow {
-    @apply text-xs px-1.5 py-0.5 rounded bg-yellow-500/10 dark:bg-yellow-400/20
-           text-yellow-600 dark:text-yellow-400 font-medium;
-  }
-
-  .tag-green {
-    @apply text-xs px-1.5 py-0.5 rounded bg-green-500/10 dark:bg-green-400/20
-           text-green-600 dark:text-green-400 font-medium;
-  }
-
-  .tag-red {
-    @apply text-xs px-1.5 py-0.5 rounded bg-red-500/10 dark:bg-red-400/20
-           text-red-600 dark:text-red-400 font-medium;
-  }
-
   /* === Empty/Loading States === */
   .empty-state {
     @apply flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400;
@@ -280,32 +260,6 @@
     @apply px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20
            border border-red-200 dark:border-red-700
            text-red-800 dark:text-red-300;
-  }
-
-  /* === Border Accents === */
-  .border-accent-violet {
-    @apply border-l-4 border-l-violet-600 dark:border-l-violet-400;
-  }
-
-  .border-accent-blue {
-    @apply border-l-4 border-l-blue-500 dark:border-l-blue-400;
-  }
-
-  .border-accent-yellow {
-    @apply border-l-4 border-l-yellow-500 dark:border-l-yellow-400;
-  }
-
-  .border-accent-green {
-    @apply border-l-4 border-l-green-500 dark:border-l-green-400;
-  }
-
-  /* === Utility Classes === */
-  .text-mono-sm {
-    @apply font-mono text-xs;
-  }
-
-  .clickable-reset {
-    @apply bg-transparent border-0 p-0 m-0 cursor-pointer text-left;
   }
 
   /* === Chat Interface Components === */
@@ -675,32 +629,6 @@
     @apply inline-block px-2 py-0.5 rounded-full text-xs font-semibold lowercase border;
   }
 
-  .adapter-badge {
-    @apply px-1.5 py-0.5 rounded-full text-xs lowercase;
-  }
-  .adapter-badge.ok {
-    @apply bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300;
-  }
-  .adapter-badge.warn {
-    @apply bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-300;
-  }
-  .adapter-badge.info {
-    @apply bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300;
-  }
-
-  .trust-observe {
-    @apply bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300;
-  }
-  .trust-suggest {
-    @apply bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300;
-  }
-  .trust-supervised_auto {
-    @apply bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300;
-  }
-  .trust-bounded_auto {
-    @apply bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300;
-  }
-
   /* === Tab Components (RightSidebar style) === */
   .tabs {
     @apply flex border-b border-black/10 dark:border-white/10 flex-shrink-0;
@@ -811,19 +739,6 @@
   /* === Layout Components === */
   .mode-label {
     @apply text-sm font-semibold px-3 py-1.5 rounded-full bg-white/55 dark:bg-gray-900/55 transition-all;
-  }
-
-  .mode-menu-trigger {
-    @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-400/35 bg-white/55 dark:bg-gray-900/55 transition-all shadow-sm;
-  }
-  .mode-menu-trigger:hover {
-    @apply border-violet-600/45 dark:border-violet-400/45;
-  }
-
-  .persona-icon {
-    width: 28px;
-    height: 28px;
-    @apply rounded-full object-cover border-2 border-violet-600/30 dark:border-violet-400/40 bg-white dark:bg-white/5 flex-shrink-0;
   }
 
   /* === ChatInterface Additional Components === */
@@ -1051,20 +966,6 @@
     @apply text-xs bg-green-600 text-white rounded px-1;
   }
 
-  .mini-voice {
-    @apply border-b border-black/10 dark:border-white/10;
-  }
-
-  :global(.mini-voice .voice-interface) {
-    @apply p-3;
-    min-height: 180px;
-  }
-
-  :global(.mini-voice .mode-selector),
-  :global(.mini-voice .vad-settings) {
-    @apply hidden;
-  }
-
   .welcome-suggestions {
     @apply flex flex-col gap-3 max-w-md w-full;
   }
@@ -1113,10 +1014,6 @@
 
   .message-user .msg-mic-btn:hover {
     @apply bg-white/35 text-white;
-  }
-
-  .facet-indicator {
-    @apply text-xs opacity-70 font-normal capitalize;
   }
 
   .message-dream .message-content {
@@ -1409,4 +1306,1009 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
   }
+
+  /* ==========================================================================
+     DASHBOARD COMPONENTS
+     Reusable patterns for dashboard panels, cards, and data displays
+     ========================================================================== */
+
+  /* Dashboard container with header */
+  .dashboard-container {
+    @apply flex flex-col h-full overflow-hidden bg-white dark:bg-gray-950;
+  }
+
+  .dashboard-header {
+    @apply px-6 py-4 border-b border-black/10 dark:border-white/10 flex-shrink-0;
+  }
+
+  .dashboard-title {
+    @apply text-xl font-bold text-gray-900 dark:text-gray-100 m-0;
+  }
+
+  .dashboard-content {
+    @apply flex-1 overflow-y-auto p-6;
+  }
+
+  /* Panel/Section within dashboard */
+  .panel {
+    @apply bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700;
+  }
+
+  .panel-title {
+    @apply font-semibold text-gray-900 dark:text-gray-100;
+  }
+
+  .panel-content {
+    @apply p-4;
+  }
+
+  .panel-footer {
+    @apply px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50;
+  }
+
+  /* Collapsible section */
+  .section-divider {
+    @apply border-t border-gray-200 dark:border-gray-700 mt-3 pt-3;
+  }
+
+  /* ==========================================================================
+     BUTTON VARIANTS
+     Extended button styles beyond the base .btn class
+     ========================================================================== */
+
+  .btn-primary {
+    @apply px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md
+           border-0 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600
+           text-gray-700 dark:text-gray-200 font-medium rounded-md
+           border border-gray-300 dark:border-gray-600 cursor-pointer transition-colors;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 bg-transparent hover:bg-black/5 dark:hover:bg-white/5
+           text-gray-700 dark:text-gray-300 font-medium rounded-md
+           border-0 cursor-pointer transition-colors;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md
+           border-0 cursor-pointer transition-colors disabled:opacity-50;
+  }
+
+  .btn-success {
+    @apply px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-md
+           border-0 cursor-pointer transition-colors;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-sm;
+  }
+
+  .btn-xs {
+    @apply px-2 py-1 text-xs;
+  }
+
+  .btn-icon {
+    @apply p-2 rounded-md bg-transparent hover:bg-black/5 dark:hover:bg-white/5
+           text-gray-600 dark:text-gray-400 cursor-pointer transition-colors;
+  }
+
+  /* ==========================================================================
+     PROGRESS/STRENGTH INDICATORS
+     For showing progress bars, strength meters, etc.
+     ========================================================================== */
+
+  .progress-bar {
+    @apply h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden;
+  }
+
+  .progress-fill {
+    @apply h-full rounded-full transition-all duration-300;
+  }
+
+  /* Compact strength indicator (inline) */
+  .strength-indicator {
+    @apply flex items-center gap-2;
+  }
+
+  .strength-bar {
+    @apply w-12 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden;
+  }
+
+  .strength-value {
+    @apply text-xs font-semibold text-gray-600 dark:text-gray-400;
+  }
+
+
+  /* ==========================================================================
+     BANNERS/ALERTS
+     For error, warning, success, and info messages
+     ========================================================================== */
+
+  .banner {
+    @apply px-4 py-3 rounded-lg border text-sm;
+  }
+
+  .banner-error {
+    @apply bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300;
+  }
+
+  .banner-warning {
+    @apply bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 text-yellow-800 dark:text-yellow-300;
+  }
+
+  .banner-success {
+    @apply bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300;
+  }
+
+  .banner-info {
+    @apply bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300;
+  }
+
+  /* ==========================================================================
+     METRICS/STATS DISPLAY
+     For showing statistics in grids or rows
+     ========================================================================== */
+
+  .stats-grid {
+    @apply grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4;
+  }
+
+  .stat-card {
+    @apply p-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-center;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-gray-900 dark:text-gray-100;
+  }
+
+  .stat-label {
+    @apply text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mt-1;
+  }
+
+  /* ==========================================================================
+     LOADING STATES
+     Spinners and loading overlays
+     ========================================================================== */
+
+  .spinner {
+    @apply inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin;
+  }
+
+  /* Loading overlay */
+  .loading-overlay {
+    @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
+  }
+
+  .loading-card {
+    @apply bg-white dark:bg-gray-900 rounded-xl p-8 text-center shadow-xl;
+  }
+
+  /* ==========================================================================
+     PAGINATION
+     For paginated lists and browsers
+     ========================================================================== */
+
+  .pagination {
+    @apply flex items-center justify-between gap-2 mt-4 pt-3 border-t border-gray-200 dark:border-gray-700;
+  }
+
+  .pagination-btn {
+    @apply px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700
+           text-gray-700 dark:text-gray-300 rounded border border-gray-300 dark:border-gray-600
+           cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .pagination-info {
+    @apply text-sm text-gray-500 dark:text-gray-400;
+  }
+
+  /* ==========================================================================
+     OVERLAY/MODAL COMPONENTS
+     For modals and loading overlays
+     ========================================================================== */
+
+  .modal-overlay {
+    @apply fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50;
+  }
+
+  .modal-content {
+    @apply bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[90vh] overflow-auto;
+  }
+
+  .modal-header {
+    @apply px-6 py-4 border-b border-gray-200 dark:border-gray-700;
+  }
+
+  .modal-body {
+    @apply px-6 py-4;
+  }
+
+  .modal-footer {
+    @apply px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3;
+  }
+
+  /* ==========================================================================
+     CONTEXT MENU
+     For right-click context menus
+     ========================================================================== */
+
+  .context-menu-backdrop {
+    @apply fixed inset-0 z-[9998] bg-transparent;
+  }
+
+  .context-menu {
+    @apply fixed z-[9999] bg-gray-800 border border-white/15 rounded-md shadow-xl p-1 min-w-[180px];
+  }
+
+  .context-menu-item {
+    @apply block w-full text-left px-3 py-2 text-xs border-0 bg-transparent text-gray-100 cursor-pointer rounded transition-colors hover:bg-white/10;
+  }
+
+  .context-menu-divider {
+    @apply h-px bg-white/10 my-1;
+  }
+
+  /* ==========================================================================
+     FILTER PILLS
+     For filter/tag selection buttons
+     ========================================================================== */
+
+  .filter-pill {
+    @apply px-2 py-1 text-[0.7rem] rounded border border-white/10 bg-transparent text-gray-400 cursor-pointer transition-all hover:bg-white/5;
+  }
+
+  .filter-pill.active {
+    @apply bg-violet-400 text-gray-900 border-violet-400;
+  }
+
+  /* ==========================================================================
+     STATUS DOTS
+     For pipeline/status indicators with animations
+     ========================================================================== */
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full bg-gray-500 relative;
+  }
+
+  .status-dot.idle {
+    @apply bg-gray-500;
+  }
+
+  .status-dot.in_progress {
+    @apply bg-blue-500;
+  }
+
+  .status-dot.in_progress::after {
+    content: '';
+    @apply absolute -inset-1 rounded-full border border-blue-500/35;
+    animation: status-pulse 1s infinite ease-in-out;
+  }
+
+  .status-dot.completed {
+    @apply bg-green-500;
+  }
+
+  .status-dot.failed {
+    @apply bg-red-500;
+  }
+
+  @keyframes status-pulse {
+    0% { transform: scale(0.9); opacity: 0.8; }
+    50% { transform: scale(1.1); opacity: 0.3; }
+    100% { transform: scale(0.9); opacity: 0.8; }
+  }
+
+  /* ==========================================================================
+     TOGGLE CHECKBOX (Direct Styling)
+     Apply directly to <input type="checkbox"> - no wrapper needed
+     For wrapper-based toggle, use .toggle-switch + .toggle-slider above
+     ========================================================================== */
+
+  .toggle-checkbox {
+    appearance: none;
+    width: 2.5rem;
+    height: 1.25rem;
+    @apply bg-gray-300 dark:bg-gray-600 rounded-full relative cursor-pointer transition-colors;
+  }
+
+  .toggle-checkbox::after {
+    content: '';
+    @apply absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform;
+  }
+
+  .toggle-checkbox:checked {
+    @apply bg-violet-600 dark:bg-violet-400;
+  }
+
+  .toggle-checkbox:checked::after {
+    transform: translateX(1.25rem);
+  }
+
+  .toggle-checkbox:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* ==========================================================================
+     COLLAPSIBLE SECTIONS
+     Expandable/collapsible panels for dashboards
+     ========================================================================== */
+
+  .collapsible-section {
+    @apply mb-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden;
+  }
+
+  .collapsible-header {
+    @apply w-full flex justify-between items-center px-4 py-3
+           bg-gray-100 dark:bg-gray-800 border-0
+           text-gray-900 dark:text-gray-100 cursor-pointer
+           text-sm font-medium text-left transition-colors
+           hover:bg-gray-200 dark:hover:bg-gray-700;
+  }
+
+  .collapsible-content {
+    @apply p-4 bg-gray-50 dark:bg-gray-900;
+  }
+
+  .collapsible-chevron {
+    @apply text-gray-500 dark:text-gray-400 text-xs;
+  }
+
+  /* ==========================================================================
+     PROGRESS STEPS
+     Step indicators for multi-step processes (migration, encryption, etc.)
+     ========================================================================== */
+
+  .progress-step {
+    @apply flex gap-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800;
+  }
+
+  .progress-step.running {
+    @apply bg-blue-100 dark:bg-blue-900/30 border-l-[3px] border-l-blue-500;
+  }
+
+  .progress-step.completed {
+    @apply bg-green-50 dark:bg-green-900/30 border-l-[3px] border-l-green-500;
+  }
+
+  .progress-step.failed {
+    @apply bg-red-50 dark:bg-red-900/30 border-l-[3px] border-l-red-500;
+  }
+
+  .progress-step.skipped {
+    @apply opacity-60;
+  }
+
+  .progress-bar-track {
+    @apply h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden;
+  }
+
+  .progress-bar-fill {
+    @apply h-full bg-violet-500 transition-all duration-300;
+  }
+
+  /* ==========================================================================
+     FORM INPUTS
+     Reusable form field styles
+     ========================================================================== */
+
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 dark:border-gray-600
+           rounded-md text-sm bg-white dark:bg-gray-900
+           text-gray-900 dark:text-gray-100
+           focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20;
+  }
+
+  .select-field {
+    @apply px-3 py-2 border border-gray-300 dark:border-gray-600
+           rounded-md text-sm bg-white dark:bg-gray-900
+           text-gray-900 dark:text-gray-100 cursor-pointer
+           focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20;
+  }
+
+  /* Note: .spinner defined in LOADING STATES section above */
+  /* This violet-colored variant is for centered loading overlays */
+  .spinner-violet {
+    @apply w-10 h-10 rounded-full;
+    border: 3px solid rgba(139, 92, 246, 0.2);
+    border-top-color: rgb(139, 92, 246);
+    animation: spin 0.8s linear infinite;
+  }
+
+  .spinner-violet.sm {
+    @apply w-5 h-5;
+    border-width: 2px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ==========================================================================
+     EXECUTING/ACTIVE INDICATORS
+     Animated dots for showing active/running states
+     ========================================================================== */
+
+  .executing-dot {
+    @apply w-2 h-2 bg-green-500 rounded-full;
+    animation: executing-pulse 1.5s infinite;
+  }
+
+  @keyframes executing-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.2); }
+  }
+
+  /* ==========================================================================
+     ANIMATIONS
+     Reusable animation classes
+     ========================================================================== */
+
+  .animate-slide-down {
+    animation: slide-down 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s ease-out;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out;
+  }
+
+  @keyframes slide-down {
+    from {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* ==========================================================================
+     PROSE CONTENT
+     Typography for rendered markdown/HTML content
+     ========================================================================== */
+
+  .prose-content {
+    @apply leading-7;
+  }
+
+  .prose-content h1 {
+    @apply text-4xl font-extrabold mb-6 text-gray-900 dark:text-gray-100 leading-tight;
+  }
+
+  .prose-content h2 {
+    @apply text-3xl font-bold mt-10 mb-4 text-gray-900 dark:text-gray-100 leading-snug;
+  }
+
+  .prose-content h3 {
+    @apply text-2xl font-semibold mt-8 mb-3 text-gray-900 dark:text-gray-100;
+  }
+
+  .prose-content h4 {
+    @apply text-xl font-semibold mt-6 mb-3 text-gray-700 dark:text-gray-300;
+  }
+
+  .prose-content p {
+    @apply mb-5 text-gray-700 dark:text-gray-300;
+  }
+
+  .prose-content strong {
+    @apply font-semibold text-gray-900 dark:text-gray-100;
+  }
+
+  .prose-content code {
+    @apply bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-sm text-red-600 dark:text-red-400 font-medium font-mono;
+  }
+
+  .prose-content pre {
+    @apply bg-gray-800 dark:bg-gray-900 p-5 rounded-lg overflow-x-auto my-6 border border-gray-700 dark:border-gray-800;
+  }
+
+  .prose-content pre code {
+    @apply bg-transparent p-0 text-gray-200 text-sm leading-relaxed;
+  }
+
+  .prose-content ul,
+  .prose-content ol {
+    @apply mb-5 pl-7 text-gray-700 dark:text-gray-300;
+  }
+
+  .prose-content li {
+    @apply mb-2 leading-7;
+  }
+
+  .prose-content li > p {
+    @apply mb-2;
+  }
+
+  .prose-content a {
+    @apply text-blue-600 dark:text-blue-400 no-underline font-medium hover:underline;
+  }
+
+  .prose-content blockquote {
+    @apply border-l-4 border-blue-600 dark:border-blue-400 pl-5 my-6 text-gray-600 dark:text-gray-400 italic;
+  }
+
+  .prose-content table {
+    @apply w-full border-collapse my-6 text-sm;
+  }
+
+  .prose-content th,
+  .prose-content td {
+    @apply p-3 text-left border-b border-gray-200 dark:border-gray-700;
+  }
+
+  .prose-content th {
+    @apply font-semibold text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-900;
+  }
+
+  .prose-content td {
+    @apply text-gray-700 dark:text-gray-300;
+  }
+
+  .prose-content hr {
+    @apply border-0 border-t border-gray-200 dark:border-gray-700 my-8;
+  }
+
+  /* ==========================================================================
+     MODEL ROLE DISPLAY
+     For showing model assignments in sidebars (role → model)
+     ========================================================================== */
+
+  .model-role-row {
+    @apply flex items-center text-[0.8rem] gap-1.5 py-0.5 px-1 rounded-md transition-all relative;
+  }
+
+  .model-role-row.active {
+    @apply bg-violet-600/10 dark:bg-violet-400/15;
+    box-shadow: 0 0 12px rgba(124, 58, 237, 0.3);
+  }
+
+  .role-name {
+    @apply text-gray-500 dark:text-gray-400 font-medium min-w-[75px] capitalize;
+  }
+
+  .role-arrow {
+    @apply text-gray-400 dark:text-gray-500 text-[0.7rem];
+  }
+
+  .role-model {
+    @apply text-gray-900 dark:text-gray-100 font-mono text-[0.7rem] font-medium
+           flex items-center gap-1 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .role-model.clickable {
+    @apply bg-transparent border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1
+           cursor-pointer transition-all hover:bg-gray-100 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600;
+  }
+
+  .role-model.error {
+    @apply text-red-500 dark:text-red-400 italic;
+  }
+
+  .role-model.needs-config {
+    @apply text-yellow-500 dark:text-yellow-400 italic cursor-pointer bg-transparent border-0 p-0;
+  }
+
+  .role-model.needs-config:hover {
+    @apply text-yellow-400 dark:text-yellow-300 underline;
+  }
+
+  /* ==========================================================================
+     MODEL DROPDOWN
+     Dropdown for selecting models in role assignments
+     ========================================================================== */
+
+  .model-dropdown {
+    @apply absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800
+           border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-[1000] max-h-[300px] overflow-y-auto;
+    animation: dropdown-slide-in 0.15s ease-out;
+  }
+
+  @keyframes dropdown-slide-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .dropdown-header {
+    @apply px-3 py-2 text-[0.7rem] font-semibold text-gray-500 dark:text-gray-400
+           border-b border-gray-200 dark:border-gray-700 uppercase tracking-wider;
+  }
+
+  .dropdown-category {
+    @apply py-1 border-b border-gray-100 dark:border-gray-700 last:border-b-0;
+  }
+
+  .category-label {
+    @apply block px-3 py-1 text-[0.65rem] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider;
+  }
+
+  .dropdown-item {
+    @apply flex flex-col items-start gap-1 px-3 py-2 w-full bg-transparent border-0 border-b border-gray-50 dark:border-gray-700
+           text-left cursor-pointer transition-all last:border-b-0 hover:bg-violet-600/10 dark:hover:bg-violet-400/15;
+  }
+
+  .dropdown-item.selected {
+    @apply bg-violet-600/15 dark:bg-violet-400/20;
+  }
+
+  .dropdown-item.vllm-active {
+    @apply bg-yellow-500/10 dark:bg-yellow-400/15 border-l-2 border-l-yellow-500;
+  }
+
+  .dropdown-item.lora-loaded {
+    @apply border-l-2 border-l-yellow-500 dark:border-l-yellow-400;
+  }
+
+  .dropdown-item:disabled {
+    @apply opacity-50 cursor-not-allowed hover:bg-transparent;
+  }
+
+  .model-name {
+    @apply font-mono text-xs font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-1.5;
+  }
+
+  .model-desc {
+    @apply text-[0.65rem] text-gray-500 dark:text-gray-400 leading-tight;
+  }
+
+  .dropdown-arrow {
+    @apply text-[0.6rem] text-gray-400 dark:text-gray-500 ml-auto;
+  }
+
+  /* ==========================================================================
+     ADAPTER/MODEL BADGES
+     Small badges for LoRA adapters, cloud providers, etc.
+     ========================================================================== */
+
+  .adapter-indicator {
+    @apply py-0.5 px-1.5 rounded text-[0.65rem] font-semibold
+           bg-violet-500/20 dark:bg-violet-400/25 text-violet-700 dark:text-violet-300 uppercase tracking-wider;
+  }
+
+  .adapter-indicator-small {
+    @apply py-0.5 px-1 rounded text-[0.6rem] font-semibold
+           bg-violet-500/20 dark:bg-violet-400/25 text-violet-700 dark:text-violet-300 uppercase tracking-wider;
+  }
+
+  .cloud-indicator {
+    @apply ml-1 text-xs;
+  }
+
+  .suggested-indicator {
+    @apply ml-1 text-[0.7rem] text-green-500 dark:text-green-400 opacity-70;
+  }
+
+  .provider-badge {
+    @apply inline-block py-0.5 px-1.5 rounded text-[0.6rem] font-medium mt-0.5;
+  }
+
+  .provider-badge.cloud {
+    @apply bg-blue-500/15 dark:bg-blue-400/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 dark:border-blue-400/30;
+  }
+
+  .default-badge {
+    @apply inline-block py-0.5 px-1 rounded text-[0.6rem] font-semibold
+           bg-green-500/15 dark:bg-green-400/20 text-green-700 dark:text-green-400 uppercase tracking-wider ml-1;
+  }
+
+  .dual-badge {
+    @apply inline-block py-0.5 px-1 rounded text-[0.6rem] font-semibold
+           bg-violet-500/15 dark:bg-violet-400/20 text-violet-700 dark:text-violet-300 uppercase tracking-wider ml-1;
+  }
+
+  .vllm-badge {
+    @apply inline-block py-0.5 px-1 rounded text-[0.6rem] font-semibold
+           bg-yellow-500/20 dark:bg-yellow-400/25 text-yellow-700 dark:text-yellow-300 uppercase tracking-wider ml-1;
+  }
+
+  .restart-badge {
+    @apply inline-block py-0.5 px-1 rounded text-[0.6rem] font-semibold
+           bg-purple-600/20 dark:bg-purple-400/30 text-purple-700 dark:text-purple-300 uppercase tracking-wider ml-1;
+  }
+
+  .bb-badge {
+    @apply text-[0.7rem] ml-1;
+  }
+
+  /* ==========================================================================
+     BACKEND ICONS
+     Multi-icon status display for LLM backends
+     ========================================================================== */
+
+  .backend-icons {
+    @apply flex gap-1 items-center p-1.5 bg-black/5 dark:bg-white/5 rounded-lg mb-2;
+  }
+
+  .backend-icon {
+    @apply flex items-center justify-center w-[26px] h-[26px] rounded text-sm
+           transition-all cursor-default border-2 border-transparent;
+  }
+
+  .backend-icon.running {
+    @apply bg-green-500/15 dark:bg-green-400/20;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  }
+
+  .backend-icon.active {
+    @apply border-violet-500 dark:border-violet-400;
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  }
+
+  .backend-icon.available:not(.running) {
+    @apply opacity-50 grayscale-[30%];
+  }
+
+  .backend-icon.cloud.configured {
+    @apply bg-purple-500/10 dark:bg-purple-400/15;
+  }
+
+  .backend-icon.bigbrother.enabled {
+    @apply bg-blue-500/15 dark:bg-blue-400/20;
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
+  }
+
+  .backend-icon.bigbrother.disabled {
+    @apply opacity-40 grayscale-[50%];
+  }
+
+  .backend-icon.remote-server.configured {
+    @apply bg-cyan-500/15 dark:bg-cyan-400/20 opacity-60;
+  }
+
+  .backend-icon.remote-server.connected {
+    @apply bg-cyan-500/25 dark:bg-cyan-400/30 opacity-100;
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.5);
+  }
+
+  .backend-icon.local-models.available:not(.running) {
+    @apply bg-orange-500/15 dark:bg-orange-400/20 opacity-50;
+  }
+
+  .backend-icon.local-models.running {
+    @apply bg-orange-500/25 dark:bg-orange-400/30;
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.5);
+  }
+
+  .backend-icon.offline {
+    @apply opacity-40 grayscale;
+  }
+
+  .backend-icon:hover {
+    transform: scale(1.1);
+  }
+
+  /* ==========================================================================
+     TRUST LEVEL BADGES
+     Temperature-gradient badges for trust levels
+     ========================================================================== */
+
+  .trust-badge {
+    @apply py-0.5 px-2 rounded-full text-[0.65rem] font-semibold lowercase border border-transparent cursor-default transition-all;
+  }
+
+  .trust-badge.clickable {
+    @apply cursor-pointer hover:scale-105;
+  }
+
+  /* observe - Cool cyan */
+  .trust-badge.trust-level-observe {
+    @apply bg-cyan-500/15 dark:bg-cyan-400/20 text-cyan-700 dark:text-cyan-300;
+  }
+  .trust-badge.trust-level-observe:hover {
+    @apply bg-cyan-500/25 dark:bg-cyan-400/30;
+  }
+
+  /* suggest - Light green */
+  .trust-badge.trust-level-suggest {
+    @apply bg-green-500/15 dark:bg-green-400/20 text-green-700 dark:text-green-300;
+  }
+  .trust-badge.trust-level-suggest:hover {
+    @apply bg-green-500/25 dark:bg-green-400/30;
+  }
+
+  /* supervised_auto - Yellow-green */
+  .trust-badge.trust-level-supervised_auto {
+    @apply bg-lime-500/15 dark:bg-lime-400/20 text-lime-700 dark:text-lime-300;
+  }
+  .trust-badge.trust-level-supervised_auto:hover {
+    @apply bg-lime-500/25 dark:bg-lime-400/30;
+  }
+
+  /* bounded_auto - Orange */
+  .trust-badge.trust-level-bounded_auto {
+    @apply bg-orange-500/15 dark:bg-orange-400/20 text-orange-700 dark:text-orange-300;
+  }
+  .trust-badge.trust-level-bounded_auto:hover {
+    @apply bg-orange-500/25 dark:bg-orange-400/30;
+  }
+
+  /* adaptive_auto - Red-orange */
+  .trust-badge.trust-level-adaptive_auto {
+    @apply bg-red-500/15 dark:bg-red-400/20 text-red-700 dark:text-red-300;
+  }
+  .trust-badge.trust-level-adaptive_auto:hover {
+    @apply bg-red-500/25 dark:bg-red-400/30;
+  }
+
+  /* YOLO - Hot yellow with glow */
+  .trust-badge.trust-level-yolo {
+    @apply bg-yellow-500/25 dark:bg-yellow-400/30 text-yellow-700 dark:text-yellow-300 border-yellow-500 dark:border-yellow-400;
+    box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.2);
+  }
+  .trust-badge.trust-level-yolo:hover {
+    @apply bg-yellow-500/35 dark:bg-yellow-400/40;
+  }
+
+  .yolo-indicator {
+    @apply uppercase font-bold tracking-wider;
+  }
+
+  /* ==========================================================================
+     MODE BADGES
+     Cognitive mode indicators
+     ========================================================================== */
+
+  .mode-badge {
+    @apply py-0.5 px-2 rounded-full text-[0.65rem] font-semibold lowercase border border-transparent transition-all;
+  }
+
+  .mode-badge.mode-dual {
+    @apply bg-purple-600/15 dark:bg-purple-400/20 text-purple-700 dark:text-purple-300;
+  }
+
+  .mode-badge.mode-agent {
+    @apply bg-blue-500/15 dark:bg-blue-400/20 text-blue-700 dark:text-blue-300;
+  }
+
+  .mode-badge.mode-emulation {
+    @apply bg-amber-500/15 dark:bg-amber-400/20 text-amber-700 dark:text-amber-300;
+  }
+
+  /* ==========================================================================
+     PERSONA BADGES
+     Persona facet indicators with gradients
+     ========================================================================== */
+
+  .persona-badge {
+    @apply py-0.5 px-2 rounded-full text-[0.65rem] font-semibold lowercase border border-transparent transition-all;
+  }
+
+  .persona-badge.clickable {
+    @apply cursor-pointer;
+  }
+
+  .persona-badge.persona-active,
+  .persona-badge.enabled {
+    @apply text-violet-700 dark:text-violet-300 border-violet-500/30 dark:border-violet-400/40;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(168, 85, 247, 0.15));
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.15);
+  }
+
+  .persona-badge.persona-active:hover,
+  .persona-badge.enabled:hover {
+    @apply border-violet-500/40 dark:border-violet-400/50;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(168, 85, 247, 0.25));
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.25);
+    transform: translateY(-1px);
+  }
+
+  .persona-badge.persona-inactive,
+  .persona-badge.disabled {
+    @apply bg-gray-500/15 dark:bg-gray-400/20 text-gray-600 dark:text-gray-400;
+  }
+
+  .persona-badge.persona-inactive:hover,
+  .persona-badge.disabled:hover {
+    @apply bg-gray-500/25 dark:bg-gray-400/30 border-gray-500/20;
+    transform: translateY(-1px);
+  }
+
+  /* Facet-specific colors */
+  .persona-badge.persona-facet-inactive {
+    @apply bg-gray-500/15 dark:bg-gray-400/20 text-gray-600 dark:text-gray-400;
+  }
+
+  .persona-badge.persona-facet-default {
+    @apply text-violet-700 dark:text-violet-300 border-violet-500/30 dark:border-violet-400/40;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(168, 85, 247, 0.15));
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.15);
+  }
+
+  .persona-badge.persona-facet-poet {
+    @apply text-indigo-700 dark:text-indigo-300 border-indigo-500/30 dark:border-indigo-400/40;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(129, 140, 248, 0.15));
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.15);
+  }
+
+  .persona-badge.persona-facet-thinker {
+    @apply text-blue-700 dark:text-blue-300 border-blue-500/30 dark:border-blue-400/40;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(96, 165, 250, 0.15));
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.15);
+  }
+
+  .persona-badge.persona-facet-friend {
+    @apply text-green-700 dark:text-green-300 border-green-500/30 dark:border-green-400/40;
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(74, 222, 128, 0.15));
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.15);
+  }
+
+  .persona-badge.persona-facet-antagonist {
+    @apply text-red-700 dark:text-red-300 border-red-500/30 dark:border-red-400/40;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(248, 113, 113, 0.15));
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
+  }
+
+  /* ==========================================================================
+     SIDEBAR FOOTER
+     Footer component for sidebars
+     ========================================================================== */
+
+  .sidebar-footer {
+    @apply py-3 border-t border-black/10 dark:border-white/10 mt-auto;
+  }
+
+  .footer-text {
+    @apply text-xs text-gray-500 dark:text-gray-400 text-center flex flex-col gap-1;
+  }
+
+  .footer-version {
+    @apply text-[0.7rem] opacity-70;
+  }
+
+  /* ==========================================================================
+     APPROVAL BADGE
+     Red notification badge for approvals count
+     ========================================================================== */
+
+  .approval-badge {
+    @apply inline-block ml-2 py-0.5 px-1.5 rounded-full text-[0.7rem] font-semibold
+           bg-red-500 dark:bg-red-400 text-white dark:text-gray-900;
+  }
+
+  /* ==========================================================================
+     VLLM MODEL INFO
+     Display for currently loaded vLLM model
+     ========================================================================== */
+
+  .vllm-model-info {
+    @apply py-0.5 px-2 mb-1;
+  }
+
+  .local-model-name {
+    @apply font-mono text-[0.7rem] text-gray-600 dark:text-gray-400
+           overflow-hidden text-ellipsis whitespace-nowrap max-w-[140px];
+  }
+
+  .loaded-indicator {
+    @apply inline-block text-[0.6rem] ml-1 text-green-500 dark:text-green-400 font-bold;
+  }
+
 }

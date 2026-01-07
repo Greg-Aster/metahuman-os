@@ -1,6 +1,6 @@
 # Autonomous Agents
 
-MetaHuman OS includes a comprehensive suite of **42 autonomous agents** that run as background processes to enrich memories, generate reflections, train models, and maintain the system. These agents are coordinated by the **Scheduler Service** and can be triggered by intervals, time-of-day, events, or user activity.
+MetaHuman OS includes a comprehensive suite of **25 autonomous agents** that run as background processes to enrich memories, generate reflections, train models, and maintain the system. These agents are coordinated by the **Scheduler Service** and can be triggered by intervals, time-of-day, events, or user activity.
 
 > **Source of Truth**: This documentation is generated from actual agent implementations in [`brain/agents/`](../../brain/agents/) as of 2025-11-25.
 

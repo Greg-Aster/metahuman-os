@@ -64,15 +64,7 @@
     'Intense - Questions after 1 minute of conversation inactivity'
   ];
 
-  const curiosityIntervals = [
-    0,     // Level 0: Off
-    3600,  // Level 1: 60 minutes
-    1800,  // Level 2: 30 minutes
-    900,   // Level 3: 15 minutes
-    300,   // Level 4: 5 minutes
-    120,   // Level 5: 2 minutes
-    60     // Level 6: 1 minute
-  ];
+  const curiosityIntervals = [0, 3600, 1800, 900, 300, 120, 60];
 
   // Agent display names and descriptions
   const agentInfo: Record<string, { name: string; description: string; icon: string }> = {
@@ -98,7 +90,6 @@
       const res = await apiFetch('/api/scheduler-config');
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load config');
-
       globalSettings = data.globalSettings;
       agents = data.agents;
     } catch (e) {
@@ -132,7 +123,6 @@
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
-
       feedback = { type: 'success', text: 'Settings saved successfully' };
       setTimeout(() => feedback = null, 3000);
     } catch (e) {
@@ -145,22 +135,16 @@
   async function toggleAgent(agentId: string) {
     const agent = agents[agentId];
     if (!agent) return;
-
     saving = true;
     feedback = null;
     try {
       const res = await apiFetch('/api/scheduler-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agents: {
-            [agentId]: { enabled: !agent.enabled }
-          }
-        }),
+        body: JSON.stringify({ agents: { [agentId]: { enabled: !agent.enabled } } }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update');
-
       agents[agentId].enabled = !agent.enabled;
       agents = { ...agents };
       feedback = { type: 'success', text: `${agentInfo[agentId]?.name || agentId} ${agents[agentId].enabled ? 'enabled' : 'disabled'}` };
@@ -175,22 +159,16 @@
   async function updateAgentInterval(agentId: string, value: number) {
     const agent = agents[agentId];
     if (!agent) return;
-
     saving = true;
     try {
       const updateField = agent.type === 'interval' ? 'interval' : 'inactivityThreshold';
       const res = await apiFetch('/api/scheduler-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agents: {
-            [agentId]: { [updateField]: value }
-          }
-        }),
+        body: JSON.stringify({ agents: { [agentId]: { [updateField]: value } } }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update');
-
       if (agent.type === 'interval') {
         agents[agentId].interval = value;
       } else {
@@ -230,22 +208,13 @@
   }
 
   function getAgentTiming(agent: AgentConfig): string {
-    if (agent.type === 'interval' && agent.interval) {
-      return `Every ${formatInterval(agent.interval)}`;
-    }
-    if (agent.type === 'activity' && agent.inactivityThreshold) {
-      return `After ${formatInterval(agent.inactivityThreshold)} idle`;
-    }
-    if (agent.type === 'time-of-day' && agent.schedule) {
-      return `Daily at ${agent.schedule}`;
-    }
-    if (agent.type === 'manual') {
-      return 'Manual only';
-    }
+    if (agent.type === 'interval' && agent.interval) return `Every ${formatInterval(agent.interval)}`;
+    if (agent.type === 'activity' && agent.inactivityThreshold) return `After ${formatInterval(agent.inactivityThreshold)} idle`;
+    if (agent.type === 'time-of-day' && agent.schedule) return `Daily at ${agent.schedule}`;
+    if (agent.type === 'manual') return 'Manual only';
     return 'Unknown';
   }
 
-  // Group agents by category
   function getAgentsByCategory(): Record<string, string[]> {
     return {
       'Memory & Reflection': ['organizer', 'curator', 'reflector'],
@@ -262,141 +231,128 @@
   });
 </script>
 
-<div class="scheduler-settings">
-  <div class="header">
+<div class="p-6 max-w-[900px] mx-auto">
+  <div class="flex justify-between items-center mb-6">
     <div>
-      <h2>Scheduler Settings</h2>
-      <p>Configure autonomous agent scheduling and timing</p>
+      <h2 class="m-0 mb-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">Scheduler Settings</h2>
+      <p class="m-0 text-sm text-gray-500 dark:text-gray-400">Configure autonomous agent scheduling and timing</p>
     </div>
-    <button class="refresh-btn" on:click={loadConfig} disabled={loading}>
+    <button class="btn-primary" on:click={loadConfig} disabled={loading}>
       {loading ? 'Loading...' : 'Refresh'}
     </button>
   </div>
 
   {#if feedback}
-    <div class="feedback" class:success={feedback.type === 'success'} class:error={feedback.type === 'error'}>
+    <div class="banner {feedback.type === 'success' ? 'banner-success' : 'banner-error'} mb-4">
       {feedback.text}
     </div>
   {/if}
 
   {#if error}
-    <div class="error-banner">
+    <div class="banner banner-error mb-6">
       <strong>Error:</strong> {error}
     </div>
   {:else if loading}
-    <div class="loading">Loading scheduler configuration...</div>
+    <div class="text-center py-8 text-gray-500 dark:text-gray-400">Loading scheduler configuration...</div>
   {:else}
     <!-- Global Settings -->
-    <section class="card">
-      <header>
-        <h3>Global Settings</h3>
-        <p>System-wide scheduler controls</p>
+    <section class="panel mb-4">
+      <header class="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Global Settings</h3>
+        <p class="m-0 text-xs text-gray-500 dark:text-gray-400">System-wide scheduler controls</p>
       </header>
 
-      <div class="settings-grid">
-        <label class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-label">Pause All Agents</span>
-            <span class="toggle-desc">Temporarily stop all scheduled agents</span>
+      <div class="flex flex-col gap-3">
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
+          <div class="flex flex-col gap-0.5">
+            <span class="font-medium text-sm text-gray-900 dark:text-gray-100">Pause All Agents</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Temporarily stop all scheduled agents</span>
           </div>
-          <input type="checkbox" bind:checked={globalSettings.pauseAll} on:change={saveGlobalSettings} />
+          <input type="checkbox" bind:checked={globalSettings.pauseAll} on:change={saveGlobalSettings} class="w-5 h-5 cursor-pointer accent-violet-600" />
         </label>
 
-        <label class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-label">Pause on User Activity</span>
-            <span class="toggle-desc">Suspend agents during active chat sessions</span>
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
+          <div class="flex flex-col gap-0.5">
+            <span class="font-medium text-sm text-gray-900 dark:text-gray-100">Pause on User Activity</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Suspend agents during active chat sessions</span>
           </div>
-          <input type="checkbox" bind:checked={globalSettings.pauseQueueOnActivity} on:change={saveGlobalSettings} />
+          <input type="checkbox" bind:checked={globalSettings.pauseQueueOnActivity} on:change={saveGlobalSettings} class="w-5 h-5 cursor-pointer accent-violet-600" />
         </label>
 
-        <label class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-label">Quiet Hours</span>
-            <span class="toggle-desc">Disable agents during specified hours</span>
+        <label class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
+          <div class="flex flex-col gap-0.5">
+            <span class="font-medium text-sm text-gray-900 dark:text-gray-100">Quiet Hours</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Disable agents during specified hours</span>
           </div>
-          <input type="checkbox" bind:checked={globalSettings.quietHours.enabled} on:change={saveGlobalSettings} />
+          <input type="checkbox" bind:checked={globalSettings.quietHours.enabled} on:change={saveGlobalSettings} class="w-5 h-5 cursor-pointer accent-violet-600" />
         </label>
 
         {#if globalSettings.quietHours.enabled}
-          <div class="time-range">
-            <label class="time-input">
-              <span>Start</span>
-              <input type="time" bind:value={globalSettings.quietHours.start} on:change={saveGlobalSettings} />
+          <div class="flex items-center gap-3 p-3 bg-gray-100 dark:bg-gray-950 rounded-md ml-4">
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Start</span>
+              <input type="time" bind:value={globalSettings.quietHours.start} on:change={saveGlobalSettings} class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" />
             </label>
-            <span class="time-separator">to</span>
-            <label class="time-input">
-              <span>End</span>
-              <input type="time" bind:value={globalSettings.quietHours.end} on:change={saveGlobalSettings} />
+            <span class="text-sm text-gray-500">to</span>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-gray-500 dark:text-gray-400">End</span>
+              <input type="time" bind:value={globalSettings.quietHours.end} on:change={saveGlobalSettings} class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" />
             </label>
           </div>
         {/if}
       </div>
 
-      <div class="concurrency-settings">
-        <h4>Concurrency Limits</h4>
-        <div class="concurrency-grid">
-          <label class="number-input">
-            <span>Max Concurrent Agents</span>
-            <input type="number" min="1" max="10" bind:value={globalSettings.maxConcurrentAgents} on:change={saveGlobalSettings} />
+      <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <h4 class="m-0 mb-3 text-sm font-semibold text-gray-600 dark:text-gray-400">Concurrency Limits</h4>
+        <div class="grid grid-cols-3 gap-4">
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Max Concurrent Agents</span>
+            <input type="number" min="1" max="10" bind:value={globalSettings.maxConcurrentAgents} on:change={saveGlobalSettings} class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-full" />
           </label>
-          <label class="number-input">
-            <span>Max LLM Agents</span>
-            <input type="number" min="1" max="5" bind:value={globalSettings.maxConcurrentLLMAgents} on:change={saveGlobalSettings} />
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Max LLM Agents</span>
+            <input type="number" min="1" max="5" bind:value={globalSettings.maxConcurrentLLMAgents} on:change={saveGlobalSettings} class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-full" />
           </label>
-          <label class="number-input">
-            <span>Activity Resume Delay (s)</span>
-            <input type="number" min="60" max="600" step="30" bind:value={globalSettings.activityResumeDelay} on:change={saveGlobalSettings} />
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Activity Resume Delay (s)</span>
+            <input type="number" min="60" max="600" step="30" bind:value={globalSettings.activityResumeDelay} on:change={saveGlobalSettings} class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-full" />
           </label>
         </div>
       </div>
     </section>
 
     <!-- Mind Wandering (Boredom) -->
-    <section class="card">
-      <header>
-        <h3>Mind Wandering</h3>
-        <p>Internal reflection frequency during idle periods</p>
+    <section class="panel mb-4">
+      <header class="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Mind Wandering</h3>
+        <p class="m-0 text-xs text-gray-500 dark:text-gray-400">Internal reflection frequency during idle periods</p>
       </header>
       <BoredomControl />
     </section>
 
     <!-- Curiosity Settings -->
-    <section class="card">
-      <header>
-        <h3>Curiosity</h3>
-        <p>User-facing questions during conversation gaps</p>
+    <section class="panel mb-4">
+      <header class="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-1 text-lg font-semibold text-gray-900 dark:text-gray-100">Curiosity</h3>
+        <p class="m-0 text-xs text-gray-500 dark:text-gray-400">User-facing questions during conversation gaps</p>
       </header>
 
-      <div class="curiosity-control">
-        <div class="curiosity-slider-wrapper">
-          <label class="slider-label">Curiosity Level</label>
-          <input
-            type="range"
-            min="0"
-            max="6"
-            bind:value={curiosityLevel}
-            on:change={saveCuriositySettings}
-            class="curiosity-slider"
-          />
-          <div class="curiosity-labels">
-            <span>Off</span>
-            <span>Gentle</span>
-            <span>Moderate</span>
-            <span>Active</span>
-            <span>Chatty</span>
-            <span>Very</span>
-            <span>Intense</span>
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Curiosity Level</label>
+          <input type="range" min="0" max="6" bind:value={curiosityLevel} on:change={saveCuriositySettings} class="w-full accent-violet-600 cursor-pointer" />
+          <div class="grid grid-cols-7 text-[0.65rem] text-gray-500 dark:text-gray-400 text-center">
+            <span>Off</span><span>Gentle</span><span>Moderate</span><span>Active</span><span>Chatty</span><span>Very</span><span>Intense</span>
           </div>
         </div>
-        <p class="curiosity-description">
+        <p class="m-0 p-3 text-xs text-gray-600 dark:text-gray-400 bg-violet-500/5 dark:bg-violet-400/10 rounded-md border-l-[3px] border-violet-600 dark:border-violet-400">
           {curiosityLevelDescriptions[curiosityLevel]}
         </p>
 
         {#if curiosityLevel > 0}
-          <div class="research-mode">
-            <label class="field-label">Research Mode</label>
-            <select bind:value={curiosityResearchMode} on:change={saveCuriositySettings}>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Research Mode</label>
+            <select bind:value={curiosityResearchMode} on:change={saveCuriositySettings} class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100">
               <option value="off">Off - Questions only</option>
               <option value="local">Local - Use existing memories</option>
               <option value="web">Web - Allow web searches</option>
@@ -410,27 +366,27 @@
     {#each Object.entries(getAgentsByCategory()) as [category, agentIds]}
       {@const categoryAgents = agentIds.filter(id => agents[id])}
       {#if categoryAgents.length > 0}
-        <section class="card">
-          <header>
-            <h3>{category}</h3>
+        <section class="panel mb-4">
+          <header class="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="m-0 text-lg font-semibold text-gray-900 dark:text-gray-100">{category}</h3>
           </header>
 
-          <div class="agents-list">
+          <div class="flex flex-col gap-2">
             {#each categoryAgents as agentId}
               {@const agent = agents[agentId]}
               {@const info = agentInfo[agentId] || { name: agentId, description: '', icon: '🤖' }}
-              <div class="agent-row" class:disabled={!agent.enabled}>
-                <div class="agent-info">
-                  <span class="agent-icon">{info.icon}</span>
-                  <div class="agent-details">
-                    <span class="agent-name">{info.name}</span>
-                    <span class="agent-desc">{info.description}</span>
+              <div class="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md transition-opacity {!agent.enabled ? 'opacity-60' : ''}">
+                <div class="flex items-center gap-3">
+                  <span class="text-xl w-8 text-center">{info.icon}</span>
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-medium text-sm text-gray-900 dark:text-gray-100">{info.name}</span>
+                    <span class="text-[0.7rem] text-gray-500 dark:text-gray-400">{info.description}</span>
                   </div>
                 </div>
-                <div class="agent-controls">
-                  <span class="agent-timing" class:disabled={!agent.enabled}>
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5 {!agent.enabled ? 'line-through opacity-60' : ''}">
                     {#if agent.usesLLM}
-                      <span class="llm-badge" title="Uses LLM">LLM</span>
+                      <span class="text-[0.6rem] font-semibold px-1.5 py-0.5 bg-violet-500/15 dark:bg-violet-400/20 text-violet-600 dark:text-violet-400 rounded uppercase">LLM</span>
                     {/if}
                     {getAgentTiming(agent)}
                   </span>
@@ -443,19 +399,17 @@
                       value={agent.interval || agent.inactivityThreshold}
                       on:change={(e) => updateAgentInterval(agentId, parseInt(e.currentTarget.value))}
                       disabled={!agent.enabled || saving}
-                      class="interval-input"
+                      class="w-[70px] px-1.5 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs text-center bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Interval in seconds"
                     />
                   {/if}
-                  <label class="toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={agent.enabled}
-                      on:change={() => toggleAgent(agentId)}
-                      disabled={saving}
-                    />
-                    <span class="toggle-slider"></span>
-                  </label>
+                  <input
+                    type="checkbox"
+                    checked={agent.enabled}
+                    on:change={() => toggleAgent(agentId)}
+                    disabled={saving}
+                    class="toggle-switch"
+                  />
                 </div>
               </div>
             {/each}
@@ -465,591 +419,3 @@
     {/each}
   {/if}
 </div>
-
-<style>
-  .scheduler-settings {
-    padding: 1.5rem;
-    max-width: 900px;
-    margin: 0 auto;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .header h2 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  :global(.dark) .header h2 {
-    color: #f3f4f6;
-  }
-
-  .header p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .header p {
-    color: #9ca3af;
-  }
-
-  .refresh-btn {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .feedback {
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .feedback.success {
-    background: rgba(34, 197, 94, 0.15);
-    color: #15803d;
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-
-  :global(.dark) .feedback.success {
-    background: rgba(34, 197, 94, 0.2);
-    color: #86efac;
-  }
-
-  .feedback.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #b91c1c;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  :global(.dark) .feedback.error {
-    background: rgba(239, 68, 68, 0.2);
-    color: #fca5a5;
-  }
-
-  .error-banner {
-    background: #fee;
-    border: 1px solid #fcc;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-    color: #c00;
-  }
-
-  :global(.dark) .error-banner {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 2rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .loading {
-    color: #9ca3af;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .card header {
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .card header {
-    border-bottom-color: #374151;
-  }
-
-  .card h3 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #111827;
-  }
-
-  :global(.dark) .card h3 {
-    color: #f3f4f6;
-  }
-
-  .card h4 {
-    margin: 1rem 0 0.75rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #4b5563;
-  }
-
-  :global(.dark) .card h4 {
-    color: #9ca3af;
-  }
-
-  .card header p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.8rem;
-  }
-
-  :global(.dark) .card header p {
-    color: #9ca3af;
-  }
-
-  .settings-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .toggle-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-
-  :global(.dark) .toggle-row {
-    background: #111827;
-  }
-
-  .toggle-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .toggle-label {
-    font-weight: 500;
-    font-size: 0.875rem;
-    color: #111827;
-  }
-
-  :global(.dark) .toggle-label {
-    color: #f3f4f6;
-  }
-
-  .toggle-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .toggle-desc {
-    color: #9ca3af;
-  }
-
-  .toggle-row input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
-    cursor: pointer;
-    accent-color: #7c3aed;
-  }
-
-  .time-range {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    background: #f3f4f6;
-    border-radius: 6px;
-    margin-left: 1rem;
-  }
-
-  :global(.dark) .time-range {
-    background: #0f172a;
-  }
-
-  .time-input {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .time-input span {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .time-input span {
-    color: #9ca3af;
-  }
-
-  .time-input input {
-    padding: 0.375rem 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    background: white;
-  }
-
-  :global(.dark) .time-input input {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .time-separator {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .concurrency-settings {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .concurrency-settings {
-    border-top-color: #374151;
-  }
-
-  .concurrency-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-  }
-
-  .number-input {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .number-input span {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #4b5563;
-  }
-
-  :global(.dark) .number-input span {
-    color: #9ca3af;
-  }
-
-  .number-input input {
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    background: white;
-    width: 100%;
-  }
-
-  :global(.dark) .number-input input {
-    background: #111827;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  /* Curiosity Controls */
-  .curiosity-control {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .curiosity-slider-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .slider-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #4b5563;
-  }
-
-  :global(.dark) .slider-label {
-    color: #9ca3af;
-  }
-
-  .curiosity-slider {
-    width: 100%;
-    accent-color: #7c3aed;
-    cursor: pointer;
-  }
-
-  .curiosity-labels {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    font-size: 0.65rem;
-    color: #6b7280;
-    text-align: center;
-  }
-
-  :global(.dark) .curiosity-labels {
-    color: #9ca3af;
-  }
-
-  .curiosity-description {
-    font-size: 0.8rem;
-    color: #4b5563;
-    margin: 0;
-    padding: 0.75rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.375rem;
-    border-left: 3px solid #7c3aed;
-  }
-
-  :global(.dark) .curiosity-description {
-    color: #9ca3af;
-    background: rgba(167, 139, 250, 0.08);
-    border-left-color: #a78bfa;
-  }
-
-  .research-mode {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .field-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #4b5563;
-  }
-
-  :global(.dark) .field-label {
-    color: #9ca3af;
-  }
-
-  .research-mode select {
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .research-mode select {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  /* Agents List */
-  .agents-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .agent-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    transition: opacity 0.2s, background 0.2s;
-  }
-
-  :global(.dark) .agent-row {
-    background: #111827;
-  }
-
-  .agent-row.disabled {
-    opacity: 0.6;
-  }
-
-  .agent-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .agent-icon {
-    font-size: 1.25rem;
-    width: 2rem;
-    text-align: center;
-  }
-
-  .agent-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .agent-name {
-    font-weight: 500;
-    font-size: 0.875rem;
-    color: #111827;
-  }
-
-  :global(.dark) .agent-name {
-    color: #f3f4f6;
-  }
-
-  .agent-desc {
-    font-size: 0.7rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .agent-desc {
-    color: #9ca3af;
-  }
-
-  .agent-controls {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .agent-timing {
-    font-size: 0.75rem;
-    color: #6b7280;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
-
-  :global(.dark) .agent-timing {
-    color: #9ca3af;
-  }
-
-  .agent-timing.disabled {
-    text-decoration: line-through;
-    opacity: 0.6;
-  }
-
-  .llm-badge {
-    font-size: 0.6rem;
-    font-weight: 600;
-    padding: 0.125rem 0.375rem;
-    background: rgba(124, 58, 237, 0.15);
-    color: #7c3aed;
-    border-radius: 4px;
-    text-transform: uppercase;
-  }
-
-  :global(.dark) .llm-badge {
-    background: rgba(167, 139, 250, 0.2);
-    color: #a78bfa;
-  }
-
-  .interval-input {
-    width: 70px;
-    padding: 0.25rem 0.375rem;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    text-align: center;
-    background: white;
-  }
-
-  :global(.dark) .interval-input {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .interval-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Toggle Switch */
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 40px;
-    height: 22px;
-  }
-
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #cbd5e1;
-    transition: 0.3s;
-    border-radius: 22px;
-  }
-
-  .toggle-slider:before {
-    position: absolute;
-    content: "";
-    height: 16px;
-    width: 16px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
-    border-radius: 50%;
-  }
-
-  .toggle-switch input:checked + .toggle-slider {
-    background-color: #7c3aed;
-  }
-
-  .toggle-switch input:checked + .toggle-slider:before {
-    transform: translateX(18px);
-  }
-
-  .toggle-switch input:disabled + .toggle-slider {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  :global(.dark) .toggle-slider {
-    background-color: #374151;
-  }
-
-  :global(.dark) .toggle-slider:before {
-    background-color: #9ca3af;
-  }
-
-  :global(.dark) .toggle-switch input:checked + .toggle-slider {
-    background-color: #a78bfa;
-  }
-
-  :global(.dark) .toggle-switch input:checked + .toggle-slider:before {
-    background-color: white;
-  }
-</style>

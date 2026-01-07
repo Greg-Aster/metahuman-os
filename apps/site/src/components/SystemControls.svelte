@@ -176,112 +176,112 @@
   });
 </script>
 
-<div class="system-controls">
-  <div class="header">
+<div class="p-6 max-w-[1400px] mx-auto">
+  <div class="flex justify-between items-center mb-6">
     <div>
-      <h2>⚙️ System Controls</h2>
-      <p>Agent triggers, automation settings, and training configuration.</p>
+      <h2 class="m-0 mb-1 text-2xl font-semibold">⚙️ System Controls</h2>
+      <p class="m-0 text-gray-500 text-sm">Agent triggers, automation settings, and training configuration.</p>
     </div>
-    <button class="refresh-btn" on:click={loadData} disabled={loading}>
+    <button class="bg-blue-500 text-white border-none px-4 py-2 rounded-md cursor-pointer font-medium transition-colors hover:enabled:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={loadData} disabled={loading}>
       {loading ? 'Refreshing…' : '↻ Refresh'}
     </button>
   </div>
 
   {#if error}
-    <div class="error-banner">
+    <div class="bg-red-100 border border-red-300 rounded-md p-4 mb-6 text-red-700 flex justify-between items-center">
       <strong>⚠️ Error:</strong> {error}
-      <button class="error-dismiss" on:click={() => error = null}>×</button>
+      <button class="bg-transparent border-none text-2xl cursor-pointer text-red-700 px-2" on:click={() => error = null}>×</button>
     </div>
   {/if}
 
   <!-- Agent Controls -->
-  <section class="card">
-    <header>
-      <h3>🤖 Background Agents</h3>
-      <p>Manually trigger autonomous agents and services.</p>
+  <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+    <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+      <h3 class="m-0 mb-1 text-lg font-semibold">🤖 Background Agents</h3>
+      <p class="m-0 text-gray-500 text-sm">Manually trigger autonomous agents and services.</p>
     </header>
-    <div class="actions-grid">
-      <button class="action-btn" on:click={runBuilderNow} disabled={working}>
-        <div class="action-icon">📦</div>
-        <div class="action-label">Run Builder</div>
-        <div class="action-desc">Generate training dataset</div>
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={runBuilderNow} disabled={working}>
+        <div class="text-[2rem] mb-2">📦</div>
+        <div class="font-semibold text-sm mb-1">Run Builder</div>
+        <div class="text-xs text-gray-500">Generate training dataset</div>
       </button>
-      <button class="action-btn" on:click={runDreamerNow} disabled={working}>
-        <div class="action-icon">💭</div>
-        <div class="action-label">Run Dreamer</div>
-        <div class="action-desc">Generate dream memories</div>
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={runDreamerNow} disabled={working}>
+        <div class="text-[2rem] mb-2">💭</div>
+        <div class="font-semibold text-sm mb-1">Run Dreamer</div>
+        <div class="text-xs text-gray-500">Generate dream memories</div>
       </button>
-      <button class="action-btn" on:click={runNightProcessorNow} disabled={working}>
-        <div class="action-icon">🌙</div>
-        <div class="action-label">Night Processor</div>
-        <div class="action-desc">Transcribe & organize audio</div>
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={runNightProcessorNow} disabled={working}>
+        <div class="text-[2rem] mb-2">🌙</div>
+        <div class="font-semibold text-sm mb-1">Night Processor</div>
+        <div class="text-xs text-gray-500">Transcribe & organize audio</div>
       </button>
-      <button class="action-btn" on:click={startSleepService} disabled={working}>
-        <div class="action-icon">😴</div>
-        <div class="action-label">Sleep Service</div>
-        <div class="action-desc">Start nightly automation</div>
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={startSleepService} disabled={working}>
+        <div class="text-[2rem] mb-2">😴</div>
+        <div class="font-semibold text-sm mb-1">Sleep Service</div>
+        <div class="text-xs text-gray-500">Start nightly automation</div>
       </button>
-      <button class="action-btn" on:click={exportConversationsNow} disabled={working}>
-        <div class="action-icon">💾</div>
-        <div class="action-label">Export Conversations</div>
-        <div class="action-desc">Export chat history</div>
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={exportConversationsNow} disabled={working}>
+        <div class="text-[2rem] mb-2">💾</div>
+        <div class="font-semibold text-sm mb-1">Export Conversations</div>
+        <div class="text-xs text-gray-500">Export chat history</div>
       </button>
-      <button class="action-btn highlight" on:click={mergeHistoricalAdapters} disabled={working}>
-        <div class="action-icon">🔀</div>
-        <div class="action-label">Merge Adapters</div>
-        <div class="action-desc">Consolidate historical adapters</div>
+      <button class="bg-amber-50 dark:bg-amber-950 border-2 border-amber-500 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={mergeHistoricalAdapters} disabled={working}>
+        <div class="text-[2rem] mb-2">🔀</div>
+        <div class="font-semibold text-sm mb-1">Merge Adapters</div>
+        <div class="text-xs text-gray-500">Consolidate historical adapters</div>
       </button>
     </div>
   </section>
 
   <!-- System Toggles -->
-  <section class="card">
-    <header>
-      <h3>🔧 System Configuration</h3>
-      <p>Core system settings and toggles.</p>
+  <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+    <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+      <h3 class="m-0 mb-1 text-lg font-semibold">🔧 System Configuration</h3>
+      <p class="m-0 text-gray-500 text-sm">Core system settings and toggles.</p>
     </header>
-    <div class="config-grid">
-      <label class="switch-row">
+    <div class="flex flex-col gap-4">
+      <label class="flex justify-between items-center p-4 bg-gray-50 dark:bg-gray-900 rounded-md cursor-pointer">
         <div>
-          <div class="switch-label">Enable LoRA Training</div>
-          <div class="switch-desc">Allow nightly LoRA adapter training</div>
+          <div class="font-semibold text-sm mb-1">Enable LoRA Training</div>
+          <div class="text-xs text-gray-500">Allow nightly LoRA adapter training</div>
         </div>
-        <input type="checkbox" checked={loraEnabled} on:change={onToggleLoraEnabled} disabled={working} />
+        <input type="checkbox" checked={loraEnabled} on:change={onToggleLoraEnabled} disabled={working} class="cursor-pointer w-5 h-5" />
       </label>
     </div>
   </section>
 
   <!-- Training Data Configuration -->
   {#if trainingConfig}
-    <section class="card">
-      <header>
-        <h3>📊 Training Data Configuration</h3>
-        <p>Configure data collection and curation settings for training.</p>
+    <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+      <header class="mb-4 border-b border-gray-200 dark:border-gray-700 pb-3">
+        <h3 class="m-0 mb-1 text-lg font-semibold">📊 Training Data Configuration</h3>
+        <p class="m-0 text-gray-500 text-sm">Configure data collection and curation settings for training.</p>
       </header>
 
       <!-- Quick Presets -->
-      <div class="presets-row">
-        <div class="presets-label">Quick Presets:</div>
-        <button class="preset-btn" on:click={() => applyPhasePreset('phase1_conservative')} disabled={updatingTrainingConfig}>
-          <span class="preset-name">Phase 1: Conservative</span>
-          <span class="preset-desc">~1000 samples</span>
+      <div class="flex items-center gap-4 mb-6 p-4 bg-gray-50 dark:bg-gray-900 rounded-md flex-wrap">
+        <div class="font-semibold text-sm">Quick Presets:</div>
+        <button class="flex flex-col py-3 px-4 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-md cursor-pointer transition-all hover:enabled:border-blue-500 hover:enabled:-translate-y-px disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => applyPhasePreset('phase1_conservative')} disabled={updatingTrainingConfig}>
+          <span class="font-semibold text-sm mb-1">Phase 1: Conservative</span>
+          <span class="text-xs text-gray-500">~1000 samples</span>
         </button>
-        <button class="preset-btn" on:click={() => applyPhasePreset('phase2_optimal')} disabled={updatingTrainingConfig}>
-          <span class="preset-name">Phase 2: Optimal</span>
-          <span class="preset-desc">~3000 samples</span>
+        <button class="flex flex-col py-3 px-4 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-md cursor-pointer transition-all hover:enabled:border-blue-500 hover:enabled:-translate-y-px disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => applyPhasePreset('phase2_optimal')} disabled={updatingTrainingConfig}>
+          <span class="font-semibold text-sm mb-1">Phase 2: Optimal</span>
+          <span class="text-xs text-gray-500">~3000 samples</span>
         </button>
-        <button class="preset-btn" on:click={() => applyPhasePreset('phase3_maximum')} disabled={updatingTrainingConfig}>
-          <span class="preset-name">Phase 3: Maximum</span>
-          <span class="preset-desc">~5000 samples</span>
+        <button class="flex flex-col py-3 px-4 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-md cursor-pointer transition-all hover:enabled:border-blue-500 hover:enabled:-translate-y-px disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => applyPhasePreset('phase3_maximum')} disabled={updatingTrainingConfig}>
+          <span class="font-semibold text-sm mb-1">Phase 3: Maximum</span>
+          <span class="text-xs text-gray-500">~5000 samples</span>
         </button>
       </div>
 
       <!-- Configuration Grid -->
-      <div class="training-config-grid">
-        <div class="config-section">
-          <h4>Curator Settings</h4>
-          <div class="form-row">
-            <label for="batch-size">Batch Size:</label>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6 mb-4">
+        <div class="p-4 bg-gray-50 dark:bg-gray-900 rounded-md">
+          <h4 class="m-0 mb-3 text-base font-semibold text-gray-500">Curator Settings</h4>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="batch-size" class="font-medium text-sm">Batch Size:</label>
             <input
               id="batch-size"
               type="number"
@@ -291,11 +291,12 @@
               value={trainingConfig.curator.batchSize}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ curator: { batchSize: parseInt(e.currentTarget.value) } })}
+              class="p-2 border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 dark:text-gray-100"
             />
-            <span class="help-hint">Samples per curator call (10-200)</span>
+            <span class="text-xs text-gray-500">Samples per curator call (10-200)</span>
           </div>
-          <div class="form-row">
-            <label for="quality-threshold">Quality Threshold:</label>
+          <div class="flex flex-col gap-2">
+            <label for="quality-threshold" class="font-medium text-sm">Quality Threshold:</label>
             <input
               id="quality-threshold"
               type="number"
@@ -305,15 +306,16 @@
               value={trainingConfig.curator.qualityThreshold}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ curator: { qualityThreshold: parseFloat(e.currentTarget.value) } })}
+              class="p-2 border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 dark:text-gray-100"
             />
-            <span class="help-hint">Min quality score (0-10)</span>
+            <span class="text-xs text-gray-500">Min quality score (0-10)</span>
           </div>
         </div>
 
-        <div class="config-section">
-          <h4>Collection Settings</h4>
-          <div class="form-row">
-            <label for="max-samples">Max Samples/Source:</label>
+        <div class="p-4 bg-gray-50 dark:bg-gray-900 rounded-md">
+          <h4 class="m-0 mb-3 text-base font-semibold text-gray-500">Collection Settings</h4>
+          <div class="flex flex-col gap-2">
+            <label for="max-samples" class="font-medium text-sm">Max Samples/Source:</label>
             <input
               id="max-samples"
               type="number"
@@ -323,347 +325,19 @@
               value={trainingConfig.collection.maxSamplesPerSource}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ collection: { maxSamplesPerSource: parseInt(e.currentTarget.value) } })}
+              class="p-2 border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 dark:text-gray-100"
             />
-            <span class="help-hint">Max samples per type (100-10000)</span>
+            <span class="text-xs text-gray-500">Max samples per type (100-10000)</span>
           </div>
         </div>
       </div>
 
-      <div class="current-config">
+      <div class="p-4 bg-gray-50 dark:bg-gray-900 rounded-md text-sm">
         <strong>Current:</strong>
-        Batch size: <span class="highlight">{trainingConfig.curator.batchSize}</span> |
-        Max samples: <span class="highlight">{trainingConfig.collection.maxSamplesPerSource}</span> |
-        Quality: <span class="highlight">{trainingConfig.curator.qualityThreshold}</span>
+        Batch size: <span class="text-blue-500 font-semibold">{trainingConfig.curator.batchSize}</span> |
+        Max samples: <span class="text-blue-500 font-semibold">{trainingConfig.collection.maxSamplesPerSource}</span> |
+        Quality: <span class="text-blue-500 font-semibold">{trainingConfig.curator.qualityThreshold}</span>
       </div>
     </section>
   {/if}
 </div>
-
-<style>
-  .system-controls {
-    padding: 1.5rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .header h2 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
-
-  .header p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .refresh-btn {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-banner {
-    background: #fee;
-    border: 1px solid #fcc;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-    color: #c00;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .error-dismiss {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: #c00;
-    padding: 0 0.5rem;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .card header {
-    margin-bottom: 1rem;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 0.75rem;
-  }
-
-  :global(.dark) .card header {
-    border-bottom-color: #374151;
-  }
-
-  .card h3 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .card h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #6b7280;
-  }
-
-  .card p {
-    margin: 0;
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .actions-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-  }
-
-  .action-btn {
-    background: white;
-    border: 2px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1.25rem 1rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
-  }
-
-  :global(.dark) .action-btn {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .action-btn:hover:not(:disabled) {
-    border-color: #3b82f6;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .action-btn.highlight {
-    border-color: #f59e0b;
-    background: #fffbeb;
-  }
-
-  :global(.dark) .action-btn.highlight {
-    background: #422006;
-    border-color: #f59e0b;
-  }
-
-  .action-icon {
-    font-size: 2rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .action-label {
-    font-weight: 600;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .action-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .config-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .switch-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-
-  :global(.dark) .switch-row {
-    background: #111827;
-  }
-
-  .switch-label {
-    font-weight: 600;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .switch-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .switch-row input[type="checkbox"] {
-    cursor: pointer;
-    width: 20px;
-    height: 20px;
-  }
-
-  .presets-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    flex-wrap: wrap;
-  }
-
-  :global(.dark) .presets-row {
-    background: #111827;
-  }
-
-  .presets-label {
-    font-weight: 600;
-    font-size: 0.875rem;
-  }
-
-  .preset-btn {
-    display: flex;
-    flex-direction: column;
-    padding: 0.75rem 1rem;
-    background: white;
-    border: 2px solid #e5e7eb;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .preset-btn {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .preset-btn:hover:not(:disabled) {
-    border-color: #3b82f6;
-    transform: translateY(-1px);
-  }
-
-  .preset-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .preset-name {
-    font-weight: 600;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .preset-desc {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .training-config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .config-section {
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 6px;
-  }
-
-  :global(.dark) .config-section {
-    background: #111827;
-  }
-
-  .form-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .form-row:last-child {
-    margin-bottom: 0;
-  }
-
-  .form-row label {
-    font-weight: 500;
-    font-size: 0.875rem;
-  }
-
-  .form-row input[type="number"] {
-    padding: 0.5rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    background: white;
-  }
-
-  :global(.dark) .form-row input[type="number"] {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .help-hint {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .current-config {
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .current-config {
-    background: #111827;
-  }
-
-  .highlight {
-    color: #3b82f6;
-    font-weight: 600;
-  }
-</style>

@@ -32,7 +32,11 @@
 		"start": "cd apps/site && pnpm preview",
 		"mobile:dev": "cd apps/mobile && ./scripts/dev.sh",
 		"mobile:sync": "cd apps/mobile && npx cap sync",
-		"mobile:open": "cd apps/mobile && npx cap open android"
+		"mobile:open": "cd apps/mobile && npx cap open android",
+		"desktop": "pnpm --filter @metahuman/electron start",
+		"desktop:dev": "pnpm --filter @metahuman/electron dev",
+		"desktop:package": "pnpm --filter @metahuman/electron package",
+		"desktop:make": "pnpm --filter @metahuman/electron make"
 	},
 	"dependencies": {
 		"dotenv": "^17.2.3",

@@ -24,70 +24,70 @@
   }
 </script>
 
-<div class="dialog-overlay" on:click={onDiscard}>
-  <div class="dialog-content" on:click|stopPropagation>
-    <div class="dialog-header">
-      <h2>Review Persona Changes</h2>
-      <button class="close-btn" on:click={onDiscard}>×</button>
+<div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[1000] p-8" on:click={onDiscard}>
+  <div class="bg-gray-800 rounded-lg max-w-[900px] w-full max-h-[90vh] flex flex-col text-gray-200" on:click|stopPropagation>
+    <div class="p-6 border-b border-gray-700 flex justify-between items-center">
+      <h2 class="m-0 text-gray-50">Review Persona Changes</h2>
+      <button class="bg-transparent border-none text-gray-400 text-[2rem] cursor-pointer p-0 w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 hover:text-gray-50" on:click={onDiscard}>×</button>
     </div>
 
-    <div class="dialog-body">
+    <div class="p-6 overflow-y-auto flex-1">
       <!-- Summary Stats -->
-      <div class="summary-stats">
-        <div class="stat">
-          <span class="stat-label">Additions</span>
-          <span class="stat-value add">{reviewData.diff.summary.additions}</span>
+      <div class="flex gap-4 mb-6">
+        <div class="flex-1 bg-gray-900 p-4 rounded-md text-center">
+          <span class="block text-xs text-gray-400 mb-2 uppercase tracking-wide">Additions</span>
+          <span class="block text-2xl font-bold text-emerald-500">{reviewData.diff.summary.additions}</span>
         </div>
-        <div class="stat">
-          <span class="stat-label">Updates</span>
-          <span class="stat-value update">{reviewData.diff.summary.updates}</span>
+        <div class="flex-1 bg-gray-900 p-4 rounded-md text-center">
+          <span class="block text-xs text-gray-400 mb-2 uppercase tracking-wide">Updates</span>
+          <span class="block text-2xl font-bold text-blue-500">{reviewData.diff.summary.updates}</span>
         </div>
-        <div class="stat">
-          <span class="stat-label">Confidence</span>
-          <span class="stat-value">{Math.round(reviewData.confidence * 100)}%</span>
+        <div class="flex-1 bg-gray-900 p-4 rounded-md text-center">
+          <span class="block text-xs text-gray-400 mb-2 uppercase tracking-wide">Confidence</span>
+          <span class="block text-2xl font-bold text-gray-50">{Math.round(reviewData.confidence * 100)}%</span>
         </div>
       </div>
 
       <!-- Diff Preview -->
-      <div class="section">
-        <div class="section-header">
-          <h3>Changes Preview</h3>
-          <button class="toggle-btn" on:click={() => (showFullDiff = !showFullDiff)}>
+      <div class="mb-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="m-0 text-gray-50 text-base">Changes Preview</h3>
+          <button class="px-4 py-2 bg-gray-700 text-gray-200 border-none rounded-md cursor-pointer text-[0.85rem] hover:bg-gray-600" on:click={() => (showFullDiff = !showFullDiff)}>
             {showFullDiff ? 'Show Summary' : 'Show Full Diff'}
           </button>
         </div>
 
         {#if showFullDiff}
-          <div class="diff-text">
-            <pre>{reviewData.diff.text}</pre>
+          <div class="bg-gray-900 rounded-md p-4 overflow-x-auto">
+            <pre class="m-0 font-mono text-[0.85rem] leading-relaxed text-gray-200">{reviewData.diff.text}</pre>
           </div>
         {:else}
-          <div class="diff-changes">
+          <div class="flex flex-col gap-3">
             {#each reviewData.diff.changes.slice(0, 5) as change}
               {#if change.action !== 'no-change'}
-                <div class="diff-item {change.action}">
-                  <div class="diff-field">{change.field}</div>
-                  <div class="diff-action">{change.action.toUpperCase()}</div>
+                <div class="bg-gray-900 border-l-[3px] p-4 rounded-md {change.action === 'add' ? 'border-l-emerald-500' : change.action === 'update' ? 'border-l-blue-500' : 'border-l-red-500'}">
+                  <div class="font-semibold text-gray-50 mb-2">{change.field}</div>
+                  <div class="inline-block px-2 py-1 bg-gray-700 rounded text-xs font-semibold mb-3">{change.action.toUpperCase()}</div>
                   {#if change.action === 'add'}
-                    <div class="diff-value">
-                      <span class="label">New:</span>
-                      <span class="value">{formatValue(change.newValue)}</span>
+                    <div class="mb-2 text-[0.9rem]">
+                      <span class="text-gray-400 mr-2">New:</span>
+                      <span class="text-gray-200 font-mono">{formatValue(change.newValue)}</span>
                     </div>
                   {:else if change.action === 'update'}
-                    <div class="diff-value">
-                      <span class="label">Old:</span>
-                      <span class="value">{formatValue(change.oldValue)}</span>
+                    <div class="mb-2 text-[0.9rem]">
+                      <span class="text-gray-400 mr-2">Old:</span>
+                      <span class="text-gray-200 font-mono">{formatValue(change.oldValue)}</span>
                     </div>
-                    <div class="diff-value">
-                      <span class="label">New:</span>
-                      <span class="value">{formatValue(change.newValue)}</span>
+                    <div class="mb-2 text-[0.9rem]">
+                      <span class="text-gray-400 mr-2">New:</span>
+                      <span class="text-gray-200 font-mono">{formatValue(change.newValue)}</span>
                     </div>
                   {/if}
                 </div>
               {/if}
             {/each}
             {#if reviewData.diff.changes.length > 5}
-              <div class="more-changes">
+              <div class="text-center text-gray-400 text-[0.85rem] italic p-2">
                 + {reviewData.diff.changes.length - 5} more changes
               </div>
             {/if}
@@ -96,20 +96,21 @@
       </div>
 
       <!-- Merge Strategy Selector -->
-      <div class="section">
-        <h3>Merge Strategy</h3>
-        <div class="strategy-options">
+      <div class="mb-6">
+        <h3 class="m-0 mb-4 text-gray-50 text-base">Merge Strategy</h3>
+        <div class="flex flex-col gap-3">
           {#each Object.entries(strategyDescriptions) as [strategy, description]}
-            <label class="strategy-option">
+            <label class="flex items-start gap-3 p-4 bg-gray-900 rounded-md cursor-pointer border-2 border-transparent transition-all hover:bg-gray-800 hover:border-gray-700 has-[input:checked]:border-blue-500 has-[input:checked]:bg-blue-900">
               <input
                 type="radio"
                 name="strategy"
                 value={strategy}
                 bind:group={selectedStrategy}
+                class="mt-1 cursor-pointer"
               />
-              <div class="strategy-details">
-                <span class="strategy-name">{strategy}</span>
-                <span class="strategy-desc">{description}</span>
+              <div class="flex flex-col gap-1">
+                <span class="font-semibold text-gray-50 capitalize">{strategy}</span>
+                <span class="text-[0.85rem] text-gray-400">{description}</span>
               </div>
             </label>
           {/each}
@@ -117,19 +118,19 @@
       </div>
 
       <!-- Optional: Transcript View -->
-      <div class="section">
-        <button class="toggle-btn" on:click={() => (showTranscript = !showTranscript)}>
+      <div class="mb-6">
+        <button class="px-4 py-2 bg-gray-700 text-gray-200 border-none rounded-md cursor-pointer text-[0.85rem] hover:bg-gray-600" on:click={() => (showTranscript = !showTranscript)}>
           {showTranscript ? 'Hide' : 'View'} Full Transcript
         </button>
 
         {#if showTranscript}
-          <div class="transcript">
-            <p class="transcript-note">
+          <div class="mt-4">
+            <p class="m-0 mb-3 text-gray-400 text-[0.85rem] italic">
               Interview transcript (not included in persona data)
             </p>
-            <div class="transcript-content">
+            <div class="bg-gray-900 rounded-md p-4 max-h-[400px] overflow-y-auto">
               {#if reviewData.extracted}
-                <pre>{JSON.stringify(reviewData.extracted, null, 2)}</pre>
+                <pre class="m-0 font-mono text-[0.85rem] leading-relaxed text-gray-200">{JSON.stringify(reviewData.extracted, null, 2)}</pre>
               {/if}
             </div>
           </div>
@@ -137,343 +138,13 @@
       </div>
     </div>
 
-    <div class="dialog-footer">
-      <button class="secondary" on:click={onDiscard}>
+    <div class="p-6 border-t border-gray-700 flex gap-4 justify-end">
+      <button class="px-6 py-3 rounded-md border-none text-[0.95rem] cursor-pointer transition-all bg-gray-700 text-gray-200 hover:bg-gray-600" on:click={onDiscard}>
         Cancel
       </button>
-      <button class="primary" on:click={() => onApply(selectedStrategy)}>
+      <button class="px-6 py-3 rounded-md border-none text-[0.95rem] cursor-pointer transition-all bg-blue-500 text-white hover:bg-blue-600" on:click={() => onApply(selectedStrategy)}>
         Apply Changes ({selectedStrategy})
       </button>
     </div>
   </div>
 </div>
-
-<style>
-  .dialog-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 2rem;
-  }
-
-  .dialog-content {
-    background: #1f2937;
-    border-radius: 0.5rem;
-    max-width: 900px;
-    width: 100%;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    color: #e5e7eb;
-  }
-
-  .dialog-header {
-    padding: 1.5rem;
-    border-bottom: 1px solid #374151;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .dialog-header h2 {
-    margin: 0;
-    color: #f9fafb;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    color: #9ca3af;
-    font-size: 2rem;
-    cursor: pointer;
-    padding: 0;
-    width: 2rem;
-    height: 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0.25rem;
-  }
-
-  .close-btn:hover {
-    background: #374151;
-    color: #f9fafb;
-  }
-
-  .dialog-body {
-    padding: 1.5rem;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .summary-stats {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .stat {
-    flex: 1;
-    background: #111827;
-    padding: 1rem;
-    border-radius: 0.375rem;
-    text-align: center;
-  }
-
-  .stat-label {
-    display: block;
-    font-size: 0.75rem;
-    color: #9ca3af;
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .stat-value {
-    display: block;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #f9fafb;
-  }
-
-  .stat-value.add {
-    color: #10b981;
-  }
-
-  .stat-value.update {
-    color: #3b82f6;
-  }
-
-  .section {
-    margin-bottom: 1.5rem;
-  }
-
-  .section h3 {
-    margin: 0 0 1rem 0;
-    color: #f9fafb;
-    font-size: 1rem;
-  }
-
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .section-header h3 {
-    margin: 0;
-  }
-
-  .toggle-btn {
-    padding: 0.5rem 1rem;
-    background: #374151;
-    color: #e5e7eb;
-    border: none;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-
-  .toggle-btn:hover {
-    background: #4b5563;
-  }
-
-  .diff-text {
-    background: #111827;
-    border-radius: 0.375rem;
-    padding: 1rem;
-    overflow-x: auto;
-  }
-
-  .diff-text pre {
-    margin: 0;
-    font-family: 'Courier New', monospace;
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: #e5e7eb;
-  }
-
-  .diff-changes {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .diff-item {
-    background: #111827;
-    border-left: 3px solid;
-    padding: 1rem;
-    border-radius: 0.375rem;
-  }
-
-  .diff-item.add {
-    border-left-color: #10b981;
-  }
-
-  .diff-item.update {
-    border-left-color: #3b82f6;
-  }
-
-  .diff-item.remove {
-    border-left-color: #ef4444;
-  }
-
-  .diff-field {
-    font-weight: 600;
-    color: #f9fafb;
-    margin-bottom: 0.5rem;
-  }
-
-  .diff-action {
-    display: inline-block;
-    padding: 0.25rem 0.5rem;
-    background: #374151;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-  }
-
-  .diff-value {
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
-  }
-
-  .diff-value .label {
-    color: #9ca3af;
-    margin-right: 0.5rem;
-  }
-
-  .diff-value .value {
-    color: #e5e7eb;
-    font-family: monospace;
-  }
-
-  .more-changes {
-    text-align: center;
-    color: #9ca3af;
-    font-size: 0.85rem;
-    font-style: italic;
-    padding: 0.5rem;
-  }
-
-  .strategy-options {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .strategy-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: #111827;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: all 0.2s;
-  }
-
-  .strategy-option:hover {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .strategy-option:has(input:checked) {
-    border-color: #3b82f6;
-    background: #1e3a8a;
-  }
-
-  .strategy-option input[type='radio'] {
-    margin-top: 0.25rem;
-    cursor: pointer;
-  }
-
-  .strategy-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .strategy-name {
-    font-weight: 600;
-    color: #f9fafb;
-    text-transform: capitalize;
-  }
-
-  .strategy-desc {
-    font-size: 0.85rem;
-    color: #9ca3af;
-  }
-
-  .transcript {
-    margin-top: 1rem;
-  }
-
-  .transcript-note {
-    margin: 0 0 0.75rem 0;
-    color: #9ca3af;
-    font-size: 0.85rem;
-    font-style: italic;
-  }
-
-  .transcript-content {
-    background: #111827;
-    border-radius: 0.375rem;
-    padding: 1rem;
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
-  .transcript-content pre {
-    margin: 0;
-    font-family: 'Courier New', monospace;
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: #e5e7eb;
-  }
-
-  .dialog-footer {
-    padding: 1.5rem;
-    border-top: 1px solid #374151;
-    display: flex;
-    gap: 1rem;
-    justify-content: flex-end;
-  }
-
-  button {
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.375rem;
-    border: none;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  button.primary {
-    background: #3b82f6;
-    color: white;
-  }
-
-  button.primary:hover {
-    background: #2563eb;
-  }
-
-  button.secondary {
-    background: #374151;
-    color: #e5e7eb;
-  }
-
-  button.secondary:hover {
-    background: #4b5563;
-  }
-</style>

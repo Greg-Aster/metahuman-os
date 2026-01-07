@@ -179,6 +179,59 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 }
 
 // ============================================================================
+// Real-time Event Queue for SSE Streaming
+// ============================================================================
+
+/**
+ * Simple async queue that allows pushing events and iterating over them in real-time.
+ * Events can be pushed from callbacks while the generator yields them to the stream.
+ */
+class AsyncEventQueue {
+  private queue: string[] = [];
+  private resolvers: Array<(value: IteratorResult<string>) => void> = [];
+  private done = false;
+
+  push(event: string): void {
+    if (this.done) return;
+
+    if (this.resolvers.length > 0) {
+      // A consumer is waiting - resolve immediately
+      const resolver = this.resolvers.shift()!;
+      resolver({ value: event, done: false });
+    } else {
+      // No consumer waiting - queue the event
+      this.queue.push(event);
+    }
+  }
+
+  finish(): void {
+    this.done = true;
+    // Resolve any waiting consumers with done=true
+    while (this.resolvers.length > 0) {
+      const resolver = this.resolvers.shift()!;
+      resolver({ value: undefined as any, done: true });
+    }
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<string> {
+    while (true) {
+      if (this.queue.length > 0) {
+        yield this.queue.shift()!;
+      } else if (this.done) {
+        return;
+      } else {
+        // Wait for next event
+        const event = await new Promise<IteratorResult<string>>(resolve => {
+          this.resolvers.push(resolve);
+        });
+        if (event.done) return;
+        yield event.value;
+      }
+    }
+  }
+}
+
+// ============================================================================
 // Graph Execution with SSE Streaming
 // ============================================================================
 
@@ -189,18 +242,28 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     return `data: ${JSON.stringify({ type, data })}\n\n`;
   };
 
+  // Create real-time event queue for streaming
+  const eventQueue = new AsyncEventQueue();
+
   try {
-    // Load graph
+    // Load graph - pass username so Big Brother config can be checked properly
     yield push('progress', { step: 'loading_graph', message: 'Loading cognitive workflow...' });
 
     const graphKey = cognitiveMode || mode;
-    const loaded = await loadGraphForMode(graphKey);
+    const loaded = await loadGraphForMode(graphKey, userContext?.username);
     if (!loaded) {
       yield push('error', { message: 'Failed to load cognitive graph' });
       return;
     }
 
-    yield push('progress', { step: 'graph_loaded', message: `Executing ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
+    // Show whether Big Brother mode is active for better user feedback
+    const isBigBrotherGraph = loaded.graph.name?.toLowerCase().includes('big brother') || loaded.source?.includes('bigbrother');
+    if (isBigBrotherGraph) {
+      yield push('progress', { step: 'graph_loaded', message: `🤖 Big Brother Mode: ${loaded.graph.name}` });
+      yield push('progress', { step: 'big_brother_init', message: '🔧 Initializing Claude Code terminal...' });
+    } else {
+      yield push('progress', { step: 'graph_loaded', message: `Executing ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
+    }
 
     const timeoutMs = 300000; // 5 minutes
     const contextData = {
@@ -233,9 +296,6 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const executionEvents: any[] = [];
     let lastProgressTime = Date.now();
 
-    // Collect events we need to yield
-    const pendingEvents: string[] = [];
-
     const eventHandler = (event: any) => {
       executionEvents.push(event);
 
@@ -243,6 +303,37 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       const cancellationStatus = checkCancellation(sessionId);
       if (cancellationStatus.cancelled) {
         throw new Error('CANCELLATION_REQUESTED');
+      }
+
+      // Forward Big Brother streaming events immediately via real-time queue
+      // These come from task-execution.node.ts via context.emitEvent()
+      if (event.type === 'big_brother_output') {
+        eventQueue.push(push('big_brother_output', {
+          chunk: event.data?.chunk || '',
+          timestamp: Date.now(),
+          sessionId,
+        }));
+      } else if (event.type === 'big_brother_waiting') {
+        eventQueue.push(push('big_brother_waiting', {
+          question: event.data?.question || '',
+          timestamp: Date.now(),
+          sessionId,
+        }));
+      } else if (event.type === 'big_brother_complete') {
+        eventQueue.push(push('big_brother_complete', {
+          success: event.data?.success ?? true,
+          error: event.data?.error,
+          timestamp: Date.now(),
+          sessionId,
+        }));
+      } else if (event.type === 'progress') {
+        // Forward progress events from nodes (Big Brother status updates, etc.)
+        eventQueue.push(push('progress', {
+          step: event.data?.step || 'unknown',
+          message: event.data?.message || 'Processing...',
+          timestamp: Date.now(),
+          sessionId,
+        }));
       }
 
       const now = Date.now();
@@ -267,14 +358,14 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
             friendlyMessage = '💭 Generating response...';
           }
 
-          pendingEvents.push(push('progress', {
+          eventQueue.push(push('progress', {
             step: 'node_executing',
             message: friendlyMessage,
             nodeId: event.nodeId,
             nodeType,
           }));
         } else if (event.type === 'node_error') {
-          pendingEvents.push(push('progress', {
+          eventQueue.push(push('progress', {
             step: 'node_error',
             message: `Error in node ${event.nodeId}`,
             error: event.data?.error,
@@ -292,7 +383,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
               const thoughtMatch = planText.match(/Thought:\s*(.+?)(?=\nAction:|$)/is);
               if (thoughtMatch) {
                 const thought = thoughtMatch[1].trim();
-                pendingEvents.push(push('progress', {
+                eventQueue.push(push('progress', {
                   step: 'thinking',
                   message: `💭 ${thought}`,
                   nodeId: event.nodeId,
@@ -305,8 +396,11 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       }
     };
 
-    // Execute graph with user context
-    const graphState = await withUserContext(
+    // Start graph execution in background while we stream events in real-time
+    let graphState: any = null;
+    let graphExecutionError: Error | null = null;
+
+    const graphPromise = withUserContext(
       {
         userId: userContext?.userId || 'anonymous',
         username: userContext?.username || 'anonymous',
@@ -315,11 +409,29 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       async () => {
         return executeGraph(loaded.graph, contextData, eventHandler);
       }
-    );
+    ).then(state => {
+      graphState = state;
+      eventQueue.finish(); // Signal queue is done
+    }).catch(err => {
+      graphExecutionError = err;
+      eventQueue.finish();
+    });
 
-    // Yield any pending progress events
-    for (const event of pendingEvents) {
+    // Stream events in real-time as they arrive from the event queue
+    for await (const event of eventQueue) {
       yield event;
+    }
+
+    // Wait for graph execution to complete (should already be done since queue finished)
+    await graphPromise;
+
+    // Handle execution error
+    if (graphExecutionError) {
+      if ((graphExecutionError as Error).message === 'CANCELLATION_REQUESTED') {
+        yield push('cancelled', { message: '⏸️ Request cancelled' });
+        return;
+      }
+      throw graphExecutionError;
     }
 
     if (!graphState) {
@@ -330,10 +442,10 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const duration = Date.now() - startedAt;
     const output = getGraphOutput(graphState);
     const responseText = output?.output || output?.response;
-    const graphError = output?.error;
+    const outputError = output?.error;
 
-    if (graphError) {
-      yield push('error', { message: graphError });
+    if (outputError) {
+      yield push('error', { message: outputError });
       return;
     }
 

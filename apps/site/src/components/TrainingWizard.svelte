@@ -47,16 +47,15 @@
     days_recent: number;
     old_samples: number;
     lora_rank: number;
-    lora_alpha: number; // LoRA alpha scaling (typically 2x rank)
+    lora_alpha: number;
     learning_rate: number;
     per_device_train_batch_size: number;
     gradient_accumulation_steps: number;
     max_seq_length: number;
-    quantization: string; // GGUF quantization level
-    skipGguf: boolean; // Skip GGUF conversion for vLLM-only training
+    quantization: string;
+    skipGguf: boolean;
   }
 
-  // Base model options organized by target compatibility
   interface BaseModelOption {
     value: string;
     label: string;
@@ -65,20 +64,14 @@
   }
 
   const baseModelOptions: BaseModelOption[] = [
-    // Ollama-compatible models (unsloth format, converts to GGUF)
     { value: 'unsloth/Qwen3-14B', label: 'Qwen3-14B (Ollama)', targets: ['ollama'], description: 'Standard 14B model for Ollama GGUF' },
     { value: 'unsloth/Qwen3-8B', label: 'Qwen3-8B (Ollama)', targets: ['ollama'], description: 'Faster 8B model for Ollama GGUF' },
     { value: 'unsloth/Qwen3-Coder-30B-A3B-Instruct', label: 'Qwen3-Coder-30B (Ollama)', targets: ['ollama'], description: 'Large coder model for Ollama' },
-    // vLLM-compatible models (train on full precision, use with AWQ in vLLM)
-    // NOTE: Train on Qwen/Qwen3-14B, load with Qwen/Qwen3-14B-AWQ - LoRA is architecture-compatible
     { value: 'Qwen/Qwen3-14B', label: 'Qwen3-14B (vLLM)', targets: ['vllm'], description: 'Train for vLLM (use with AWQ base)' },
     { value: 'Qwen/Qwen3-8B', label: 'Qwen3-8B (vLLM)', targets: ['vllm'], description: 'Faster 8B for vLLM' },
-    // Models that work with both targets
     { value: 'Qwen/Qwen2.5-14B-Instruct', label: 'Qwen2.5-14B-Instruct', targets: ['ollama', 'vllm', 'both'], description: 'Works with both Ollama and vLLM' },
   ];
 
-  // Training config presets for Ollama (GGUF output)
-  // Values aligned with etc/training.json
   const loraConfigPresetOllama: TrainingConfig = {
     base_model: 'unsloth/Qwen3-14B',
     num_train_epochs: 5,
@@ -87,17 +80,15 @@
     days_recent: 30,
     old_samples: 3000,
     lora_rank: 16,
-    lora_alpha: 32, // 2x rank for stable training
-    learning_rate: 0.0003, // 3e-4 (optimized for personality capture)
+    lora_alpha: 32,
+    learning_rate: 0.0003,
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
-    quantization: 'Q4_K_M', // Balanced quality/speed
+    quantization: 'Q4_K_M',
     skipGguf: false
   };
 
-  // Training config presets for vLLM (safetensors output)
-  // Values aligned with etc/training.json
   const loraConfigPresetVllm: TrainingConfig = {
     base_model: 'Qwen/Qwen3-14B',
     num_train_epochs: 5,
@@ -106,16 +97,15 @@
     days_recent: 30,
     old_samples: 3000,
     lora_rank: 16,
-    lora_alpha: 32, // 2x rank for stable training
-    learning_rate: 0.0003, // 3e-4 (optimized for personality capture)
+    lora_alpha: 32,
+    learning_rate: 0.0003,
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
-    quantization: 'Q4_K_M', // Not used for vLLM
-    skipGguf: true // Skip GGUF conversion - vLLM uses safetensors
+    quantization: 'Q4_K_M',
+    skipGguf: true
   };
 
-  // Legacy presets for backwards compatibility
   const loraConfigPreset = loraConfigPresetOllama;
 
   const fineTuneConfigPreset: TrainingConfig = {
@@ -125,20 +115,20 @@
     monthly_training: true,
     days_recent: 30,
     old_samples: 5000,
-    lora_rank: 0, // Not used for fine-tuning
-    lora_alpha: 0, // Not used for fine-tuning
-    learning_rate: 0.00002, // 2e-5 (lower for fine-tuning)
+    lora_rank: 0,
+    lora_alpha: 0,
+    learning_rate: 0.00002,
     per_device_train_batch_size: 4,
     gradient_accumulation_steps: 8,
     max_seq_length: 2048,
-    quantization: 'Q4_K_M', // Balanced quality/speed
+    quantization: 'Q4_K_M',
     skipGguf: false
   };
 
   // State
   let currentStep: WizardStep = 1;
   let selectedMethod: TrainingMethod = null;
-  let trainingTarget: TrainingTarget = 'ollama'; // Default to Ollama for backward compatibility
+  let trainingTarget: TrainingTarget = 'ollama';
   let systemCapabilities: SystemCapabilities = {
     hasLocalGPU: false,
     gpuModel: null,
@@ -162,17 +152,17 @@
   let error = '';
   let validatingRunpod = false;
   let runpodValid = false;
-  let runpodConfigLoaded = false; // Track if config was auto-loaded
+  let runpodConfigLoaded = false;
 
   // Current user
   let username = '';
 
   // Advanced settings
-  let enableS3Upload = true; // Enable S3 upload by default if configured
-  let enablePreprocessing = true; // Enable curation/preprocessing by default
-  let hasS3Configured = false; // Track if S3 credentials exist
+  let enableS3Upload = true;
+  let enablePreprocessing = true;
+  let hasS3Configured = false;
 
-  // Training data configuration (memory type weights)
+  // Training data configuration
   let includePersona = true;
   let memoryPercentages: Record<string, number> = {
     conversation: 40,
@@ -220,7 +210,7 @@
       case 2: return selectedMethod === 'local-lora' || runpodValid;
       case 3: return datasetStats !== null;
       case 4: return true;
-      case 5: return false; // Final step, no proceed
+      case 5: return false;
       default: return false;
     }
   })();
@@ -236,13 +226,10 @@
     }
   })();
 
-  // Auto-switch config preset when method or target changes
   $: if (selectedMethod) {
     if (selectedMethod === 'fine-tune') {
       trainingConfig = { ...fineTuneConfigPreset };
     } else {
-      // Both local-lora and remote-lora use LoRA config
-      // Use vLLM preset for vLLM target, Ollama preset otherwise
       if (trainingTarget === 'vllm') {
         trainingConfig = { ...loraConfigPresetVllm };
       } else {
@@ -251,22 +238,17 @@
     }
   }
 
-  // Computed: filter base model options based on selected target
   $: filteredBaseModels = baseModelOptions.filter(opt =>
     opt.targets.includes(trainingTarget) || opt.targets.includes('both')
   );
 
-  // Debug log for filtering
   $: console.log('[TrainingWizard] trainingTarget:', trainingTarget, 'filteredModels:', filteredBaseModels.map(m => m.label));
 
-  // Check if current method uses LoRA
   $: usesLoRA = selectedMethod === 'local-lora' || selectedMethod === 'remote-lora';
 
-  // System capability detection
   async function detectCapabilities() {
     loading = true;
     error = '';
-
     try {
       const res = await apiFetch('/api/system/gpu-info');
       if (res.ok) {
@@ -279,8 +261,6 @@
           hasRunpodKey: data.hasRunpodKey || false,
           hasPreviousModel: data.hasPreviousModel || false
         };
-
-        // Check if S3 is configured
         hasS3Configured = data.hasS3Configured || false;
       }
     } catch (err) {
@@ -291,14 +271,11 @@
     }
   }
 
-  // Load existing RunPod configuration (for owner users)
   async function loadRunpodConfig() {
     try {
       const res = await apiFetch('/api/runpod/config');
       if (res.ok) {
         const data = await res.json();
-
-        // Auto-fill fields if API key exists
         if (data.apiKey) {
           runpodConfig.apiKey = data.apiKey;
           runpodConfigLoaded = true;
@@ -307,7 +284,6 @@
           runpodConfig.templateId = data.templateId;
         }
         if (data.gpuType) {
-          // Check if it's a predefined GPU type
           const predefinedGpus = [
             'NVIDIA GeForce RTX 5090',
             'NVIDIA GeForce RTX 4090',
@@ -316,11 +292,9 @@
             'NVIDIA H100 PCIe',
             'NVIDIA H100 80GB HBM3'
           ];
-
           if (predefinedGpus.includes(data.gpuType)) {
             runpodConfig.gpuType = data.gpuType;
           } else {
-            // Custom GPU type
             customGpuType = data.gpuType;
             runpodConfig.gpuType = data.gpuType;
             useCustomGpu = true;
@@ -329,14 +303,11 @@
       }
     } catch (err) {
       console.error('[TrainingWizard] Failed to load RunPod config:', err);
-      // Not a critical error, user can still enter manually
     }
   }
 
-  // Navigation
   function nextStep() {
     if (canProceed) {
-      // Skip RunPod config if doing local training
       if (currentStep === 1 && selectedMethod === 'local-lora') {
         currentStep = 3 as WizardStep;
       } else {
@@ -346,7 +317,6 @@
   }
 
   function prevStep() {
-    // Skip RunPod config on back if local training
     if (currentStep === 3 && selectedMethod === 'local-lora') {
       currentStep = 1;
     } else {
@@ -356,14 +326,11 @@
 
   function selectMethod(method: TrainingMethod) {
     selectedMethod = method;
-    // User must click Continue to proceed - no auto-advance
   }
 
-  // Load dataset stats
   async function loadDatasetStats() {
     loading = true;
     error = '';
-
     try {
       const res = await apiFetch('/api/training/dataset-stats');
       if (!res.ok) throw new Error('Failed to load dataset stats');
@@ -376,18 +343,15 @@
     }
   }
 
-  // Load training data configuration (memory type weights)
   async function loadTrainingDataConfig() {
     try {
       const res = await apiFetch('/api/training-data');
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.config) {
-          // Load includePersona
           if (typeof data.config.collection?.includePersona === 'boolean') {
             includePersona = data.config.collection.includePersona;
           }
-          // Load percentages
           if (data.config.memoryTypes?.percentages) {
             memoryPercentages = { ...memoryPercentages, ...data.config.memoryTypes.percentages };
           }
@@ -399,7 +363,6 @@
     }
   }
 
-  // Save training data configuration
   async function saveTrainingDataConfig() {
     try {
       const res = await apiFetch('/api/training-data', {
@@ -410,7 +373,6 @@
           memoryTypes: { percentages: memoryPercentages },
         }),
       });
-
       if (!res.ok) {
         console.warn('[TrainingWizard] Failed to save training data config');
       }
@@ -419,7 +381,6 @@
     }
   }
 
-  // Handle training data config changes
   function handlePersonaChange(event: CustomEvent<boolean>) {
     includePersona = event.detail;
     saveTrainingDataConfig();
@@ -430,30 +391,23 @@
     saveTrainingDataConfig();
   }
 
-  // Validate RunPod credentials
   async function validateRunpod() {
     if (!runpodConfig.apiKey) {
       error = 'Please enter your RunPod API key';
       return;
     }
-
     validatingRunpod = true;
     error = '';
-
     try {
       const res = await apiFetch('/api/runpod/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: runpodConfig.apiKey })
       });
-
       if (!res.ok) throw new Error('Invalid RunPod API key');
-
       const data = await res.json();
       runpodValid = data.valid;
-
       if (runpodValid) {
-        // Save config
         localStorage.setItem('mh_runpod_config', JSON.stringify(runpodConfig));
       }
     } catch (err) {
@@ -465,18 +419,13 @@
     }
   }
 
-  // Check if a log line contains progress information
   function isProgressLine(line: string): boolean {
     return /\[ProgressTracker\]|Attempt\s+\d+\/\d+|\bSTEP\s+\d+\/\d+|\bStage\s+\d+\/\d+/i.test(line);
   }
 
-  // Parse console logs to extract progress indicators
   function extractProgress(logs: string[]): ProgressInfo | null {
-    // Search logs in reverse order (most recent first)
     for (let i = logs.length - 1; i >= 0; i--) {
       const line = logs[i];
-
-      // Match ProgressTracker format: "[ProgressTracker] 📊 stage: 8% - Attempt 10/120 - message"
       const progressMatch = line.match(/\[ProgressTracker\]\s+📊\s+(\w+):\s+(\d+)%\s+-\s+Attempt\s+(\d+)\/(\d+)\s+-\s+(.+)/);
       if (progressMatch) {
         return {
@@ -487,8 +436,6 @@
           message: progressMatch[5].trim()
         };
       }
-
-      // Match lora-trainer format: "[lora-trainer] Waiting for pod ssh gateway... (Attempt X/120)"
       const loraMatch = line.match(/\[lora-trainer\]\s+(.+?)\s+\(Attempt\s+(\d+)\/(\d+)\)/);
       if (loraMatch) {
         const attemptCurrent = parseInt(loraMatch[2]);
@@ -501,8 +448,6 @@
           message: loraMatch[1].trim()
         };
       }
-
-      // Match other stage indicators
       const stageMatch = line.match(/\[(?:lora-trainer|full-cycle|fine-tune-cycle)\]\s+(?:STEP|Stage)\s+(\d+)\/(\d+):\s+(.+)/i);
       if (stageMatch) {
         const stageCurrent = parseInt(stageMatch[1]);
@@ -516,59 +461,42 @@
         };
       }
     }
-
     return null;
   }
 
-  // Poll training logs and status
   async function pollTrainingLogs() {
     try {
-      // Load audit events (reduced from 50 to 30 lines)
       const logsRes = await apiFetch('/api/training/logs?maxLines=30');
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         if (logsData.success && logsData.logs) {
           trainingLogs = logsData.logs;
-          // Auto-scroll only if user is near bottom
           requestAnimationFrame(() => scrollLogsIfNeeded('events'));
         }
       }
-
-      // Load console logs (increased from 50 to 200 for better progress detection)
       const consoleRes = await apiFetch('/api/training/console-logs?maxLines=200');
       if (consoleRes.ok) {
         const consoleData = await consoleRes.json();
         if (consoleData.success && consoleData.logs) {
           consoleLogs = consoleData.logs;
-
-          // Extract progress information from logs
           currentProgress = extractProgress(consoleData.logs);
-
-          // Auto-scroll only if user is near bottom
           requestAnimationFrame(() => scrollLogsIfNeeded('console'));
         }
       }
-
-      // Check if process is still running
       const statusRes = await apiFetch('/api/training/running');
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         if (statusData.success) {
           trainingPid = statusData.running ? statusData.pid : null;
-
-          // If process stopped, mark as complete and stop polling
           if (!statusData.running && !trainingComplete) {
             trainingComplete = true;
-            currentProgress = null; // Clear progress on completion
-
-            // Check if training failed by looking for failure indicators in logs
+            currentProgress = null;
             const logText = consoleLogs.join('\n');
             if (logText.includes('TRAINING FAILED') ||
                 logText.includes('training_success=false') ||
                 logText.includes('Remote training failed') ||
                 logText.includes('You need a GPU')) {
               trainingFailed = true;
-              // Extract failure reason
               const gpuMatch = logText.match(/Unsloth cannot find any torch accelerator/);
               const errorMatch = logText.match(/❌ TRAINING FAILED[^\n]*\n[^\n]*\n[^\n]*• Error: ([^\n]+)/);
               if (gpuMatch) {
@@ -582,7 +510,6 @@
               trainingFailed = false;
               failureReason = '';
             }
-
             stopLogsPolling();
           }
         }
@@ -592,11 +519,9 @@
     }
   }
 
-  // Smart scroll: only scroll if user is already near bottom
   function scrollLogsIfNeeded(type: 'console' | 'events') {
     const container = type === 'console' ? consoleScrollContainer : eventsScrollContainer;
     if (!container) return;
-
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     if (isNearBottom) {
       container.scrollTop = container.scrollHeight;
@@ -607,11 +532,7 @@
     if (logsInterval) {
       clearInterval(logsInterval);
     }
-
-    // Initial poll
     pollTrainingLogs();
-
-    // Poll every 10 seconds (reduced from 5 to reduce CPU load)
     logsInterval = window.setInterval(pollTrainingLogs, 10000);
   }
 
@@ -622,12 +543,10 @@
     }
   }
 
-  // Cancel training
   async function cancelTraining() {
     if (!confirm('Cancel the training cycle? This will stop all in-progress work.')) {
       return;
     }
-
     cancelling = true;
     try {
       const res = await apiFetch('/api/adapters', {
@@ -635,12 +554,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'cancelFullCycle' })
       });
-
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to cancel training');
       }
-
       trainingPid = null;
       stopLogsPolling();
       alert('Training cancelled successfully');
@@ -651,25 +568,21 @@
     }
   }
 
-  // Load trained model into Ollama
   async function loadModel(modelType: 'merged' | 'adapter' | 'both') {
     loadingModel = true;
     modelLoadSuccess = '';
     error = '';
-
     try {
       const res = await apiFetch('/api/training/load-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelType })
       });
-
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to load model');
       }
-
-      modelLoadSuccess = `✅ ${data.message || 'Model loaded successfully!'}`;
+      modelLoadSuccess = `${data.message || 'Model loaded successfully!'}`;
     } catch (err) {
       error = (err as Error).message;
     } finally {
@@ -677,27 +590,22 @@
     }
   }
 
-  // Launch training
   async function launchTraining() {
     loading = true;
     error = '';
-
     try {
-      // Build the launch request payload
       const payload: any = {
         method: selectedMethod,
         trainingTarget: trainingTarget,
         trainingConfig: {
           ...trainingConfig,
-          skipGguf: trainingTarget === 'vllm' // Skip GGUF for vLLM-only training
+          skipGguf: trainingTarget === 'vllm'
         },
         advancedSettings: {
-          enableS3Upload: enableS3Upload && hasS3Configured, // Only enable if S3 is configured
+          enableS3Upload: enableS3Upload && hasS3Configured,
           enablePreprocessing: enablePreprocessing
         }
       };
-
-      // Include RunPod config for remote training methods
       if (selectedMethod === 'remote-lora' || selectedMethod === 'fine-tune') {
         payload.runpodConfig = {
           apiKey: runpodConfig.apiKey,
@@ -705,22 +613,16 @@
           gpuType: useCustomGpu ? customGpuType : runpodConfig.gpuType
         };
       }
-
-      // Call the new training launch endpoint
       const res = await apiFetch('/api/training/launch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
       if (!res.ok) throw new Error('Failed to launch training');
-
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || 'Training launch failed');
       }
-
-      // Training started successfully
       trainingComplete = false;
       trainingPid = data.pid || null;
       startLogsPolling();
@@ -732,26 +634,19 @@
     }
   }
 
-  // Retry training after failure
   async function retryTraining() {
-    // Reset failure state
     trainingComplete = false;
     trainingFailed = false;
     failureReason = '';
     consoleLogs = [];
     trainingLogs = [];
     error = '';
-
-    // Launch training again with same settings
     await launchTraining();
   }
 
-  // Lifecycle
   onMount(() => {
     detectCapabilities();
-    loadRunpodConfig(); // Auto-load RunPod config for owner users
-
-    // Fetch current user's username
+    loadRunpodConfig();
     apiFetch('/api/session')
       .then(res => res.json())
       .then(data => {
@@ -760,13 +655,10 @@
         }
       })
       .catch(err => console.error('[TrainingWizard] Failed to fetch session:', err));
-
-    // Load saved RunPod config from localStorage if exists
     const saved = localStorage.getItem('mh_runpod_config');
     if (saved) {
       try {
         const savedConfig = JSON.parse(saved);
-        // Only use localStorage if API config wasn't loaded
         if (!runpodConfigLoaded) {
           runpodConfig = savedConfig;
         }
@@ -774,8 +666,6 @@
         console.error('[TrainingWizard] Failed to load saved RunPod config');
       }
     }
-
-    // Check if training is already running on mount
     apiFetch('/api/training/running')
       .then(res => res.json())
       .then(data => {
@@ -786,34 +676,34 @@
         }
       })
       .catch(err => console.warn('Could not check training status:', err));
-
-    // Cleanup on unmount
     return () => {
       stopLogsPolling();
     };
   });
 
-  // Watch for step changes to load data
   $: if (currentStep === 3 && datasetStats === null) {
     loadDatasetStats();
   }
 
-  // Load training data config when entering step 3
   $: if (currentStep === 3 && !trainingDataConfigLoaded) {
     loadTrainingDataConfig();
   }
-
-  // Auto-scroll is now handled in pollTrainingLogs() using requestAnimationFrame
-  // This prevents constant reactive re-renders and DOM reflows
 </script>
 
-<div class="training-wizard">
+<div class="max-w-[900px] mx-auto p-8">
   <!-- Progress Indicator -->
-  <div class="wizard-progress">
+  <div class="flex justify-between mb-8 px-4">
     {#each [1, 2, 3, 4, 5] as step}
-      <div class="progress-step" class:active={currentStep === step} class:completed={currentStep > step}>
-        <div class="step-dot">{step}</div>
-        <div class="step-label">
+      <div class="flex flex-col items-center gap-2 flex-1 relative {step < 5 ? 'after:content-[\'\'] after:absolute after:top-4 after:left-1/2 after:w-full after:h-0.5 after:bg-gray-700 after:-z-10' : ''}">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2
+          {currentStep === step ? 'bg-emerald-600 border-emerald-600 text-white' : currentStep > step ? 'bg-emerald-600 border-emerald-600' : 'bg-gray-900 border-gray-700'}">
+          {#if currentStep > step}
+            <span class="text-white">✓</span>
+          {:else}
+            {step}
+          {/if}
+        </div>
+        <div class="text-xs {currentStep === step ? 'text-white font-semibold' : 'text-gray-500'}">
           {#if step === 1}Method
           {:else if step === 2}RunPod
           {:else if step === 3}Dataset
@@ -826,163 +716,175 @@
   </div>
 
   <!-- Step Title -->
-  <h2 class="wizard-title">{stepTitle}</h2>
+  <h2 class="text-2xl font-bold mb-4 text-center text-gray-900 dark:text-gray-100">{stepTitle}</h2>
 
   <!-- Error Display -->
   {#if error}
-    <div class="error-banner">
-      <span class="error-icon">⚠️</span>
-      <span class="error-text">{error}</span>
-      <button class="error-close" on:click={() => error = ''}>✕</button>
+    <div class="banner banner-error mb-6 flex items-center gap-3">
+      <span class="text-xl">⚠️</span>
+      <span class="flex-1">{error}</span>
+      <button class="bg-transparent border-0 text-red-300 text-xl cursor-pointer p-1 hover:text-white" on:click={() => error = ''}>✕</button>
     </div>
   {/if}
 
   <!-- Step Content -->
-  <div class="wizard-content">
+  <div class="min-h-[400px] mb-8">
     {#if currentStep === 1}
       <!-- Step 1: Method Selection -->
-      <div class="method-selection">
-        <p class="step-description">
+      <div>
+        <p class="text-base text-gray-500 dark:text-gray-400 mb-8 text-center">
           Select your training target and method based on your hardware and goals.
         </p>
 
-        <!-- Training Target Selection (First) -->
-        <div class="target-selection">
-          <h4>Training Target</h4>
-          <p class="target-description">Choose where you'll use the trained model:</p>
+        <!-- Training Target Selection -->
+        <div class="mb-8 pb-6 border-b border-gray-700">
+          <h4 class="text-lg mb-2 text-center text-gray-900 dark:text-gray-100">Training Target</h4>
+          <p class="text-sm text-gray-500 text-center mb-6">Choose where you'll use the trained model:</p>
 
-          <div class="target-cards">
+          <div class="flex justify-center gap-4 flex-wrap">
             <button
-              class="target-card"
-              class:selected={trainingTarget === 'ollama'}
+              class="flex items-center gap-3 px-6 py-4 rounded-xl border-2 cursor-pointer transition-all min-w-[160px]
+                {trainingTarget === 'ollama' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600'}"
               on:click={() => trainingTarget = 'ollama'}
             >
-              <div class="target-icon">🦙</div>
-              <div class="target-info">
-                <h5>Ollama</h5>
-                <span class="target-detail">GGUF format • Local inference</span>
+              <div class="text-2xl">🦙</div>
+              <div>
+                <h5 class="m-0 text-base text-white">Ollama</h5>
+                <span class="text-xs text-gray-500">GGUF format • Local inference</span>
               </div>
             </button>
 
             <button
-              class="target-card"
-              class:selected={trainingTarget === 'vllm'}
+              class="flex items-center gap-3 px-6 py-4 rounded-xl border-2 cursor-pointer transition-all min-w-[160px]
+                {trainingTarget === 'vllm' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600'}"
               on:click={() => trainingTarget = 'vllm'}
             >
-              <div class="target-icon">⚡</div>
-              <div class="target-info">
-                <h5>vLLM</h5>
-                <span class="target-detail">Safetensors format • High throughput</span>
+              <div class="text-2xl">⚡</div>
+              <div>
+                <h5 class="m-0 text-base text-white">vLLM</h5>
+                <span class="text-xs text-gray-500">Safetensors format • High throughput</span>
               </div>
             </button>
 
             <button
-              class="target-card"
-              class:selected={trainingTarget === 'both'}
+              class="flex items-center gap-3 px-6 py-4 rounded-xl border-2 cursor-pointer transition-all min-w-[160px]
+                {trainingTarget === 'both' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600'}"
               on:click={() => trainingTarget = 'both'}
             >
-              <div class="target-icon">🔄</div>
-              <div class="target-info">
-                <h5>Both</h5>
-                <span class="target-detail">Safetensors + GGUF conversion</span>
+              <div class="text-2xl">🔄</div>
+              <div>
+                <h5 class="m-0 text-base text-white">Both</h5>
+                <span class="text-xs text-gray-500">Safetensors + GGUF conversion</span>
               </div>
             </button>
           </div>
 
           {#if trainingTarget === 'vllm'}
-            <div class="target-note">
-              <span class="note-icon">ℹ️</span>
+            <div class="flex items-start gap-3 mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm text-gray-400">
+              <span class="shrink-0">ℹ️</span>
               <span>vLLM training produces safetensors adapters. Make sure your vLLM server uses a compatible base model (e.g., Qwen/Qwen3-14B-AWQ).</span>
             </div>
           {/if}
         </div>
 
-        <!-- Training Method Selection (Second) -->
-        <h4 class="method-header">Choose Training Method</h4>
+        <!-- Training Method Selection -->
+        <h4 class="text-lg mb-4 text-center text-gray-900 dark:text-gray-100">Choose Training Method</h4>
 
-        <div class="method-cards">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           <!-- Local LoRA Training -->
-          <button class="method-card" class:selected={selectedMethod === 'local-lora'} on:click={() => selectMethod('local-lora')}>
-            <div class="card-icon">🏠 💻</div>
-            <h3 class="card-title">Local LoRA Training</h3>
-            <p class="card-description">Train on your local machine</p>
+          <button
+            class="p-6 rounded-xl border-2 cursor-pointer transition-all text-left flex flex-col gap-4
+              {selectedMethod === 'local-lora' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
+            on:click={() => selectMethod('local-lora')}
+          >
+            <div class="text-3xl">🏠 💻</div>
+            <h3 class="text-xl m-0 text-gray-100">Local LoRA Training</h3>
+            <p class="text-sm text-gray-500 m-0">Train on your local machine</p>
 
-            <div class="card-requirements">
-              <div class="requirement" class:met={systemCapabilities.hasLocalGPU}>
+            <div class="flex flex-col gap-2">
+              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasLocalGPU ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasLocalGPU ? '✅' : '❌'} NVIDIA GPU (10GB+ VRAM)
               </div>
-              <div class="requirement" class:met={systemCapabilities.hasUnsloth}>
+              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasUnsloth ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasUnsloth ? '✅' : '❌'} Python + unsloth
               </div>
             </div>
 
             {#if systemCapabilities.hasLocalGPU && systemCapabilities.gpuModel}
-              <div class="card-info">
+              <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
                 Detected: {systemCapabilities.gpuModel} ({systemCapabilities.vramGB}GB)
               </div>
             {/if}
 
-            <div class="card-action">
-              <span class="action-icon">→</span>
+            <div class="flex items-center gap-2 text-emerald-500 font-semibold">
+              <span>→</span>
               <span>Select</span>
             </div>
           </button>
 
           <!-- Remote LoRA Training -->
-          <button class="method-card" class:selected={selectedMethod === 'remote-lora'} on:click={() => selectMethod('remote-lora')}>
-            <div class="card-icon">☁️ 🚀</div>
-            <h3 class="card-title">Remote LoRA Training</h3>
-            <p class="card-description">Train on RunPod cloud</p>
+          <button
+            class="p-6 rounded-xl border-2 cursor-pointer transition-all text-left flex flex-col gap-4
+              {selectedMethod === 'remote-lora' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
+            on:click={() => selectMethod('remote-lora')}
+          >
+            <div class="text-3xl">☁️ 🚀</div>
+            <h3 class="text-xl m-0 text-gray-100">Remote LoRA Training</h3>
+            <p class="text-sm text-gray-500 m-0">Train on RunPod cloud</p>
 
-            <div class="card-requirements">
-              <div class="requirement" class:met={systemCapabilities.hasRunpodKey}>
+            <div class="flex flex-col gap-2">
+              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasRunpodKey ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasRunpodKey ? '✅' : '⚠️'} RunPod API key
               </div>
-              <div class="requirement met">
+              <div class="text-sm flex items-center gap-2 text-emerald-500">
                 ✅ No local GPU needed
               </div>
             </div>
 
-            <div class="card-info">
+            <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
               Cost: ~$2-10 per training session
             </div>
 
-            <div class="card-action">
-              <span class="action-icon">→</span>
+            <div class="flex items-center gap-2 text-emerald-500 font-semibold">
+              <span>→</span>
               <span>Select</span>
             </div>
           </button>
 
           <!-- Full Fine-Tuning -->
-          <button class="method-card" class:selected={selectedMethod === 'fine-tune'} on:click={() => selectMethod('fine-tune')}>
-            <div class="card-icon">🎯 🧠</div>
-            <h3 class="card-title">Full Fine-Tuning</h3>
-            <p class="card-description">Advanced continuous learning</p>
+          <button
+            class="p-6 rounded-xl border-2 cursor-pointer transition-all text-left flex flex-col gap-4
+              {selectedMethod === 'fine-tune' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
+            on:click={() => selectMethod('fine-tune')}
+          >
+            <div class="text-3xl">🎯 🧠</div>
+            <h3 class="text-xl m-0 text-gray-100">Full Fine-Tuning</h3>
+            <p class="text-sm text-gray-500 m-0">Advanced continuous learning</p>
 
-            <div class="card-requirements">
-              <div class="requirement" class:met={systemCapabilities.hasRunpodKey}>
+            <div class="flex flex-col gap-2">
+              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasRunpodKey ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasRunpodKey ? '✅' : '⚠️'} RunPod API key
               </div>
-              <div class="requirement" class:met={systemCapabilities.hasPreviousModel}>
+              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasPreviousModel ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasPreviousModel ? '✅' : '⚠️'} 1000+ samples recommended
               </div>
             </div>
 
-            <div class="card-info">
+            <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
               Builds on previous training runs
             </div>
 
-            <div class="card-action">
-              <span class="action-icon">→</span>
+            <div class="flex items-center gap-2 text-emerald-500 font-semibold">
+              <span>→</span>
               <span>Select</span>
             </div>
           </button>
         </div>
 
         {#if !systemCapabilities.hasLocalGPU && !systemCapabilities.hasRunpodKey}
-          <div class="recommendation-box">
-            <span class="recommendation-icon">💡</span>
-            <span class="recommendation-text">
+          <div class="banner banner-warning flex items-center gap-3">
+            <span class="text-2xl">💡</span>
+            <span class="text-sm">
               No local GPU or RunPod key detected. We recommend setting up RunPod for cloud training.
             </span>
           </div>
@@ -991,48 +893,48 @@
 
     {:else if currentStep === 2}
       <!-- Step 2: RunPod Configuration -->
-      <div class="runpod-config">
-        <p class="step-description">
+      <div>
+        <p class="text-base text-gray-500 mb-8 text-center">
           Configure your RunPod credentials for cloud training. Don't have an account?
-          <a href="https://runpod.io" target="_blank" rel="noopener">Sign up here</a>
+          <a href="https://runpod.io" target="_blank" rel="noopener" class="text-emerald-500 hover:underline">Sign up here</a>
         </p>
 
         {#if runpodConfigLoaded}
-          <div class="info-banner">
-            <span class="info-icon">✓</span>
-            <span class="info-text">
-              RunPod configuration auto-loaded from your saved settings
-            </span>
+          <div class="banner banner-success mb-6 flex items-center gap-3">
+            <span class="text-xl font-bold">✓</span>
+            <span>RunPod configuration auto-loaded from your saved settings</span>
           </div>
         {/if}
 
-        <form class="config-form" on:submit|preventDefault={validateRunpod}>
+        <form class="max-w-[600px] mx-auto" on:submit|preventDefault={validateRunpod}>
           <div class="form-group">
-            <label for="apiKey">RunPod API Key *</label>
+            <label class="form-label" for="apiKey">RunPod API Key *</label>
             <input
               type="password"
               id="apiKey"
+              class="input-field"
               bind:value={runpodConfig.apiKey}
               placeholder="Enter your RunPod API key"
               required
             />
-            <small>Get your API key from the <a href="https://www.runpod.io/console/user/settings" target="_blank">RunPod Dashboard</a></small>
+            <small class="block mt-2 text-sm text-gray-500">Get your API key from the <a href="https://www.runpod.io/console/user/settings" target="_blank" class="text-emerald-500 hover:underline">RunPod Dashboard</a></small>
           </div>
 
           <div class="form-group">
-            <label for="templateId">Template ID</label>
+            <label class="form-label" for="templateId">Template ID</label>
             <input
               type="text"
               id="templateId"
+              class="input-field"
               bind:value={runpodConfig.templateId}
               placeholder="metahuman-runpod-trainer"
             />
-            <small>Uses <code>docker.io/gregoryaster/metahuman-runpod-trainer:v3-xformers-5090</code></small>
+            <small class="block mt-2 text-sm text-gray-500">Uses <code class="bg-black/20 px-1.5 py-0.5 rounded text-xs font-mono">docker.io/gregoryaster/metahuman-runpod-trainer:v3-xformers-5090</code></small>
           </div>
 
           <div class="form-group">
-            <label for="gpuType">Preferred GPU Type</label>
-            <select id="gpuType" bind:value={runpodConfig.gpuType} on:change={() => useCustomGpu = runpodConfig.gpuType === 'custom'}>
+            <label class="form-label" for="gpuType">Preferred GPU Type</label>
+            <select id="gpuType" class="select-field w-full" bind:value={runpodConfig.gpuType} on:change={() => useCustomGpu = runpodConfig.gpuType === 'custom'}>
               <option value="NVIDIA GeForce RTX 5090">NVIDIA GeForce RTX 5090 (~$0.60/hr)</option>
               <option value="NVIDIA GeForce RTX 4090">NVIDIA GeForce RTX 4090 (~$0.40/hr)</option>
               <option value="NVIDIA A100-PCIE-40GB">NVIDIA A100 PCIe 40GB (~$1.00/hr)</option>
@@ -1041,24 +943,25 @@
               <option value="NVIDIA H100 80GB HBM3">NVIDIA H100 SXM (~$2.70/hr)</option>
               <option value="custom">Custom GPU Type...</option>
             </select>
-            <small>Higher-end GPUs are faster but more expensive. <a href="https://docs.runpod.io/references/gpu-types" target="_blank">View all GPU types</a></small>
+            <small class="block mt-2 text-sm text-gray-500">Higher-end GPUs are faster but more expensive. <a href="https://docs.runpod.io/references/gpu-types" target="_blank" class="text-emerald-500 hover:underline">View all GPU types</a></small>
           </div>
 
           {#if useCustomGpu}
             <div class="form-group">
-              <label for="customGpuType">Custom GPU Type</label>
+              <label class="form-label" for="customGpuType">Custom GPU Type</label>
               <input
                 type="text"
                 id="customGpuType"
+                class="input-field"
                 bind:value={customGpuType}
                 placeholder="e.g., NVIDIA L40S"
                 on:input={() => runpodConfig.gpuType = customGpuType}
               />
-              <small>Enter the exact GPU name as it appears in RunPod</small>
+              <small class="block mt-2 text-sm text-gray-500">Enter the exact GPU name as it appears in RunPod</small>
             </div>
           {/if}
 
-          <button type="submit" class="validate-button" disabled={validatingRunpod || !runpodConfig.apiKey}>
+          <button type="submit" class="btn-primary w-full py-4 text-base" disabled={validatingRunpod || !runpodConfig.apiKey}>
             {#if validatingRunpod}
               Validating...
             {:else if runpodValid}
@@ -1072,100 +975,97 @@
 
     {:else if currentStep === 3}
       <!-- Step 3: Dataset Review -->
-      <div class="dataset-review">
+      <div>
         {#if loading}
-          <div class="loading-state">
-            <div class="spinner"></div>
-            <p>Loading dataset statistics...</p>
+          <div class="flex flex-col items-center gap-4 p-12">
+            <div class="w-12 h-12 border-3 border-gray-700 border-t-emerald-500 rounded-full animate-spin"></div>
+            <p class="text-gray-400">Loading dataset statistics...</p>
           </div>
         {:else if datasetStats}
-          <p class="step-description">
+          <p class="text-base text-gray-500 mb-8 text-center">
             Review your episodic memory statistics. This data will be used for training.
           </p>
 
-          <div class="stats-grid">
+          <div class="stats-grid mb-8">
             <div class="stat-card">
-              <div class="stat-value">{datasetStats.totalMemories.toLocaleString()}</div>
+              <div class="stat-value text-emerald-500">{datasetStats.totalMemories.toLocaleString()}</div>
               <div class="stat-label">Total Memories</div>
             </div>
-
             <div class="stat-card">
-              <div class="stat-value">{datasetStats.estimatedTrainingSamples.toLocaleString()}</div>
+              <div class="stat-value text-emerald-500">{datasetStats.estimatedTrainingSamples.toLocaleString()}</div>
               <div class="stat-label">Training Samples</div>
             </div>
-
             <div class="stat-card">
-              <div class="stat-value">{datasetStats.recentMemories.toLocaleString()}</div>
+              <div class="stat-value text-emerald-500">{datasetStats.recentMemories.toLocaleString()}</div>
               <div class="stat-label">Recent (30 days)</div>
             </div>
-
             <div class="stat-card">
-              <div class="stat-value">{datasetStats.oldestMemory ? new Date(datasetStats.oldestMemory).toLocaleDateString() : 'N/A'}</div>
+              <div class="stat-value text-emerald-500">{datasetStats.oldestMemory ? new Date(datasetStats.oldestMemory).toLocaleDateString() : 'N/A'}</div>
               <div class="stat-label">Earliest Memory</div>
             </div>
           </div>
 
-          <div class="breakdown-section">
-            <h4>Memory Breakdown by Type</h4>
-            <div class="breakdown-list">
-              <div class="breakdown-item">
-                <span class="breakdown-label">Episodic</span>
-                <span class="breakdown-value">{datasetStats.episodicMemories.toLocaleString()}</span>
+          <div class="mb-8">
+            <h4 class="text-lg mb-4 text-gray-100">Memory Breakdown by Type</h4>
+            <div class="flex flex-col gap-2">
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span class="capitalize">Episodic</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.episodicMemories.toLocaleString()}</span>
               </div>
-              <div class="breakdown-item">
-                <span class="breakdown-label">Therapy Sessions</span>
-                <span class="breakdown-value">{datasetStats.therapySessions.toLocaleString()}</span>
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span class="capitalize">Therapy Sessions</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.therapySessions.toLocaleString()}</span>
               </div>
-              <div class="breakdown-item">
-                <span class="breakdown-label">Chat Conversations</span>
-                <span class="breakdown-value">{datasetStats.chatConversations.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="breakdown-section">
-            <h4>Cognitive Mode Distribution</h4>
-            <div class="breakdown-list">
-              <div class="breakdown-item">
-                <span class="breakdown-label">Dual Mode</span>
-                <span class="breakdown-value">{datasetStats.cognitiveModeCounts.dual.toLocaleString()}</span>
-              </div>
-              <div class="breakdown-item">
-                <span class="breakdown-label">Agent Mode</span>
-                <span class="breakdown-value">{datasetStats.cognitiveModeCounts.agent.toLocaleString()}</span>
-              </div>
-              <div class="breakdown-item">
-                <span class="breakdown-label">Emulation Mode</span>
-                <span class="breakdown-value">{datasetStats.cognitiveModeCounts.emulation.toLocaleString()}</span>
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span class="capitalize">Chat Conversations</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.chatConversations.toLocaleString()}</span>
               </div>
             </div>
           </div>
 
-          <div class="curation-options">
-            <h4>Curation Strategy</h4>
-            <label class="checkbox-label">
-              <input type="checkbox" bind:checked={trainingConfig.monthly_training} />
+          <div class="mb-8">
+            <h4 class="text-lg mb-4 text-gray-100">Cognitive Mode Distribution</h4>
+            <div class="flex flex-col gap-2">
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span>Dual Mode</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.cognitiveModeCounts.dual.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span>Agent Mode</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.cognitiveModeCounts.agent.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span>Emulation Mode</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.cognitiveModeCounts.emulation.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-8">
+            <h4 class="text-lg mb-4 text-gray-100">Curation Strategy</h4>
+            <label class="flex items-center gap-3 cursor-pointer text-sm">
+              <input type="checkbox" class="w-5 h-5 cursor-pointer accent-emerald-600" bind:checked={trainingConfig.monthly_training} />
               <span>Monthly Training (last 30 days + 3000 random old samples)</span>
             </label>
 
             {#if trainingConfig.monthly_training}
-              <div class="advanced-curation">
+              <div class="grid grid-cols-2 gap-4 mt-4 pl-8">
                 <div class="form-group">
-                  <label for="daysRecent">Recent Days</label>
-                  <input type="number" id="daysRecent" bind:value={trainingConfig.days_recent} min="1" max="365" />
+                  <label class="form-label" for="daysRecent">Recent Days</label>
+                  <input type="number" id="daysRecent" class="input-field" bind:value={trainingConfig.days_recent} min="1" max="365" />
                 </div>
                 <div class="form-group">
-                  <label for="oldSamples">Old Samples</label>
-                  <input type="number" id="oldSamples" bind:value={trainingConfig.old_samples} min="0" max="10000" />
+                  <label class="form-label" for="oldSamples">Old Samples</label>
+                  <input type="number" id="oldSamples" class="input-field" bind:value={trainingConfig.old_samples} min="0" max="10000" />
                 </div>
               </div>
             {/if}
           </div>
 
           <!-- Training Data Controls -->
-          <div class="training-data-section">
-            <h4>Training Data Composition</h4>
-            <p class="section-description">
+          <div class="mt-8 border-t border-gray-700 pt-6">
+            <h4 class="text-lg mb-2 text-gray-100">Training Data Composition</h4>
+            <p class="text-sm text-gray-500 mb-4 leading-relaxed">
               Control what types of memories are used in training. By default, conversations and observations
               are weighted higher for authentic voice. Increase reflections/dreams for more self-growth focus.
             </p>
@@ -1182,12 +1082,13 @@
 
     {:else if currentStep === 4}
       <!-- Step 4: Training Configuration -->
-      <div class="training-config">
-        <div class="method-info-banner" class:lora={usesLoRA} class:finetune={!usesLoRA}>
-          <div class="banner-icon">{usesLoRA ? '🎯' : '🔥'}</div>
-          <div class="banner-content">
-            <h4>{usesLoRA ? 'LoRA Training Configuration' : 'Full Fine-Tuning Configuration'}</h4>
-            <p>
+      <div class="max-w-[600px] mx-auto">
+        <div class="p-6 rounded-xl mb-8 flex items-start gap-4 border-2
+          {usesLoRA ? 'bg-emerald-600/10 border-emerald-600' : 'bg-orange-500/10 border-orange-500'}">
+          <div class="text-3xl leading-none">{usesLoRA ? '🎯' : '🔥'}</div>
+          <div class="flex-1">
+            <h4 class="m-0 mb-2 text-lg text-gray-100">{usesLoRA ? 'LoRA Training Configuration' : 'Full Fine-Tuning Configuration'}</h4>
+            <p class="m-0 text-sm text-gray-500 leading-relaxed">
               {#if usesLoRA}
                 LoRA (Low-Rank Adaptation) trains only a small set of adapter weights while freezing the base model.
                 This is faster, uses less VRAM, and is perfect for personalizing conversational style.
@@ -1199,15 +1100,15 @@
           </div>
         </div>
 
-        <div class="config-form">
+        <div>
           <div class="form-group">
-            <label for="baseModel">Base Model</label>
-            <select id="baseModel" bind:value={trainingConfig.base_model}>
+            <label class="form-label" for="baseModel">Base Model</label>
+            <select id="baseModel" class="select-field w-full" bind:value={trainingConfig.base_model}>
               {#each filteredBaseModels as model}
                 <option value={model.value}>{model.label}</option>
               {/each}
             </select>
-            <small>
+            <small class="block mt-2 text-sm text-gray-500">
               {#if trainingTarget === 'vllm'}
                 Models compatible with vLLM LoRA loading
               {:else if trainingTarget === 'ollama'}
@@ -1219,95 +1120,94 @@
           </div>
 
           <div class="form-group">
-            <label for="epochs">Training Epochs</label>
-            <input type="range" id="epochs" bind:value={trainingConfig.num_train_epochs} min="1" max="5" step="1" />
-            <span class="range-value">{trainingConfig.num_train_epochs} epochs</span>
-            <small>More epochs = better learning but longer training time</small>
+            <label class="form-label" for="epochs">Training Epochs</label>
+            <div class="flex items-center gap-4">
+              <input type="range" id="epochs" class="flex-1" bind:value={trainingConfig.num_train_epochs} min="1" max="5" step="1" />
+              <span class="font-semibold text-emerald-500 min-w-[80px]">{trainingConfig.num_train_epochs} epochs</span>
+            </div>
+            <small class="block mt-2 text-sm text-gray-500">More epochs = better learning but longer training time</small>
           </div>
 
           <div class="form-group">
-            <label for="maxSamples">Max Samples (optional)</label>
+            <label class="form-label" for="maxSamples">Max Samples (optional)</label>
             <input
               type="number"
               id="maxSamples"
+              class="input-field"
               bind:value={trainingConfig.max_samples}
               placeholder="Leave blank for all samples"
               min="100"
             />
-            <small>Limit samples for faster testing</small>
+            <small class="block mt-2 text-sm text-gray-500">Limit samples for faster testing</small>
           </div>
 
-          <details class="advanced-config">
-            <summary>Advanced Settings</summary>
-            <div class="advanced-fields">
+          <details class="mt-8 border-t border-gray-700 pt-4">
+            <summary class="cursor-pointer font-semibold py-2 text-gray-100">Advanced Settings</summary>
+            <div class="mt-4 grid grid-cols-2 gap-4">
               {#if usesLoRA}
-                <!-- LoRA-specific settings -->
                 <div class="form-group">
-                  <label for="loraRank">LoRA Rank</label>
-                  <select id="loraRank" bind:value={trainingConfig.lora_rank}>
+                  <label class="form-label" for="loraRank">LoRA Rank</label>
+                  <select id="loraRank" class="select-field w-full" bind:value={trainingConfig.lora_rank}>
                     <option value={8}>8 (Balanced)</option>
                     <option value={16}>16 (Higher Capacity)</option>
                     <option value={32}>32 (Maximum)</option>
                   </select>
-                  <small>Higher rank = more parameters but longer training</small>
+                  <small class="block mt-2 text-sm text-gray-500">Higher rank = more parameters but longer training</small>
                 </div>
               {/if}
 
               <div class="form-group">
-                <label for="learningRate">Learning Rate</label>
-                <select id="learningRate" bind:value={trainingConfig.learning_rate}>
+                <label class="form-label" for="learningRate">Learning Rate</label>
+                <select id="learningRate" class="select-field w-full" bind:value={trainingConfig.learning_rate}>
                   {#if usesLoRA}
-                    <!-- LoRA uses higher learning rates -->
                     <option value={0.0001}>1e-4</option>
                     <option value={0.0002}>2e-4 (Recommended for LoRA)</option>
                     <option value={0.0003}>3e-4</option>
                   {:else}
-                    <!-- Fine-tuning uses lower learning rates -->
                     <option value={0.00001}>1e-5</option>
                     <option value={0.00002}>2e-5 (Recommended for Fine-Tune)</option>
                     <option value={0.00005}>5e-5</option>
                   {/if}
                 </select>
-                <small>{usesLoRA ? 'LoRA uses higher learning rates' : 'Fine-tuning requires lower rates to preserve base model'}</small>
+                <small class="block mt-2 text-sm text-gray-500">{usesLoRA ? 'LoRA uses higher learning rates' : 'Fine-tuning requires lower rates to preserve base model'}</small>
               </div>
 
               {#if !usesLoRA}
-                <!-- Fine-tuning specific settings -->
                 <div class="form-group">
-                  <label for="batchSize">Batch Size</label>
-                  <select id="batchSize" bind:value={trainingConfig.per_device_train_batch_size}>
+                  <label class="form-label" for="batchSize">Batch Size</label>
+                  <select id="batchSize" class="select-field w-full" bind:value={trainingConfig.per_device_train_batch_size}>
                     <option value={2}>2</option>
                     <option value={4}>4 (Recommended)</option>
                     <option value={8}>8 (High VRAM)</option>
                   </select>
-                  <small>Larger batch size requires more VRAM (40GB+ recommended)</small>
+                  <small class="block mt-2 text-sm text-gray-500">Larger batch size requires more VRAM (40GB+ recommended)</small>
                 </div>
 
                 <div class="form-group">
-                  <label for="gradAccum">Gradient Accumulation Steps</label>
-                  <select id="gradAccum" bind:value={trainingConfig.gradient_accumulation_steps}>
+                  <label class="form-label" for="gradAccum">Gradient Accumulation Steps</label>
+                  <select id="gradAccum" class="select-field w-full" bind:value={trainingConfig.gradient_accumulation_steps}>
                     <option value={4}>4</option>
                     <option value={8}>8 (Recommended)</option>
                     <option value={16}>16</option>
                   </select>
-                  <small>Effective batch size = batch_size × accumulation_steps</small>
+                  <small class="block mt-2 text-sm text-gray-500">Effective batch size = batch_size × accumulation_steps</small>
                 </div>
               {/if}
 
               <div class="form-group">
-                <label for="contextWindow">Context Window</label>
-                <select id="contextWindow" bind:value={trainingConfig.max_seq_length}>
+                <label class="form-label" for="contextWindow">Context Window</label>
+                <select id="contextWindow" class="select-field w-full" bind:value={trainingConfig.max_seq_length}>
                   <option value={2048}>2048 tokens (~1500 words)</option>
                   <option value={4096}>4096 tokens (~3000 words)</option>
                   <option value={8192}>8192 tokens (~6000 words)</option>
                 </select>
-                <small>Longer context = more VRAM required</small>
+                <small class="block mt-2 text-sm text-gray-500">Longer context = more VRAM required</small>
               </div>
 
               {#if trainingTarget !== 'vllm'}
                 <div class="form-group">
-                  <label for="quantization">GGUF Quantization</label>
-                  <select id="quantization" bind:value={trainingConfig.quantization}>
+                  <label class="form-label" for="quantization">GGUF Quantization</label>
+                  <select id="quantization" class="select-field w-full" bind:value={trainingConfig.quantization}>
                     <option value="Q4_K_M">Q4_K_M (Balanced - 8GB, Recommended)</option>
                     <option value="Q4_K_S">Q4_K_S (Smallest - 7GB)</option>
                     <option value="Q5_K_M">Q5_K_M (Higher Quality - 10GB)</option>
@@ -1315,57 +1215,59 @@
                     <option value="Q6_K">Q6_K (Very High Quality - 11GB)</option>
                     <option value="Q8_0">Q8_0 (Highest Quality - 14GB)</option>
                   </select>
-                  <small>Higher quantization = better quality but larger file size</small>
+                  <small class="block mt-2 text-sm text-gray-500">Higher quantization = better quality but larger file size</small>
                 </div>
               {:else}
                 <div class="form-group">
-                  <label>Output Format</label>
-                  <div class="info-box">
-                    <span class="info-icon">⚡</span>
+                  <label class="form-label">Output Format</label>
+                  <div class="flex items-center gap-3 p-3 bg-emerald-600/10 border border-emerald-600/30 rounded-lg text-emerald-500 font-medium">
+                    <span class="text-xl">⚡</span>
                     <span>vLLM target: Safetensors format (no GGUF conversion)</span>
                   </div>
-                  <small>LoRA adapters will be saved in safetensors format for direct use with vLLM</small>
+                  <small class="block mt-2 text-sm text-gray-500">LoRA adapters will be saved in safetensors format for direct use with vLLM</small>
                 </div>
               {/if}
 
               <!-- Pipeline Settings -->
-              <div class="form-group toggle-group" style="grid-column: 1 / -1;">
-                <label class="section-label">Pipeline Settings</label>
+              <div class="col-span-2 border-t border-gray-700 pt-4 mt-4 flex flex-col gap-4">
+                <label class="font-semibold text-gray-100">Pipeline Settings</label>
 
-                <div class="toggle-item">
-                  <label class="toggle-container">
-                    <input type="checkbox" bind:checked={enablePreprocessing} />
-                    <span class="toggle-slider"></span>
-                    <span class="toggle-label">
+                <div class="flex flex-col gap-2">
+                  <label class="flex items-center gap-3 cursor-pointer select-none">
+                    <div class="relative">
+                      <input type="checkbox" class="sr-only peer" bind:checked={enablePreprocessing} />
+                      <div class="w-11 h-6 bg-gray-700 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
+                      <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+                    </div>
+                    <span class="text-sm flex items-center gap-2">
                       Enable Data Preprocessing
-                      {#if !enablePreprocessing}<span class="warning-badge">⚠️ Not Recommended</span>{/if}
+                      {#if !enablePreprocessing}<span class="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-500 font-semibold">⚠️ Not Recommended</span>{/if}
                     </span>
                   </label>
-                  <small class="toggle-description">
+                  <small class="pl-14 text-sm text-gray-500">
                     Uses LLM curator to select high-quality conversations for training.
                     Disabling may result in lower quality models.
                   </small>
                 </div>
 
                 {#if selectedMethod === 'remote-lora' || selectedMethod === 'fine-tune'}
-                  <div class="toggle-item">
-                    <label class="toggle-container">
-                      <input
-                        type="checkbox"
-                        bind:checked={enableS3Upload}
-                        disabled={!hasS3Configured}
-                      />
-                      <span class="toggle-slider" class:disabled={!hasS3Configured}></span>
-                      <span class="toggle-label">
+                  <div class="flex flex-col gap-2">
+                    <label class="flex items-center gap-3 cursor-pointer select-none {!hasS3Configured ? 'opacity-40' : ''}">
+                      <div class="relative">
+                        <input type="checkbox" class="sr-only peer" bind:checked={enableS3Upload} disabled={!hasS3Configured} />
+                        <div class="w-11 h-6 bg-gray-700 rounded-full peer-checked:bg-emerald-600 transition-colors {!hasS3Configured ? 'cursor-not-allowed' : ''}"></div>
+                        <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+                      </div>
+                      <span class="text-sm flex items-center gap-2">
                         Enable S3 Upload
                         {#if !hasS3Configured}
-                          <span class="info-badge">⚙️ Not Configured</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-500 font-semibold">⚙️ Not Configured</span>
                         {:else if enableS3Upload}
-                          <span class="success-badge">✓ Saves ~55% Cost</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-500 font-semibold">✓ Saves ~55% Cost</span>
                         {/if}
                       </span>
                     </label>
-                    <small class="toggle-description">
+                    <small class="pl-14 text-sm text-gray-500">
                       {#if hasS3Configured}
                         Upload models to S3 instead of direct download. Pod terminates immediately after upload (~3min vs ~15min download).
                       {:else}
@@ -1382,16 +1284,16 @@
 
     {:else if currentStep === 5}
       <!-- Step 5: Training Monitor -->
-      <div class="training-monitor">
+      <div class="w-full">
         {#if !trainingPid && !trainingComplete}
           <!-- Pre-launch confirmation -->
-          <div class="confirmation-dialog">
-            <h3>Ready to Start Training?</h3>
+          <div class="max-w-[600px] mx-auto bg-gray-900 border-2 border-emerald-600 rounded-2xl p-8">
+            <h3 class="text-2xl text-center mb-6 text-gray-100">Ready to Start Training?</h3>
 
-            <div class="training-summary">
-              <div class="summary-item">
-                <span class="summary-label">Method:</span>
-                <span class="summary-value">
+            <div class="flex flex-col gap-4 mb-8">
+              <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                <span class="font-semibold text-gray-100">Method:</span>
+                <span class="text-gray-400">
                   {#if selectedMethod === 'local-lora'}Local LoRA Training
                   {:else if selectedMethod === 'remote-lora'}Remote LoRA Training
                   {:else}Full Fine-Tuning
@@ -1399,9 +1301,9 @@
                 </span>
               </div>
 
-              <div class="summary-item">
-                <span class="summary-label">Target:</span>
-                <span class="summary-value">
+              <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                <span class="font-semibold text-gray-100">Target:</span>
+                <span class="text-gray-400">
                   {#if trainingTarget === 'ollama'}🦙 Ollama (GGUF)
                   {:else if trainingTarget === 'vllm'}⚡ vLLM (Safetensors)
                   {:else}🔄 Both (GGUF + Safetensors)
@@ -1409,46 +1311,46 @@
                 </span>
               </div>
 
-              <div class="summary-item">
-                <span class="summary-label">Model:</span>
-                <span class="summary-value">{trainingConfig.base_model}</span>
+              <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                <span class="font-semibold text-gray-100">Model:</span>
+                <span class="text-gray-400">{trainingConfig.base_model}</span>
               </div>
 
-              <div class="summary-item">
-                <span class="summary-label">Dataset:</span>
-                <span class="summary-value">
+              <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                <span class="font-semibold text-gray-100">Dataset:</span>
+                <span class="text-gray-400">
                   {datasetStats ? datasetStats.estimatedTrainingSamples.toLocaleString() : 'N/A'} samples
                 </span>
               </div>
 
-              <div class="summary-item">
-                <span class="summary-label">Epochs:</span>
-                <span class="summary-value">{trainingConfig.num_train_epochs}</span>
+              <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                <span class="font-semibold text-gray-100">Epochs:</span>
+                <span class="text-gray-400">{trainingConfig.num_train_epochs}</span>
               </div>
 
               {#if selectedMethod !== 'local-lora'}
-                <div class="summary-item">
-                  <span class="summary-label">GPU:</span>
-                  <span class="summary-value">{runpodConfig.gpuType}</span>
+                <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                  <span class="font-semibold text-gray-100">GPU:</span>
+                  <span class="text-gray-400">{runpodConfig.gpuType}</span>
                 </div>
 
-                <div class="summary-item">
-                  <span class="summary-label">Estimated Time:</span>
-                  <span class="summary-value">2-4 hours</span>
+                <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                  <span class="font-semibold text-gray-100">Estimated Time:</span>
+                  <span class="text-gray-400">2-4 hours</span>
                 </div>
 
-                <div class="summary-item">
-                  <span class="summary-label">Estimated Cost:</span>
-                  <span class="summary-value warning-text">$5-15</span>
+                <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
+                  <span class="font-semibold text-gray-100">Estimated Cost:</span>
+                  <span class="text-yellow-500 font-semibold">$5-15</span>
                 </div>
               {/if}
             </div>
 
-            <div class="launch-actions">
-              <button class="cancel-button" on:click={prevStep}>
+            <div class="flex gap-4">
+              <button class="btn-secondary flex-1 py-4" on:click={prevStep}>
                 ← Back to Config
               </button>
-              <button class="launch-button" on:click={launchTraining} disabled={loading}>
+              <button class="btn-primary flex-1 py-4 bg-emerald-600 hover:bg-emerald-700" on:click={launchTraining} disabled={loading}>
                 {#if loading}
                   🚀 Launching...
                 {:else}
@@ -1458,44 +1360,44 @@
             </div>
 
             <!-- Terminal Command Option -->
-            <details class="terminal-command-section">
-              <summary>💻 Run from Terminal Instead</summary>
-              <div class="terminal-command-content">
-                <p class="terminal-description">
+            <details class="mt-6 border border-gray-700 rounded-lg overflow-hidden">
+              <summary class="p-4 bg-gray-950 cursor-pointer font-semibold text-gray-500 hover:bg-gray-900 hover:text-white transition-colors">💻 Run from Terminal Instead</summary>
+              <div class="p-4 bg-gray-900">
+                <p class="text-sm text-gray-500 m-0 mb-4">
                   Choose a training mode and copy the command to run in a separate terminal.
                 </p>
 
-                <h4 class="command-section-title">🚀 Full Cycle (RunPod - Remote GPU)</h4>
-                <p class="command-description">Complete LoRA training on RunPod cloud GPU. Best for full training runs.</p>
-                <div class="command-box">
-                  <code class="command-text">pnpm tsx brain/agents/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
-                  <button class="copy-button" on:click={() => {
+                <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🚀 Full Cycle (RunPod - Remote GPU)</h4>
+                <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on RunPod cloud GPU. Best for full training runs.</p>
+                <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
                     navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
 
-                <h4 class="command-section-title">🖥️ Full Cycle Local (Local GPU)</h4>
-                <p class="command-description">Complete LoRA training on your local GPU. Requires CUDA-capable GPU.</p>
-                <div class="command-box">
-                  <code class="command-text">pnpm tsx brain/agents/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
-                  <button class="copy-button" on:click={() => {
+                <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🖥️ Full Cycle Local (Local GPU)</h4>
+                <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on your local GPU. Requires CUDA-capable GPU.</p>
+                <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
                     navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
 
-                <h4 class="command-section-title">🔧 Fine-Tune Cycle (Incremental)</h4>
-                <p class="command-description">Fine-tune an existing adapter with new data. Faster than full training.</p>
-                <div class="command-box">
-                  <code class="command-text">pnpm tsx brain/agents/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
-                  <button class="copy-button" on:click={() => {
+                <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🔧 Fine-Tune Cycle (Incremental)</h4>
+                <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune an existing adapter with new data. Faster than full training.</p>
+                <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
                     navigator.clipboard.writeText(`pnpm tsx brain/agents/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
 
-                <p class="terminal-note">
+                <p class="text-sm text-gray-500 m-0 mt-4 p-3 bg-emerald-600/10 rounded">
                   <strong>Tip:</strong> Running from terminal lets you see full output in real-time and run multiple sessions.
                 </p>
               </div>
@@ -1503,110 +1405,114 @@
           </div>
         {:else}
           <!-- Training in progress or completed -->
-          <div class="monitor-status">
+          <div class="flex items-center justify-between p-4 bg-gray-900 rounded-lg mb-6">
             {#if trainingPid}
-              <div class="status-badge running">
-                <div class="spinner-small"></div>
+              <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-emerald-600/10 text-emerald-500 border border-emerald-600/30">
+                <div class="w-4 h-4 border-2 border-emerald-600/20 border-t-emerald-500 rounded-full animate-spin"></div>
                 <span>Training in Progress (PID: {trainingPid})</span>
               </div>
-              <button class="btn-danger-small" on:click={cancelTraining} disabled={cancelling}>
+              <button class="btn-danger btn-sm" on:click={cancelTraining} disabled={cancelling}>
                 {cancelling ? 'Cancelling...' : '🛑 Cancel Training'}
               </button>
             {:else if trainingComplete && trainingFailed}
-              <div class="status-badge failed">
+              <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-red-500/10 text-red-500 border border-red-500/30">
                 <span>❌ Training Failed</span>
               </div>
-              <div class="failure-info">
-                <p class="failure-reason">{failureReason}</p>
-              </div>
-              <div class="post-training-actions">
-                <button class="btn-primary-small retry-btn" on:click={retryTraining} disabled={loading}>
+              <div class="flex gap-3 flex-wrap">
+                <button class="btn-sm px-4 py-2 rounded-md font-semibold cursor-pointer transition-all bg-gradient-to-br from-yellow-500 to-orange-500 text-white hover:from-yellow-600 hover:to-orange-600" on:click={retryTraining} disabled={loading}>
                   {loading ? 'Starting...' : '🔄 Retry Training'}
                 </button>
-                <button class="btn-tertiary-small" on:click={() => currentStep = 1}>
+                <button class="btn-secondary btn-sm" on:click={() => currentStep = 1}>
                   ⚙️ Change Settings
                 </button>
               </div>
             {:else if trainingComplete}
-              <div class="status-badge complete">
+              <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-green-500/10 text-green-500 border border-green-500/30">
                 <span>✅ Training Complete!</span>
               </div>
-              <div class="post-training-actions">
-                <button class="btn-primary-small" on:click={() => loadModel('merged')} disabled={loadingModel}>
+              <div class="flex gap-3 flex-wrap">
+                <button class="btn-primary btn-sm" on:click={() => loadModel('merged')} disabled={loadingModel}>
                   {loadingModel ? 'Loading...' : '📦 Load Merged Model'}
                 </button>
-                <button class="btn-secondary-small" on:click={() => loadModel('adapter')} disabled={loadingModel}>
+                <button class="btn-secondary btn-sm" on:click={() => loadModel('adapter')} disabled={loadingModel}>
                   {loadingModel ? 'Loading...' : '🔧 Load LoRA Adapter'}
                 </button>
-                <button class="btn-secondary-small" on:click={() => loadModel('both')} disabled={loadingModel}>
+                <button class="btn-secondary btn-sm" on:click={() => loadModel('both')} disabled={loadingModel}>
                   {loadingModel ? 'Loading...' : '📦🔧 Load Both'}
                 </button>
-                <button class="btn-tertiary-small" on:click={() => currentStep = 1}>
+                <button class="btn-ghost btn-sm border border-gray-700" on:click={() => currentStep = 1}>
                   🔄 New Training
                 </button>
               </div>
-              {#if modelLoadSuccess}
-                <div class="success-message">{modelLoadSuccess}</div>
-              {/if}
             {:else}
-              <div class="status-badge idle">
+              <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-gray-500/10 text-gray-500 border border-gray-500/30">
                 <span>No active training</span>
               </div>
             {/if}
           </div>
 
-          <div class="monitor-content">
+          {#if trainingComplete && trainingFailed}
+            <div class="bg-red-500/5 border border-red-500/20 rounded-lg p-4 mb-6">
+              <p class="text-gray-400 text-sm m-0 leading-relaxed">{failureReason}</p>
+            </div>
+          {/if}
+
+          {#if modelLoadSuccess}
+            <div class="banner banner-success mb-6">{modelLoadSuccess}</div>
+          {/if}
+
+          <div class="flex flex-col gap-6">
             <!-- Training Progress Banner -->
             {#if trainingPid && currentProgress}
-              <div class="progress-banner">
-                <div class="progress-header">
-                  <div class="progress-stage">
-                    <span class="stage-icon">⚙️</span>
-                    <span class="stage-name">{currentProgress.stage.replace(/_/g, ' ').toUpperCase()}</span>
+              <div class="bg-gradient-to-br from-emerald-600/15 to-cyan-500/15 border-2 border-emerald-600 rounded-xl p-6 shadow-lg shadow-emerald-600/20">
+                <div class="flex justify-between items-center mb-4">
+                  <div class="flex items-center gap-3">
+                    <span class="text-2xl animate-spin-slow">⚙️</span>
+                    <span class="text-lg font-bold text-emerald-500 uppercase tracking-wide">{currentProgress.stage.replace(/_/g, ' ')}</span>
                   </div>
-                  <div class="progress-stats">
-                    <span class="progress-percentage">{currentProgress.percentage}%</span>
-                    <span class="progress-attempts">Attempt {currentProgress.attemptCurrent}/{currentProgress.attemptMax}</span>
+                  <div class="flex items-center gap-4">
+                    <span class="text-2xl font-bold text-cyan-400" style="text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);">{currentProgress.percentage}%</span>
+                    <span class="text-sm font-semibold text-gray-400 bg-black/30 px-3 py-1.5 rounded-lg">Attempt {currentProgress.attemptCurrent}/{currentProgress.attemptMax}</span>
                   </div>
                 </div>
-                <div class="progress-message">{currentProgress.message}</div>
-                <div class="progress-bar-container">
-                  <div class="progress-bar-fill" style="width: {currentProgress.percentage}%"></div>
+                <div class="text-sm text-gray-100 mb-4 p-2 px-3 bg-black/20 rounded-lg italic">{currentProgress.message}</div>
+                <div class="w-full h-2 bg-black/30 rounded overflow-hidden">
+                  <div class="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded transition-all duration-300" style="width: {currentProgress.percentage}%; box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);"></div>
                 </div>
               </div>
             {/if}
 
             <!-- Console Output -->
-            <div class="logs-container">
-              <h4>🖥️ Console Output</h4>
-              <div class="logs-scroll console-output" bind:this={consoleScrollContainer}>
+            <div class="panel overflow-hidden">
+              <h4 class="px-4 py-3 bg-gray-950 border-b border-gray-700 m-0 text-sm font-semibold text-gray-100">🖥️ Console Output</h4>
+              <div class="h-[300px] overflow-y-auto p-4 font-mono text-sm bg-black" bind:this={consoleScrollContainer}>
                 {#if consoleLogs.length === 0}
-                  <div class="log-empty">
+                  <div class="text-gray-500 text-center py-8 italic">
                     {trainingPid ? 'Waiting for training process to start...' : 'No console output yet.'}
                   </div>
                 {:else}
                   {#each consoleLogs as line}
-                    <div class="console-line" class:progress-highlight={isProgressLine(line)}>{line}</div>
+                    <div class="text-green-400 mb-1 break-words {isProgressLine(line) ? 'text-cyan-400 font-semibold bg-cyan-500/10 px-2 py-1 -ml-2 border-l-[3px] border-cyan-400' : ''}">{line}</div>
                   {/each}
                 {/if}
               </div>
             </div>
 
             <!-- Audit Events -->
-            <div class="logs-container">
-              <h4>📋 Training Events</h4>
-              <div class="logs-scroll events-output" bind:this={eventsScrollContainer}>
+            <div class="panel overflow-hidden">
+              <h4 class="px-4 py-3 bg-gray-950 border-b border-gray-700 m-0 text-sm font-semibold text-gray-100">📋 Training Events</h4>
+              <div class="h-[300px] overflow-y-auto p-4 font-mono text-sm bg-gray-950" bind:this={eventsScrollContainer}>
                 {#if trainingLogs.length === 0}
-                  <div class="log-empty">
+                  <div class="text-gray-500 text-center py-8 italic">
                     {trainingPid ? 'Waiting for training events...' : 'No training events yet.'}
                   </div>
                 {:else}
                   {#each trainingLogs as log}
-                    <div class="log-entry">
-                      <span class="log-timestamp">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                      <span class="log-event">{(log.event || 'unknown').replace('full_cycle_', '').replace(/_/g, ' ')}</span>
+                    <div class="flex gap-3 mb-2 text-gray-500">
+                      <span class="text-gray-600 shrink-0">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                      <span class="text-emerald-500 font-semibold capitalize">{(log.event || 'unknown').replace('full_cycle_', '').replace(/_/g, ' ')}</span>
                       {#if log.details}
-                        <span class="log-details">{JSON.stringify(log.details)}</span>
+                        <span class="text-gray-500 text-xs">{JSON.stringify(log.details)}</span>
                       {/if}
                     </div>
                   {/each}
@@ -1615,8 +1521,8 @@
             </div>
 
             {#if trainingPid}
-              <div class="progress-footer">
-                <p class="help-text">
+              <div class="p-4 bg-emerald-600/5 border border-emerald-600/20 rounded-lg">
+                <p class="m-0 text-gray-500 text-sm">
                   <strong>Note:</strong> The training process may take 30-60 minutes depending on dataset size.
                   You can navigate away and check back later.
                 </p>
@@ -1630,11 +1536,11 @@
 
   <!-- Navigation -->
   {#if currentStep < 5}
-    <div class="wizard-navigation">
-      <button class="nav-button secondary" on:click={prevStep} disabled={currentStep === 1}>
+    <div class="flex justify-between gap-4 pt-8 border-t border-gray-700">
+      <button class="btn-secondary px-8 py-3" on:click={prevStep} disabled={currentStep === 1}>
         ← Back
       </button>
-      <button class="nav-button primary" on:click={nextStep} disabled={!canProceed || loading}>
+      <button class="btn-primary px-8 py-3 bg-emerald-600 hover:bg-emerald-700" on:click={nextStep} disabled={!canProceed || loading}>
         {#if loading}
           Loading...
         {:else}
@@ -1646,1317 +1552,16 @@
 </div>
 
 <style>
-  .training-wizard {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .wizard-progress {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding: 0 1rem;
-  }
-
-  .progress-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-    position: relative;
-  }
-
-  .progress-step::after {
-    content: '';
-    position: absolute;
-    top: 1rem;
-    left: 50%;
-    width: 100%;
-    height: 2px;
-    background: var(--border-color, #333);
-    z-index: -1;
-  }
-
-  .progress-step:last-child::after {
-    display: none;
-  }
-
-  .step-dot {
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    background: var(--bg-secondary, #1a1a1a);
-    border: 2px solid var(--border-color, #333);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 0.875rem;
-  }
-
-  .progress-step.active .step-dot {
-    background: var(--primary-color, #00a67e);
-    border-color: var(--primary-color, #00a67e);
-    color: white;
-  }
-
-  .progress-step.completed .step-dot {
-    background: var(--primary-color, #00a67e);
-    border-color: var(--primary-color, #00a67e);
-  }
-
-  .progress-step.completed .step-dot::after {
-    content: '✓';
-    color: white;
-  }
-
-  .step-label {
-    font-size: 0.75rem;
-    color: var(--text-secondary, #888);
-  }
-
-  .progress-step.active .step-label {
-    color: var(--text-primary, #fff);
-    font-weight: 600;
-  }
-
-  .wizard-title {
-    font-size: 1.75rem;
-    margin-bottom: 1rem;
-    text-align: center;
-  }
-
-  .error-banner {
-    background: #ff4444;
-    color: white;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .error-icon {
-    font-size: 1.25rem;
-  }
-
-  .error-text {
-    flex: 1;
-  }
-
-  .error-close {
-    background: none;
-    border: none;
-    color: white;
-    font-size: 1.25rem;
-    cursor: pointer;
-    padding: 0.25rem;
-  }
-
-  .info-banner {
-    background: #00a67e;
-    color: white;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .info-icon {
-    font-size: 1.25rem;
-    font-weight: bold;
-  }
-
-  .method-info-banner {
-    padding: 1.5rem;
-    border-radius: 0.75rem;
-    margin-bottom: 2rem;
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-    border: 2px solid;
-  }
-
-  .method-info-banner.lora {
-    background: rgba(0, 166, 126, 0.1);
-    border-color: #00a67e;
-  }
-
-  .method-info-banner.finetune {
-    background: rgba(255, 136, 0, 0.1);
-    border-color: #ff8800;
-  }
-
-  .banner-icon {
-    font-size: 2rem;
-    line-height: 1;
-  }
-
-  .banner-content {
-    flex: 1;
-  }
-
-  .banner-content h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.125rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .banner-content p {
-    margin: 0;
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    line-height: 1.5;
-  }
-
-  .info-text {
-    flex: 1;
-  }
-
-  .wizard-content {
-    min-height: 400px;
-    margin-bottom: 2rem;
-  }
-
-  .step-description {
-    font-size: 1rem;
-    color: var(--text-secondary, #888);
-    margin-bottom: 2rem;
-    text-align: center;
-  }
-
-  /* Method Selection */
-  .method-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 2rem;
-  }
-
-  .method-card {
-    background: var(--bg-secondary, #1a1a1a);
-    border: 2px solid var(--border-color, #333);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .method-card:hover {
-    border-color: var(--primary-color, #00a67e);
-    transform: translateY(-2px);
-  }
-
-  .method-card.selected {
-    border-color: var(--primary-color, #00a67e);
-    background: rgba(0, 166, 126, 0.1);
-  }
-
-  .card-icon {
-    font-size: 2rem;
-  }
-
-  .card-title {
-    font-size: 1.25rem;
-    margin: 0;
-  }
-
-  .card-description {
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    margin: 0;
-  }
-
-  .card-requirements {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .requirement {
-    font-size: 0.875rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .requirement.met {
-    color: var(--success-color, #00a67e);
-  }
-
-  .card-info {
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    padding-top: 0.5rem;
-    border-top: 1px solid var(--border-color, #333);
-  }
-
-  .card-action {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--primary-color, #00a67e);
-    font-weight: 600;
-  }
-
-  .recommendation-box {
-    background: rgba(255, 193, 7, 0.1);
-    border: 1px solid rgba(255, 193, 7, 0.3);
-    border-radius: 0.5rem;
-    padding: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .recommendation-icon {
-    font-size: 1.5rem;
-  }
-
-  .recommendation-text {
-    font-size: 0.875rem;
-  }
-
-  /* Forms */
-  .config-form,
-  .training-config {
-    max-width: 600px;
-    margin: 0 auto;
-  }
-
-  .form-group {
-    margin-bottom: 1.5rem;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 600;
-  }
-
-  .form-group input,
-  .form-group select {
-    width: 100%;
-    padding: 0.75rem;
-    background: var(--bg-tertiary, #111);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 0.5rem;
-    color: var(--text-primary, #fff);
-    font-size: 1rem;
-  }
-
-  .form-group small {
-    display: block;
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-  }
-
-  .form-group small a {
-    color: var(--primary-color, #00a67e);
-  }
-
-  .form-group small code {
-    background: rgba(0, 0, 0, 0.2);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-family: 'Courier New', monospace;
-    font-size: 0.8125rem;
-  }
-
-  .validate-button {
-    width: 100%;
-    padding: 1rem;
-    background: var(--primary-color, #00a67e);
-    color: white;
-    border: none;
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s ease;
-  }
-
-  .validate-button:hover:not(:disabled) {
-    background: var(--primary-hover, #008f6e);
-  }
-
-  .validate-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Dataset Review */
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    padding: 3rem;
-  }
-
-  .spinner {
-    width: 3rem;
-    height: 3rem;
-    border: 3px solid var(--border-color, #333);
-    border-top-color: var(--primary-color, #00a67e);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
+  /* Only keyframe animations need to stay */
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-
-  .stat-card {
-    background: var(--bg-secondary, #1a1a1a);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    text-align: center;
-  }
-
-  .stat-value {
-    font-size: 2rem;
-    font-weight: bold;
-    color: var(--primary-color, #00a67e);
-  }
-
-  .stat-label {
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    margin-top: 0.5rem;
-  }
-
-  .breakdown-section {
-    margin-bottom: 2rem;
-  }
-
-  .breakdown-section h4 {
-    font-size: 1.125rem;
-    margin-bottom: 1rem;
-  }
-
-  .breakdown-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .breakdown-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.75rem;
-    background: var(--bg-secondary, #1a1a1a);
-    border-radius: 0.5rem;
-  }
-
-  .breakdown-label {
-    text-transform: capitalize;
-  }
-
-  .breakdown-value {
-    font-weight: 600;
-    color: var(--primary-color, #00a67e);
-  }
-
-  .curation-options {
-    margin-top: 2rem;
-  }
-
-  .curation-options h4 {
-    font-size: 1.125rem;
-    margin-bottom: 1rem;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
-    cursor: pointer;
-  }
-
-  .advanced-curation {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-top: 1rem;
-    padding-left: 2rem;
-  }
-
-  /* Training Data Section */
-  .training-data-section {
-    margin-top: 2rem;
-    border-top: 1px solid var(--border-color, #e5e7eb);
-    padding-top: 1.5rem;
-  }
-
-  :global(.dark) .training-data-section {
-    border-top-color: #374151;
-  }
-
-  .training-data-section h4 {
-    font-size: 1.125rem;
-    margin-bottom: 0.5rem;
-    color: var(--text-color, #111827);
-  }
-
-  :global(.dark) .training-data-section h4 {
-    color: #f3f4f6;
-  }
-
-  .section-description {
-    font-size: 0.875rem;
-    color: #6b7280;
-    margin-bottom: 1rem;
-    line-height: 1.5;
-  }
-
-  :global(.dark) .section-description {
-    color: #9ca3af;
-  }
-
-  /* Training Config */
-  .range-value {
-    display: inline-block;
-    margin-left: 1rem;
-    font-weight: 600;
-    color: var(--primary-color, #00a67e);
-  }
-
-  .advanced-config {
-    margin-top: 2rem;
-    border-top: 1px solid var(--border-color, #333);
-    padding-top: 1rem;
-  }
-
-  .advanced-config summary {
-    cursor: pointer;
-    font-weight: 600;
-    padding: 0.5rem 0;
-  }
-
-  .advanced-fields {
-    margin-top: 1rem;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-
-  /* Toggle Switches */
-  .toggle-group {
-    border-top: 1px solid var(--border-color, #333);
-    padding-top: 1rem;
-    margin-top: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .section-label {
-    font-weight: 600;
-    font-size: 0.95rem;
-    color: var(--text-primary, #fff);
-    margin-bottom: 0.25rem;
-    display: block;
-  }
-
-  .toggle-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .toggle-container {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .toggle-container input[type="checkbox"] {
-    display: none;
-  }
-
-  .toggle-slider {
-    position: relative;
-    width: 44px;
-    height: 24px;
-    background: var(--bg-tertiary, #2a2a2a);
-    border-radius: 12px;
-    transition: background 0.2s ease;
-    flex-shrink: 0;
-  }
-
-  .toggle-slider::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 20px;
-    height: 20px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s ease;
-  }
-
-  .toggle-container input[type="checkbox"]:checked + .toggle-slider {
-    background: var(--primary-color, #00a67e);
-  }
-
-  .toggle-container input[type="checkbox"]:checked + .toggle-slider::after {
-    transform: translateX(20px);
-  }
-
-  .toggle-container input[type="checkbox"]:disabled + .toggle-slider {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .toggle-container input[type="checkbox"]:disabled + .toggle-slider.disabled {
-    background: var(--bg-tertiary, #2a2a2a);
-  }
-
-  .toggle-label {
-    font-size: 0.95rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .toggle-description {
-    display: block;
-    margin-left: 0;
-    padding-left: 52px;
-    font-size: 0.85rem;
-    color: var(--text-secondary, #888);
-    line-height: 1.4;
-  }
-
-  .warning-badge,
-  .info-badge,
-  .success-badge {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.4rem;
-    border-radius: 0.25rem;
-    font-weight: 600;
-  }
-
-  .warning-badge {
-    background: rgba(255, 193, 7, 0.2);
-    color: #ffc107;
-  }
-
-  .info-badge {
-    background: rgba(33, 150, 243, 0.2);
-    color: #2196f3;
-  }
-
-  .success-badge {
-    background: rgba(76, 175, 80, 0.2);
-    color: #4caf50;
-  }
-
-  /* Launch Training */
-  .confirmation-dialog {
-    max-width: 600px;
-    margin: 0 auto;
-    background: var(--bg-secondary, #1a1a1a);
-    border: 2px solid var(--primary-color, #00a67e);
-    border-radius: 1rem;
-    padding: 2rem;
-  }
-
-  .confirmation-dialog h3 {
-    font-size: 1.5rem;
-    text-align: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .training-summary {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-
-  .summary-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.75rem;
-    background: var(--bg-tertiary, #111);
-    border-radius: 0.5rem;
-  }
-
-  .summary-label {
-    font-weight: 600;
-  }
-
-  .summary-value {
-    color: var(--text-secondary, #888);
-  }
-
-  .warning-text {
-    color: #ffc107;
-    font-weight: 600;
-  }
-
-  .launch-actions {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .launch-button,
-  .cancel-button {
-    flex: 1;
-    padding: 1rem;
-    border: none;
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .launch-button {
-    background: var(--primary-color, #00a67e);
-    color: white;
-  }
-
-  .launch-button:hover:not(:disabled) {
-    background: var(--primary-hover, #008f6e);
-    transform: translateY(-1px);
-  }
-
-  .launch-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .cancel-button {
-    background: var(--bg-tertiary, #111);
-    color: var(--text-primary, #fff);
-    border: 1px solid var(--border-color, #333);
-  }
-
-  .cancel-button:hover {
-    background: var(--bg-secondary, #1a1a1a);
-  }
-
-  /* Navigation */
-  .wizard-navigation {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 2rem;
-    border-top: 1px solid var(--border-color, #333);
-  }
-
-  .nav-button {
-    padding: 0.75rem 2rem;
-    border: none;
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .nav-button.primary {
-    background: var(--primary-color, #00a67e);
-    color: white;
-  }
-
-  .nav-button.primary:hover:not(:disabled) {
-    background: var(--primary-hover, #008f6e);
-  }
-
-  .nav-button.secondary {
-    background: var(--bg-tertiary, #111);
-    color: var(--text-primary, #fff);
-    border: 1px solid var(--border-color, #333);
-  }
-
-  .nav-button.secondary:hover:not(:disabled) {
-    background: var(--bg-secondary, #1a1a1a);
-  }
-
-  .nav-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Training Monitor */
-  .training-monitor {
-    width: 100%;
-  }
-
-  .monitor-status {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem;
-    background: var(--bg-secondary, #1a1a1a);
-    border-radius: 0.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-weight: 600;
-  }
-
-  .status-badge.running {
-    background: rgba(0, 166, 126, 0.1);
-    color: #00a67e;
-    border: 1px solid rgba(0, 166, 126, 0.3);
-  }
-
-  .status-badge.complete {
-    background: rgba(76, 175, 80, 0.1);
-    color: #4caf50;
-    border: 1px solid rgba(76, 175, 80, 0.3);
-  }
-
-  .status-badge.failed {
-    background: rgba(244, 67, 54, 0.1);
-    color: #f44336;
-    border: 1px solid rgba(244, 67, 54, 0.3);
-  }
-
-  .failure-info {
-    background: rgba(244, 67, 54, 0.05);
-    border: 1px solid rgba(244, 67, 54, 0.2);
-    border-radius: 0.5rem;
-    padding: 1rem;
-    margin: 0.75rem 0;
-  }
-
-  .failure-reason {
-    color: var(--text-secondary, #9ca3af);
-    font-size: 0.9rem;
-    margin: 0;
-    line-height: 1.5;
-  }
-
-  .retry-btn {
-    background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%) !important;
-  }
-
-  .retry-btn:hover {
-    background: linear-gradient(135deg, #d97706 0%, #ea580c 100%) !important;
-  }
-
-  .status-badge.idle {
-    background: rgba(158, 158, 158, 0.1);
-    color: #888;
-    border: 1px solid rgba(158, 158, 158, 0.3);
-  }
-
-  .spinner-small {
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(0, 166, 126, 0.2);
-    border-top-color: #00a67e;
-    border-radius: 50%;
+  .animate-spin {
     animation: spin 1s linear infinite;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .btn-danger-small, .btn-primary-small {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-danger-small {
-    background: #dc3545;
-    color: white;
-  }
-
-  .btn-danger-small:hover:not(:disabled) {
-    background: #c82333;
-  }
-
-  .btn-primary-small {
-    background: var(--primary-color, #00a67e);
-    color: white;
-  }
-
-  .btn-primary-small:hover:not(:disabled) {
-    background: var(--primary-hover, #008f6e);
-  }
-
-  .btn-secondary-small {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--primary-color, #00a67e);
-    background: transparent;
-    color: var(--primary-color, #00a67e);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-secondary-small:hover:not(:disabled) {
-    background: rgba(0, 166, 126, 0.1);
-  }
-
-  .btn-secondary-small:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-tertiary-small {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border-color, #333);
-    background: var(--bg-tertiary, #111);
-    color: var(--text-secondary, #888);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-tertiary-small:hover:not(:disabled) {
-    background: var(--bg-secondary, #1a1a1a);
-    color: var(--text-primary, #fff);
-  }
-
-  .post-training-actions {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .success-message {
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    background: rgba(76, 175, 80, 0.1);
-    border: 1px solid rgba(76, 175, 80, 0.3);
-    border-radius: 0.5rem;
-    color: #4caf50;
-    font-size: 0.875rem;
-  }
-
-  .monitor-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .logs-container {
-    background: var(--bg-secondary, #1a1a1a);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  .logs-container h4 {
-    padding: 0.75rem 1rem;
-    background: var(--bg-tertiary, #111);
-    border-bottom: 1px solid var(--border-color, #333);
-    margin: 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .logs-scroll {
-    height: 300px;
-    overflow-y: auto;
-    padding: 1rem;
-    font-family: 'Courier New', monospace;
-    font-size: 0.8125rem;
-  }
-
-  .console-output {
-    background: #0a0a0a;
-  }
-
-  .events-output {
-    background: var(--bg-tertiary, #111);
-  }
-
-  .log-empty {
-    color: var(--text-secondary, #888);
-    text-align: center;
-    padding: 2rem;
-    font-style: italic;
-  }
-
-  .console-line {
-    color: #0f0;
-    margin-bottom: 0.25rem;
-    word-wrap: break-word;
-  }
-
-  .console-line.progress-highlight {
-    color: #00d4ff;
-    font-weight: 600;
-    background: rgba(0, 212, 255, 0.1);
-    padding: 0.25rem 0.5rem;
-    border-left: 3px solid #00d4ff;
-    margin-left: -0.5rem;
-  }
-
-  .log-entry {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-    color: var(--text-secondary, #888);
-  }
-
-  .log-timestamp {
-    color: var(--text-tertiary, #666);
-    flex-shrink: 0;
-  }
-
-  .log-event {
-    color: var(--primary-color, #00a67e);
-    font-weight: 600;
-    text-transform: capitalize;
-  }
-
-  .log-details {
-    color: var(--text-secondary, #888);
-    font-size: 0.75rem;
-  }
-
-  .progress-footer {
-    padding: 1rem;
-    background: rgba(0, 166, 126, 0.05);
-    border: 1px solid rgba(0, 166, 126, 0.2);
-    border-radius: 0.5rem;
-  }
-
-  .help-text {
-    margin: 0;
-    color: var(--text-secondary, #888);
-    font-size: 0.875rem;
-  }
-
-  /* Progress Banner */
-  .progress-banner {
-    background: linear-gradient(135deg, rgba(0, 166, 126, 0.15) 0%, rgba(0, 212, 255, 0.15) 100%);
-    border: 2px solid var(--primary-color, #00a67e);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    box-shadow: 0 4px 12px rgba(0, 166, 126, 0.2);
-  }
-
-  .progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .progress-stage {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .stage-icon {
-    font-size: 1.5rem;
-    animation: spin-slow 3s linear infinite;
-  }
-
-  @keyframes spin-slow {
-    to { transform: rotate(360deg); }
-  }
-
-  .stage-name {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: var(--primary-color, #00a67e);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .progress-stats {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .progress-percentage {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #00d4ff;
-    text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
-  }
-
-  .progress-attempts {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: var(--text-secondary, #aaa);
-    background: rgba(0, 0, 0, 0.3);
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.5rem;
-  }
-
-  .progress-message {
-    font-size: 0.95rem;
-    color: var(--text-primary, #fff);
-    margin-bottom: 1rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 0.5rem;
-    font-style: italic;
-  }
-
-  .progress-bar-container {
-    width: 100%;
-    height: 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--primary-color, #00a67e) 0%, #00d4ff 100%);
-    border-radius: 4px;
-    transition: width 0.3s ease;
-    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
-  }
-
-  /* Terminal Command Section */
-  .terminal-command-section {
-    margin-top: 1.5rem;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  .terminal-command-section summary {
-    padding: 1rem;
-    background: var(--bg-tertiary, #111);
-    cursor: pointer;
-    font-weight: 600;
-    color: var(--text-secondary, #888);
-  }
-
-  .terminal-command-section summary:hover {
-    background: var(--bg-secondary, #1a1a1a);
-    color: var(--text-primary, #fff);
-  }
-
-  .terminal-command-content {
-    padding: 1rem;
-    background: var(--bg-secondary, #1a1a1a);
-  }
-
-  .terminal-description {
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    margin: 0 0 1rem 0;
-  }
-
-  .command-box {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: #0a0a0a;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .command-text {
-    flex: 1;
-    font-family: 'Courier New', monospace;
-    font-size: 0.8125rem;
-    color: #0f0;
-    word-break: break-all;
-  }
-
-  .copy-button {
-    padding: 0.375rem 0.75rem;
-    background: var(--primary-color, #00a67e);
-    color: white;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.2s ease;
-  }
-
-  .copy-button:hover {
-    background: var(--primary-hover, #008f6e);
-  }
-
-  .terminal-note {
-    font-size: 0.8125rem;
-    color: var(--text-secondary, #888);
-    margin: 1rem 0 0 0;
-    padding: 0.75rem;
-    background: rgba(0, 166, 126, 0.1);
-    border-radius: 0.375rem;
-  }
-
-  .command-section-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--text-primary, #fff);
-    margin: 1.25rem 0 0.25rem 0;
-    padding: 0;
-  }
-
-  .command-section-title:first-of-type {
-    margin-top: 0;
-  }
-
-  .command-description {
-    font-size: 0.8125rem;
-    color: var(--text-secondary, #888);
-    margin: 0 0 0.5rem 0;
-  }
-
-  /* Training Target Selection */
-  .target-selection {
-    margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid var(--border-color, #333);
-  }
-
-  .target-selection h4 {
-    font-size: 1.125rem;
-    margin: 0 0 0.5rem 0;
-    text-align: center;
-  }
-
-  /* Method header (shown below target selection) */
-  .method-header {
-    font-size: 1.125rem;
-    margin: 0 0 1rem 0;
-    text-align: center;
-  }
-
-  .target-description {
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-    text-align: center;
-    margin-bottom: 1.5rem;
-  }
-
-  .target-cards {
-    display: flex;
-    justify-content: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .target-card {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 1.5rem;
-    background: var(--bg-secondary, #1a1a1a);
-    border: 2px solid var(--border-color, #333);
-    border-radius: 0.75rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 160px;
-  }
-
-  .target-card:hover {
-    border-color: var(--primary-color, #00a67e);
-  }
-
-  .target-card.selected {
-    border-color: var(--primary-color, #00a67e);
-    background: rgba(0, 166, 126, 0.1);
-  }
-
-  .target-icon {
-    font-size: 1.5rem;
-  }
-
-  .target-info h5 {
-    margin: 0;
-    font-size: 1rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .target-detail {
-    font-size: 0.75rem;
-    color: var(--text-secondary, #888);
-  }
-
-  .target-note {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-    padding: 1rem;
-    background: rgba(33, 150, 243, 0.1);
-    border: 1px solid rgba(33, 150, 243, 0.3);
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    color: var(--text-secondary, #888);
-  }
-
-  .note-icon {
-    flex-shrink: 0;
-  }
-
-  /* Info box for vLLM output format */
-  .info-box {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    background: rgba(0, 166, 126, 0.1);
-    border: 1px solid rgba(0, 166, 126, 0.3);
-    border-radius: 0.5rem;
-    color: var(--primary-color, #00a67e);
-    font-weight: 500;
-  }
-
-  .info-box .info-icon {
-    font-size: 1.25rem;
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
   }
 </style>

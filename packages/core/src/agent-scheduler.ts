@@ -780,6 +780,7 @@ export class AgentScheduler extends EventEmitter {
       const result = await this.runtime.run(
         agentId,
         {
+          username: username || 'system',
           userId: username || 'system',
           dataDir: ROOT,
         },

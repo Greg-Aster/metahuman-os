@@ -41,8 +41,8 @@ export function checkIndexHealth(
 ): IndexHealthCheck {
   const profilePaths = getProfilePaths(username);
 
-  // Get all episodic memory files
-  const memoryFiles = listEpisodicFiles(username);
+  // Get all episodic memory files (uses storage router internally)
+  const memoryFiles = listEpisodicFiles();
   const memoryIds = new Set(memoryFiles.map(f => path.basename(f, '.json')));
 
   // Load the current index
@@ -61,7 +61,7 @@ export function checkIndexHealth(
   }
 
   // Check which memories are indexed
-  const indexedIds = new Set(index.items.map(item => item.id));
+  const indexedIds = new Set(index.data.map(item => item.id));
   const missingFromIndex = [...memoryIds].filter(id => !indexedIds.has(id)).length;
   const orphanedEntries = [...indexedIds].filter(id => !memoryIds.has(id)).length;
 
@@ -71,11 +71,11 @@ export function checkIndexHealth(
 
   return {
     totalMemories: memoryFiles.length,
-    indexedMemories: index.items.length,
+    indexedMemories: index.data.length,
     missingFromIndex,
     orphanedEntries,
     stalePercentage,
-    lastUpdated: index.metadata?.lastUpdated || null,
+    lastUpdated: index.meta?.createdAt || null,
     needsRebuild: stalePercentage > 20 || orphanedEntries > 10,
   };
 }
@@ -89,7 +89,7 @@ function removeOrphanedEntries(
   dryRun = true
 ): { removed: number; ids: string[] } {
   const profilePaths = getProfilePaths(username);
-  const memoryFiles = listEpisodicFiles(username);
+  const memoryFiles = listEpisodicFiles();
   const memoryIds = new Set(memoryFiles.map(f => path.basename(f, '.json')));
 
   const index = loadIndex(model, username);
@@ -98,7 +98,7 @@ function removeOrphanedEntries(
   }
 
   const orphanedIds: string[] = [];
-  const validItems = index.items.filter(item => {
+  const validItems = index.data.filter(item => {
     if (memoryIds.has(item.id)) {
       return true;
     }
@@ -108,7 +108,7 @@ function removeOrphanedEntries(
 
   if (!dryRun && orphanedIds.length > 0) {
     // Update the index file
-    index.items = validItems;
+    index.data = validItems;
     const indexPath = path.join(
       profilePaths.root,
       'memory',
@@ -160,19 +160,16 @@ export async function runIndexMaintenance(
 
   if (shouldRebuild && !dryRun) {
     try {
-      // Rebuild the index
-      const result = await buildMemoryIndex({
+      // Rebuild the index - returns path on success, throws on failure
+      await buildMemoryIndex({
         username,
-        model,
         force: true,
       });
 
-      if (result.success) {
-        indexesRebuilt.push(model || 'default');
-        memoriesReindexed = result.indexed || 0;
-      } else {
-        errors.push(`Index rebuild failed: ${result.error || 'Unknown error'}`);
-      }
+      indexesRebuilt.push(model || 'default');
+      // Get count from the rebuilt index
+      const newStatus = getIndexStatus(model, username);
+      memoriesReindexed = newStatus.items || 0;
     } catch (error) {
       errors.push(`Index rebuild error: ${(error as Error).message}`);
     }
@@ -204,7 +201,7 @@ export async function runIndexMaintenance(
 
   // Get final index size
   const status = getIndexStatus(model, username);
-  const indexSize = status.totalItems || 0;
+  const indexSize = status.items || 0;
 
   if (!dryRun && (indexesRebuilt.length > 0 || orphanedEntriesRemoved > 0)) {
     audit({
@@ -267,16 +264,16 @@ export function getIndexStatistics(username: string, model?: string): {
 
   // Load index for detailed stats
   const index = loadIndex(model, username);
-  const uniqueItems = index ? new Set(index.items.map(i => i.id)).size : 0;
-  const avgDimension = index && index.items.length > 0
-    ? Math.round(index.items.reduce((sum, i) => sum + (i.embedding?.length || 0), 0) / index.items.length)
+  const uniqueItems = index ? new Set(index.data.map(i => i.id)).size : 0;
+  const avgDimension = index && index.data.length > 0
+    ? Math.round(index.data.reduce((sum, i) => sum + (i.vector?.length || 0), 0) / index.data.length)
     : 0;
 
   return {
-    totalItems: status.totalItems || 0,
+    totalItems: status.items || 0,
     uniqueItems,
     averageVectorDimension: avgDimension,
-    lastUpdated: status.lastUpdated || null,
+    lastUpdated: status.createdAt || null,
     fileSizeBytes,
   };
 }
