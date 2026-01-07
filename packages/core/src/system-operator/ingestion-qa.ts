@@ -272,8 +272,8 @@ export async function runIngestionQA(
     dryRun = false,
   } = options;
 
-  // Get all memory files
-  const memoryFiles = listEpisodicFiles(username);
+  // Get all memory files (uses storage router internally)
+  const memoryFiles = listEpisodicFiles();
   const allIssues: MemoryIssue[] = [];
   let repairedCount = 0;
 
@@ -382,7 +382,7 @@ export function getIngestionHealth(username: string): {
   estimatedIssues: number;
   needsFullScan: boolean;
 } {
-  const memoryFiles = listEpisodicFiles(username);
+  const memoryFiles = listEpisodicFiles();
 
   // Quick spot check on last 10 files
   const recentFiles = memoryFiles.slice(-10);
@@ -412,7 +412,7 @@ export function cleanupDuplicates(
   username: string,
   dryRun = true
 ): { removed: number; files: string[] } {
-  const memoryFiles = listEpisodicFiles(username);
+  const memoryFiles = listEpisodicFiles();
   const duplicates = findDuplicates(memoryFiles);
   const filesToRemove: string[] = [];
 

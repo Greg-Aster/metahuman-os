@@ -613,92 +613,92 @@
   }
 </script>
 
-<div class="security-container">
-  <div class="security-header">
-    <h1>🔒 Security & Account Settings</h1>
-    <p>Manage your authentication and profile information</p>
+<div class="p-8 max-w-3xl mx-auto h-full overflow-y-auto overflow-x-hidden">
+  <div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 m-0 mb-2">🔒 Security & Account Settings</h1>
+    <p class="text-gray-500 dark:text-gray-400 m-0">Manage your authentication and profile information</p>
   </div>
 
   {#if loading}
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <p>Loading account information...</p>
+    <div class="flex flex-col items-center justify-center py-16 px-8">
+      <div class="w-10 h-10 border-3 border-violet-500/20 border-t-violet-500 rounded-full animate-spin"></div>
+      <p class="mt-4 text-gray-500 dark:text-gray-400">Loading account information...</p>
     </div>
   {:else if !currentUser}
-    <div class="not-authenticated">
+    <div class="flex flex-col items-center justify-center py-16 px-8 text-center">
       <svg class="w-16 h-16 text-gray-400 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
       </svg>
-      <h2>Authentication Required</h2>
-      <p>Please login to access security settings</p>
-      <a href="/" class="login-button">Go to Login</a>
+      <h2 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-2">Authentication Required</h2>
+      <p class="text-gray-500 dark:text-gray-400 m-0 mb-6">Please login to access security settings</p>
+      <a href="/" class="inline-block px-6 py-3 bg-gradient-to-r from-violet-500 to-pink-600 text-white no-underline rounded-lg font-semibold transition-transform hover:-translate-y-0.5">Go to Login</a>
     </div>
   {:else}
     {#if error}
-      <div class="alert alert-error">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="flex items-center gap-3 p-4 rounded-lg mb-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <span>{error}</span>
-        <button on:click={() => error = ''} class="alert-close">×</button>
+        <span class="flex-1">{error}</span>
+        <button on:click={() => error = ''} class="ml-auto bg-transparent border-none text-2xl cursor-pointer text-inherit opacity-60 hover:opacity-100">×</button>
       </div>
     {/if}
 
     {#if success}
-      <div class="alert alert-success">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="flex items-center gap-3 p-4 rounded-lg mb-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <span>{success}</span>
-        <button on:click={() => success = ''} class="alert-close">×</button>
+        <span class="flex-1">{success}</span>
+        <button on:click={() => success = ''} class="ml-auto bg-transparent border-none text-2xl cursor-pointer text-inherit opacity-60 hover:opacity-100">×</button>
       </div>
     {/if}
 
     <!-- Current User Info -->
-    <div class="card">
-      <h2>Account Information</h2>
-      <div class="user-info-grid">
-        <div class="info-row">
-          <span class="label">Username:</span>
-          <span class="value">{currentUser.username}</span>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">Account Information</h2>
+      <div class="flex flex-col gap-3">
+        <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-800 last:border-b-0">
+          <span class="font-medium text-gray-500 dark:text-gray-400">Username:</span>
+          <span class="font-medium text-gray-900 dark:text-gray-100">{currentUser.username}</span>
         </div>
-        <div class="info-row">
-          <span class="label">Role:</span>
-          <span class="value role-badge role-{currentUser.role}">{currentUser.role}</span>
+        <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-800 last:border-b-0">
+          <span class="font-medium text-gray-500 dark:text-gray-400">Role:</span>
+          <span class="inline-block px-3 py-1 rounded-full text-xs font-semibold uppercase {currentUser.role === 'owner' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'}">{currentUser.role}</span>
         </div>
         {#if currentUser.metadata?.displayName}
-          <div class="info-row">
-            <span class="label">Display Name:</span>
-            <span class="value">{currentUser.metadata.displayName}</span>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-800 last:border-b-0">
+            <span class="font-medium text-gray-500 dark:text-gray-400">Display Name:</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{currentUser.metadata.displayName}</span>
           </div>
         {/if}
         {#if currentUser.metadata?.email}
-          <div class="info-row">
-            <span class="label">Email:</span>
-            <span class="value">{currentUser.metadata.email}</span>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-800 last:border-b-0">
+            <span class="font-medium text-gray-500 dark:text-gray-400">Email:</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{currentUser.metadata.email}</span>
           </div>
         {/if}
         {#if currentUser.createdAt}
-          <div class="info-row">
-            <span class="label">Created:</span>
-            <span class="value">{new Date(currentUser.createdAt).toLocaleString()}</span>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-800 last:border-b-0">
+            <span class="font-medium text-gray-500 dark:text-gray-400">Created:</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{new Date(currentUser.createdAt).toLocaleString()}</span>
           </div>
         {/if}
       </div>
     </div>
 
     <!-- Change Username -->
-    <div class="card">
-      <h2>Change Username</h2>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">Change Username</h2>
       {#if !showChangeUsername}
-        <p>Your current username is <strong>{currentUser.username}</strong></p>
-        <button class="btn btn-primary" on:click={() => showChangeUsername = true}>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Your current username is <strong class="text-gray-900 dark:text-gray-100">{currentUser.username}</strong></p>
+        <button class="btn-primary" on:click={() => showChangeUsername = true}>
           Change Username
         </button>
       {:else}
         <form on:submit|preventDefault={handleChangeUsername}>
-          <div class="form-group">
-            <label for="newUsername">New Username</label>
+          <div class="mb-4">
+            <label for="newUsername" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">New Username</label>
             <input
               id="newUsername"
               type="text"
@@ -706,14 +706,15 @@
               placeholder="Enter new username"
               disabled={usernameChanging}
               required
+              class="input-field"
             />
-            <small>Username must be 3-50 characters, alphanumeric with underscore/hyphen</small>
+            <small class="block mt-1 text-sm text-gray-500 dark:text-gray-400">Username must be 3-50 characters, alphanumeric with underscore/hyphen</small>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" disabled={usernameChanging}>
+          <div class="flex gap-3">
+            <button type="submit" class="btn-primary" disabled={usernameChanging}>
               {usernameChanging ? 'Changing...' : 'Save Username'}
             </button>
-            <button type="button" class="btn btn-secondary" on:click={cancelChangeUsername} disabled={usernameChanging}>
+            <button type="button" class="btn-secondary" on:click={cancelChangeUsername} disabled={usernameChanging}>
               Cancel
             </button>
           </div>
@@ -722,17 +723,17 @@
     </div>
 
     <!-- Change Password -->
-    <div class="card">
-      <h2>Change Password</h2>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">Change Password</h2>
       {#if !showChangePassword}
-        <p>Update your password to keep your account secure</p>
-        <button class="btn btn-primary" on:click={() => showChangePassword = true}>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Update your password to keep your account secure</p>
+        <button class="btn-primary" on:click={() => showChangePassword = true}>
           Change Password
         </button>
       {:else}
         <form on:submit|preventDefault={handleChangePassword}>
-          <div class="form-group">
-            <label for="currentPassword">Current Password</label>
+          <div class="mb-4">
+            <label for="currentPassword" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">Current Password</label>
             <input
               id="currentPassword"
               type="password"
@@ -740,10 +741,11 @@
               placeholder="Enter current password"
               disabled={passwordChanging}
               required
+              class="input-field"
             />
           </div>
-          <div class="form-group">
-            <label for="newPassword">New Password</label>
+          <div class="mb-4">
+            <label for="newPassword" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">New Password</label>
             <input
               id="newPassword"
               type="password"
@@ -751,10 +753,11 @@
               placeholder="Enter new password"
               disabled={passwordChanging}
               required
+              class="input-field"
             />
           </div>
-          <div class="form-group">
-            <label for="confirmPassword">Confirm New Password</label>
+          <div class="mb-4">
+            <label for="confirmPassword" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm New Password</label>
             <input
               id="confirmPassword"
               type="password"
@@ -762,13 +765,14 @@
               placeholder="Confirm new password"
               disabled={passwordChanging}
               required
+              class="input-field"
             />
           </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" disabled={passwordChanging}>
+          <div class="flex gap-3">
+            <button type="submit" class="btn-primary" disabled={passwordChanging}>
               {passwordChanging ? 'Changing...' : 'Save Password'}
             </button>
-            <button type="button" class="btn btn-secondary" on:click={cancelChangePassword} disabled={passwordChanging}>
+            <button type="button" class="btn-secondary" on:click={cancelChangePassword} disabled={passwordChanging}>
               Cancel
             </button>
           </div>
@@ -777,71 +781,71 @@
     </div>
 
     <!-- Recovery Codes -->
-    <div class="card">
-      <h2>🔑 Recovery Codes</h2>
-      <p>Use recovery codes to reset your password if you forget it. Each code can only be used once.</p>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🔑 Recovery Codes</h2>
+      <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Use recovery codes to reset your password if you forget it. Each code can only be used once.</p>
 
       {#if recoveryCodesLoading}
-        <p class="loading-text">Loading recovery codes...</p>
+        <p class="text-gray-500 dark:text-gray-400 italic">Loading recovery codes...</p>
       {:else}
-        <div class="recovery-status">
-          <div class="recovery-count">
-            <strong>{recoveryCodes.length} of 10 codes remaining</strong>
+        <div class="mb-6">
+          <div class="mb-4">
+            <strong class="text-lg text-gray-900 dark:text-gray-100">{recoveryCodes.length} of 10 codes remaining</strong>
           </div>
           {#if recoveryCodes.length <= 3 && recoveryCodes.length > 0}
-            <div class="warning-box">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <div class="flex gap-3 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg mb-4">
+              <svg class="flex-shrink-0 w-5 h-5 text-yellow-600 dark:text-yellow-400" width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
                 <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
               </svg>
-              <div>
-                <strong>Low Recovery Codes</strong>
-                <p>You have {recoveryCodes.length} code{recoveryCodes.length === 1 ? '' : 's'} remaining. Consider regenerating new codes soon.</p>
+              <div class="flex-1">
+                <strong class="block text-yellow-800 dark:text-yellow-300 mb-1 text-sm">Low Recovery Codes</strong>
+                <p class="m-0 text-sm text-yellow-700 dark:text-yellow-400">You have {recoveryCodes.length} code{recoveryCodes.length === 1 ? '' : 's'} remaining. Consider regenerating new codes soon.</p>
               </div>
             </div>
           {:else if recoveryCodes.length === 0}
-            <div class="warning-box danger-warning">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <div class="flex gap-3 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg mb-4">
+              <svg class="flex-shrink-0 w-5 h-5 text-red-600 dark:text-red-400" width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M8 1L1 14h14L8 1z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
                 <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
               </svg>
-              <div>
-                <strong>No Recovery Codes Available</strong>
-                <p>You have no recovery codes left. Regenerate codes immediately to ensure you can recover your account.</p>
+              <div class="flex-1">
+                <strong class="block text-red-800 dark:text-red-300 mb-1 text-sm">No Recovery Codes Available</strong>
+                <p class="m-0 text-sm text-red-700 dark:text-red-400">You have no recovery codes left. Regenerate codes immediately to ensure you can recover your account.</p>
               </div>
             </div>
           {/if}
         </div>
 
-        <div class="recovery-actions">
+        <div class="flex flex-wrap gap-3 mb-4">
           {#if recoveryCodes.length > 0 && !showRecoveryCodes}
-            <button class="btn btn-secondary" on:click={() => showRecoveryCodes = true}>
+            <button class="btn-secondary" on:click={() => showRecoveryCodes = true}>
               View Remaining Codes
             </button>
           {/if}
 
           {#if !showRegenerateConfirm}
             <button
-              class="btn btn-primary"
+              class="btn-primary"
               on:click={() => showRegenerateConfirm = true}
               disabled={regeneratingCodes}
             >
               Regenerate All Codes
             </button>
           {:else}
-            <div class="confirm-box">
-              <p><strong>⚠️ Are you sure?</strong></p>
-              <p>This will invalidate all existing recovery codes and generate 10 new ones.</p>
-              <div class="confirm-actions">
+            <div class="w-full p-4 bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg">
+              <p class="m-0 mb-2 text-yellow-800 dark:text-yellow-300"><strong>⚠️ Are you sure?</strong></p>
+              <p class="m-0 mb-4 text-yellow-700 dark:text-yellow-400">This will invalidate all existing recovery codes and generate 10 new ones.</p>
+              <div class="flex gap-3">
                 <button
-                  class="btn btn-primary"
+                  class="btn-primary"
                   on:click={handleRegenerateCodes}
                   disabled={regeneratingCodes}
                 >
                   {regeneratingCodes ? 'Regenerating...' : 'Yes, Regenerate'}
                 </button>
                 <button
-                  class="btn btn-secondary"
+                  class="btn-secondary"
                   on:click={() => showRegenerateConfirm = false}
                   disabled={regeneratingCodes}
                 >
@@ -853,22 +857,22 @@
         </div>
 
         {#if showRecoveryCodes && recoveryCodes.length > 0}
-          <div class="recovery-codes-display">
-            <div class="codes-header">
-              <h3>Your Recovery Codes</h3>
-              <button class="btn btn-secondary btn-sm" on:click={copyAllCodesToClipboard}>
+          <div class="mt-6 p-6 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <div class="flex justify-between items-center mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+              <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0">Your Recovery Codes</h3>
+              <button class="btn-sm" on:click={copyAllCodesToClipboard}>
                 📋 Copy All
               </button>
             </div>
-            <div class="codes-grid">
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3 mb-4">
               {#each recoveryCodes as code, index}
-                <div class="code-item">
-                  <span class="code-number">{(index + 1).toString().padStart(2, '0')}.</span>
-                  <code class="code-value">{code}</code>
+                <div class="flex items-center gap-2 p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md">
+                  <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{(index + 1).toString().padStart(2, '0')}.</span>
+                  <code class="font-mono text-sm font-semibold text-violet-500 dark:text-violet-400 tracking-wider">{code}</code>
                 </div>
               {/each}
             </div>
-            <button class="btn btn-secondary" on:click={() => showRecoveryCodes = false}>
+            <button class="btn-secondary" on:click={() => showRecoveryCodes = false}>
               Hide Codes
             </button>
           </div>
@@ -877,40 +881,42 @@
     </div>
 
     <!-- Update Profile -->
-    <div class="card">
-      <h2>Profile Information</h2>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">Profile Information</h2>
       {#if !showChangeProfile}
-        <p>Update your display name and email</p>
-        <button class="btn btn-primary" on:click={() => showChangeProfile = true}>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Update your display name and email</p>
+        <button class="btn-primary" on:click={() => showChangeProfile = true}>
           Update Profile
         </button>
       {:else}
         <form on:submit|preventDefault={handleChangeProfile}>
-          <div class="form-group">
-            <label for="displayName">Display Name</label>
+          <div class="mb-4">
+            <label for="displayName" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">Display Name</label>
             <input
               id="displayName"
               type="text"
               bind:value={newDisplayName}
               placeholder="Your display name"
               disabled={profileChanging}
+              class="input-field"
             />
           </div>
-          <div class="form-group">
-            <label for="email">Email (optional)</label>
+          <div class="mb-4">
+            <label for="email" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">Email (optional)</label>
             <input
               id="email"
               type="email"
               bind:value={newEmail}
               placeholder="your@email.com"
               disabled={profileChanging}
+              class="input-field"
             />
           </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" disabled={profileChanging}>
+          <div class="flex gap-3">
+            <button type="submit" class="btn-primary" disabled={profileChanging}>
               {profileChanging ? 'Updating...' : 'Save Profile'}
             </button>
-            <button type="button" class="btn btn-secondary" on:click={cancelChangeProfile} disabled={profileChanging}>
+            <button type="button" class="btn-secondary" on:click={cancelChangeProfile} disabled={profileChanging}>
               Cancel
             </button>
           </div>
@@ -919,41 +925,41 @@
     </div>
 
     <!-- Remote Access Controls -->
-    <div class="card">
-      <h2>🌐 Remote Access</h2>
-      <p>Enable the Cloudflare tunnel to allow secure remote connections back to your MetaHuman node.</p>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🌐 Remote Access</h2>
+      <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Enable the Cloudflare tunnel to allow secure remote connections back to your MetaHuman node.</p>
 
       {#if tunnelStatusLoading && !tunnelStatus}
-        <p class="loading-text">Checking tunnel status...</p>
+        <p class="text-gray-500 dark:text-gray-400 italic">Checking tunnel status...</p>
       {:else if tunnelStatus}
-        <div class="tunnel-status-grid">
-          <div class="tunnel-status-row">
-            <span class="label">cloudflared</span>
-            <span class="status-pill" class:status-pill-ok={tunnelStatus.installed} class:status-pill-bad={!tunnelStatus.installed}>
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4">
+          <div class="flex flex-col gap-1">
+            <span class="font-medium text-gray-500 dark:text-gray-400">cloudflared</span>
+            <span class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold {tunnelStatus.installed ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300'}">
               {tunnelStatus.installed ? 'Installed' : 'Missing'}
             </span>
           </div>
-          <div class="tunnel-status-row">
-            <span class="label">Remote access</span>
-            <span class="status-pill" class:status-pill-ok={tunnelStatus.enabled} class:status-pill-bad={!tunnelStatus.enabled}>
+          <div class="flex flex-col gap-1">
+            <span class="font-medium text-gray-500 dark:text-gray-400">Remote access</span>
+            <span class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold {tunnelStatus.enabled ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300'}">
               {tunnelStatus.enabled ? 'Enabled' : 'Disabled'}
             </span>
           </div>
-          <div class="tunnel-status-row">
-            <span class="label">Runtime</span>
-            <span class="status-pill" class:status-pill-ok={tunnelStatus.running} class:status-pill-bad={!tunnelStatus.running}>
+          <div class="flex flex-col gap-1">
+            <span class="font-medium text-gray-500 dark:text-gray-400">Runtime</span>
+            <span class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold {tunnelStatus.running ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300'}">
               {tunnelStatus.running ? 'Running' : 'Stopped'}
             </span>
           </div>
         </div>
       {:else}
-        <p class="muted-text">Tunnel status is currently unavailable. Try refreshing.</p>
+        <p class="text-gray-500 dark:text-gray-400 text-sm">Tunnel status is currently unavailable. Try refreshing.</p>
       {/if}
 
-      <div class="remote-actions">
+      <div class="flex flex-wrap gap-3 items-center mt-2">
         <button
           type="button"
-          class="btn btn-primary"
+          class="btn-primary"
           on:click={() => setTunnelEnabled(true)}
           disabled={tunnelActionPending || tunnelStatusLoading || !tunnelStatus || tunnelStatus.enabled || !tunnelStatus.installed}
         >
@@ -961,7 +967,7 @@
         </button>
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn-secondary"
           on:click={() => setTunnelEnabled(false)}
           disabled={tunnelActionPending || tunnelStatusLoading || !tunnelStatus || !tunnelStatus.enabled}
         >
@@ -969,7 +975,7 @@
         </button>
         <button
           type="button"
-          class="btn btn-secondary btn-ghost"
+          class="px-6 py-3 rounded-lg font-semibold text-sm bg-transparent border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 cursor-pointer transition-all hover:border-solid hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={loadTunnelStatus}
           disabled={tunnelStatusLoading || tunnelActionPending}
         >
@@ -977,46 +983,47 @@
         </button>
       </div>
 
-      <p class="helper-text">
+      <p class="text-gray-500 dark:text-gray-400 text-sm mt-4">
         Need to start or stop the process? Use the Network tab for full Cloudflare controls.
       </p>
     </div>
 
     <!-- Trust Coupling (Owner Only) -->
     {#if currentUser.role === 'owner'}
-      <div class="card">
-        <h2>🔗 Trust & Cognitive Mode Coupling</h2>
-        <p>Link trust level to cognitive mode for automatic permission adjustment</p>
+      <div class="panel mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🔗 Trust & Cognitive Mode Coupling</h2>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Link trust level to cognitive mode for automatic permission adjustment</p>
         {#if couplingLoading}
-          <p class="loading-text">Loading coupling state...</p>
+          <p class="text-gray-500 dark:text-gray-400 italic">Loading coupling state...</p>
         {:else}
-          <div class="toggle-control">
-            <label class="toggle-label">
+          <div class="flex flex-col gap-3">
+            <label class="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
                 checked={trustCoupled}
                 on:change={handleCouplingToggle}
                 disabled={couplingSaving}
+                class="hidden peer"
               />
-              <span class="toggle-switch"></span>
-              <span class="toggle-text">
+              <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">
                 {trustCoupled ? 'Coupled (automatic)' : 'Decoupled (manual)'}
               </span>
             </label>
             {#if couplingSaving}
-              <span class="saving-indicator">Saving...</span>
+              <span class="text-violet-500 text-sm italic">Saving...</span>
             {/if}
           </div>
-          <div class="coupling-info">
+          <div class="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg border-l-3 border-violet-500">
             {#if trustCoupled}
-              <small>
+              <small class="block text-gray-600 dark:text-gray-400 leading-relaxed">
                 ✓ Trust level adjusts automatically when switching cognitive modes:<br>
                 • <strong>Dual Consciousness</strong> → supervised_auto (full autonomy with logging)<br>
                 • <strong>Agent Mode</strong> → suggest (approval required)<br>
                 • <strong>Emulation</strong> → observe (read-only, no actions)
               </small>
             {:else}
-              <small>
+              <small class="block text-gray-600 dark:text-gray-400 leading-relaxed">
                 ⚠️ Trust level must be manually adjusted. Cognitive mode changes won't affect permissions.
               </small>
             {/if}
@@ -1025,26 +1032,27 @@
       </div>
 
       <!-- Trust Level (Owner Only) -->
-      <div class="card">
-        <h2>🔐 Trust Level (Progressive Autonomy)</h2>
-        <p>Controls what skills the operator can access and whether actions require approval</p>
+      <div class="panel mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🔐 Trust Level (Progressive Autonomy)</h2>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Controls what skills the operator can access and whether actions require approval</p>
         {#if trustLoading}
-          <p class="loading-text">Loading trust level...</p>
+          <p class="text-gray-500 dark:text-gray-400 italic">Loading trust level...</p>
         {:else}
-          <div class="trust-level-control">
-            <div class="form-group">
-              <label for="trustLevel">Current Trust Level</label>
+          <div class="flex flex-col gap-4">
+            <div class="mb-4">
+              <label for="trustLevel" class="block font-medium text-gray-700 dark:text-gray-300 mb-2">Current Trust Level</label>
               <select
                 id="trustLevel"
                 bind:value={trustLevel}
                 on:change={handleTrustLevelChange}
                 disabled={trustSaving}
+                class="select-field"
               >
                 {#each trustOptions as option}
                   <option value={option}>{option}</option>
                 {/each}
               </select>
-              <small>
+              <small class="block mt-1 text-sm text-gray-500 dark:text-gray-400">
                 {#if trustLevel === 'observe'}
                   Monitor only, no actions, learn patterns
                 {:else if trustLevel === 'suggest'}
@@ -1058,7 +1066,7 @@
                 {/if}
               </small>
             </div>
-            <div class="trust-info">
+            <div class="p-3 bg-gray-100 dark:bg-gray-800 border-l-3 border-violet-500 rounded text-sm text-gray-700 dark:text-gray-300">
               <strong>Trust Progression:</strong> observe → suggest → supervised_auto → bounded_auto → adaptive_auto
             </div>
           </div>
@@ -1066,26 +1074,27 @@
       </div>
 
       <!-- Persona Summary Toggle -->
-      <div class="card">
-        <h2>🧠 Persona Summary</h2>
-        <p>Include your persona identity, values, and goals in chat context</p>
+      <div class="panel mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🧠 Persona Summary</h2>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Include your persona identity, values, and goals in chat context</p>
         {#if personaSummaryLoading}
-          <p class="loading-text">Loading persona summary setting...</p>
+          <p class="text-gray-500 dark:text-gray-400 italic">Loading persona summary setting...</p>
         {:else}
-          <div class="toggle-control">
-            <label class="toggle-label">
+          <div class="flex flex-col gap-3">
+            <label class="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
                 checked={includePersonaSummary}
                 on:change={handlePersonaSummaryToggle}
                 disabled={personaSummarySaving}
+                class="hidden peer"
               />
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">
+              <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">
                 {includePersonaSummary ? 'Enabled' : 'Disabled'}
               </span>
             </label>
-            <small>
+            <small class="text-gray-500 dark:text-gray-400">
               When enabled, the AI will have access to your persona's identity, values, goals, and personality traits.
               This helps the AI respond more consistently with your configured personality.
             </small>
@@ -1094,97 +1103,101 @@
       </div>
 
       <!-- Cognitive Architecture Safety Controls -->
-      <div class="card">
-        <h2>🛡️ Cognitive Architecture (Layer 3 Safety)</h2>
-        <p>Configure safety validation and response refinement for all AI responses</p>
+      <div class="panel mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🛡️ Cognitive Architecture (Layer 3 Safety)</h2>
+        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Configure safety validation and response refinement for all AI responses</p>
         {#if cognitiveLayersLoading}
-          <p class="loading-text">Loading cognitive layer settings...</p>
+          <p class="text-gray-500 dark:text-gray-400 italic">Loading cognitive layer settings...</p>
         {:else}
-          <div class="cognitive-layers-grid">
+          <div class="flex flex-col gap-6 mb-6">
             <!-- Master Switch -->
-            <div class="setting-row">
-              <div class="setting-header">
-                <h3>3-Layer Pipeline</h3>
-                <p class="setting-description">Enable full cognitive architecture (context → generation → validation)</p>
+            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="flex-1">
+                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">3-Layer Pipeline</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Enable full cognitive architecture (context → generation → validation)</p>
               </div>
-              <label class="toggle-label">
+              <label class="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={cognitiveLayersConfig.useCognitivePipeline}
                   on:change={() => handleCognitiveLayerToggle('useCognitivePipeline')}
                   disabled={cognitiveLayersSaving}
+                  class="hidden peer"
                 />
-                <span class="toggle-switch"></span>
-                <span class="toggle-text">
+                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
                   {cognitiveLayersConfig.useCognitivePipeline ? 'Enabled' : 'Disabled'}
                 </span>
               </label>
             </div>
 
             <!-- Safety Checks -->
-            <div class="setting-row" class:disabled={!cognitiveLayersConfig.useCognitivePipeline}>
-              <div class="setting-header">
-                <h3>Safety Validation (Phase 4.2)</h3>
-                <p class="setting-description">Pattern-based detection of sensitive data, security violations, and harmful content</p>
-                <small class="setting-meta">Non-blocking • &lt;5ms overhead</small>
+            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.useCognitivePipeline ? 'opacity-50' : ''}">
+              <div class="flex-1">
+                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">Safety Validation (Phase 4.2)</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Pattern-based detection of sensitive data, security violations, and harmful content</p>
+                <small class="block text-xs font-medium text-violet-500">Non-blocking • &lt;5ms overhead</small>
               </div>
-              <label class="toggle-label">
+              <label class="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={cognitiveLayersConfig.enableSafetyChecks}
                   on:change={() => handleCognitiveLayerToggle('enableSafetyChecks')}
                   disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
+                  class="hidden peer"
                 />
-                <span class="toggle-switch"></span>
-                <span class="toggle-text">
+                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
                   {cognitiveLayersConfig.enableSafetyChecks ? 'Enabled' : 'Disabled'}
                 </span>
               </label>
             </div>
 
             <!-- Response Refinement -->
-            <div class="setting-row" class:disabled={!cognitiveLayersConfig.useCognitivePipeline}>
-              <div class="setting-header">
-                <h3>Response Refinement (Phase 4.3)</h3>
-                <p class="setting-description">Auto-sanitize API keys, passwords, file paths, and internal IPs</p>
-                <small class="setting-meta">Non-blocking • &lt;10ms average</small>
+            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.useCognitivePipeline ? 'opacity-50' : ''}">
+              <div class="flex-1">
+                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">Response Refinement (Phase 4.3)</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Auto-sanitize API keys, passwords, file paths, and internal IPs</p>
+                <small class="block text-xs font-medium text-violet-500">Non-blocking • &lt;10ms average</small>
               </div>
-              <label class="toggle-label">
+              <label class="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={cognitiveLayersConfig.enableResponseRefinement}
                   on:change={() => handleCognitiveLayerToggle('enableResponseRefinement')}
                   disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
+                  class="hidden peer"
                 />
-                <span class="toggle-switch"></span>
-                <span class="toggle-text">
+                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
                   {cognitiveLayersConfig.enableResponseRefinement ? 'Enabled' : 'Disabled'}
                 </span>
               </label>
             </div>
 
             <!-- Blocking Mode -->
-            <div class="setting-row blocking-mode" class:disabled={!cognitiveLayersConfig.enableResponseRefinement}>
-              <div class="setting-header">
-                <h3>⚠️ Blocking Mode (Phase 4.4)</h3>
-                <p class="setting-description">Send refined (sanitized) responses to users instead of originals</p>
-                <small class="setting-meta">
+            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border-l-3 border-amber-500 border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.enableResponseRefinement ? 'opacity-50' : ''}">
+              <div class="flex-1">
+                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">⚠️ Blocking Mode (Phase 4.4)</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Send refined (sanitized) responses to users instead of originals</p>
+                <small class="block text-xs font-medium">
                   {#if cognitiveLayersConfig.enableBlockingMode}
-                    <strong class="enforcement-mode">ENFORCEMENT MODE ACTIVE</strong> - Users receive sanitized responses
+                    <strong class="text-red-600 dark:text-red-400">ENFORCEMENT MODE ACTIVE</strong> - Users receive sanitized responses
                   {:else}
-                    <strong class="monitoring-mode">MONITORING MODE</strong> - Users receive original responses, refinements logged
+                    <strong class="text-gray-500 dark:text-gray-400">MONITORING MODE</strong> - Users receive original responses, refinements logged
                   {/if}
                 </small>
               </div>
-              <label class="toggle-label">
+              <label class="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={cognitiveLayersConfig.enableBlockingMode}
                   on:change={() => handleCognitiveLayerToggle('enableBlockingMode')}
                   disabled={cognitiveLayersSaving || !cognitiveLayersConfig.enableResponseRefinement}
+                  class="hidden peer"
                 />
-                <span class="toggle-switch"></span>
-                <span class="toggle-text">
+                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
                   {cognitiveLayersConfig.enableBlockingMode ? 'Enforcement' : 'Monitoring'}
                 </span>
               </label>
@@ -1192,57 +1205,52 @@
           </div>
 
           <!-- Info Panel -->
-          <div class="cognitive-info-panel">
-            <h4>What gets detected & refined:</h4>
-            <div class="detection-grid">
-              <div class="detection-category">
-                <strong>Sensitive Data:</strong>
-                <ul>
-                  <li>API keys (sk-*, pk-*, Bearer)</li>
-                  <li>Passwords & credentials</li>
-                  <li>SSH private keys</li>
+          <div class="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 border-l-3 border-violet-500">
+            <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0 mb-3">What gets detected & refined:</h4>
+            <div class="grid grid-cols-2 sm:grid-cols-1 gap-4 mb-3">
+              <div class="text-xs">
+                <strong class="block text-gray-700 dark:text-gray-300 mb-1">Sensitive Data:</strong>
+                <ul class="m-0 pl-5 list-disc">
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">API keys (sk-*, pk-*, Bearer)</li>
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">Passwords & credentials</li>
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">SSH private keys</li>
                 </ul>
               </div>
-              <div class="detection-category">
-                <strong>Security Violations:</strong>
-                <ul>
-                  <li>File paths (/home/, /etc/, C:\)</li>
-                  <li>Internal IPs (192.168.*, 10.*)</li>
-                  <li>System configurations</li>
+              <div class="text-xs">
+                <strong class="block text-gray-700 dark:text-gray-300 mb-1">Security Violations:</strong>
+                <ul class="m-0 pl-5 list-disc">
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">File paths (/home/, /etc/, C:\)</li>
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">Internal IPs (192.168.*, 10.*)</li>
+                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">System configurations</li>
                 </ul>
               </div>
             </div>
-            <small class="info-footer">
-              All Layer 3 operations are fully audited to <code>logs/audit/YYYY-MM-DD.ndjson</code>
+            <small class="block text-xs text-gray-500 dark:text-gray-400 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+              All Layer 3 operations are fully audited to <code class="bg-gray-200 dark:bg-gray-700 text-violet-500 px-1.5 py-0.5 rounded text-[0.6875rem] font-mono">logs/audit/YYYY-MM-DD.ndjson</code>
             </small>
           </div>
         {/if}
       </div>
     {/if}
 
-     <!-- Profile Creation (Owner Only) remobved but im a hoarder so i dont delete -->
-     <!-- {#if currentUser.role === 'owner'}
-      <ProfileCreation onProfileCreated={() => profileDangerZone?.refreshProfiles()} />
-    {/if}  -->
-
     <!-- Danger Zone -->
-    <div class="card danger-card">
-      <h2>⚠️ Danger Zone</h2>
-      <p class="danger-description">
+    <div class="bg-red-50 dark:bg-red-900/20 border-2 border-red-500 rounded-xl p-6 mb-6">
+      <h2 class="text-xl font-semibold text-red-800 dark:text-red-200 m-0 mb-4">⚠️ Danger Zone</h2>
+      <p class="text-sm text-red-700 dark:text-red-300 m-0 mb-4">
         Critical operations that can permanently affect your account, data, and system configuration. Proceed with caution.
       </p>
 
       <!-- Profile Visibility -->
-      <div class="danger-section">
-        <h3>🌍 Profile Visibility</h3>
-        <p>Control who can view your profile as a guest user</p>
+      <div class="py-6 border-b border-red-500/30 first:pt-0 last:border-b-0 last:pb-0">
+        <h3 class="text-lg font-semibold text-red-800 dark:text-red-200 m-0 mb-3">🌍 Profile Visibility</h3>
+        <p class="text-sm text-red-700 dark:text-red-300 m-0 mb-4">Control who can view your profile as a guest user</p>
 
-        <div class="form-group">
+        <div class="mb-4">
           <select
             bind:value={profileVisibility}
             on:change={saveVisibility}
             disabled={savingVisibility}
-            class="visibility-select"
+            class="select-field"
           >
             <option value="private">🔒 Private - Owner only</option>
             <option value="public">🌍 Public - Anyone (including anonymous)</option>
@@ -1250,8 +1258,8 @@
         </div>
 
         {#if profileVisibility === 'public'}
-          <div class="warning-box">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <div class="flex gap-3 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
+            <svg class="flex-shrink-0 w-5 h-5 text-yellow-600 dark:text-yellow-400" width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path
                 d="M8 1L1 14h14L8 1z"
                 stroke="currentColor"
@@ -1260,9 +1268,9 @@
               />
               <path d="M8 6v3M8 11v1" stroke="currentColor" stroke-width="2" />
             </svg>
-            <div>
-              <strong>Public Profile Warning</strong>
-              <p>
+            <div class="flex-1">
+              <strong class="block text-yellow-800 dark:text-yellow-300 mb-1 text-sm">Public Profile Warning</strong>
+              <p class="m-0 text-sm text-yellow-700 dark:text-yellow-400">
                 Guest users will be able to interact with your persona in read-only
                 emulation mode. They cannot modify your data or access private information.
               </p>
@@ -1272,7 +1280,7 @@
       </div>
 
       <!-- Profile Deletion / Account Removal -->
-      <div class="danger-section">
+      <div class="py-6 border-b border-red-500/30 first:pt-0 last:border-b-0 last:pb-0">
         {#if currentUser.role === 'owner'}
           <ProfileDangerZone bind:this={profileDangerZone} />
         {:else if currentUser.role === 'standard'}
@@ -1282,12 +1290,12 @@
 
       <!-- Factory Reset (Owner Only) -->
       {#if currentUser.role === 'owner'}
-        <div class="danger-section">
-          <h3>⚠️ Factory Reset</h3>
-          <p class="danger-description">
+        <div class="py-6 border-b border-red-500/30 first:pt-0 last:border-b-0 last:pb-0">
+          <h3 class="text-lg font-semibold text-red-800 dark:text-red-200 m-0 mb-3">⚠️ Factory Reset</h3>
+          <p class="text-sm text-red-700 dark:text-red-300 m-0 mb-4">
             Delete all memories, conversations, and logs, and restore the default GPT-OSS base model. This action is permanent and cannot be undone.
           </p>
-          <button class="btn btn-danger" on:click={resetFactorySettings} disabled={resettingFactory}>
+          <button class="btn-danger" on:click={resetFactorySettings} disabled={resettingFactory}>
             {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
           </button>
         </div>
@@ -1295,16 +1303,16 @@
     </div>
 
     <!-- Security Information -->
-    <div class="card info-card">
-      <h2>Security Information</h2>
-      <ul>
-        <li>Your password is hashed and never stored in plain text</li>
-        <li>Session cookies are HTTPOnly and secure</li>
-        <li>Owner sessions last 24 hours, guest sessions last 1 hour</li>
-        <li>Clear your browser cookies to log out from all devices</li>
+    <div class="panel mb-6">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">Security Information</h2>
+      <ul class="m-0 pl-6">
+        <li class="text-gray-500 dark:text-gray-400 mb-2">Your password is hashed and never stored in plain text</li>
+        <li class="text-gray-500 dark:text-gray-400 mb-2">Session cookies are HTTPOnly and secure</li>
+        <li class="text-gray-500 dark:text-gray-400 mb-2">Owner sessions last 24 hours, guest sessions last 1 hour</li>
+        <li class="text-gray-500 dark:text-gray-400 mb-2">Clear your browser cookies to log out from all devices</li>
         {#if currentUser.role === 'owner'}
-          <li>Trust level changes are audited and logged for security</li>
-          <li>All skill executions respect the current trust level</li>
+          <li class="text-gray-500 dark:text-gray-400 mb-2">Trust level changes are audited and logged for security</li>
+          <li class="text-gray-500 dark:text-gray-400 mb-2">All skill executions respect the current trust level</li>
         {/if}
       </ul>
     </div>
@@ -1312,1106 +1320,19 @@
 </div>
 
 <style>
-  .security-container {
-    padding: 2rem;
-    max-width: 800px;
-    margin: 0 auto;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  .security-header {
-    margin-bottom: 2rem;
-  }
-
-  .security-header h1 {
-    font-size: 2rem;
-    font-weight: 700;
-    color: rgb(17 24 39);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .security-header h1 {
-    color: rgb(243 244 246);
-  }
-
-  .security-header p {
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .security-header p {
-    color: rgb(156 163 175);
-  }
-
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid rgba(139, 92, 246, 0.2);
-    border-top-color: rgb(139, 92, 246);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .loading-state p {
-    margin-top: 1rem;
-    color: rgb(107 114 128);
+  .animate-spin {
+    animation: spin 0.8s linear infinite;
   }
 
-  :global(.dark) .loading-state p {
-    color: rgb(156 163 175);
+  .border-3 {
+    border-width: 3px;
   }
 
-  .not-authenticated {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
-    text-align: center;
-  }
-
-  .not-authenticated h2 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .not-authenticated h2 {
-    color: rgb(243 244 246);
-  }
-
-  .not-authenticated p {
-    color: rgb(107 114 128);
-    margin: 0 0 1.5rem 0;
-  }
-
-  :global(.dark) .not-authenticated p {
-    color: rgb(156 163 175);
-  }
-
-  .login-button {
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: linear-gradient(135deg, rgb(139, 92, 246) 0%, rgb(219, 39, 119) 100%);
-    color: white;
-    text-decoration: none;
-    border-radius: 0.5rem;
-    font-weight: 600;
-    transition: transform 0.2s;
-  }
-
-  .login-button:hover {
-    transform: translateY(-2px);
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .alert-error {
-    background: rgb(254 242 242);
-    border: 1px solid rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .alert-error {
-    background: rgb(127 29 29 / 0.3);
-    border-color: rgb(153 27 27);
-    color: rgb(254 226 226);
-  }
-
-  .alert-success {
-    background: rgb(240 253 244);
-    border: 1px solid rgb(187 247 208);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .alert-success {
-    background: rgb(20 83 45 / 0.3);
-    border-color: rgb(22 101 52);
-    color: rgb(187 247 208);
-  }
-
-  .alert-close {
-    margin-left: auto;
-    background: transparent;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: inherit;
-    opacity: 0.6;
-  }
-
-  .alert-close:hover {
-    opacity: 1;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .card {
-    background: rgb(17 24 39);
-    border-color: rgb(55 65 81);
-  }
-
-  .card h2 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .card h2 {
-    color: rgb(243 244 246);
-  }
-
-  .card p {
-    color: rgb(107 114 128);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .card p {
-    color: rgb(156 163 175);
-  }
-
-  .tunnel-status-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .tunnel-status-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9999px;
-    padding: 0.35rem 0.85rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    background: rgb(229 231 235);
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .status-pill {
-    background: rgb(31 41 55);
-    color: rgb(229 231 235);
-  }
-
-  .status-pill-ok {
-    background: rgb(209 250 229);
-    color: rgb(22 101 52);
-  }
-
-  :global(.dark) .status-pill-ok {
-    background: rgb(20 83 45);
-    color: rgb(187 247 208);
-  }
-
-  .status-pill-bad {
-    background: rgb(254 226 226);
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .status-pill-bad {
-    background: rgb(127 29 29);
-    color: rgb(254 226 226);
-  }
-
-  .remote-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: center;
-    margin-top: 0.5rem;
-  }
-
-  .muted-text {
-    color: rgb(107 114 128);
-    font-size: 0.9rem;
-  }
-
-  :global(.dark) .muted-text {
-    color: rgb(156 163 175);
-  }
-
-  .helper-text {
-    color: rgb(107 114 128);
-    font-size: 0.9rem;
-    margin-top: 1rem;
-  }
-
-  :global(.dark) .helper-text {
-    color: rgb(156 163 175);
-  }
-
-  .user-info-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgb(243 244 246);
-  }
-
-  :global(.dark) .info-row {
-    border-color: rgb(31 41 55);
-  }
-
-  .info-row:last-child {
-    border-bottom: none;
-  }
-
-  .label {
-    font-weight: 500;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .label {
-    color: rgb(156 163 175);
-  }
-
-  .value {
-    color: rgb(17 24 39);
-    font-weight: 500;
-  }
-
-  :global(.dark) .value {
-    color: rgb(243 244 246);
-  }
-
-  .role-badge {
-    display: inline-block;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .role-badge.role-owner {
-    background: rgb(243 232 255);
-    color: rgb(107 33 168);
-  }
-
-  :global(.dark) .role-badge.role-owner {
-    background: rgb(88 28 135 / 0.3);
-    color: rgb(216 180 254);
-  }
-
-  .role-badge.role-guest {
-    background: rgb(219 234 254);
-    color: rgb(30 64 175);
-  }
-
-  :global(.dark) .role-badge.role-guest {
-    background: rgb(30 58 138 / 0.3);
-    color: rgb(191 219 254);
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  .form-group label {
-    display: block;
-    font-weight: 500;
-    color: rgb(55 65 81);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .form-group label {
-    color: rgb(209 213 219);
-  }
-
-  .form-group input {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    background: white;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .form-group input {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: rgb(139, 92, 246);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  .form-group input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .form-group small {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .form-group small {
-    color: rgb(156 163 175);
-  }
-
-  .form-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.5rem;
-    font-weight: 600;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, rgb(139, 92, 246) 0%, rgb(219, 39, 119) 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
-  }
-
-  .btn-secondary {
-    background: rgb(243 244 246);
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .btn-secondary {
-    background: rgb(55 65 81);
-    color: rgb(209 213 219);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: rgb(229 231 235);
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: rgb(75 85 99);
-  }
-
-  .btn-ghost {
-    background: transparent;
-    border: 1px dashed rgb(209 213 219);
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .btn-ghost {
-    border-color: rgb(75 85 99);
-    color: rgb(209 213 219);
-  }
-
-  .btn-ghost:hover:not(:disabled) {
-    border-style: solid;
-    color: rgb(31 41 55);
-  }
-
-  :global(.dark) .btn-ghost:hover:not(:disabled) {
-    color: rgb(243 244 246);
-  }
-
-  .info-card ul {
-    margin: 0;
-    padding-left: 1.5rem;
-  }
-
-  .info-card li {
-    color: rgb(107 114 128);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .info-card li {
-    color: rgb(156 163 175);
-  }
-
-  .loading-text {
-    color: rgb(107 114 128);
-    font-style: italic;
-  }
-
-  :global(.dark) .loading-text {
-    color: rgb(156 163 175);
-  }
-
-  .trust-level-control {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .trust-info {
-    padding: 0.75rem;
-    background: rgb(243 244 246);
-    border-left: 3px solid rgb(139, 92, 246);
-    border-radius: 0.25rem;
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .trust-info {
-    background: rgb(31 41 55);
-    color: rgb(209 213 219);
-  }
-
-  .form-group select {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid rgb(209 213 219);
-    border-radius: 0.5rem;
-    font-size: 1rem;
-    background: white;
-    color: rgb(17 24 39);
-    cursor: pointer;
-  }
-
-  :global(.dark) .form-group select {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-    color: rgb(243 244 246);
-  }
-
-  .form-group select:focus {
-    outline: none;
-    border-color: rgb(139, 92, 246);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  .form-group select:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .toggle-control {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-  }
-
-  .toggle-label input[type="checkbox"] {
-    display: none;
-  }
-
-  .toggle-slider,
-  .toggle-switch {
-    position: relative;
-    width: 48px;
-    height: 24px;
-    background: rgb(209 213 219);
-    border-radius: 9999px;
-    transition: background 0.2s;
-  }
-
-  :global(.dark) .toggle-slider,
-  :global(.dark) .toggle-switch {
-    background: rgb(55 65 81);
-  }
-
-  .toggle-slider::after,
-  .toggle-switch::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 20px;
-    height: 20px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }
-
-  .toggle-label input:checked + .toggle-slider,
-  .toggle-label input:checked + .toggle-switch {
-    background: rgb(139, 92, 246);
-  }
-
-  .toggle-label input:checked + .toggle-slider::after,
-  .toggle-label input:checked + .toggle-switch::after {
-    transform: translateX(24px);
-  }
-
-  .toggle-label input:disabled + .toggle-slider,
-  .toggle-label input:disabled + .toggle-switch {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .toggle-text {
-    font-weight: 500;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .toggle-text {
-    color: rgb(243 244 246);
-  }
-
-  .coupling-info {
-    margin-top: 0.5rem;
-    padding: 0.75rem;
-    background: rgb(243 244 246);
-    border-radius: 0.5rem;
-    border-left: 3px solid rgb(139, 92, 246);
-  }
-
-  :global(.dark) .coupling-info {
-    background: rgb(31 41 55);
-  }
-
-  .coupling-info small {
-    display: block;
-    color: rgb(75 85 99);
-    line-height: 1.6;
-  }
-
-  :global(.dark) .coupling-info small {
-    color: rgb(156 163 175);
-  }
-
-  .saving-indicator {
-    color: rgb(139, 92, 246);
-    font-size: 0.875rem;
-    font-style: italic;
-  }
-
-  /* Cognitive Layers Styles */
-  .cognitive-layers-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .setting-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 1rem;
-    background: rgb(249 250 251);
-    border-radius: 0.5rem;
-    border: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .setting-row {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-  }
-
-  .setting-row.disabled {
-    opacity: 0.5;
-  }
-
-  .setting-row.blocking-mode {
-    border-left: 3px solid rgb(245 158 11);
-  }
-
-  .setting-header {
-    flex: 1;
-  }
-
-  .setting-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 0.25rem 0;
-  }
-
-  :global(.dark) .setting-header h3 {
-    color: rgb(243 244 246);
-  }
-
-  .setting-description {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .setting-description {
-    color: rgb(156 163 175);
-  }
-
-  .setting-meta {
-    display: block;
-    font-size: 0.75rem;
-    color: rgb(139, 92, 246);
-    font-weight: 500;
-  }
-
-  .enforcement-mode {
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .enforcement-mode {
-    color: rgb(252 165 165);
-  }
-
-  .monitoring-mode {
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .monitoring-mode {
-    color: rgb(156 163 175);
-  }
-
-  .cognitive-info-panel {
-    background: rgb(243 244 246);
-    border-radius: 0.5rem;
-    padding: 1rem;
-    border-left: 3px solid rgb(139, 92, 246);
-  }
-
-  :global(.dark) .cognitive-info-panel {
-    background: rgb(31 41 55);
-  }
-
-  .cognitive-info-panel h4 {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .cognitive-info-panel h4 {
-    color: rgb(243 244 246);
-  }
-
-  .detection-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 0.75rem;
-  }
-
-  @media (max-width: 640px) {
-    .detection-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .detection-category {
-    font-size: 0.75rem;
-  }
-
-  .detection-category strong {
-    display: block;
-    color: rgb(55 65 81);
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .detection-category strong {
-    color: rgb(209 213 219);
-  }
-
-  .detection-category ul {
-    margin: 0;
-    padding-left: 1.25rem;
-    list-style-type: disc;
-  }
-
-  .detection-category li {
-    color: rgb(107 114 128);
-    margin-bottom: 0.125rem;
-  }
-
-  :global(.dark) .detection-category li {
-    color: rgb(156 163 175);
-  }
-
-  .info-footer {
-    display: block;
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .info-footer {
-    color: rgb(156 163 175);
-    border-color: rgb(55 65 81);
-  }
-
-  .info-footer code {
-    background: rgb(229 231 235);
-    color: rgb(139, 92, 246);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-size: 0.6875rem;
-    font-family: monospace;
-  }
-
-  :global(.dark) .info-footer code {
-    background: rgb(55 65 81);
-  }
-
-  /* Recovery Codes Styles */
-  .recovery-status {
-    margin-bottom: 1.5rem;
-  }
-
-  .recovery-count {
-    margin-bottom: 1rem;
-  }
-
-  .recovery-count strong {
-    color: rgb(17 24 39);
-    font-size: 1.125rem;
-  }
-
-  :global(.dark) .recovery-count strong {
-    color: rgb(243 244 246);
-  }
-
-  .warning-box {
-    display: flex;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: rgb(254 252 232);
-    border: 1px solid rgb(253 224 71);
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .warning-box {
-    background: rgb(113 63 18 / 0.2);
-    border-color: rgb(180 83 9);
-  }
-
-  .warning-box.danger-warning {
-    background: rgb(254 242 242);
-    border-color: rgb(254 226 226);
-  }
-
-  :global(.dark) .warning-box.danger-warning {
-    background: rgb(127 29 29 / 0.3);
-    border-color: rgb(153 27 27);
-  }
-
-  .warning-box svg {
-    flex-shrink: 0;
-    width: 1.25rem;
-    height: 1.25rem;
-    color: rgb(161 98 7);
-  }
-
-  :global(.dark) .warning-box svg {
-    color: rgb(251 191 36);
-  }
-
-  .warning-box.danger-warning svg {
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .warning-box.danger-warning svg {
-    color: rgb(254 226 226);
-  }
-
-  .warning-box div {
-    flex: 1;
-  }
-
-  .warning-box strong {
-    display: block;
-    color: rgb(120 53 15);
-    margin-bottom: 0.25rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .warning-box strong {
-    color: rgb(253 224 71);
-  }
-
-  .warning-box.danger-warning strong {
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .warning-box.danger-warning strong {
-    color: rgb(254 226 226);
-  }
-
-  .warning-box p {
-    margin: 0;
-    font-size: 0.875rem;
-    color: rgb(161 98 7);
-  }
-
-  :global(.dark) .warning-box p {
-    color: rgb(250 204 21);
-  }
-
-  .warning-box.danger-warning p {
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .warning-box.danger-warning p {
-    color: rgb(254 226 226);
-  }
-
-  .recovery-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .confirm-box {
-    flex: 1 1 100%;
-    padding: 1rem;
-    background: rgb(254 252 232);
-    border: 2px solid rgb(253 224 71);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .confirm-box {
-    background: rgb(113 63 18 / 0.2);
-    border-color: rgb(180 83 9);
-  }
-
-  .confirm-box p {
-    margin: 0 0 0.5rem 0;
-    color: rgb(120 53 15);
-  }
-
-  :global(.dark) .confirm-box p {
-    color: rgb(250 204 21);
-  }
-
-  .confirm-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 1rem;
-  }
-
-  .recovery-codes-display {
-    margin-top: 1.5rem;
-    padding: 1.5rem;
-    background: rgb(249 250 251);
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .recovery-codes-display {
-    background: rgb(31 41 55);
-    border-color: rgb(55 65 81);
-  }
-
-  .codes-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid rgb(229 231 235);
-  }
-
-  :global(.dark) .codes-header {
-    border-color: rgb(55 65 81);
-  }
-
-  .codes-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-    margin: 0;
-  }
-
-  :global(.dark) .codes-header h3 {
-    color: rgb(243 244 246);
-  }
-
-  .btn-sm {
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-  }
-
-  .codes-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .code-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    background: white;
-    border: 1px solid rgb(229 231 235);
-    border-radius: 0.375rem;
-  }
-
-  :global(.dark) .code-item {
-    background: rgb(17 24 39);
-    border-color: rgb(55 65 81);
-  }
-
-  .code-number {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .code-number {
-    color: rgb(156 163 175);
-  }
-
-  .code-value {
-    font-family: 'Courier New', monospace;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(139, 92, 246);
-    letter-spacing: 0.05em;
-  }
-
-  :global(.dark) .code-value {
-    color: rgb(196 181 253);
-  }
-
-  /* Danger Card Styles */
-  .danger-card {
-    background: rgb(254 242 242);
-    border: 2px solid rgb(239 68 68);
-  }
-
-  :global(.dark) .danger-card {
-    background: rgb(127 29 29 / 0.2);
-    border-color: rgb(220 38 38);
-  }
-
-  .danger-card h2 {
-    color: rgb(153 27 27);
-  }
-
-  :global(.dark) .danger-card h2 {
-    color: rgb(254 226 226);
-  }
-
-  .danger-description {
-    font-size: 0.875rem;
-    color: rgb(153 27 27);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .danger-description {
-    color: rgb(252 165 165);
-  }
-
-  .btn-danger {
-    background: rgb(220 38 38);
-    color: white;
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    background: rgb(185 28 28);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
-  }
-
-  .btn-danger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Danger Section Dividers */
-  .danger-section {
-    padding: 1.5rem 0;
-    border-bottom: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  :global(.dark) .danger-section {
-    border-bottom-color: rgba(220, 38, 38, 0.3);
-  }
-
-  .danger-section:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .danger-section:first-child {
-    padding-top: 0;
-  }
-
-  .danger-section h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: rgb(153 27 27);
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .danger-section h3 {
-    color: rgb(254 226 226);
-  }
-
-  .danger-section p {
-    font-size: 0.875rem;
-    color: rgb(153 27 27);
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .danger-section p {
-    color: rgb(252 165 165);
+  .border-l-3 {
+    border-left-width: 3px;
   }
 </style>

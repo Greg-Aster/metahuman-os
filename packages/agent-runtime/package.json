@@ -19,6 +19,7 @@
     "@metahuman/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/diff": "^8.0.0",
     "typescript": "^5.3.0"
   },
   "files": [

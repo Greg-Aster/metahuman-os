@@ -293,40 +293,40 @@
   });
 </script>
 
-<div class="operator-dashboard">
+<div class="p-4 text-sm">
   {#if loading}
-    <div class="loading">Loading Active Operator status...</div>
+    <div class="p-8 text-center text-gray-500 dark:text-gray-400">Loading Active Operator status...</div>
   {:else if error}
-    <div class="error">{error}</div>
+    <div class="p-8 text-center text-red-500">{error}</div>
   {:else if status}
     <!-- Header with Status -->
-    <div class="status-header">
-      <div class="status-main">
-        <div class="mode-indicator" class:active={status.enabled} class:passive={!status.enabled}>
-          <span class="mode-dot" style="background-color: {status.enabled ? '#22c55e' : '#6b7280'}"></span>
-          <span class="mode-text">{status.enabled ? 'Active' : 'Passive'}</span>
+    <div class="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 font-semibold text-lg">
+          <span class="w-2.5 h-2.5 rounded-full" style="background-color: {status.enabled ? '#22c55e' : '#6b7280'}"></span>
+          <span class={status.enabled ? 'text-green-500' : 'text-gray-500'}>{status.enabled ? 'Active' : 'Passive'}</span>
         </div>
-        <div class="health-badge" style="background-color: {getHealthColor(status.health)}20; color: {getHealthColor(status.health)}">
+        <div class="px-3 py-1 rounded-full text-xs font-medium" style="background-color: {getHealthColor(status.health)}20; color: {getHealthColor(status.health)}">
           {status.health}
           {#if status.healthMessage}
-            <span class="health-detail">- {status.healthMessage}</span>
+            <span class="font-normal opacity-80">- {status.healthMessage}</span>
           {/if}
         </div>
       </div>
-      <div class="controls">
+      <div class="flex gap-2">
         {#if status.enabled}
-          <button class="control-btn stop" on:click={() => controlOperator('stop')} disabled={actionLoading}>
+          <button class="btn-secondary btn-sm" on:click={() => controlOperator('stop')} disabled={actionLoading}>
             Stop
           </button>
-          <button class="control-btn emergency" on:click={() => controlOperator('emergency-stop')} disabled={actionLoading}>
+          <button class="btn-danger btn-sm" on:click={() => controlOperator('emergency-stop')} disabled={actionLoading}>
             Emergency Stop
           </button>
         {:else}
-          <button class="control-btn start" on:click={() => controlOperator('start')} disabled={actionLoading}>
+          <button class="btn-success btn-sm" on:click={() => controlOperator('start')} disabled={actionLoading}>
             Start
           </button>
         {/if}
-        <button class="control-btn reset" on:click={() => controlOperator('reset')} disabled={actionLoading}>
+        <button class="btn-primary btn-sm" on:click={() => controlOperator('reset')} disabled={actionLoading}>
           Reset
         </button>
       </div>
@@ -334,31 +334,31 @@
 
     <!-- Current Task -->
     {#if status.isExecuting && status.currentTask}
-      <div class="current-task">
-        <div class="section-label">Currently Executing</div>
-        <div class="task-info">
-          <span class="task-icon">{getTaskIcon(status.currentTask)}</span>
-          <span class="task-name">{status.currentTask}</span>
-          <span class="executing-indicator"></span>
+      <div class="bg-gradient-to-r from-blue-500/10 to-violet-500/10 border border-blue-500/25 rounded-lg p-3 mb-4">
+        <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Currently Executing</div>
+        <div class="flex items-center gap-2">
+          <span class="text-xl">{getTaskIcon(status.currentTask)}</span>
+          <span class="font-medium text-gray-900 dark:text-gray-100">{status.currentTask}</span>
+          <span class="executing-dot"></span>
         </div>
       </div>
     {/if}
 
     <!-- Quick Stats -->
-    <div class="quick-stats">
-      <div class="stat">
+    <div class="grid grid-cols-4 gap-3 mb-4">
+      <div class="stat-card">
         <div class="stat-value">{status.queue.length}</div>
         <div class="stat-label">Queue</div>
       </div>
-      <div class="stat">
+      <div class="stat-card">
         <div class="stat-value">{status.metrics.totalTasksExecuted}</div>
         <div class="stat-label">Tasks Run</div>
       </div>
-      <div class="stat">
+      <div class="stat-card">
         <div class="stat-value">{status.metrics.successRate}</div>
         <div class="stat-label">Success</div>
       </div>
-      <div class="stat">
+      <div class="stat-card">
         <div class="stat-value">{status.scratchpad.cycleNumber}</div>
         <div class="stat-label">Cycle</div>
       </div>
@@ -366,62 +366,61 @@
 
     <!-- Resource Lanes Section -->
     {#if queueStatus}
-      <div class="section">
-        <button class="section-header" on:click={() => collapsed.lanes = !collapsed.lanes}>
+      <div class="collapsible-section">
+        <button class="collapsible-header" on:click={() => collapsed.lanes = !collapsed.lanes}>
           <span>Resource Lanes ({queueStatus.stats?.totalQueued || 0} tasks)</span>
-          <span class="chevron">{collapsed.lanes ? '▸' : '▾'}</span>
+          <span class="collapsible-chevron">{collapsed.lanes ? '▸' : '▾'}</span>
         </button>
         {#if !collapsed.lanes}
-          <div class="section-content lanes-content">
-            <div class="lanes-grid">
+          <div class="collapsible-content">
+            <div class="grid grid-cols-3 gap-3 max-md:grid-cols-1">
               {#each Object.entries(laneConfig) as [laneId, config]}
                 {@const laneTasks = queueStatus.tasksByLane?.[laneId as keyof typeof queueStatus.tasksByLane] || []}
                 {@const paused = isLanePaused(laneId)}
-                <div class="lane-column" class:paused style="--lane-color: {config.color}">
-                  <div class="lane-header">
-                    <span class="lane-icon">{config.icon}</span>
-                    <span class="lane-name">{config.name}</span>
+                <div class="bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden border-t-[3px] transition-opacity {paused ? 'opacity-60' : ''}" style="border-top-color: {paused ? '#ef4444' : config.color}">
+                  <div class="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 border-b border-gray-300 dark:border-gray-600">
+                    <span class="text-base">{config.icon}</span>
+                    <span class="flex-1 font-medium text-sm text-gray-900 dark:text-gray-100">{config.name}</span>
                     {#if paused}
-                      <span class="paused-badge">PAUSED</span>
+                      <span class="bg-red-500 text-white px-1.5 py-0.5 rounded text-[0.65rem] font-semibold tracking-wide">PAUSED</span>
                     {/if}
-                    <span class="lane-count">{laneTasks.length}</span>
+                    <span class="text-white px-2 py-0.5 rounded-full text-xs font-semibold" style="background-color: {config.color}">{laneTasks.length}</span>
                     <button
-                      class="lane-throttle-btn"
-                      class:resume={paused}
+                      class="bg-transparent border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-[0.7rem] cursor-pointer text-gray-500 dark:text-gray-400 transition-colors hover:bg-gray-300 dark:hover:bg-gray-600 {paused ? 'text-green-500 border-green-500/40 hover:bg-green-500/20' : ''}"
                       on:click|stopPropagation={() => toggleLanePause(laneId, paused)}
                       title={paused ? 'Resume lane' : 'Pause lane'}
                     >
                       {paused ? '▶' : '⏸'}
                     </button>
                   </div>
-                  <div class="lane-tasks">
+                  <div class="p-2 min-h-[80px]">
                     {#if laneTasks.length > 0}
                       {#each laneTasks.slice(0, 5) as task}
-                        <div class="lane-task">
-                          <span class="task-icon">{getTaskIcon(task.type)}</span>
-                          <span class="task-type">{task.type}</span>
-                          <span class="task-priority" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
+                        <div class="flex items-center gap-1.5 px-2 py-1.5 bg-gray-200 dark:bg-gray-700 rounded mb-1.5 text-xs last:mb-0">
+                          <span>{getTaskIcon(task.type)}</span>
+                          <span class="flex-1 text-gray-900 dark:text-gray-100">{task.type}</span>
+                          <span class="text-[0.65rem] uppercase font-medium" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
                         </div>
                       {/each}
                       {#if laneTasks.length > 5}
-                        <div class="lane-overflow">+{laneTasks.length - 5} more</div>
+                        <div class="text-center text-xs text-gray-500 dark:text-gray-400 italic py-1">+{laneTasks.length - 5} more</div>
                       {/if}
                     {:else}
-                      <div class="lane-empty">Empty</div>
+                      <div class="text-center text-gray-500 dark:text-gray-400 italic p-4 text-sm">Empty</div>
                     {/if}
                   </div>
                 </div>
               {/each}
             </div>
             {#if queueStatus.inFlightRemote?.length > 0}
-              <div class="in-flight-section">
-                <div class="subsection-label">In-Flight Remote Tasks</div>
-                <div class="in-flight-list">
+              <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">In-Flight Remote Tasks</div>
+                <div class="flex flex-col gap-1.5">
                   {#each queueStatus.inFlightRemote as remote}
-                    <div class="in-flight-item">
-                      <span class="provider">{remote.provider}</span>
-                      <span class="task-id">{remote.taskId.slice(0, 8)}...</span>
-                      <span class="started">{formatTimestamp(remote.startedAt)}</span>
+                    <div class="flex items-center gap-3 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm">
+                      <span class="bg-violet-500 text-white px-2 py-0.5 rounded text-xs font-medium">{remote.provider}</span>
+                      <span class="text-gray-500 dark:text-gray-400 font-mono text-xs">{remote.taskId.slice(0, 8)}...</span>
+                      <span class="ml-auto text-gray-500 dark:text-gray-400 text-xs">{formatTimestamp(remote.startedAt)}</span>
                     </div>
                   {/each}
                 </div>
@@ -433,109 +432,113 @@
     {/if}
 
     <!-- Queue Section (Legacy) -->
-    <div class="section">
-      <button class="section-header" on:click={() => collapsed.queue = !collapsed.queue}>
+    <div class="collapsible-section">
+      <button class="collapsible-header" on:click={() => collapsed.queue = !collapsed.queue}>
         <span>Queue Details ({status.queue.length})</span>
-        <span class="chevron">{collapsed.queue ? '▸' : '▾'}</span>
+        <span class="collapsible-chevron">{collapsed.queue ? '▸' : '▾'}</span>
       </button>
       {#if !collapsed.queue}
-        <div class="section-content">
+        <div class="collapsible-content">
           {#if status.queue.tasks.length > 0}
-            <div class="queue-list">
+            <div class="flex flex-col gap-2">
               {#each status.queue.tasks.slice(0, 10) as task}
-                <div class="queue-item">
-                  <span class="task-icon">{getTaskIcon(task.type)}</span>
-                  <span class="task-type">{task.type}</span>
-                  <span class="task-priority" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
-                  <span class="task-time">{formatTimestamp(task.queuedAt)}</span>
+                <div class="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded">
+                  <span class="text-xl">{getTaskIcon(task.type)}</span>
+                  <span class="flex-1 text-gray-900 dark:text-gray-100">{task.type}</span>
+                  <span class="text-xs uppercase font-medium" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{formatTimestamp(task.queuedAt)}</span>
                 </div>
               {/each}
             </div>
             {#if status.queue.length > 10}
-              <div class="queue-overflow">+{status.queue.length - 10} more tasks in queue</div>
+              <div class="mt-2 p-2 text-center text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded italic">
+                +{status.queue.length - 10} more tasks in queue
+              </div>
             {/if}
           {:else}
-            <div class="empty-message">Queue is empty</div>
+            <div class="text-center text-gray-500 dark:text-gray-400 italic p-4">Queue is empty</div>
           {/if}
         </div>
       {/if}
     </div>
 
     <!-- Scratchpad Section -->
-    <div class="section">
-      <button class="section-header" on:click={() => collapsed.scratchpad = !collapsed.scratchpad}>
+    <div class="collapsible-section">
+      <button class="collapsible-header" on:click={() => collapsed.scratchpad = !collapsed.scratchpad}>
         <span>Scratchpad ({status.scratchpad.entriesCount} entries)</span>
-        <span class="chevron">{collapsed.scratchpad ? '▸' : '▾'}</span>
+        <span class="collapsible-chevron">{collapsed.scratchpad ? '▸' : '▾'}</span>
       </button>
       {#if !collapsed.scratchpad}
-        <div class="section-content">
+        <div class="collapsible-content">
           {#if status.scratchpad.lastDecision}
-            <div class="last-decision">
-              <strong>Last Decision:</strong> {status.scratchpad.lastDecision}
+            <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded mb-3">
+              <strong class="text-gray-900 dark:text-gray-100">Last Decision:</strong> {status.scratchpad.lastDecision}
             </div>
           {/if}
           {#if status.scratchpad.activitySummary}
-            <div class="activity-summary">
-              <strong>Activity:</strong> {status.scratchpad.activitySummary}
+            <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded mb-3">
+              <strong class="text-gray-900 dark:text-gray-100">Activity:</strong> {status.scratchpad.activitySummary}
             </div>
           {/if}
           {#if status.scratchpad.recentEntries.length > 0}
-            <div class="scratchpad-entries">
+            <div class="flex flex-col gap-2">
               {#each status.scratchpad.recentEntries.slice(0, 10) as entry}
-                <div class="scratchpad-entry" class:decision={entry.type === 'decision'} class:execution={entry.type === 'execution'}>
-                  <span class="entry-type">{entry.type}</span>
-                  <span class="entry-content">{entry.content}</span>
-                  <span class="entry-time">{formatTimestamp(entry.timestamp)}</span>
+                <div class="grid grid-cols-[70px_1fr_auto] gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm border-l-[3px] {entry.type === 'decision' ? 'border-l-violet-500' : entry.type === 'execution' ? 'border-l-green-500' : 'border-l-gray-400'}">
+                  <span class="text-gray-500 dark:text-gray-400 text-xs uppercase">{entry.type}</span>
+                  <span class="text-gray-900 dark:text-gray-100">{entry.content}</span>
+                  <span class="text-gray-500 dark:text-gray-400 text-xs">{formatTimestamp(entry.timestamp)}</span>
                 </div>
               {/each}
             </div>
             {#if status.scratchpad.recentEntries.length > 10}
-              <div class="queue-overflow">+{status.scratchpad.recentEntries.length - 10} more entries</div>
+              <div class="mt-2 p-2 text-center text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded italic">
+                +{status.scratchpad.recentEntries.length - 10} more entries
+              </div>
             {/if}
           {:else}
-            <div class="empty-message">No recent activity</div>
+            <div class="text-center text-gray-500 dark:text-gray-400 italic p-4">No recent activity</div>
           {/if}
         </div>
       {/if}
     </div>
 
     <!-- Metrics Section -->
-    <div class="section">
-      <button class="section-header" on:click={() => collapsed.metrics = !collapsed.metrics}>
+    <div class="collapsible-section">
+      <button class="collapsible-header" on:click={() => collapsed.metrics = !collapsed.metrics}>
         <span>Metrics</span>
-        <span class="chevron">{collapsed.metrics ? '▸' : '▾'}</span>
+        <span class="collapsible-chevron">{collapsed.metrics ? '▸' : '▾'}</span>
       </button>
       {#if !collapsed.metrics}
-        <div class="section-content">
-          <div class="metrics-grid">
-            <div class="metric">
-              <span class="metric-label">Avg Duration</span>
-              <span class="metric-value">{formatDuration(status.metrics.averageDurationMs)}</span>
+        <div class="collapsible-content">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Avg Duration</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{formatDuration(status.metrics.averageDurationMs)}</span>
             </div>
-            <div class="metric">
-              <span class="metric-label">Tokens/Hour</span>
-              <span class="metric-value">{status.cost.tokensThisHour.toLocaleString()}</span>
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Tokens/Hour</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{status.cost.tokensThisHour.toLocaleString()}</span>
             </div>
             {#if status.cost.budgetEnabled}
-              <div class="metric">
-                <span class="metric-label">Budget</span>
-                <span class="metric-value">{status.cost.utilization}</span>
+              <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+                <span class="text-gray-500 dark:text-gray-400 text-sm">Budget</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{status.cost.utilization}</span>
               </div>
             {/if}
-            <div class="metric">
-              <span class="metric-label">Errors</span>
-              <span class="metric-value" class:error={status.errors.consecutiveErrors > 0}>
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Errors</span>
+              <span class="font-medium {status.errors.consecutiveErrors > 0 ? 'text-red-500' : 'text-gray-900 dark:text-gray-100'}">
                 {status.errors.consecutiveErrors}
               </span>
             </div>
           </div>
           {#if Object.keys(status.metrics.tasksByType).length > 0}
-            <div class="tasks-by-type">
-              <div class="subsection-label">Tasks by Type</div>
+            <div class="mt-4">
+              <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Tasks by Type</div>
               {#each Object.entries(status.metrics.tasksByType) as [type, count]}
-                <div class="type-count">
-                  <span>{getTaskIcon(type)} {type}</span>
-                  <span>{count}</span>
+                <div class="flex justify-between py-1.5 border-b border-gray-200 dark:border-gray-700 last:border-b-0">
+                  <span class="text-gray-900 dark:text-gray-100">{getTaskIcon(type)} {type}</span>
+                  <span class="text-gray-500 dark:text-gray-400">{count}</span>
                 </div>
               {/each}
             </div>
@@ -545,36 +548,36 @@
     </div>
 
     <!-- Config Section -->
-    <div class="section">
-      <button class="section-header" on:click={() => collapsed.config = !collapsed.config}>
+    <div class="collapsible-section">
+      <button class="collapsible-header" on:click={() => collapsed.config = !collapsed.config}>
         <span>Configuration</span>
-        <span class="chevron">{collapsed.config ? '▸' : '▾'}</span>
+        <span class="collapsible-chevron">{collapsed.config ? '▸' : '▾'}</span>
       </button>
       {#if !collapsed.config}
-        <div class="section-content">
-          <div class="config-grid">
-            <div class="config-item">
-              <span class="config-label">Decision Model</span>
-              <span class="config-value">{status.config.decisionModel}</span>
+        <div class="collapsible-content">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Decision Model</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{status.config.decisionModel}</span>
             </div>
-            <div class="config-item">
-              <span class="config-label">Cooldown</span>
-              <span class="config-value">{status.config.cooldownMs}ms</span>
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Cooldown</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{status.config.cooldownMs}ms</span>
             </div>
-            <div class="config-item">
-              <span class="config-label">Max Consecutive</span>
-              <span class="config-value">{status.config.maxConsecutiveTasks}</span>
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Max Consecutive</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{status.config.maxConsecutiveTasks}</span>
             </div>
-            <div class="config-item">
-              <span class="config-label">Self-Healing</span>
-              <span class="config-value">{status.config.enableSelfHealing ? 'Enabled' : 'Disabled'}</span>
+            <div class="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded">
+              <span class="text-gray-500 dark:text-gray-400 text-sm">Self-Healing</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{status.config.enableSelfHealing ? 'Enabled' : 'Disabled'}</span>
             </div>
           </div>
-          <div class="enabled-tasks">
-            <div class="subsection-label">Enabled Tasks</div>
-            <div class="task-chips">
+          <div class="mt-4">
+            <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Enabled Tasks</div>
+            <div class="flex flex-wrap gap-2">
               {#each status.config.enabledTaskTypes as taskType}
-                <span class="task-chip">{getTaskIcon(taskType)} {taskType}</span>
+                <span class="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-full text-xs text-gray-900 dark:text-gray-100">{getTaskIcon(taskType)} {taskType}</span>
               {/each}
             </div>
           </div>
@@ -583,578 +586,3 @@
     </div>
   {/if}
 </div>
-
-<style>
-  .operator-dashboard {
-    padding: 1rem;
-    font-size: 0.9rem;
-  }
-
-  .loading, .error {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted, #6b7280);
-  }
-
-  .error {
-    color: #ef4444;
-  }
-
-  .status-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color, #374151);
-  }
-
-  .status-main {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .mode-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 600;
-    font-size: 1.1rem;
-  }
-
-  .mode-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-
-  .mode-indicator.active .mode-text {
-    color: #22c55e;
-  }
-
-  .mode-indicator.passive .mode-text {
-    color: #6b7280;
-  }
-
-  .health-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 1rem;
-    font-size: 0.8rem;
-    font-weight: 500;
-  }
-
-  .health-detail {
-    font-weight: 400;
-    opacity: 0.8;
-  }
-
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .control-btn {
-    padding: 0.4rem 0.8rem;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .control-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .control-btn.start {
-    background: #22c55e;
-    color: white;
-  }
-
-  .control-btn.start:hover:not(:disabled) {
-    background: #16a34a;
-  }
-
-  .control-btn.stop {
-    background: #6b7280;
-    color: white;
-  }
-
-  .control-btn.stop:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .control-btn.emergency {
-    background: #ef4444;
-    color: white;
-  }
-
-  .control-btn.emergency:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  .control-btn.reset {
-    background: #3b82f6;
-    color: white;
-  }
-
-  .control-btn.reset:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .current-task {
-    background: linear-gradient(135deg, #3b82f620, #8b5cf620);
-    border: 1px solid #3b82f640;
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .section-label {
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
-  }
-
-  .task-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .task-icon {
-    font-size: 1.2rem;
-  }
-
-  .task-name {
-    font-weight: 500;
-  }
-
-  .executing-indicator {
-    width: 8px;
-    height: 8px;
-    background: #22c55e;
-    border-radius: 50%;
-    animation: pulse 1.5s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(1.2); }
-  }
-
-  .quick-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .stat {
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    text-align: center;
-  }
-
-  .stat-value {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--text-primary, #f3f4f6);
-  }
-
-  .stat-label {
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .section {
-    margin-bottom: 0.5rem;
-    border: 1px solid var(--border-color, #374151);
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  .section-header {
-    width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    background: var(--bg-secondary, #1f2937);
-    border: none;
-    color: var(--text-primary, #f3f4f6);
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 500;
-    text-align: left;
-  }
-
-  .section-header:hover {
-    background: var(--bg-hover, #374151);
-  }
-
-  .chevron {
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .section-content {
-    padding: 1rem;
-    background: var(--bg-primary, #111827);
-  }
-
-  .queue-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .queue-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-  }
-
-  .task-type {
-    flex: 1;
-  }
-
-  .task-priority {
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-  }
-
-  .task-time {
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .empty-message {
-    color: var(--text-muted, #9ca3af);
-    font-style: italic;
-    text-align: center;
-    padding: 1rem;
-  }
-
-  .queue-overflow {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    text-align: center;
-    font-size: 0.85rem;
-    color: var(--text-muted, #9ca3af);
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-    font-style: italic;
-  }
-
-  .last-decision, .activity-summary {
-    padding: 0.75rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .scratchpad-entries {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .scratchpad-entry {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-  }
-
-  .scratchpad-entry.decision {
-    border-left: 3px solid #8b5cf6;
-  }
-
-  .scratchpad-entry.execution {
-    border-left: 3px solid #22c55e;
-  }
-
-  .entry-type {
-    color: var(--text-muted, #9ca3af);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    width: 70px;
-  }
-
-  .entry-content {
-    color: var(--text-primary, #f3f4f6);
-  }
-
-  .entry-time {
-    color: var(--text-muted, #9ca3af);
-    font-size: 0.75rem;
-  }
-
-  .metrics-grid, .config-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-  }
-
-  .metric, .config-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-  }
-
-  .metric-label, .config-label {
-    color: var(--text-muted, #9ca3af);
-    font-size: 0.85rem;
-  }
-
-  .metric-value, .config-value {
-    font-weight: 500;
-  }
-
-  .metric-value.error {
-    color: #ef4444;
-  }
-
-  .subsection-label {
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 1rem 0 0.5rem;
-  }
-
-  .tasks-by-type {
-    margin-top: 0.5rem;
-  }
-
-  .type-count {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.375rem 0;
-    border-bottom: 1px solid var(--border-color, #374151);
-  }
-
-  .type-count:last-child {
-    border-bottom: none;
-  }
-
-  .enabled-tasks {
-    margin-top: 0.5rem;
-  }
-
-  .task-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .task-chip {
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 1rem;
-    font-size: 0.8rem;
-  }
-
-  /* Resource Lanes Styles */
-  .lanes-content {
-    padding: 0.75rem;
-  }
-
-  .lanes-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.75rem;
-  }
-
-  .lane-column {
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.5rem;
-    border-top: 3px solid var(--lane-color, #3b82f6);
-    overflow: hidden;
-    transition: opacity 0.2s;
-  }
-
-  .lane-column.paused {
-    opacity: 0.6;
-    border-top-color: #ef4444;
-  }
-
-  .lane-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-tertiary, #111827);
-    border-bottom: 1px solid var(--border-color, #374151);
-  }
-
-  .lane-icon {
-    font-size: 1rem;
-  }
-
-  .lane-name {
-    flex: 1;
-    font-weight: 500;
-    font-size: 0.85rem;
-  }
-
-  .lane-count {
-    background: var(--lane-color, #3b82f6);
-    color: white;
-    padding: 0.125rem 0.5rem;
-    border-radius: 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .paused-badge {
-    background: #ef4444;
-    color: white;
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-  }
-
-  .lane-throttle-btn {
-    background: transparent;
-    border: 1px solid var(--border-color, #374151);
-    border-radius: 0.25rem;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.7rem;
-    cursor: pointer;
-    color: var(--text-muted, #9ca3af);
-    transition: all 0.15s;
-    margin-left: 0.25rem;
-  }
-
-  .lane-throttle-btn:hover {
-    background: var(--bg-hover, #374151);
-    color: var(--text-primary, #f3f4f6);
-    border-color: var(--text-muted, #6b7280);
-  }
-
-  .lane-throttle-btn.resume {
-    color: #22c55e;
-    border-color: #22c55e40;
-  }
-
-  .lane-throttle-btn.resume:hover {
-    background: #22c55e20;
-    border-color: #22c55e;
-  }
-
-  .lane-tasks {
-    padding: 0.5rem;
-    min-height: 80px;
-  }
-
-  .lane-task {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.5rem;
-    background: var(--bg-primary, #111827);
-    border-radius: 0.25rem;
-    margin-bottom: 0.375rem;
-    font-size: 0.8rem;
-  }
-
-  .lane-task:last-child {
-    margin-bottom: 0;
-  }
-
-  .lane-task .task-type {
-    flex: 1;
-    font-size: 0.8rem;
-  }
-
-  .lane-task .task-priority {
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    font-weight: 500;
-  }
-
-  .lane-empty {
-    color: var(--text-muted, #6b7280);
-    font-style: italic;
-    text-align: center;
-    padding: 1rem;
-    font-size: 0.85rem;
-  }
-
-  .lane-overflow {
-    text-align: center;
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-    padding: 0.25rem;
-    font-style: italic;
-  }
-
-  .in-flight-section {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border-color, #374151);
-  }
-
-  .in-flight-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .in-flight-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-  }
-
-  .in-flight-item .provider {
-    background: #8b5cf6;
-    color: white;
-    padding: 0.125rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .in-flight-item .task-id {
-    color: var(--text-muted, #9ca3af);
-    font-family: monospace;
-    font-size: 0.8rem;
-  }
-
-  .in-flight-item .started {
-    margin-left: auto;
-    color: var(--text-muted, #9ca3af);
-    font-size: 0.75rem;
-  }
-
-  @media (max-width: 768px) {
-    .lanes-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>

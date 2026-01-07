@@ -36,6 +36,14 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
 
     console.log(`[ClaudeFullTask] Delegating entire task to Big Brother backend: "${messageText.substring(0, 60)}..."`);
 
+    // Helper to emit progress events to the UI
+    const emitProgress = (step: string, message: string, details?: any) => {
+      console.log(`[ClaudeFullTask] ${message}`);
+      _context?.emitEvent?.('progress', { step, message, ...details });
+    };
+
+    emitProgress('big_brother_init', '🔧 Loading Big Brother backends...');
+
     const { audit } = await import('../../audit.js');
     const { getUserContext } = await import('../../context.js');
     const { loadOperatorConfig } = await import('../../config.js');
@@ -43,6 +51,7 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
 
     // Ensure backends are loaded before checking
     await ensureBackendsInitialized();
+    emitProgress('big_brother_backends_loaded', '✓ Backends initialized');
 
     const userContext = getUserContext();
     const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username) : null;
@@ -51,17 +60,22 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
       ? 'open-interpreter'
       : rawProvider;
 
+    emitProgress('big_brother_selecting', `🔍 Selecting backend: ${preferredBackend || 'default'}`);
+
     const backend = preferredBackend ? getBackend(preferredBackend) : getActiveBackend(userContext?.username);
     if (!backend) {
-      throw new Error('No escalation backend configured');
+      emitProgress('big_brother_error', '❌ No escalation backend configured');
+      throw new Error('No escalation backend configured. Check Settings → Big Brother.');
     }
 
+    emitProgress('big_brother_checking', `⏳ Checking if ${backend.name} is available...`);
     const available = await backend.isAvailable();
     if (!available) {
-      throw new Error(`Backend ${backend.name} is not available`);
+      emitProgress('big_brother_error', `❌ ${backend.name} is not available`);
+      throw new Error(`Backend ${backend.name} is not available. Is it installed and running?`);
     }
 
-    console.log(`[ClaudeFullTask] Using ${backend.name} for task execution`);
+    emitProgress('big_brother_ready', `✓ ${backend.name} ready`);
 
     const skillsList = 'File operations (read/write/list/delete), shell commands, task management, WebSearch (for real-time info like weather, news, current events), git operations, etc.';
 
@@ -123,7 +137,8 @@ Execute now and report results.`;
     });
 
     const timeoutMs = _properties?.timeout || 300000; // 5 minutes default
-    console.log(`[ClaudeFullTask] Sending request to ${backend.name}...`);
+    const timeoutMinutes = Math.round(timeoutMs / 60000);
+    emitProgress('big_brother_sending', `📤 Sending request to ${backend.name} (${timeoutMinutes}min timeout)...`);
 
     // Set up streaming callbacks to emit events to the graph executor
     const escalationOptions: any = {
@@ -141,12 +156,14 @@ Execute now and report results.`;
       escalationOptions.onWaitingForInput = (question: string) => {
         _context.emitEvent?.('claude_cli_waiting', { question });
       };
-      console.log('[ClaudeFullTask] Streaming callbacks configured');
+      emitProgress('big_brother_streaming', '🔄 Streaming callbacks configured');
     }
 
+    emitProgress('big_brother_executing', `⚙️ ${backend.name} is working...`);
     const result = await escalate(prompt, escalationOptions);
 
     if (!result.success) {
+      emitProgress('big_brother_error', `❌ Task failed: ${result.error || 'Unknown error'}`);
       throw new Error(result.error || 'Task execution failed');
     }
 
@@ -159,11 +176,12 @@ Execute now and report results.`;
       details: {
         responseLength: response.length,
         backend: backend.id,
+        executionTime: result.executionTime,
       },
       actor: 'big-brother',
     });
 
-    console.log(`[ClaudeFullTask] ✓ Task completed by ${backend.name}`);
+    emitProgress('big_brother_complete', `✅ Task completed by ${backend.name}`);
 
     // Emit completion event
     if (_context?.emitEvent) {
@@ -188,6 +206,13 @@ Execute now and report results.`;
     const errorMsg = (error as Error).message;
     const err = error as any;
     const isTimeout = err.killed === true || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out');
+
+    // Emit error progress event to the UI
+    const errorProgressMsg = isTimeout
+      ? '⏱️ Task timed out - try a simpler request'
+      : `❌ Big Brother error: ${errorMsg}`;
+    console.log(`[ClaudeFullTask] ${errorProgressMsg}`);
+    _context?.emitEvent?.('progress', { step: 'big_brother_error', message: errorProgressMsg });
 
     audit({
       level: 'error',

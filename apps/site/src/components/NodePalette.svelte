@@ -115,32 +115,32 @@
 
 <div class="node-palette" class:collapsed>
   {#if !collapsed}
-    <div class="palette-header">
-      <div class="palette-title">
+    <div class="flex items-center justify-between p-4 border-b border-neutral-700">
+      <div class="flex items-center gap-2 text-white font-semibold text-sm">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
         </svg>
         <span>Node Palette</span>
       </div>
-      <button onclick={() => collapsed = true} class="collapse-button" title="Collapse palette">
+      <button onclick={() => collapsed = true} class="palette-btn" title="Collapse palette">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
       </button>
     </div>
 
-    <div class="search-box">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="flex items-center gap-2 py-3 px-4 border-b border-neutral-700 bg-neutral-900">
+      <svg class="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
       </svg>
       <input
         type="text"
         bind:value={searchQuery}
         placeholder="Search nodes..."
-        class="search-input"
+        class="flex-1 bg-transparent border-0 text-white text-sm outline-none placeholder:text-neutral-600"
       />
       {#if searchQuery}
-        <button onclick={() => searchQuery = ''} class="clear-search">
+        <button onclick={() => searchQuery = ''} class="palette-btn">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
@@ -150,18 +150,18 @@
 
     <div class="categories-list">
       {#if loading}
-        <div class="loading">
+        <div class="flex flex-col items-center justify-center py-12 px-4 gap-4 text-neutral-500">
           <span class="loading-spinner"></span>
           <p>Loading nodes...</p>
         </div>
       {:else if allNodes.length === 0}
-        <div class="no-results">
+        <div class="flex flex-col items-center justify-center py-12 px-4 text-center text-neutral-500">
           <p>No nodes available</p>
-          <p class="hint">Check server connection</p>
+          <p class="text-xs text-neutral-600">Check server connection</p>
         </div>
       {:else}
       {#each filteredCategories as { category, nodes }}
-        <div class="category">
+        <div class="border-b border-neutral-800">
           <button
             class="category-header"
             onclick={() => toggleCategory(category)}
@@ -169,13 +169,13 @@
             <svg class="w-4 h-4 chevron" class:expanded={expandedCategories.has(category)} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
             </svg>
-            <span class="category-icon">{categoryInfo[category]?.icon || '📦'}</span>
-            <span class="category-name">{categoryInfo[category]?.name || category}</span>
-            <span class="category-count">{nodes.length}</span>
+            <span class="text-base">{categoryInfo[category]?.icon || '📦'}</span>
+            <span class="flex-1 font-semibold">{categoryInfo[category]?.name || category}</span>
+            <span class="text-xs text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded-xl">{nodes.length}</span>
           </button>
 
           {#if expandedCategories.has(category)}
-            <div class="nodes-list">
+            <div class="py-2">
               {#each nodes as node}
                 <button
                   class="node-item"
@@ -183,10 +183,10 @@
                   title={node.description}
                   style="--node-color: {node.color}; --node-bg: {node.bgColor};"
                 >
-                  <div class="node-color-bar" style="background: {node.color};"></div>
-                  <div class="node-info">
-                    <div class="node-name">{node.name}</div>
-                    <div class="node-description">{node.description}</div>
+                  <div class="w-[3px] h-8 rounded-sm flex-shrink-0" style="background: {node.color};"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-white truncate">{node.name}</div>
+                    <div class="text-xs text-neutral-500 truncate mt-0.5">{node.description}</div>
                   </div>
                 </button>
               {/each}
@@ -196,12 +196,12 @@
       {/each}
 
       {#if filteredCategories.length === 0}
-        <div class="no-results">
-          <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="flex flex-col items-center justify-center py-12 px-4 text-center text-neutral-500">
+          <svg class="w-8 h-8 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
           <p>No nodes found</p>
-          <p class="hint">Try a different search term</p>
+          <p class="text-xs text-neutral-600">Try a different search term</p>
         </div>
       {/if}
       {/if}
@@ -211,288 +211,77 @@
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
       </svg>
-      <span class="expand-text">Nodes</span>
+      <span class="text-xs tracking-widest uppercase text-neutral-500">Nodes</span>
     </button>
   {/if}
 </div>
 
 <style>
+  /* Node palette container */
   .node-palette {
-    width: 280px;
-    height: 100%;
-    background: #1a1a1a;
-    border-right: 1px solid #333;
-    display: flex;
-    flex-direction: column;
-    transition: width 0.3s ease;
+    @apply w-[280px] h-full bg-neutral-900 border-r border-neutral-700 flex flex-col transition-all duration-300;
   }
-
   .node-palette.collapsed {
-    width: 48px;
+    @apply w-12;
   }
 
-  .palette-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem;
-    border-bottom: 1px solid #333;
+  /* Palette buttons (collapse/clear) */
+  .palette-btn {
+    @apply bg-transparent border-0 text-neutral-500 cursor-pointer p-1 rounded flex items-center gap-2 transition-all;
+  }
+  .palette-btn:hover {
+    @apply bg-neutral-800 text-white;
   }
 
-  .palette-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: #fff;
-    font-weight: 600;
-    font-size: 0.875rem;
-  }
-
-  .collapse-button,
+  /* Expand button (vertical text) */
   .expand-button {
-    background: transparent;
-    border: none;
-    color: #888;
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    transition: all 0.2s;
-  }
-
-  .collapse-button:hover,
-  .expand-button:hover {
-    background: #2a2a2a;
-    color: #fff;
-  }
-
-  .expand-button {
+    @apply bg-transparent border-0 text-neutral-500 cursor-pointer p-4 w-full h-full flex flex-col items-center justify-center gap-2 transition-all;
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    padding: 1rem 0.5rem;
-    width: 100%;
-    height: 100%;
-    justify-content: center;
+  }
+  .expand-button:hover {
+    @apply bg-neutral-800 text-white;
   }
 
-  .expand-text {
-    font-size: 0.75rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #888;
-  }
-
-  .search-box {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid #333;
-    background: #151515;
-  }
-
-  .search-input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: #fff;
-    font-size: 0.875rem;
-    outline: none;
-  }
-
-  .search-input::placeholder {
-    color: #666;
-  }
-
-  .clear-search {
-    background: transparent;
-    border: none;
-    color: #888;
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    display: flex;
-    transition: all 0.2s;
-  }
-
-  .clear-search:hover {
-    background: #2a2a2a;
-    color: #fff;
-  }
-
+  /* Categories list with scrollbar */
   .categories-list {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
+    @apply flex-1 overflow-y-auto overflow-x-hidden;
   }
+  .categories-list::-webkit-scrollbar { width: 8px; }
+  .categories-list::-webkit-scrollbar-track { @apply bg-neutral-900; }
+  .categories-list::-webkit-scrollbar-thumb { @apply bg-neutral-700 rounded; }
+  .categories-list::-webkit-scrollbar-thumb:hover { @apply bg-neutral-600; }
 
-  .category {
-    border-bottom: 1px solid #2a2a2a;
-  }
-
+  /* Category header */
   .category-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    background: transparent;
-    border: none;
-    color: #ddd;
-    cursor: pointer;
-    transition: background 0.2s;
-    text-align: left;
-    font-size: 0.875rem;
+    @apply flex items-center gap-2 w-full py-3 px-4 bg-transparent border-0 text-neutral-300 cursor-pointer transition-colors text-left text-sm;
   }
-
   .category-header:hover {
-    background: #2a2a2a;
+    @apply bg-neutral-800;
   }
 
+  /* Chevron rotation */
   .chevron {
-    transition: transform 0.2s;
+    @apply transition-transform duration-200;
   }
-
   .chevron.expanded {
     transform: rotate(90deg);
   }
 
-  .category-icon {
-    font-size: 1rem;
-  }
-
-  .category-name {
-    flex: 1;
-    font-weight: 600;
-  }
-
-  .category-count {
-    color: #666;
-    font-size: 0.75rem;
-    background: #2a2a2a;
-    padding: 0.125rem 0.5rem;
-    border-radius: 12px;
-  }
-
-  .nodes-list {
-    padding: 0.5rem 0;
-  }
-
+  /* Node item */
   .node-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    padding-left: 2.5rem;
-    background: transparent;
-    border: none;
-    color: #ddd;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: left;
+    @apply flex items-center gap-3 w-full py-3 px-4 pl-10 bg-transparent border-0 text-neutral-300 cursor-pointer transition-all text-left;
   }
-
   .node-item:hover {
-    background: #2a2a2a;
+    @apply bg-neutral-800;
   }
 
-  .node-color-bar {
-    width: 3px;
-    height: 32px;
-    border-radius: 2px;
-    flex-shrink: 0;
-  }
-
-  .node-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .node-name {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #fff;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .node-description {
-    font-size: 0.75rem;
-    color: #888;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 0.125rem;
-  }
-
-  .no-results {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem 1rem;
-    text-align: center;
-    color: #666;
-  }
-
-  .no-results svg {
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-
-  .no-results p {
-    margin: 0.25rem 0;
-  }
-
-  .no-results .hint {
-    font-size: 0.75rem;
-    color: #555;
-  }
-
-  .loading {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem 1rem;
-    gap: 1rem;
-    color: #888;
-  }
-
+  /* Loading spinner */
   .loading-spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid #333;
-    border-top-color: #888;
-    border-radius: 50%;
+    @apply w-6 h-6 border-2 border-neutral-700 border-t-neutral-400 rounded-full;
     animation: spin 0.8s linear infinite;
   }
-
   @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  /* Custom scrollbar */
-  .categories-list::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .categories-list::-webkit-scrollbar-track {
-    background: #1a1a1a;
-  }
-
-  .categories-list::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 4px;
-  }
-
-  .categories-list::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    to { transform: rotate(360deg); }
   }
 </style>

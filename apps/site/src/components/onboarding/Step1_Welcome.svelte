@@ -3,524 +3,128 @@
   export let onSkip: () => void;
 </script>
 
-<div class="step-welcome">
-  <div class="welcome-header">
-    <div class="logo">🧠</div>
-    <h1>Welcome to MetaHuman OS</h1>
-    <p class="subtitle">Your Dual Consciousness Extension</p>
+<div class="flex flex-col gap-8 max-w-[800px] mx-auto p-8 md:p-4">
+  <div class="text-center mb-4">
+    <div class="text-6xl mb-4 animate-pulse">🧠</div>
+    <h1 class="text-4xl md:text-3xl font-bold m-0 mb-2 bg-gradient-to-br from-indigo-500 to-purple-600 dark:from-indigo-400 dark:to-purple-400 bg-clip-text text-transparent">Welcome to MetaHuman OS</h1>
+    <p class="text-xl md:text-base text-gray-500 dark:text-gray-400 m-0">Your Dual Consciousness Extension</p>
   </div>
 
-  <div class="welcome-content">
-    <div class="intro-section">
-      <h2>What is MetaHuman OS?</h2>
-      <p>
+  <div class="flex flex-col gap-8">
+    <div>
+      <h2 class="text-2xl font-semibold m-0 mb-4 text-gray-900 dark:text-gray-50">What is MetaHuman OS?</h2>
+      <p class="text-base leading-relaxed text-gray-600 dark:text-gray-300 m-0">
         MetaHuman OS is not an assistant—it's a parallel intelligence that operates as a seamless extension of yourself.
         By learning from your memories, goals, personality, and values, it creates a digital consciousness that thinks
         and acts in alignment with who you are.
       </p>
     </div>
 
-    <div class="privacy-banner">
-      <div class="privacy-icon">🔒</div>
-      <div class="privacy-text">
-        <strong>Your Data, Your Control</strong>
-        <p>Your information is stored on the machine where you set up your account. <a href="/user-guide#accounts-security" target="_blank">Learn about account types</a></p>
+    <div class="flex items-center gap-4 px-6 py-4 bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950 dark:to-emerald-900 border-2 border-emerald-500 rounded-lg">
+      <div class="text-3xl">🔒</div>
+      <div>
+        <strong class="block text-lg text-emerald-800 dark:text-emerald-300 mb-1">Your Data, Your Control</strong>
+        <p class="m-0 text-sm text-emerald-700 dark:text-emerald-200">Your information is stored on the machine where you set up your account. <a href="/user-guide#accounts-security" target="_blank" class="text-emerald-800 dark:text-emerald-300 underline font-medium hover:text-emerald-700 dark:hover:text-emerald-200">Learn about account types</a></p>
       </div>
     </div>
 
-    <div class="onboarding-overview">
-      <h2>What We'll Cover</h2>
-      <p class="overview-intro">This quick setup will help us understand you better:</p>
+    <div>
+      <h2 class="text-2xl font-semibold m-0 mb-4 text-gray-900 dark:text-gray-50">What We'll Cover</h2>
+      <p class="text-base text-gray-500 dark:text-gray-400 m-0 mb-6">This quick setup will help us understand you better:</p>
 
-      <div class="steps-preview">
-        <div class="preview-step">
-          <div class="step-number">1</div>
-          <div class="step-info">
-            <strong>Welcome</strong>
-            <span>Introduction to MetaHuman OS</span>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] md:grid-cols-1 gap-4 mb-6">
+        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all hover:-translate-y-0.5 hover:shadow-lg dark:hover:shadow-black/30">
+          <div class="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-xl rounded-full flex-shrink-0">1</div>
+          <div class="flex flex-col gap-1">
+            <strong class="text-base text-gray-900 dark:text-gray-50">Welcome</strong>
+            <span class="text-sm text-gray-500 dark:text-gray-400">Introduction to MetaHuman OS</span>
           </div>
         </div>
 
-        <div class="preview-step">
-          <div class="step-number">2</div>
-          <div class="step-info">
-            <strong>Personality</strong>
-            <span>Communication style and traits</span>
+        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all hover:-translate-y-0.5 hover:shadow-lg dark:hover:shadow-black/30">
+          <div class="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-xl rounded-full flex-shrink-0">2</div>
+          <div class="flex flex-col gap-1">
+            <strong class="text-base text-gray-900 dark:text-gray-50">Personality</strong>
+            <span class="text-sm text-gray-500 dark:text-gray-400">Communication style and traits</span>
           </div>
         </div>
 
-        <div class="preview-step">
-          <div class="step-number">3</div>
-          <div class="step-info">
-            <strong>Context Import</strong>
-            <span>Upload documents, journals, or notes</span>
+        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all hover:-translate-y-0.5 hover:shadow-lg dark:hover:shadow-black/30">
+          <div class="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-xl rounded-full flex-shrink-0">3</div>
+          <div class="flex flex-col gap-1">
+            <strong class="text-base text-gray-900 dark:text-gray-50">Context Import</strong>
+            <span class="text-sm text-gray-500 dark:text-gray-400">Upload documents, journals, or notes</span>
           </div>
         </div>
 
-        <div class="preview-step">
-          <div class="step-number">4</div>
-          <div class="step-info">
-            <strong>Goals</strong>
-            <span>What you want to achieve</span>
+        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all hover:-translate-y-0.5 hover:shadow-lg dark:hover:shadow-black/30">
+          <div class="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-xl rounded-full flex-shrink-0">4</div>
+          <div class="flex flex-col gap-1">
+            <strong class="text-base text-gray-900 dark:text-gray-50">Goals</strong>
+            <span class="text-sm text-gray-500 dark:text-gray-400">What you want to achieve</span>
           </div>
         </div>
 
-        <div class="preview-step">
-          <div class="step-number">5</div>
-          <div class="step-info">
-            <strong>Review & Complete</strong>
-            <span>Finalize your setup</span>
+        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all hover:-translate-y-0.5 hover:shadow-lg dark:hover:shadow-black/30">
+          <div class="flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-xl rounded-full flex-shrink-0">5</div>
+          <div class="flex flex-col gap-1">
+            <strong class="text-base text-gray-900 dark:text-gray-50">Review & Complete</strong>
+            <span class="text-sm text-gray-500 dark:text-gray-400">Finalize your setup</span>
           </div>
         </div>
       </div>
 
-      <div class="time-estimate">
-        <span class="clock-icon">⏱️</span>
+      <div class="flex items-center justify-center gap-2 p-3 bg-amber-100 dark:bg-amber-950 border border-amber-400 dark:border-amber-500 rounded-md text-amber-800 dark:text-amber-300">
+        <span class="text-xl">⏱️</span>
         <span>Estimated time: 10-15 minutes</span>
       </div>
     </div>
 
-    <div class="how-it-works">
-      <h2>How It Works</h2>
-      <div class="work-steps">
-        <div class="work-item">
-          <div class="work-icon">💭</div>
-          <div class="work-text">
-            <strong>Learn</strong>
-            <p>We capture your memories, goals, and personality traits</p>
+    <div>
+      <h2 class="text-2xl font-semibold m-0 mb-4 text-gray-900 dark:text-gray-50">How It Works</h2>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] md:grid-cols-1 gap-6">
+        <div class="flex flex-col items-center text-center gap-3">
+          <div class="text-5xl">💭</div>
+          <div>
+            <strong class="block text-lg text-gray-900 dark:text-gray-50 mb-2">Learn</strong>
+            <p class="m-0 text-sm leading-relaxed text-gray-500 dark:text-gray-400">We capture your memories, goals, and personality traits</p>
           </div>
         </div>
 
-        <div class="work-item">
-          <div class="work-icon">🧬</div>
-          <div class="work-text">
-            <strong>Adapt</strong>
-            <p>The system builds a model that reflects your thinking patterns</p>
+        <div class="flex flex-col items-center text-center gap-3">
+          <div class="text-5xl">🧬</div>
+          <div>
+            <strong class="block text-lg text-gray-900 dark:text-gray-50 mb-2">Adapt</strong>
+            <p class="m-0 text-sm leading-relaxed text-gray-500 dark:text-gray-400">The system builds a model that reflects your thinking patterns</p>
           </div>
         </div>
 
-        <div class="work-item">
-          <div class="work-icon">⚡</div>
-          <div class="work-text">
-            <strong>Act</strong>
-            <p>Your digital consciousness operates autonomously in alignment with your values</p>
+        <div class="flex flex-col items-center text-center gap-3">
+          <div class="text-5xl">⚡</div>
+          <div>
+            <strong class="block text-lg text-gray-900 dark:text-gray-50 mb-2">Act</strong>
+            <p class="m-0 text-sm leading-relaxed text-gray-500 dark:text-gray-400">Your digital consciousness operates autonomously in alignment with your values</p>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="optional-notice">
-      <p>
-        <strong>Note:</strong> You can skip this wizard and add data manually later through various utilities
+    <div class="px-6 py-4 bg-blue-50 dark:bg-blue-950 border-l-4 border-blue-500 dark:border-blue-400 rounded">
+      <p class="m-0 text-sm leading-relaxed text-blue-800 dark:text-blue-200">
+        <strong class="text-blue-900 dark:text-blue-100">Note:</strong> You can skip this wizard and add data manually later through various utilities
         (Memory Capture, File Ingestion, Chat, etc.). However, completing this setup now will give your
         MetaHuman a strong foundation from the start.
       </p>
     </div>
   </div>
 
-  <div class="welcome-actions">
-    <button class="btn btn-secondary" on:click={onSkip}>
+  <div class="flex justify-between gap-4 pt-4 border-t border-gray-200 dark:border-gray-700 md:flex-col-reverse">
+    <button class="flex-1 px-6 py-3 text-base font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer transition-all hover:bg-gray-200 dark:hover:bg-gray-600" on:click={onSkip}>
       Skip for Now
     </button>
-    <button class="btn btn-primary" on:click={onNext}>
+    <button class="flex-1 px-6 py-3 text-base font-semibold bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-none rounded-lg cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/40" on:click={onNext}>
       Get Started →
     </button>
   </div>
 </div>
 
-<style>
-  .step-welcome {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .welcome-header {
-    text-align: center;
-    margin-bottom: 1rem;
-  }
-
-  .logo {
-    font-size: 4rem;
-    margin-bottom: 1rem;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-  }
-
-  .welcome-header h1 {
-    font-size: 2.5rem;
-    font-weight: 700;
-    margin: 0 0 0.5rem 0;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  :global(.dark) .welcome-header h1 {
-    background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .subtitle {
-    font-size: 1.2rem;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .subtitle {
-    color: #9ca3af;
-  }
-
-  .welcome-content {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-  }
-
-  .intro-section h2,
-  .onboarding-overview h2,
-  .how-it-works h2 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0 0 1rem 0;
-    color: #111827;
-  }
-
-  :global(.dark) .intro-section h2,
-  :global(.dark) .onboarding-overview h2,
-  :global(.dark) .how-it-works h2 {
-    color: #f9fafb;
-  }
-
-  .intro-section p {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: #4b5563;
-    margin: 0;
-  }
-
-  :global(.dark) .intro-section p {
-    color: #d1d5db;
-  }
-
-  .privacy-banner {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem 1.5rem;
-    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-    border: 2px solid #10b981;
-    border-radius: 8px;
-  }
-
-  :global(.dark) .privacy-banner {
-    background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
-    border-color: #10b981;
-  }
-
-  .privacy-icon {
-    font-size: 2rem;
-  }
-
-  .privacy-text strong {
-    display: block;
-    font-size: 1.1rem;
-    color: #065f46;
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.dark) .privacy-text strong {
-    color: #6ee7b7;
-  }
-
-  .privacy-text p {
-    margin: 0;
-    font-size: 0.9rem;
-    color: #047857;
-  }
-
-  :global(.dark) .privacy-text p {
-    color: #a7f3d0;
-  }
-
-  .privacy-text a {
-    color: #065f46;
-    text-decoration: underline;
-    font-weight: 500;
-  }
-
-  .privacy-text a:hover {
-    color: #047857;
-  }
-
-  :global(.dark) .privacy-text a {
-    color: #6ee7b7;
-  }
-
-  :global(.dark) .privacy-text a:hover {
-    color: #a7f3d0;
-  }
-
-  .overview-intro {
-    font-size: 1rem;
-    color: #6b7280;
-    margin: 0 0 1.5rem 0;
-  }
-
-  :global(.dark) .overview-intro {
-    color: #9ca3af;
-  }
-
-  .steps-preview {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .preview-step {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-  }
-
-  :global(.dark) .preview-step {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .preview-step:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .preview-step:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-
-  .step-number {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    font-weight: 700;
-    font-size: 1.2rem;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .step-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .step-info strong {
-    font-size: 1rem;
-    color: #111827;
-  }
-
-  :global(.dark) .step-info strong {
-    color: #f9fafb;
-  }
-
-  .step-info span {
-    font-size: 0.85rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .step-info span {
-    color: #9ca3af;
-  }
-
-  .time-estimate {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    background: #fef3c7;
-    border: 1px solid #fbbf24;
-    border-radius: 6px;
-    font-size: 0.95rem;
-    color: #92400e;
-  }
-
-  :global(.dark) .time-estimate {
-    background: #451a03;
-    border-color: #f59e0b;
-    color: #fcd34d;
-  }
-
-  .clock-icon {
-    font-size: 1.2rem;
-  }
-
-  .work-steps {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .work-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 0.75rem;
-  }
-
-  .work-icon {
-    font-size: 3rem;
-  }
-
-  .work-text strong {
-    display: block;
-    font-size: 1.1rem;
-    color: #111827;
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.dark) .work-text strong {
-    color: #f9fafb;
-  }
-
-  .work-text p {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #6b7280;
-  }
-
-  :global(.dark) .work-text p {
-    color: #9ca3af;
-  }
-
-  .optional-notice {
-    padding: 1rem 1.5rem;
-    background: #eff6ff;
-    border-left: 4px solid #3b82f6;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .optional-notice {
-    background: #1e3a8a;
-    border-color: #60a5fa;
-  }
-
-  .optional-notice p {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: #1e40af;
-  }
-
-  :global(.dark) .optional-notice p {
-    color: #bfdbfe;
-  }
-
-  .optional-notice strong {
-    color: #1e3a8a;
-  }
-
-  :global(.dark) .optional-notice strong {
-    color: #93c5fd;
-  }
-
-  .welcome-actions {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .welcome-actions {
-    border-color: #374151;
-  }
-
-  .btn {
-    flex: 1;
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-secondary {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #374151;
-    color: #d1d5db;
-    border-color: #4b5563;
-  }
-
-  .btn-secondary:hover {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-secondary:hover {
-    background: #4b5563;
-  }
-
-  @media (max-width: 768px) {
-    .step-welcome {
-      padding: 1rem;
-    }
-
-    .welcome-header h1 {
-      font-size: 2rem;
-    }
-
-    .subtitle {
-      font-size: 1rem;
-    }
-
-    .steps-preview {
-      grid-template-columns: 1fr;
-    }
-
-    .work-steps {
-      grid-template-columns: 1fr;
-    }
-
-    .welcome-actions {
-      flex-direction: column-reverse;
-    }
-  }
-</style>

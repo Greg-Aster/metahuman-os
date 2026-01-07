@@ -104,15 +104,15 @@
 </script>
 
 {#if loading}
-  <div class="tier-selector loading">
+  <div class="tier-selector flex items-center justify-center gap-2 min-h-[200px] text-gray-500">
     <span class="spinner"></span>
     <span>Detecting tiers...</span>
   </div>
 {:else if compact}
   <!-- Compact mode: just shows current tier with icon -->
   <button class="tier-compact" on:click={handleRefresh} disabled={refreshing}>
-    <span class="tier-icon">{getTierIcon(currentTier)}</span>
-    <span class="tier-name">{TIERS[currentTier].name}</span>
+    <span class="text-xl">{getTierIcon(currentTier)}</span>
+    <span class="font-semibold text-sm text-gray-800 dark:text-gray-100">{TIERS[currentTier].name}</span>
     {#if refreshing}
       <span class="spinner small"></span>
     {/if}
@@ -120,9 +120,9 @@
 {:else}
   <!-- Full mode: shows all tiers with selection -->
   <div class="tier-selector">
-    <div class="tier-header">
-      <h3>Compute Tier</h3>
-      <button class="refresh-btn" on:click={handleRefresh} disabled={refreshing}>
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="m-0 text-base font-semibold text-gray-700 dark:text-gray-200">Compute Tier</h3>
+      <button class="p-1 px-2 border-0 bg-transparent cursor-pointer rounded-md text-base hover:bg-black/5 dark:hover:bg-white/10" on:click={handleRefresh} disabled={refreshing}>
         {#if refreshing}
           <span class="spinner small"></span>
         {:else}
@@ -132,64 +132,40 @@
     </div>
 
     <!-- Device Status -->
-    <div class="device-status">
-      <span class="status-item" title="Battery">
+    <div class="flex gap-4 mb-4 text-sm">
+      <span class="flex items-center gap-1 text-gray-500" title="Battery">
         {getBatteryIcon()} {device.batteryLevel}%
       </span>
-      <span class="status-item" title="Network">
+      <span class="flex items-center gap-1 text-gray-500" title="Network">
         {getNetworkIcon()} {device.networkType}
       </span>
       {#if device.saveDataMode}
-        <span class="status-item warning" title="Data Saver Active">💾 Saver</span>
+        <span class="flex items-center gap-1 text-amber-500" title="Data Saver Active">💾 Saver</span>
       {/if}
     </div>
 
     <!-- Selection Mode -->
-    <div class="mode-selector">
-      <label>
-        <input
-          type="radio"
-          name="mode"
-          value="auto"
-          checked={currentConfig.mode === 'auto'}
-          on:change={() => handleModeChange('auto')}
-        />
+    <div class="flex flex-wrap gap-3 mb-4 text-sm">
+      <label class="flex items-center gap-1 cursor-pointer text-gray-700 dark:text-gray-300">
+        <input type="radio" name="mode" value="auto" checked={currentConfig.mode === 'auto'} on:change={() => handleModeChange('auto')} />
         Auto
       </label>
-      <label>
-        <input
-          type="radio"
-          name="mode"
-          value="prefer-offline"
-          checked={currentConfig.mode === 'prefer-offline'}
-          on:change={() => handleModeChange('prefer-offline')}
-        />
+      <label class="flex items-center gap-1 cursor-pointer text-gray-700 dark:text-gray-300">
+        <input type="radio" name="mode" value="prefer-offline" checked={currentConfig.mode === 'prefer-offline'} on:change={() => handleModeChange('prefer-offline')} />
         Prefer Offline
       </label>
-      <label>
-        <input
-          type="radio"
-          name="mode"
-          value="prefer-server"
-          checked={currentConfig.mode === 'prefer-server'}
-          on:change={() => handleModeChange('prefer-server')}
-        />
+      <label class="flex items-center gap-1 cursor-pointer text-gray-700 dark:text-gray-300">
+        <input type="radio" name="mode" value="prefer-server" checked={currentConfig.mode === 'prefer-server'} on:change={() => handleModeChange('prefer-server')} />
         Prefer Server
       </label>
-      <label>
-        <input
-          type="radio"
-          name="mode"
-          value="manual"
-          checked={currentConfig.mode === 'manual'}
-          on:change={() => handleModeChange('manual')}
-        />
+      <label class="flex items-center gap-1 cursor-pointer text-gray-700 dark:text-gray-300">
+        <input type="radio" name="mode" value="manual" checked={currentConfig.mode === 'manual'} on:change={() => handleModeChange('manual')} />
         Manual
       </label>
     </div>
 
     <!-- Tier Cards -->
-    <div class="tier-cards">
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3 mb-4">
       {#each Object.values(TIERS) as tier}
         {@const status = result?.tierStatuses[tier.id]}
         {@const isSelected = currentTier === tier.id}
@@ -201,27 +177,26 @@
           on:click={() => handleManualSelect(tier.id)}
           disabled={currentConfig.mode !== 'manual'}
         >
-          <div class="tier-card-header">
-            <span class="tier-icon large">{getTierIcon(tier.id)}</span>
-            <span class="tier-name">{tier.name}</span>
-            <span class="status-dot" style="background-color: {getStatusColor(status?.available || false)}"></span>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-2xl">{getTierIcon(tier.id)}</span>
+            <span class="font-semibold text-sm text-gray-800 dark:text-gray-100 flex-1">{tier.name}</span>
+            <span class="w-2 h-2 rounded-full" style="background-color: {getStatusColor(status?.available || false)}"></span>
           </div>
 
-          <div class="tier-model">{tier.model}</div>
+          <div class="text-xs text-gray-500 mb-1 font-mono">{tier.model}</div>
+          <div class="text-xs text-gray-400 mb-2">{getStatusText(tier.id)}</div>
 
-          <div class="tier-status">{getStatusText(tier.id)}</div>
-
-          <div class="tier-capabilities">
+          <div class="flex gap-1 flex-wrap">
             {#each tier.capabilities.slice(0, 4) as cap}
-              <span class="capability" title={cap}>{getCapabilityIcon(cap)}</span>
+              <span class="text-xs p-0.5 bg-black/5 dark:bg-white/10 rounded" title={cap}>{getCapabilityIcon(cap)}</span>
             {/each}
             {#if tier.capabilities.length > 4}
-              <span class="capability more">+{tier.capabilities.length - 4}</span>
+              <span class="text-[0.625rem] text-gray-500">+{tier.capabilities.length - 4}</span>
             {/if}
           </div>
 
           {#if isSelected}
-            <div class="selected-badge">Active</div>
+            <div class="absolute -top-2 -right-2 bg-blue-500 text-white text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full uppercase">Active</div>
           {/if}
         </button>
       {/each}
@@ -229,7 +204,7 @@
 
     <!-- Selection Reason -->
     {#if result?.reason}
-      <div class="selection-reason">
+      <div class="text-xs text-gray-500 p-2 bg-black/[0.03] dark:bg-white/5 rounded-md">
         <strong>Why:</strong> {result.reason}
       </div>
     {/if}
@@ -237,292 +212,55 @@
 {/if}
 
 <style>
+  /* Tier selector container */
   .tier-selector {
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.75rem;
+    @apply p-4 rounded-xl bg-black/[0.02] dark:bg-white/[0.03];
   }
 
-  :global(.dark) .tier-selector {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .tier-selector.loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    min-height: 200px;
-    color: #6b7280;
-  }
-
-  .tier-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .tier-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) .tier-header h3 {
-    color: #e5e7eb;
-  }
-
-  .refresh-btn {
-    padding: 0.25rem 0.5rem;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    border-radius: 0.375rem;
-    font-size: 1rem;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .refresh-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .device-status {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .status-item {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    color: #6b7280;
-  }
-
-  .status-item.warning {
-    color: #f59e0b;
-  }
-
-  .mode-selector {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .mode-selector label {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    cursor: pointer;
-    color: #374151;
-  }
-
-  :global(.dark) .mode-selector label {
-    color: #d1d5db;
-  }
-
-  .tier-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
+  /* Tier card with state variants */
   .tier-card {
-    position: relative;
-    padding: 0.75rem;
-    border: 2px solid transparent;
-    border-radius: 0.5rem;
-    background: white;
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.15s;
+    @apply relative p-3 border-2 border-transparent rounded-lg bg-white dark:bg-gray-800
+           cursor-pointer text-left transition-all;
   }
-
-  :global(.dark) .tier-card {
-    background: #1f2937;
-  }
-
   .tier-card:disabled {
-    cursor: default;
-    opacity: 0.7;
+    @apply cursor-default opacity-70;
   }
-
   .tier-card.available {
-    border-color: #d1d5db;
+    @apply border-gray-300 dark:border-gray-700;
   }
-
-  :global(.dark) .tier-card.available {
-    border-color: #374151;
-  }
-
   .tier-card.unavailable {
-    border-color: #fecaca;
-    background: #fef2f2;
+    @apply border-red-200 bg-red-50 dark:border-red-900 dark:bg-stone-900;
   }
-
-  :global(.dark) .tier-card.unavailable {
-    border-color: #7f1d1d;
-    background: #1c1917;
-  }
-
   .tier-card.selected {
-    border-color: #3b82f6;
+    @apply border-blue-500;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   }
-
   .tier-card:not(:disabled):hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
 
-  .tier-card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .tier-icon {
-    font-size: 1.25rem;
-  }
-
-  .tier-icon.large {
-    font-size: 1.5rem;
-  }
-
-  .tier-name {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: #1f2937;
-    flex: 1;
-  }
-
-  :global(.dark) .tier-name {
-    color: #f3f4f6;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .tier-model {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-bottom: 0.25rem;
-    font-family: monospace;
-  }
-
-  .tier-status {
-    font-size: 0.75rem;
-    color: #9ca3af;
-    margin-bottom: 0.5rem;
-  }
-
-  .tier-capabilities {
-    display: flex;
-    gap: 0.25rem;
-    flex-wrap: wrap;
-  }
-
-  .capability {
-    font-size: 0.75rem;
-    padding: 0.125rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .capability {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .capability.more {
-    color: #6b7280;
-    font-size: 0.625rem;
-  }
-
-  .selected-badge {
-    position: absolute;
-    top: -8px;
-    right: -8px;
-    background: #3b82f6;
-    color: white;
-    font-size: 0.625rem;
-    font-weight: 600;
-    padding: 0.125rem 0.375rem;
-    border-radius: 9999px;
-    text-transform: uppercase;
-  }
-
-  .selection-reason {
-    font-size: 0.75rem;
-    color: #6b7280;
-    padding: 0.5rem;
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 0.375rem;
-  }
-
-  :global(.dark) .selection-reason {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  /* Compact mode */
+  /* Compact mode button */
   .tier-compact {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.25rem 0.75rem;
-    border: none;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 9999px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    transition: all 0.15s;
+    @apply inline-flex items-center gap-1.5 py-1 px-3 border-0 rounded-full cursor-pointer
+           text-sm transition-all bg-black/5 dark:bg-white/10 dark:text-gray-200;
   }
-
-  :global(.dark) .tier-compact {
-    background: rgba(255, 255, 255, 0.1);
-    color: #e5e7eb;
-  }
-
   .tier-compact:hover:not(:disabled) {
-    background: rgba(0, 0, 0, 0.1);
+    @apply bg-black/10 dark:bg-white/15;
   }
-
-  :global(.dark) .tier-compact:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
-  }
-
   .tier-compact:disabled {
-    cursor: wait;
+    @apply cursor-wait;
   }
 
-  /* Spinner */
+  /* Spinner animation */
   .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid #e5e7eb;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
+    @apply w-5 h-5 rounded-full border-2 border-gray-200 border-t-blue-500;
     animation: spin 0.8s linear infinite;
   }
-
   .spinner.small {
-    width: 14px;
-    height: 14px;
+    @apply w-3.5 h-3.5;
     border-width: 1.5px;
   }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }

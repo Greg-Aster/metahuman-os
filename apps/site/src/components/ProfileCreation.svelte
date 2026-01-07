@@ -113,29 +113,29 @@
   }
 </script>
 
-<div class="profile-creation">
-  <h2>➕ Create Profile</h2>
-  <p class="description">
+<div class="p-6 border-2 border-green-500 rounded-lg bg-green-50 dark:bg-green-950 mb-8">
+  <h2 class="m-0 mb-2 text-xl text-green-600 dark:text-green-300">➕ Create Profile</h2>
+  <p class="m-0 mb-4 text-sm text-green-700 dark:text-green-200">
     Create a new user account with full profile directory structure and authentication credentials.
   </p>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="banner banner-error mb-4">{error}</div>
   {/if}
 
   {#if success}
-    <div class="success-message">{success}</div>
+    <div class="banner banner-success mb-4">{success}</div>
   {/if}
 
   {#if !showForm}
-    <button class="btn-create" on:click={() => (showForm = true)}>
+    <button class="py-3 px-6 bg-green-500 text-white border-0 rounded-md text-sm font-semibold cursor-pointer hover:bg-green-600 transition-colors" on:click={() => (showForm = true)}>
       Create New Profile
     </button>
   {:else}
-    <form on:submit|preventDefault={handleCreate} class="creation-form">
+    <form on:submit|preventDefault={handleCreate} class="flex flex-col gap-4">
       <div class="form-group">
-        <label for="username">
-          Username <span class="required">*</span>
+        <label for="username" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Username <span class="text-red-500">*</span>
         </label>
         <input
           id="username"
@@ -144,13 +144,14 @@
           placeholder="john-doe"
           disabled={creating}
           required
+          class="form-input"
         />
-        <small>3-50 characters, letters, numbers, underscore, and hyphen only</small>
+        <small class="text-xs text-gray-500 dark:text-gray-400">3-50 characters, letters, numbers, underscore, and hyphen only</small>
       </div>
 
       <div class="form-group">
-        <label for="password">
-          Password <span class="required">*</span>
+        <label for="password" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Password <span class="text-red-500">*</span>
         </label>
         <input
           id="password"
@@ -159,12 +160,13 @@
           placeholder="Minimum 6 characters"
           disabled={creating}
           required
+          class="form-input"
         />
       </div>
 
       <div class="form-group">
-        <label for="confirmPassword">
-          Confirm Password <span class="required">*</span>
+        <label for="confirmPassword" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Confirm Password <span class="text-red-500">*</span>
         </label>
         <input
           id="confirmPassword"
@@ -173,12 +175,13 @@
           placeholder="Re-enter password"
           disabled={creating}
           required
+          class="form-input"
         />
       </div>
 
       <div class="form-group">
-        <label for="displayName">
-          Display Name <span class="optional">(optional)</span>
+        <label for="displayName" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Display Name <span class="font-normal text-gray-500">(optional)</span>
         </label>
         <input
           id="displayName"
@@ -186,12 +189,13 @@
           bind:value={displayName}
           placeholder="John Doe"
           disabled={creating}
+          class="form-input"
         />
       </div>
 
       <div class="form-group">
-        <label for="email">
-          Email <span class="optional">(optional)</span>
+        <label for="email" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Email <span class="font-normal text-gray-500">(optional)</span>
         </label>
         <input
           id="email"
@@ -199,19 +203,20 @@
           bind:value={email}
           placeholder="john@example.com"
           disabled={creating}
+          class="form-input"
         />
       </div>
 
       <div class="form-group">
-        <label for="role">
-          Role <span class="required">*</span>
+        <label for="role" class="font-semibold text-sm text-green-700 dark:text-green-200">
+          Role <span class="text-red-500">*</span>
         </label>
-        <select id="role" bind:value={role} disabled={creating}>
+        <select id="role" bind:value={role} disabled={creating} class="form-input">
           <option value="standard">Standard User</option>
           <option value="guest">Guest</option>
           <option value="owner">Owner</option>
         </select>
-        <small>
+        <small class="text-xs text-gray-500 dark:text-gray-400">
           {#if role === 'owner'}
             <strong>Owner:</strong> Full system access, can create/delete profiles, change settings
           {:else if role === 'standard'}
@@ -222,16 +227,16 @@
         </small>
       </div>
 
-      <div class="form-actions">
+      <div class="flex gap-3 justify-end mt-2">
         <button
           type="button"
-          class="btn-cancel"
+          class="btn-secondary"
           on:click={handleCancel}
           disabled={creating}
         >
           Cancel
         </button>
-        <button type="submit" class="btn-submit" disabled={creating}>
+        <button type="submit" class="py-3 px-6 bg-green-500 text-white border-0 rounded text-sm font-semibold cursor-pointer hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed" disabled={creating}>
           {creating ? 'Creating...' : 'Create Profile'}
         </button>
       </div>
@@ -240,209 +245,14 @@
 </div>
 
 <style>
-  .profile-creation {
-    padding: 1.5rem;
-    border: 2px solid #10b981;
-    border-radius: 8px;
-    background: #f0fdf4;
-    margin-bottom: 2rem;
-  }
-
-  :global(.dark) .profile-creation {
-    background: #064e3b;
-    border-color: #059669;
-  }
-
-  .profile-creation h2 {
-    margin: 0 0 0.5rem 0;
-    color: #059669;
-    font-size: 1.25rem;
-  }
-
-  :global(.dark) .profile-creation h2 {
-    color: #6ee7b7;
-  }
-
-  .description {
-    margin: 0 0 1rem 0;
-    color: #065f46;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .description {
-    color: #a7f3d0;
-  }
-
-  .error-message {
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    border-radius: 4px;
-    color: #991b1b;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #991b1b;
-    color: #fecaca;
-  }
-
-  .success-message {
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-    background: #d1fae5;
-    border: 1px solid #a7f3d0;
-    border-radius: 4px;
-    color: #065f46;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .success-message {
-    background: #064e3b;
-    border-color: #059669;
-    color: #a7f3d0;
-  }
-
-  .btn-create {
-    padding: 0.75rem 1.5rem;
-    background: #10b981;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-create:hover {
-    background: #059669;
-  }
-
-  .creation-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
+  /* Form group layout */
   .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    @apply flex flex-col gap-2;
   }
 
-  .form-group label {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: #065f46;
-  }
-
-  :global(.dark) .form-group label {
-    color: #d1fae5;
-  }
-
-  .required {
-    color: #dc2626;
-  }
-
-  .optional {
-    font-weight: 400;
-    color: #6b7280;
-  }
-
-  :global(.dark) .optional {
-    color: #9ca3af;
-  }
-
-  .form-group input,
-  .form-group select {
-    padding: 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .form-group input,
-  :global(.dark) .form-group select {
-    background: #1f2937;
-    border-color: #4b5563;
-    color: #f3f4f6;
-  }
-
-  .form-group input:focus,
-  .form-group select:focus {
-    outline: none;
-    border-color: #10b981;
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-  }
-
-  .form-group input:disabled,
-  .form-group select:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .form-group small {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .form-group small {
-    color: #9ca3af;
-  }
-
-  .form-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    margin-top: 0.5rem;
-  }
-
-  .btn-cancel,
-  .btn-submit {
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-cancel {
-    background: #e5e7eb;
-    color: #374151;
-  }
-
-  .btn-cancel:hover:not(:disabled) {
-    background: #d1d5db;
-  }
-
-  :global(.dark) .btn-cancel {
-    background: #374151;
-    color: #d1d5db;
-  }
-
-  :global(.dark) .btn-cancel:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-submit {
-    background: #10b981;
-    color: white;
-  }
-
-  .btn-submit:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .btn-submit:disabled,
-  .btn-cancel:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  /* Focus ring for green theme */
+  .form-group :global(input:focus),
+  .form-group :global(select:focus) {
+    @apply ring-2 ring-green-500/20 border-green-500;
   }
 </style>

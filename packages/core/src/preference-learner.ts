@@ -286,11 +286,11 @@ async function extractPreferencesFromEvents(
       },
     });
 
-    if (!response.success || !response.text) {
+    if (!response.content) {
       return [];
     }
 
-    const parsed = JSON.parse(response.text);
+    const parsed = JSON.parse(response.content);
     return parsed.preferences || [];
   } catch (error) {
     console.warn('[preference-learner] Extraction failed:', (error as Error).message);
@@ -398,11 +398,11 @@ async function checkContradiction(
       },
     });
 
-    if (!response.success || !response.text) {
+    if (!response.content) {
       return { contradicts: false };
     }
 
-    return JSON.parse(response.text);
+    return JSON.parse(response.content);
   } catch {
     return { contradicts: false };
   }
@@ -419,14 +419,16 @@ async function detectContradictions(preferences: LearnedPreference[]): Promise<v
     for (let j = i + 1; j < active.length; j++) {
       const result = await checkContradiction(active[i], active[j]);
       if (result.contradicts) {
-        active[i].contradicts = active[i].contradicts || [];
-        active[j].contradicts = active[j].contradicts || [];
+        const iContradicts = active[i].contradicts || [];
+        const jContradicts = active[j].contradicts || [];
+        active[i].contradicts = iContradicts;
+        active[j].contradicts = jContradicts;
 
-        if (!active[i].contradicts.includes(active[j].id)) {
-          active[i].contradicts.push(active[j].id);
+        if (!iContradicts.includes(active[j].id)) {
+          iContradicts.push(active[j].id);
         }
-        if (!active[j].contradicts.includes(active[i].id)) {
-          active[j].contradicts.push(active[i].id);
+        if (!jContradicts.includes(active[i].id)) {
+          jContradicts.push(active[i].id);
         }
       }
     }

@@ -39,68 +39,68 @@
   }
 </script>
 
-<div class="personality-choice">
+<div class="w-full">
   {#if choice === 'pending'}
-    <div class="choice-screen">
-      <div class="choice-header">
-        <h2>Build Your Personality Profile</h2>
-        <p class="choice-description">
+    <div class="flex flex-col gap-8">
+      <div class="text-center">
+        <h2 class="text-3xl font-bold mb-4 text-white dark:text-white">Build Your Personality Profile</h2>
+        <p class="text-base leading-relaxed text-white/80 dark:text-white/80 max-w-[600px] mx-auto">
           Choose how you'd like to set up your personality profile. You can complete a deep interview,
           answer a quick survey, or skip and do it later.
         </p>
       </div>
 
-      <div class="choice-cards">
-        <button class="choice-card primary" on:click={handleStartFullInterview}>
-          <div class="card-icon">🧠</div>
-          <h3>Full Persona Interview</h3>
-          <p class="card-description">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
+        <button class="choice-card choice-card-primary" on:click={handleStartFullInterview}>
+          <div class="text-5xl mb-4">🧠</div>
+          <h3 class="text-xl font-semibold mb-3 text-white dark:text-white">Full Persona Interview</h3>
+          <p class="text-sm leading-relaxed text-white/70 dark:text-white/70 mb-4">
             7-15 adaptive questions using motivational interviewing techniques.
             Takes 15-20 minutes.
           </p>
-          <ul class="card-features">
-            <li>✓ Therapeutic conversation style</li>
-            <li>✓ Analyzes communication patterns</li>
-            <li>✓ Extracts Big Five personality traits</li>
-            <li>✓ Identifies values, goals, and interests</li>
-            <li>✓ Can pause and resume anytime</li>
+          <ul class="list-none p-0 mb-6 text-left w-full">
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Therapeutic conversation style</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Analyzes communication patterns</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Extracts Big Five personality traits</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Identifies values, goals, and interests</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Can pause and resume anytime</li>
           </ul>
-          <div class="card-badge best">Most Comprehensive</div>
+          <div class="choice-badge choice-badge-best">Most Comprehensive</div>
         </button>
 
         <button class="choice-card" on:click={handleStartQuickSurvey}>
-          <div class="card-icon">📝</div>
-          <h3>Quick Survey</h3>
-          <p class="card-description">
+          <div class="text-5xl mb-4">📝</div>
+          <h3 class="text-xl font-semibold mb-3 text-white dark:text-white">Quick Survey</h3>
+          <p class="text-sm leading-relaxed text-white/70 dark:text-white/70 mb-4">
             7 simple questions about your personality and preferences.
             Takes about 5 minutes.
           </p>
-          <ul class="card-features">
-            <li>✓ Fast and straightforward</li>
-            <li>✓ Basic personality extraction</li>
-            <li>✓ Good starting point</li>
-            <li>✓ Can enhance later with full interview</li>
+          <ul class="list-none p-0 mb-6 text-left w-full">
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Fast and straightforward</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Basic personality extraction</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Good starting point</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">✓ Can enhance later with full interview</li>
           </ul>
-          <div class="card-badge">Fastest</div>
+          <div class="choice-badge">Fastest</div>
         </button>
 
-        <button class="choice-card secondary" on:click={handleSkipBoth}>
-          <div class="card-icon">⏭️</div>
-          <h3>Skip for Now</h3>
-          <p class="card-description">
+        <button class="choice-card" on:click={handleSkipBoth}>
+          <div class="text-5xl mb-4">⏭️</div>
+          <h3 class="text-xl font-semibold mb-3 text-white dark:text-white">Skip for Now</h3>
+          <p class="text-sm leading-relaxed text-white/70 dark:text-white/70 mb-4">
             Complete the personality interview later from the System menu.
           </p>
-          <ul class="card-features">
-            <li>• Get started immediately</li>
-            <li>• Access from System → Generator</li>
-            <li>• All sessions saved and resumable</li>
-            <li>• Manually edit persona files anytime</li>
+          <ul class="list-none p-0 mb-6 text-left w-full">
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">• Get started immediately</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">• Access from System → Generator</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">• All sessions saved and resumable</li>
+            <li class="text-sm text-white/80 dark:text-white/80 mb-2 pl-2">• Manually edit persona files anytime</li>
           </ul>
         </button>
       </div>
 
-      <div class="choice-footer">
-        <button class="btn-link" on:click={onBack}>
+      <div class="text-center mt-4">
+        <button class="bg-transparent border-0 text-white/60 dark:text-white/60 text-sm cursor-pointer px-4 py-2 transition-colors hover:text-white/90" on:click={onBack}>
           ← Back
         </button>
       </div>
@@ -117,11 +117,11 @@
 
   {#if showSkipNotification}
     <div class="skip-notification">
-      <div class="notification-content">
-        <div class="notification-icon">ℹ️</div>
-        <div class="notification-text">
-          <strong>Personality interview skipped</strong>
-          <p>You can complete it anytime from <strong>System → Generator</strong></p>
+      <div class="flex gap-4 items-start max-w-[400px] p-4 px-6 rounded-xl border border-blue-400/30 bg-slate-900 shadow-xl">
+        <div class="text-2xl flex-shrink-0">ℹ️</div>
+        <div>
+          <strong class="block text-white mb-1 text-[0.9375rem]">Personality interview skipped</strong>
+          <p class="m-0 text-sm text-white/70 leading-relaxed">You can complete it anytime from <strong class="text-blue-400">System → Generator</strong></p>
         </div>
       </div>
     </div>
@@ -129,306 +129,35 @@
 </div>
 
 <style>
-  .personality-choice {
-    width: 100%;
-  }
-
-  .choice-screen {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-  }
-
-  .choice-header {
-    text-align: center;
-  }
-
-  .choice-header h2 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin: 0 0 1rem;
-    color: white;
-  }
-
-  :global(html:not(.dark)) .choice-header h2 {
-    color: rgb(17, 24, 39);
-  }
-
-  .choice-description {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: rgba(255, 255, 255, 0.8);
-    margin: 0;
-    max-width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  :global(html:not(.dark)) .choice-description {
-    color: rgba(0, 0, 0, 0.7);
-  }
-
-  .choice-cards {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.5rem;
-    margin-top: 1rem;
-  }
-
-  @media (max-width: 1024px) {
-    .choice-cards {
-      grid-template-columns: 1fr;
-    }
-  }
-
+  /* Choice card - interactive selection cards */
   .choice-card {
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 2rem;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    position: relative;
-    width: 100%;
-    font-family: inherit;
+    @apply bg-white/5 border-2 border-white/10 rounded-xl p-8 cursor-pointer transition-all
+           flex flex-col items-center text-center relative w-full;
   }
-
-  :global(html:not(.dark)) .choice-card {
-    background: rgba(0, 0, 0, 0.02);
-    border-color: rgba(0, 0, 0, 0.1);
-  }
-
   .choice-card:hover {
-    border-color: rgba(96, 165, 250, 0.5);
-    background: rgba(96, 165, 250, 0.1);
+    @apply border-blue-400/50 bg-blue-400/10;
     transform: translateY(-2px);
   }
-
-  .choice-card.primary:hover {
-    border-color: rgba(96, 165, 250, 0.8);
-    background: rgba(96, 165, 250, 0.15);
+  .choice-card-primary:hover {
+    @apply border-blue-400/80 bg-blue-400/15;
   }
 
-  .card-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
+  /* Choice badge */
+  .choice-badge {
+    @apply absolute top-4 right-4 px-3 py-1 rounded-xl text-xs font-semibold
+           bg-blue-400/20 text-blue-400 border border-blue-400/30;
+  }
+  .choice-badge-best {
+    @apply bg-violet-400/20 text-violet-400 border-violet-400/30;
   }
 
-  .choice-card h3 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin: 0 0 0.75rem;
-    color: white;
-  }
-
-  :global(html:not(.dark)) .choice-card h3 {
-    color: rgb(17, 24, 39);
-  }
-
-  .card-description {
-    font-size: 0.875rem;
-    line-height: 1.5;
-    color: rgba(255, 255, 255, 0.7);
-    margin: 0 0 1rem;
-  }
-
-  :global(html:not(.dark)) .card-description {
-    color: rgba(0, 0, 0, 0.6);
-  }
-
-  .card-features {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 1.5rem;
-    text-align: left;
-    width: 100%;
-  }
-
-  .card-features li {
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.8);
-    margin-bottom: 0.5rem;
-    padding-left: 0.5rem;
-  }
-
-  :global(html:not(.dark)) .card-features li {
-    color: rgba(0, 0, 0, 0.7);
-  }
-
-  .card-badge {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    background: rgba(96, 165, 250, 0.2);
-    color: #60a5fa;
-    padding: 0.25rem 0.75rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    border: 1px solid rgba(96, 165, 250, 0.3);
-  }
-
-  .card-badge.best {
-    background: rgba(167, 139, 250, 0.2);
-    color: #a78bfa;
-    border-color: rgba(167, 139, 250, 0.3);
-  }
-
-  :global(html:not(.dark)) .card-badge {
-    background: rgba(37, 99, 235, 0.1);
-    color: #2563eb;
-    border-color: rgba(37, 99, 235, 0.2);
-  }
-
-  :global(html:not(.dark)) .card-badge.best {
-    background: rgba(139, 92, 246, 0.1);
-    color: #7c3aed;
-    border-color: rgba(139, 92, 246, 0.2);
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-    width: 100%;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(96, 165, 250, 0.4);
-  }
-
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-  }
-
-  :global(html:not(.dark)) .btn-secondary {
-    background: rgba(0, 0, 0, 0.05);
-    color: rgba(0, 0, 0, 0.8);
-    border-color: rgba(0, 0, 0, 0.2);
-  }
-
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  :global(html:not(.dark)) .btn-secondary:hover {
-    background: rgba(0, 0, 0, 0.08);
-    border-color: rgba(0, 0, 0, 0.3);
-  }
-
-  .choice-footer {
-    text-align: center;
-    margin-top: 1rem;
-  }
-
-  .btn-link {
-    background: none;
-    border: none;
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 0.875rem;
-    cursor: pointer;
-    padding: 0.5rem 1rem;
-    transition: color 0.2s;
-  }
-
-  :global(html:not(.dark)) .btn-link {
-    color: rgba(0, 0, 0, 0.5);
-  }
-
-  .btn-link:hover {
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  :global(html:not(.dark)) .btn-link:hover {
-    color: rgba(0, 0, 0, 0.8);
-  }
-
-  /* Skip Notification */
+  /* Skip notification - slide in from right */
   .skip-notification {
-    position: fixed;
-    top: 2rem;
-    right: 2rem;
-    z-index: 12000;
+    @apply fixed top-8 right-8 z-[12000];
     animation: slideInRight 0.3s ease-out;
   }
-
   @keyframes slideInRight {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
-  }
-
-  .notification-content {
-    background: rgb(15, 23, 42);
-    border: 1px solid rgba(96, 165, 250, 0.3);
-    border-radius: 12px;
-    padding: 1rem 1.5rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    display: flex;
-    gap: 1rem;
-    align-items: start;
-    max-width: 400px;
-  }
-
-  :global(html:not(.dark)) .notification-content {
-    background: white;
-    border-color: rgba(37, 99, 235, 0.3);
-  }
-
-  .notification-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .notification-text strong {
-    display: block;
-    color: white;
-    margin-bottom: 0.25rem;
-    font-size: 0.9375rem;
-  }
-
-  :global(html:not(.dark)) .notification-text strong {
-    color: rgb(17, 24, 39);
-  }
-
-  .notification-text p {
-    margin: 0;
-    font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.7);
-    line-height: 1.5;
-  }
-
-  :global(html:not(.dark)) .notification-text p {
-    color: rgba(0, 0, 0, 0.6);
-  }
-
-  .notification-text strong {
-    color: #60a5fa;
-  }
-
-  :global(html:not(.dark)) .notification-text p strong {
-    color: #2563eb;
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
   }
 </style>

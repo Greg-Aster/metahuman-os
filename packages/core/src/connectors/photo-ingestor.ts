@@ -18,6 +18,32 @@ import { captureEvent } from '../memory.js';
 // Types
 // ============================================================================
 
+// Extended EXIF data interface for common tags
+interface ExifData {
+  DateTimeOriginal?: string | number;
+  DateTime?: string | number;
+  Make?: string;
+  Model?: string;
+  LensModel?: string;
+  FocalLength?: number;
+  FNumber?: number;
+  ExposureTime?: number;
+  ISOSpeedRatings?: number | number[];
+  GPSLatitude?: number[];
+  GPSLatitudeRef?: string;
+  GPSLongitude?: number[];
+  GPSLongitudeRef?: string;
+  GPSAltitude?: number;
+  PixelXDimension?: number;
+  PixelYDimension?: number;
+  Orientation?: number;
+  Software?: string;
+  Artist?: string;
+  Copyright?: string;
+  ImageDescription?: string;
+  [key: string]: unknown;
+}
+
 export interface PhotoMetadata {
   // File info
   filename: string;
@@ -105,7 +131,7 @@ export async function extractExifMetadata(filepath: string): Promise<PhotoMetada
     const exifOffset = findExifOffset(buffer);
     if (exifOffset !== -1) {
       const exifBuffer = buffer.slice(exifOffset);
-      const exif = ExifReader(exifBuffer);
+      const exif = ExifReader(exifBuffer) as ExifData;
 
       // Date/Time
       if (exif.DateTimeOriginal) {
@@ -390,9 +416,8 @@ export async function ingestPhoto(
     ];
 
     // Create memory event
-    const eventId = captureEvent({
+    const eventId = captureEvent(content, {
       type: 'observation',
-      content,
       tags,
       source: options?.source || 'photo-ingestor',
       metadata: {

@@ -39,7 +39,7 @@ All data and AI processing happens on your infrastructure. You control where you
 - **Natural Conversation**: Chat with your digital extension using cognitive modes (Dual Consciousness, Agent, Emulation)
 - **Memory Management**: Capture observations, browse timeline, search semantically
 - **Voice Interaction**: Clone your voice, speak to the system, get vocal responses
-- **Autonomous Agents**: 40+ background processes enrich memories, generate reflections, train models
+- **Autonomous Agents**: 25 background agents enrich memories, generate reflections, train models
 - **Visual Workflows**: Node-based cognitive graphs for complex reasoning patterns
 - **LoRA Training**: Continuous personalization through fine-tuning
 

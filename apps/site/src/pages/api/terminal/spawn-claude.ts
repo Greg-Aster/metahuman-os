@@ -1,20 +1,14 @@
 import type { APIRoute } from 'astro';
-import { spawn } from 'child_process';
 import { getAuthenticatedUser } from '@metahuman/core/auth';
-import { audit } from '@metahuman/core';
-import * as fs from 'fs';
-import * as path from 'path';
+import { audit, bigBrotherTerminal } from '@metahuman/core';
 
-const REPO_ROOT = path.resolve(process.cwd(), '../..');
-const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
-const TTYD_BIN = path.join(REPO_ROOT, 'bin/ttyd');
-const CLAUDE_PORT = 3099; // Dedicated port for Big Brother
-
-// Track Big Brother terminal
-let bigBrotherTerminal: { pid: number; port: number } | null = null;
+const BIG_BROTHER_PORT = 3099;
 
 /**
- * POST: Spawn a dedicated Claude CLI terminal for Big Brother mode
+ * POST: Start the Big Brother terminal (using the singleton manager)
+ *
+ * This endpoint uses the bigBrotherTerminal singleton to ensure there's
+ * only ONE Big Brother terminal instance. All escalations go to this terminal.
  */
 export const POST: APIRoute = async ({ cookies }) => {
   try {
@@ -30,101 +24,59 @@ export const POST: APIRoute = async ({ cookies }) => {
       });
     }
 
-    // Check if Big Brother terminal already exists
-    if (bigBrotherTerminal) {
-      // Verify it's still running
-      try {
-        process.kill(bigBrotherTerminal.pid, 0); // Signal 0 checks if process exists
+    // Get current state
+    const currentState = bigBrotherTerminal.getState();
 
-        audit({
-          level: 'info',
-          category: 'action',
-          event: 'big_brother_terminal_already_running',
-          details: { port: bigBrotherTerminal.port, pid: bigBrotherTerminal.pid },
-          actor: user.username
-        });
+    // Check if already running
+    if (currentState.isRunning) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_terminal_already_running',
+        details: { port: currentState.port, pid: currentState.pid },
+        actor: user.username
+      });
 
-        return new Response(JSON.stringify({
-          port: bigBrotherTerminal.port,
-          pid: bigBrotherTerminal.pid,
-          url: `http://localhost:${bigBrotherTerminal.port}`,
-          alreadyRunning: true
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      } catch {
-        // Process is dead, clean up
-        bigBrotherTerminal = null;
-      }
+      return new Response(JSON.stringify({
+        port: currentState.port,
+        pid: currentState.pid,
+        url: `http://localhost:${currentState.port}`,
+        alreadyRunning: true
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
-
-    // Ensure log directory exists
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-
-    // Spawn ttyd with Claude CLI
-    const logFile = path.join(LOG_DIR, `big-brother-terminal.log`);
-    const pidFile = path.join(LOG_DIR, `big-brother-terminal.pid`);
 
     audit({
       level: 'info',
       category: 'action',
       event: 'big_brother_terminal_spawning',
-      details: { port: CLAUDE_PORT },
+      details: { port: BIG_BROTHER_PORT },
       actor: user.username
     });
 
-    // Create/clear the session log file
-    const sessionLogPath = path.join(LOG_DIR, 'big-brother-session.log');
-    fs.writeFileSync(sessionLogPath, `
-════════════════════════════════════════════════════════════════════════════════
-🤖 BIG BROTHER MODE - Claude Code Session Log
-════════════════════════════════════════════════════════════════════════════════
-Started: ${new Date().toISOString()}
+    // Start the terminal using the singleton
+    const started = await bigBrotherTerminal.start();
 
-This terminal shows all Big Brother escalations in real-time.
-When the operator gets stuck, it will send prompts to Claude Code for guidance.
+    if (!started) {
+      throw new Error('Failed to start Big Brother terminal');
+    }
 
-Waiting for escalations...
-════════════════════════════════════════════════════════════════════════════════
-
-`);
-
-    // Spawn ttyd with tail -f to show the session log
-    // Note: --title-format not supported in ttyd 1.7.x
-    const ttydProcess = spawn(TTYD_BIN, [
-      '--port', CLAUDE_PORT.toString(),
-      '--writable',
-      '--cwd', REPO_ROOT,
-      '/usr/bin/tail', '-f', sessionLogPath // Tail the session log (full path required)
-    ], {
-      detached: true,
-      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')]
-    });
-
-    ttydProcess.unref();
-
-    // Store PID
-    fs.writeFileSync(pidFile, ttydProcess.pid!.toString());
-    bigBrotherTerminal = { pid: ttydProcess.pid!, port: CLAUDE_PORT };
-
-    // Wait a moment for ttyd to start
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    const newState = bigBrotherTerminal.getState();
 
     audit({
       level: 'info',
       category: 'action',
       event: 'big_brother_terminal_spawned',
-      details: { port: CLAUDE_PORT, pid: ttydProcess.pid },
+      details: { port: newState.port, pid: newState.pid },
       actor: user.username
     });
 
     return new Response(JSON.stringify({
-      port: CLAUDE_PORT,
-      pid: ttydProcess.pid,
-      url: `http://localhost:${CLAUDE_PORT}`,
+      port: newState.port,
+      pid: newState.pid,
+      url: `http://localhost:${newState.port}`,
       alreadyRunning: false
     }), {
       status: 200,
@@ -150,13 +102,15 @@ Waiting for escalations...
 };
 
 /**
- * DELETE: Kill the Big Brother terminal
+ * DELETE: Stop the Big Brother terminal (using the singleton manager)
  */
 export const DELETE: APIRoute = async ({ cookies }) => {
   try {
     const user = getAuthenticatedUser(cookies);
 
-    if (!bigBrotherTerminal) {
+    const currentState = bigBrotherTerminal.getState();
+
+    if (!currentState.isRunning) {
       return new Response(JSON.stringify({
         success: true,
         message: 'No Big Brother terminal running'
@@ -166,54 +120,46 @@ export const DELETE: APIRoute = async ({ cookies }) => {
       });
     }
 
-    try {
-      // Kill the process group
-      process.kill(-bigBrotherTerminal.pid, 'SIGTERM');
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_terminal_stopping',
+      details: { port: currentState.port, pid: currentState.pid },
+      actor: user.username
+    });
 
-      // Clean up PID file
-      const pidFile = path.join(LOG_DIR, `big-brother-terminal.pid`);
-      if (fs.existsSync(pidFile)) {
-        fs.unlinkSync(pidFile);
-      }
+    // Stop using the singleton
+    await bigBrotherTerminal.stop();
 
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'big_brother_terminal_killed',
-        details: { port: bigBrotherTerminal.port, pid: bigBrotherTerminal.pid },
-        actor: user.username
-      });
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_terminal_killed',
+      details: { port: currentState.port, pid: currentState.pid },
+      actor: user.username
+    });
 
-      bigBrotherTerminal = null;
-
-      return new Response(JSON.stringify({
-        success: true,
-        message: 'Big Brother terminal killed'
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      audit({
-        level: 'error',
-        category: 'action',
-        event: 'big_brother_terminal_kill_failed',
-        details: { error: error instanceof Error ? error.message : 'Unknown error' },
-        actor: user.username
-      });
-
-      return new Response(JSON.stringify({
-        error: error instanceof Error ? error.message : 'Failed to kill terminal'
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-  } catch (error) {
     return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Authentication failed'
+      success: true,
+      message: 'Big Brother terminal stopped'
     }), {
-      status: 401,
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'action',
+      event: 'big_brother_terminal_kill_failed',
+      details: { error: error instanceof Error ? error.message : 'Unknown error' },
+      actor: 'system'
+    });
+
+    return new Response(JSON.stringify({
+      error: error instanceof Error ? error.message : 'Failed to stop terminal'
+    }), {
+      status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
   }

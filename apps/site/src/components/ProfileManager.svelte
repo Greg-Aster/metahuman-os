@@ -241,44 +241,44 @@
   }
 </script>
 
-<div class="profile-manager">
-  <h2>Profile Management</h2>
-  <p class="description">
+<div class="p-4">
+  <h2 class="m-0 mb-2 text-xl text-gray-800 dark:text-gray-100">Profile Management</h2>
+  <p class="text-gray-500 dark:text-gray-400 text-sm mb-6">
     Manage your profile data locally. Download from server, create new profiles, or sync changes.
   </p>
 
   {#if error}
-    <div class="message error">{error}</div>
+    <div class="p-3 rounded-md mb-4 text-sm bg-red-50 dark:bg-red-500/10 text-red-600 border border-red-200 dark:border-red-500/30">{error}</div>
   {/if}
 
   {#if success}
-    <div class="message success">{success}</div>
+    <div class="p-3 rounded-md mb-4 text-sm bg-green-50 dark:bg-green-500/10 text-green-600 border border-green-200 dark:border-green-500/30">{success}</div>
   {/if}
 
   {#if loading}
-    <div class="loading">Loading profiles...</div>
+    <div class="text-center p-8 text-gray-500">Loading profiles...</div>
   {:else}
     <!-- Active Profile -->
-    <div class="section">
-      <h3>Current Profile</h3>
+    <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+      <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Current Profile</h3>
       {#if activeProfile}
-        <div class="profile-card active">
-          <div class="profile-info">
-            <span class="profile-name">{activeProfile.name}</span>
-            <span class="profile-source">{activeProfile.source}</span>
+        <div class="p-4 bg-white dark:bg-gray-900 rounded-lg border-2 border-violet-600">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="font-semibold text-gray-800 dark:text-gray-100">{activeProfile.name}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{activeProfile.source}</span>
           </div>
-          <div class="profile-meta">
+          <div class="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
             <span>{activeProfile.memoryCount} memories</span>
             <span>Updated: {formatDate(activeProfile.updatedAt)}</span>
           </div>
           {#if activeProfile.serverUrl}
-            <div class="profile-server">
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-2">
               Server: {activeProfile.serverUrl}
             </div>
           {/if}
         </div>
       {:else}
-        <div class="no-profile">
+        <div class="text-center p-8 text-gray-500">
           <p>No profile loaded. Download from server or create a new one.</p>
         </div>
       {/if}
@@ -286,16 +286,16 @@
 
     <!-- Sync Status -->
     {#if syncStatus}
-      <div class="section">
-        <h3>Sync Status</h3>
-        <div class="sync-status">
-          <div class="sync-item">
-            <span class="sync-label">Last Sync:</span>
-            <span class="sync-value">{formatDate(syncStatus.lastSync || '')}</span>
+      <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Sync Status</h3>
+        <div class="flex flex-col gap-2">
+          <div class="flex justify-between">
+            <span class="text-gray-500 text-sm">Last Sync:</span>
+            <span class="font-medium text-gray-800 dark:text-gray-100">{formatDate(syncStatus.lastSync || '')}</span>
           </div>
-          <div class="sync-item">
-            <span class="sync-label">Pending Upload:</span>
-            <span class="sync-value" class:has-pending={syncStatus.pendingUpload > 0}>
+          <div class="flex justify-between">
+            <span class="text-gray-500 text-sm">Pending Upload:</span>
+            <span class="font-medium {syncStatus.pendingUpload > 0 ? 'text-amber-500' : 'text-gray-800 dark:text-gray-100'}">
               {syncStatus.pendingUpload}
             </span>
           </div>
@@ -304,88 +304,88 @@
     {/if}
 
     <!-- Actions -->
-    <div class="section">
-      <h3>Actions</h3>
-      <div class="actions">
+    <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+      <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Actions</h3>
+      <div class="flex flex-col gap-3">
         <!-- Download from Server -->
         <button
-          class="action-btn primary"
+          class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-violet-600 border-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={handleDownload}
           disabled={downloading || !serverConnected}
         >
           {#if downloading}
-            <span class="spinner"></span>
+            <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
             {#if downloadProgress}
               {downloadProgress.message}
             {:else}
               Downloading...
             {/if}
           {:else}
-            <span class="icon">⬇️</span>
+            <span>⬇️</span>
             Download from Server
           {/if}
         </button>
 
         <!-- Sync -->
         <button
-          class="action-btn"
+          class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={handleSync}
           disabled={syncing || !serverConnected || !activeProfile}
         >
           {#if syncing}
-            <span class="spinner"></span>
+            <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
             Syncing...
           {:else}
-            <span class="icon">🔄</span>
+            <span>🔄</span>
             Sync Changes
           {/if}
         </button>
 
         <!-- Upload Only -->
         <button
-          class="action-btn"
+          class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={handleUpload}
           disabled={syncing || !serverConnected || !syncStatus || syncStatus.pendingUpload === 0}
         >
-          <span class="icon">⬆️</span>
+          <span>⬆️</span>
           Upload Local Changes
         </button>
 
         <!-- Create New -->
         <button
-          class="action-btn secondary"
+          class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
           on:click={() => showCreateModal = true}
         >
-          <span class="icon">➕</span>
+          <span>➕</span>
           Create New Profile
         </button>
 
         <!-- Export -->
         <button
-          class="action-btn"
+          class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={handleExport}
           disabled={exporting || !activeProfile}
         >
-          <span class="icon">📤</span>
+          <span>📤</span>
           Export Profile
         </button>
 
         <!-- Import -->
-        <label class="action-btn">
-          <span class="icon">📥</span>
+        <label class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+          <span>📥</span>
           Import Profile
           <input
             type="file"
             accept=".json"
             on:change={handleImport}
             disabled={importing}
-            style="display: none;"
+            class="hidden"
           />
         </label>
       </div>
 
       {#if !serverConnected}
-        <p class="hint warning">
+        <p class="text-xs text-amber-500 mt-3">
           ⚠️ Server not connected. Some actions require server connection.
         </p>
       {/if}
@@ -393,16 +393,16 @@
 
     <!-- Download Progress -->
     {#if downloadProgress}
-      <div class="section">
-        <h3>Download Progress</h3>
-        <div class="progress-container">
-          <div class="progress-bar">
+      <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Download Progress</h3>
+        <div class="mt-2">
+          <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
             <div
-              class="progress-fill"
+              class="h-full bg-violet-600 transition-all duration-300"
               style="width: {(downloadProgress.current / downloadProgress.total) * 100}%"
             ></div>
           </div>
-          <div class="progress-text">
+          <div class="text-xs text-gray-500 mt-1 text-center">
             {downloadProgress.message}
             ({downloadProgress.current} / {downloadProgress.total})
           </div>
@@ -412,19 +412,19 @@
 
     <!-- All Profiles -->
     {#if profiles.length > 1}
-      <div class="section">
-        <h3>All Profiles</h3>
-        <div class="profiles-list">
+      <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">All Profiles</h3>
+        <div class="flex flex-col gap-2">
           {#each profiles as profile}
-            <div class="profile-card" class:active={profile.id === activeProfile?.id}>
-              <div class="profile-info">
-                <span class="profile-name">{profile.name}</span>
-                <span class="profile-source">{profile.source}</span>
+            <div class="p-4 bg-white dark:bg-gray-900 rounded-lg border {profile.id === activeProfile?.id ? 'border-2 border-violet-600' : 'border-gray-200 dark:border-gray-700'}">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="font-semibold text-gray-800 dark:text-gray-100">{profile.name}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{profile.source}</span>
               </div>
-              <div class="profile-actions">
+              <div class="flex justify-end mt-2">
                 {#if profile.id !== activeProfile?.id}
                   <button
-                    class="small-btn danger"
+                    class="px-2 py-1 text-xs border-none rounded bg-red-100 text-red-600 cursor-pointer hover:bg-red-200"
                     on:click={() => handleDelete(profile)}
                   >
                     Delete
@@ -440,32 +440,33 @@
 
   <!-- Create Profile Modal -->
   {#if showCreateModal}
-    <div class="modal-overlay" on:click={() => showCreateModal = false}>
-      <div class="modal" on:click|stopPropagation>
-        <h3>Create New Profile</h3>
-        <p>Create a local profile that works completely offline.</p>
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showCreateModal = false}>
+      <div class="bg-white dark:bg-gray-800 rounded-xl p-6 w-[90%] max-w-[400px]" on:click|stopPropagation>
+        <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Create New Profile</h3>
+        <p class="text-gray-500 dark:text-gray-400 text-sm">Create a local profile that works completely offline.</p>
 
-        <div class="form-group">
-          <label for="profile-name">Profile Name</label>
+        <div class="my-4">
+          <label for="profile-name" class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Profile Name</label>
           <input
             id="profile-name"
             type="text"
             bind:value={newProfileName}
             placeholder="Enter name..."
             disabled={creating}
+            class="w-full px-2.5 py-2.5 border border-gray-300 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100"
           />
         </div>
 
-        <div class="modal-actions">
+        <div class="flex gap-3 justify-end mt-6">
           <button
-            class="action-btn secondary"
+            class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
             on:click={() => showCreateModal = false}
             disabled={creating}
           >
             Cancel
           </button>
           <button
-            class="action-btn primary"
+            class="flex items-center justify-center gap-2 px-4 py-3 border rounded-lg text-sm font-medium cursor-pointer transition-all bg-violet-600 border-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
             on:click={handleCreate}
             disabled={creating || !newProfileName.trim()}
           >
@@ -477,395 +478,3 @@
   {/if}
 </div>
 
-<style>
-  .profile-manager {
-    padding: 1rem;
-  }
-
-  h2 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.25rem;
-    color: #1f2937;
-  }
-
-  :global(.dark) h2 {
-    color: #f3f4f6;
-  }
-
-  h3 {
-    margin: 0 0 0.75rem 0;
-    font-size: 1rem;
-    color: #374151;
-  }
-
-  :global(.dark) h3 {
-    color: #d1d5db;
-  }
-
-  .description {
-    color: #6b7280;
-    font-size: 0.875rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .description {
-    color: #9ca3af;
-  }
-
-  .section {
-    margin-bottom: 1.5rem;
-    padding: 1rem;
-    background: #f9fafb;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .section {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .message {
-    padding: 0.75rem;
-    border-radius: 0.375rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .message.error {
-    background: #fef2f2;
-    color: #dc2626;
-    border: 1px solid #fecaca;
-  }
-
-  :global(.dark) .message.error {
-    background: rgba(220, 38, 38, 0.1);
-    border-color: rgba(220, 38, 38, 0.3);
-  }
-
-  .message.success {
-    background: #f0fdf4;
-    color: #16a34a;
-    border: 1px solid #bbf7d0;
-  }
-
-  :global(.dark) .message.success {
-    background: rgba(22, 163, 74, 0.1);
-    border-color: rgba(22, 163, 74, 0.3);
-  }
-
-  .profile-card {
-    padding: 1rem;
-    background: white;
-    border-radius: 0.5rem;
-    border: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .profile-card {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .profile-card.active {
-    border-color: #7c3aed;
-    border-width: 2px;
-  }
-
-  .profile-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .profile-name {
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  :global(.dark) .profile-name {
-    color: #f3f4f6;
-  }
-
-  .profile-source {
-    font-size: 0.75rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    background: #e5e7eb;
-    color: #4b5563;
-  }
-
-  :global(.dark) .profile-source {
-    background: #374151;
-    color: #9ca3af;
-  }
-
-  .profile-meta {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .profile-meta {
-    color: #9ca3af;
-  }
-
-  .profile-server {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-top: 0.5rem;
-  }
-
-  .no-profile {
-    text-align: center;
-    padding: 2rem;
-    color: #6b7280;
-  }
-
-  .sync-status {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .sync-item {
-    display: flex;
-    justify-content: space-between;
-  }
-
-  .sync-label {
-    color: #6b7280;
-    font-size: 0.875rem;
-  }
-
-  .sync-value {
-    font-weight: 500;
-    color: #1f2937;
-  }
-
-  :global(.dark) .sync-value {
-    color: #f3f4f6;
-  }
-
-  .sync-value.has-pending {
-    color: #f59e0b;
-  }
-
-  .actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.5rem;
-    background: white;
-    color: #374151;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .action-btn {
-    background: #1f2937;
-    border-color: #374151;
-    color: #d1d5db;
-  }
-
-  .action-btn:hover:not(:disabled) {
-    background: #f3f4f6;
-    border-color: #9ca3af;
-  }
-
-  :global(.dark) .action-btn:hover:not(:disabled) {
-    background: #374151;
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .action-btn.primary {
-    background: #7c3aed;
-    border-color: #7c3aed;
-    color: white;
-  }
-
-  .action-btn.primary:hover:not(:disabled) {
-    background: #6d28d9;
-  }
-
-  .action-btn.secondary {
-    background: #f3f4f6;
-    border-color: #d1d5db;
-  }
-
-  :global(.dark) .action-btn.secondary {
-    background: #374151;
-    border-color: #4b5563;
-  }
-
-  .icon {
-    font-size: 1rem;
-  }
-
-  .spinner {
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.75s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .hint {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-top: 0.75rem;
-  }
-
-  .hint.warning {
-    color: #f59e0b;
-  }
-
-  .progress-container {
-    margin-top: 0.5rem;
-  }
-
-  .progress-bar {
-    height: 0.5rem;
-    background: #e5e7eb;
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: #374151;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: #7c3aed;
-    transition: width 0.3s;
-  }
-
-  .progress-text {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-top: 0.25rem;
-    text-align: center;
-  }
-
-  .profiles-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .profile-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 0.5rem;
-  }
-
-  .small-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    border: none;
-    border-radius: 0.25rem;
-    cursor: pointer;
-  }
-
-  .small-btn.danger {
-    background: #fee2e2;
-    color: #dc2626;
-  }
-
-  .small-btn.danger:hover {
-    background: #fecaca;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 2rem;
-    color: #6b7280;
-  }
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: white;
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    width: 90%;
-    max-width: 400px;
-  }
-
-  :global(.dark) .modal {
-    background: #1f2937;
-  }
-
-  .form-group {
-    margin: 1rem 0;
-  }
-
-  .form-group label {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 500;
-    margin-bottom: 0.5rem;
-    color: #374151;
-  }
-
-  :global(.dark) .form-group label {
-    color: #d1d5db;
-  }
-
-  .form-group input {
-    width: 100%;
-    padding: 0.625rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .form-group input {
-    background: #111827;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    margin-top: 1.5rem;
-  }
-</style>

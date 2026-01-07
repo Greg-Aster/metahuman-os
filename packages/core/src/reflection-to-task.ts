@@ -223,11 +223,11 @@ async function extractTasksFromReflection(
       },
     });
 
-    if (!response.success || !response.text) {
+    if (!response.content) {
       return [];
     }
 
-    const parsed = JSON.parse(response.text);
+    const parsed = JSON.parse(response.content);
     return parsed.tasks || [];
   } catch (error) {
     console.warn('[reflection-to-task] Extraction failed:', (error as Error).message);

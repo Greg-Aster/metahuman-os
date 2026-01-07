@@ -16,8 +16,40 @@ export * from './deployment';  // Deployment mode configuration (local vs server
 export * from './identity';
 export * from './memory';
 export * from './memory-content-filter';  // Content mode filtering for agent reflections
-export * from './reflection-to-task';  // Phase 4: Extract tasks from reflections
-export * from './preference-learner';  // Phase 4: Continual learning from preferences
+// Phase 4: Extract tasks from reflections
+export {
+  type TaskSuggestion,
+  type ExtractionResult as TaskExtractionResult,
+  type ExtractionOptions as TaskExtractionOptions,
+  extractTaskSuggestions,
+  listTaskSuggestions,
+  getTaskSuggestion,
+  approveTaskSuggestion,
+  rejectTaskSuggestion,
+  bulkApprove,
+  cleanupSuggestions,
+  reflectionToTask,
+} from './reflection-to-task';
+// Phase 4: Continual learning from preferences
+export {
+  type PreferenceCategory,
+  type LearnedPreference,
+  type PreferenceSnapshot,
+  type ExtractionResult as PreferenceExtractionResult,
+  type LearningOptions,
+  learnPreferences,
+  getPreferences,
+  getPreference,
+  confirmPreference,
+  rejectPreference,
+  modifyPreference,
+  getPreferenceStats,
+  getPreferencesByCategory,
+  getActivePreferences,
+  findContradictions,
+  cleanupPreferences,
+  preferenceLearner,
+} from './preference-learner';
 export * from './goal-review';  // Phase 4: Weekly goal reviews
 export * from './system-operator';  // Phase 5: System operator maintenance skills
 export * from './voice';  // Phase 5: Live voice loop foundation
@@ -38,7 +70,18 @@ export * from './model-router';
 export * from './specialist-broker';
 export * from './agent-monitor';
 export * from './vector-index';
-export * from './embeddings';
+// Embeddings - exclude isEmbeddingServiceAvailable (conflicts with model-router)
+export {
+  type EmbeddingProvider,
+  type EmbeddingConfig,
+  loadEmbeddingConfig,
+  saveEmbeddingConfig,
+  EmbeddingServiceError,
+  preloadEmbeddingModel,
+  embedText,
+  cosineSimilarity,
+  getEmbeddingDimensions,
+} from './embeddings';
 export * from './intelligent-memory-retrieval';
 export * from './locks';
 export * from './logging';
@@ -378,7 +421,24 @@ export type { EncryptionStatus, UnlockResult, EncryptionCapabilities } from './e
 
 // Big Brother Mode - Escalation Backend Abstraction
 export * from './big-brother';
-export * from './escalation-backend';
+export * from './big-brother-terminal';
+// Escalation backend - exclude isEscalationAvailable (conflicts with big-brother), rename getActiveBackend
+export {
+  type EscalationOptions,
+  type EscalationResult,
+  type ReasoningStep,
+  type EscalationBackend,
+  registerBackend,
+  getBackend,
+  getActiveBackend as getActiveEscalationBackend,
+  listBackends,
+  getBackendStatuses,
+  escalate,
+  isEscalationReady,
+  BACKEND_IDS,
+  type BackendId,
+  ensureBackendsInitialized,
+} from './escalation-backend';
 // Export backends (auto-register on import)
 export * from './backends/claude-code-backend';
 export * from './backends/open-interpreter-backend';
@@ -645,7 +705,20 @@ export * from './legacy-cli-adapters.js';
 export * from './connectors/photo-ingestor.js';
 export * from './connectors/document-ingestor.js';
 export * from './connectors/calendar-connector.js';
-export * from './connectors/chat-ingestor.js';
+// Chat ingestor - rename ChatMessage to avoid conflict with persona/extractor
+export {
+  type ChatPlatform,
+  type ChatMessage as ChatImportMessage,
+  type ChatAttachment,
+  type ChatConversation,
+  type ChatIngestionResult,
+  type ChatIngestionOptions,
+  detectPlatform,
+  parseChatExport,
+  ingestChatExport,
+  ingestChatsFromDirectory,
+  chatIngestor,
+} from './connectors/chat-ingestor.js';
 export * from './connectors/voice-memo-ingestor.js';
 export * from './connectors/clip-tagger.js';
 

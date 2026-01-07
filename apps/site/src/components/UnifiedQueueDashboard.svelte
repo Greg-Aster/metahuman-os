@@ -254,18 +254,18 @@
   });
 </script>
 
-<div class="queue-dashboard">
+<div class="p-4 text-sm h-full overflow-y-auto">
   {#if loading}
-    <div class="loading">Loading Unified Queue status...</div>
+    <div class="p-8 text-center text-gray-500 dark:text-gray-400">Loading Unified Queue status...</div>
   {:else if error}
-    <div class="error">{error}</div>
+    <div class="p-8 text-center text-red-500">{error}</div>
   {:else if status}
     <!-- Header with Status -->
-    <div class="status-header">
-      <div class="status-main">
-        <div class="running-indicator" class:active={status.running} class:paused={status.paused}>
-          <span class="status-dot"></span>
-          <span class="status-text">
+    <div class="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 font-semibold text-lg">
+          <span class="w-2.5 h-2.5 rounded-full {status.paused ? 'bg-yellow-500' : status.running ? 'bg-green-500' : 'bg-gray-500'}"></span>
+          <span class="{status.paused ? 'text-yellow-500' : status.running ? 'text-green-500' : ''}">
             {#if status.paused}
               Paused
             {:else if status.running}
@@ -275,30 +275,30 @@
             {/if}
           </span>
         </div>
-        <div class="queue-stats">
-          <span class="stat-badge">{status.stats.total} queued</span>
-          <span class="stat-badge success">{status.stats.completed} completed</span>
+        <div class="flex gap-2">
+          <span class="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">{status.stats.total} queued</span>
+          <span class="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs text-green-500">{status.stats.completed} completed</span>
           {#if status.stats.failed > 0}
-            <span class="stat-badge error">{status.stats.failed} failed</span>
+            <span class="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs text-red-500">{status.stats.failed} failed</span>
           {/if}
         </div>
       </div>
-      <div class="controls">
+      <div class="flex gap-2">
         {#if status.running}
           {#if status.paused}
-            <button class="control-btn resume" on:click={() => controlQueue('resume')} disabled={actionLoading}>
+            <button class="px-3 py-1.5 rounded-md text-sm cursor-pointer transition-all bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlQueue('resume')} disabled={actionLoading}>
               Resume
             </button>
           {:else}
-            <button class="control-btn pause" on:click={() => controlQueue('pause')} disabled={actionLoading}>
+            <button class="px-3 py-1.5 rounded-md text-sm cursor-pointer transition-all bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlQueue('pause')} disabled={actionLoading}>
               Pause
             </button>
           {/if}
-          <button class="control-btn stop" on:click={() => controlQueue('stop')} disabled={actionLoading}>
+          <button class="px-3 py-1.5 rounded-md text-sm cursor-pointer transition-all bg-gray-500 text-white hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlQueue('stop')} disabled={actionLoading}>
             Stop
           </button>
         {:else}
-          <button class="control-btn start" on:click={() => controlQueue('start')} disabled={actionLoading}>
+          <button class="px-3 py-1.5 rounded-md text-sm cursor-pointer transition-all bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlQueue('start')} disabled={actionLoading}>
             Start
           </button>
         {/if}
@@ -306,56 +306,56 @@
     </div>
 
     <!-- Lane Columns -->
-    <div class="lane-columns">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
       {#each Object.entries(LANE_LABELS) as [laneId, lane]}
         {@const laneStatus = status.lanes[laneId]}
         {@const tasks = status.tasksByLane[laneId as keyof typeof status.tasksByLane] || []}
-        <div class="lane-column" style="--lane-color: {lane.color}">
-          <div class="lane-header">
-            <div class="lane-title">
-              <span class="lane-icon">{lane.icon}</span>
-              <span class="lane-name">{lane.name}</span>
+        <div class="bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col min-h-[300px]" style="border-top: 3px solid {lane.color}">
+          <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+            <div class="flex items-center gap-2 font-semibold mb-1">
+              <span class="text-xl">{lane.icon}</span>
+              <span style="color: {lane.color}">{lane.name}</span>
             </div>
-            <div class="lane-desc">{lane.description}</div>
-            <div class="lane-stats">
-              <span class="lane-stat" class:active={laneStatus?.running > 0}>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">{lane.description}</div>
+            <div class="flex gap-3 text-xs">
+              <span class="{laneStatus?.running > 0 ? 'text-green-500' : 'text-gray-500 dark:text-gray-400'}">
                 {laneStatus?.running || 0} running
               </span>
-              <span class="lane-stat">{tasks.length} queued</span>
+              <span class="text-gray-500 dark:text-gray-400">{tasks.length} queued</span>
             </div>
           </div>
 
-          <div class="lane-content">
+          <div class="flex-1 p-3 overflow-y-auto">
             {#if laneStatus?.currentTask}
-              <div class="current-task">
-                <div class="current-label">Currently Executing</div>
-                <div class="task-card executing">
-                  <span class="task-icon">{getTaskIcon(laneStatus.currentTask.type)}</span>
-                  <span class="task-type">{laneStatus.currentTask.type}</span>
-                  <span class="executing-indicator"></span>
+              <div class="mb-3 pb-3 border-b border-dashed border-gray-300 dark:border-gray-600">
+                <div class="text-[0.7rem] text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Currently Executing</div>
+                <div class="flex items-center gap-2 p-2 bg-white dark:bg-gray-900 rounded-md border-2" style="border-color: {lane.color}; background: linear-gradient(135deg, transparent, {lane.color}10)">
+                  <span class="text-base">{getTaskIcon(laneStatus.currentTask.type)}</span>
+                  <span class="text-sm">{laneStatus.currentTask.type}</span>
+                  <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse ml-auto"></span>
                 </div>
               </div>
             {/if}
 
-            <div class="task-list">
+            <div class="flex flex-col gap-2">
               {#if tasks.length > 0}
                 {#each tasks.slice(0, 8) as task}
-                  <div class="task-card">
-                    <span class="task-icon">{getTaskIcon(task.type)}</span>
-                    <div class="task-details">
-                      <span class="task-type">{task.type}</span>
-                      <span class="task-meta">
-                        <span class="task-priority" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
-                        <span class="task-time">{formatTimestamp(task.queuedAt)}</span>
+                  <div class="flex items-center gap-2 p-2 bg-white dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700">
+                    <span class="text-base">{getTaskIcon(task.type)}</span>
+                    <div class="flex-1 flex flex-col gap-0.5">
+                      <span class="text-sm">{task.type}</span>
+                      <span class="flex gap-2 text-xs">
+                        <span class="font-medium uppercase" style="color: {getPriorityColor(task.priority)}">{task.priority}</span>
+                        <span class="text-gray-500 dark:text-gray-400">{formatTimestamp(task.queuedAt)}</span>
                       </span>
                     </div>
                   </div>
                 {/each}
                 {#if tasks.length > 8}
-                  <div class="overflow-indicator">+{tasks.length - 8} more</div>
+                  <div class="text-center text-xs text-gray-500 dark:text-gray-400 italic p-2">+{tasks.length - 8} more</div>
                 {/if}
               {:else if !laneStatus?.currentTask}
-                <div class="empty-lane">No tasks</div>
+                <div class="text-gray-500 dark:text-gray-400 italic text-center py-8 px-4">No tasks</div>
               {/if}
             </div>
           </div>
@@ -365,20 +365,20 @@
 
     <!-- In-Flight Remote Tasks -->
     {#if status.inFlightRemote.length > 0}
-      <div class="section">
-        <button class="section-header" on:click={() => showRemoteInFlight = !showRemoteInFlight}>
+      <div class="mb-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <button class="w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 border-none text-gray-900 dark:text-gray-100 cursor-pointer text-sm font-medium text-left hover:bg-gray-200 dark:hover:bg-gray-700" on:click={() => showRemoteInFlight = !showRemoteInFlight}>
           <span>In-Flight Remote ({status.inFlightRemote.length})</span>
-          <span class="chevron">{showRemoteInFlight ? '▾' : '▸'}</span>
+          <span class="text-gray-500 dark:text-gray-400">{showRemoteInFlight ? '▾' : '▸'}</span>
         </button>
         {#if showRemoteInFlight}
-          <div class="section-content">
-            <div class="remote-list">
+          <div class="p-4 bg-white dark:bg-gray-900">
+            <div class="flex flex-col gap-2">
               {#each status.inFlightRemote as remote}
-                <div class="remote-item">
-                  <span class="remote-provider">{remote.provider}</span>
-                  <span class="remote-task">{remote.taskId.slice(0, 8)}...</span>
-                  <span class="remote-time">{formatTimestamp(remote.startedAt)}</span>
-                  <span class="in-flight-indicator"></span>
+                <div class="flex items-center gap-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
+                  <span class="font-medium text-blue-500">{remote.provider}</span>
+                  <span class="text-gray-500 dark:text-gray-400 font-mono text-sm">{remote.taskId.slice(0, 8)}...</span>
+                  <span class="ml-auto text-xs text-gray-500 dark:text-gray-400">{formatTimestamp(remote.startedAt)}</span>
+                  <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
                 </div>
               {/each}
             </div>
@@ -389,31 +389,31 @@
 
     <!-- Triggers Section -->
     {#if triggers && triggers.triggers.length > 0}
-      <div class="section">
-        <button class="section-header" on:click={() => showTriggers = !showTriggers}>
+      <div class="mb-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <button class="w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 border-none text-gray-900 dark:text-gray-100 cursor-pointer text-sm font-medium text-left hover:bg-gray-200 dark:hover:bg-gray-700" on:click={() => showTriggers = !showTriggers}>
           <span>Triggers ({triggers.triggers.length})</span>
-          <span class="chevron">{showTriggers ? '▾' : '▸'}</span>
+          <span class="text-gray-500 dark:text-gray-400">{showTriggers ? '▾' : '▸'}</span>
         </button>
         {#if showTriggers}
-          <div class="section-content">
-            <div class="trigger-list">
+          <div class="p-4 bg-white dark:bg-gray-900">
+            <div class="flex flex-col gap-2">
               {#each triggers.triggers as trigger}
-                <div class="trigger-item" class:disabled={!trigger.enabled}>
-                  <div class="trigger-info">
-                    <span class="trigger-id">{trigger.id}</span>
-                    <span class="trigger-type">{trigger.type}</span>
+                <div class="flex items-center gap-4 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-md {!trigger.enabled ? 'opacity-50' : ''}">
+                  <div class="flex-1 flex gap-3 items-center">
+                    <span class="font-medium">{trigger.id}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400 px-1.5 py-0.5 bg-white dark:bg-gray-900 rounded">{trigger.type}</span>
                     {#if trigger.nextRun}
-                      <span class="trigger-next">{formatFutureTimestamp(trigger.nextRun)}</span>
+                      <span class="text-xs text-green-500">{formatFutureTimestamp(trigger.nextRun)}</span>
                     {/if}
                   </div>
-                  <div class="trigger-stats">
-                    <span class="trigger-runs">{trigger.runCount} runs</span>
+                  <div class="flex gap-3 text-xs text-gray-500 dark:text-gray-400">
+                    <span>{trigger.runCount} runs</span>
                     {#if trigger.errorCount > 0}
-                      <span class="trigger-errors">{trigger.errorCount} errors</span>
+                      <span class="text-red-500">{trigger.errorCount} errors</span>
                     {/if}
                   </div>
                   <button
-                    class="trigger-btn"
+                    class="px-2 py-1 text-xs bg-blue-500 text-white border-none rounded cursor-pointer hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     on:click={() => triggerAgent(trigger.id)}
                     disabled={actionLoading || !trigger.enabled}
                   >
@@ -429,10 +429,10 @@
 
     <!-- Next Scheduled -->
     {#if status.nextTriggers && status.nextTriggers.length > 0}
-      <div class="next-scheduled">
-        <span class="next-label">Next:</span>
+      <div class="flex items-center gap-3 px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-md text-sm">
+        <span class="text-gray-500 dark:text-gray-400">Next:</span>
         {#each status.nextTriggers.slice(0, 3) as next}
-          <span class="next-item">
+          <span class="text-gray-900 dark:text-gray-100">
             {next.agentId} {formatFutureTimestamp(next.nextRun)}
           </span>
         {/each}
@@ -441,469 +441,3 @@
   {/if}
 </div>
 
-<style>
-  .queue-dashboard {
-    padding: 1rem;
-    font-size: 0.9rem;
-    height: 100%;
-    overflow-y: auto;
-  }
-
-  .loading, .error {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted, #6b7280);
-  }
-
-  .error {
-    color: #ef4444;
-  }
-
-  .status-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color, #374151);
-  }
-
-  .status-main {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .running-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 600;
-    font-size: 1.1rem;
-  }
-
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #6b7280;
-  }
-
-  .running-indicator.active .status-dot {
-    background: #22c55e;
-  }
-
-  .running-indicator.paused .status-dot {
-    background: #eab308;
-  }
-
-  .running-indicator.active .status-text {
-    color: #22c55e;
-  }
-
-  .running-indicator.paused .status-text {
-    color: #eab308;
-  }
-
-  .queue-stats {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .stat-badge {
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.25rem;
-    font-size: 0.8rem;
-  }
-
-  .stat-badge.success {
-    color: #22c55e;
-  }
-
-  .stat-badge.error {
-    color: #ef4444;
-  }
-
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .control-btn {
-    padding: 0.4rem 0.8rem;
-    border: none;
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .control-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .control-btn.start, .control-btn.resume {
-    background: #22c55e;
-    color: white;
-  }
-
-  .control-btn.start:hover:not(:disabled), .control-btn.resume:hover:not(:disabled) {
-    background: #16a34a;
-  }
-
-  .control-btn.pause {
-    background: #eab308;
-    color: white;
-  }
-
-  .control-btn.pause:hover:not(:disabled) {
-    background: #ca8a04;
-  }
-
-  .control-btn.stop {
-    background: #6b7280;
-    color: white;
-  }
-
-  .control-btn.stop:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  /* Lane Columns */
-  .lane-columns {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  @media (max-width: 900px) {
-    .lane-columns {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .lane-column {
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.5rem;
-    border: 1px solid var(--border-color, #374151);
-    border-top: 3px solid var(--lane-color);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    min-height: 300px;
-  }
-
-  .lane-header {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border-color, #374151);
-    background: var(--bg-primary, #111827);
-  }
-
-  .lane-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-  }
-
-  .lane-icon {
-    font-size: 1.2rem;
-  }
-
-  .lane-name {
-    color: var(--lane-color);
-  }
-
-  .lane-desc {
-    font-size: 0.75rem;
-    color: var(--text-muted, #9ca3af);
-    margin-bottom: 0.5rem;
-  }
-
-  .lane-stats {
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.8rem;
-  }
-
-  .lane-stat {
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .lane-stat.active {
-    color: #22c55e;
-  }
-
-  .lane-content {
-    flex: 1;
-    padding: 0.75rem;
-    overflow-y: auto;
-  }
-
-  .current-task {
-    margin-bottom: 0.75rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px dashed var(--border-color, #374151);
-  }
-
-  .current-label {
-    font-size: 0.7rem;
-    color: var(--text-muted, #9ca3af);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
-  }
-
-  .task-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .task-card {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: var(--bg-primary, #111827);
-    border-radius: 0.375rem;
-    border: 1px solid var(--border-color, #374151);
-  }
-
-  .task-card.executing {
-    border-color: var(--lane-color);
-    background: linear-gradient(135deg, var(--bg-primary, #111827), color-mix(in srgb, var(--lane-color) 10%, transparent));
-  }
-
-  .task-icon {
-    font-size: 1rem;
-  }
-
-  .task-details {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .task-type {
-    font-size: 0.85rem;
-  }
-
-  .task-meta {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.75rem;
-  }
-
-  .task-priority {
-    font-weight: 500;
-    text-transform: uppercase;
-  }
-
-  .task-time {
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .executing-indicator {
-    width: 8px;
-    height: 8px;
-    background: #22c55e;
-    border-radius: 50%;
-    animation: pulse 1.5s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(1.2); }
-  }
-
-  .empty-lane {
-    color: var(--text-muted, #9ca3af);
-    font-style: italic;
-    text-align: center;
-    padding: 2rem 1rem;
-  }
-
-  .overflow-indicator {
-    text-align: center;
-    font-size: 0.8rem;
-    color: var(--text-muted, #9ca3af);
-    font-style: italic;
-    padding: 0.5rem;
-  }
-
-  /* Sections */
-  .section {
-    margin-bottom: 0.5rem;
-    border: 1px solid var(--border-color, #374151);
-    border-radius: 0.5rem;
-    overflow: hidden;
-  }
-
-  .section-header {
-    width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    background: var(--bg-secondary, #1f2937);
-    border: none;
-    color: var(--text-primary, #f3f4f6);
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 500;
-    text-align: left;
-  }
-
-  .section-header:hover {
-    background: var(--bg-hover, #374151);
-  }
-
-  .chevron {
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .section-content {
-    padding: 1rem;
-    background: var(--bg-primary, #111827);
-  }
-
-  /* Remote In-Flight */
-  .remote-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .remote-item {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.5rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-  }
-
-  .remote-provider {
-    font-weight: 500;
-    color: #3b82f6;
-  }
-
-  .remote-task {
-    color: var(--text-muted, #9ca3af);
-    font-family: monospace;
-    font-size: 0.85rem;
-  }
-
-  .remote-time {
-    margin-left: auto;
-    font-size: 0.8rem;
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .in-flight-indicator {
-    width: 6px;
-    height: 6px;
-    background: #3b82f6;
-    border-radius: 50%;
-    animation: pulse 1.5s infinite;
-  }
-
-  /* Triggers */
-  .trigger-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .trigger-item {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-  }
-
-  .trigger-item.disabled {
-    opacity: 0.5;
-  }
-
-  .trigger-info {
-    flex: 1;
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-  }
-
-  .trigger-id {
-    font-weight: 500;
-  }
-
-  .trigger-type {
-    font-size: 0.8rem;
-    color: var(--text-muted, #9ca3af);
-    padding: 0.125rem 0.375rem;
-    background: var(--bg-primary, #111827);
-    border-radius: 0.25rem;
-  }
-
-  .trigger-next {
-    font-size: 0.8rem;
-    color: #22c55e;
-  }
-
-  .trigger-stats {
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.8rem;
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .trigger-errors {
-    color: #ef4444;
-  }
-
-  .trigger-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.8rem;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 0.25rem;
-    cursor: pointer;
-  }
-
-  .trigger-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .trigger-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Next Scheduled */
-  .next-scheduled {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    background: var(--bg-secondary, #1f2937);
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-  }
-
-  .next-label {
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .next-item {
-    color: var(--text-primary, #f3f4f6);
-  }
-</style>

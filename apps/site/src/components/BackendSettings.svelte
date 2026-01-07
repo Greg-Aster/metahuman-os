@@ -56,8 +56,8 @@
   let vllmEnforceEager = true;
   let vllmAutoUtilization = false;
   let vllmMaxModelLen = 4096;
-  let vllmMaxTokens = 2048; // Output token limit (thinking + response)
-  let vllmEnableThinking = true; // Qwen3 thinking mode (shows <think> tags)
+  let vllmMaxTokens = 2048;
+  let vllmEnableThinking = true;
 
   // Ollama config
   let ollamaEndpoint = 'http://localhost:11434';
@@ -78,7 +78,6 @@
   let bigBrotherDelegateAll = false;
   let bigBrotherProvider: string = 'claude-code';
   let savingBigBrother = false;
-
 
   // Embedding config (for semantic memory search)
   let embeddingEnabled = true;
@@ -118,7 +117,6 @@
     loadEmbeddingConfig();
   });
 
-  // Load Open Interpreter status
   async function loadInterpreterStatus() {
     try {
       const res = await apiFetch('/api/interpreter-status');
@@ -130,7 +128,6 @@
     }
   }
 
-  // Start Open Interpreter server
   async function startInterpreter() {
     interpreterStarting = true;
     error = null;
@@ -155,7 +152,6 @@
     }
   }
 
-  // Stop Open Interpreter server
   async function stopInterpreter() {
     interpreterStopping = true;
     error = null;
@@ -190,7 +186,6 @@
         activeBackend = data.config.activeBackend || 'ollama';
         resolvedBackend = data.active?.resolvedBackend || null;
 
-        // vLLM config
         vllmModel = data.config.vllm?.model || '';
         vllmGpuUtil = data.config.vllm?.gpuMemoryUtilization || 0.7;
         vllmEndpoint = data.config.vllm?.endpoint || 'http://localhost:8000';
@@ -200,11 +195,9 @@
         vllmMaxTokens = data.config.vllm?.maxTokens || 2048;
         vllmEnableThinking = data.config.vllm?.enableThinking ?? true;
 
-        // Ollama config
         ollamaEndpoint = data.config.ollama?.endpoint || 'http://localhost:11434';
         ollamaModel = data.config.ollama?.defaultModel || 'qwen3:14b';
 
-        // Remote server URL
         if (data.config.remote?.serverUrl) {
           remoteServerUrl = data.config.remote.serverUrl;
         }
@@ -233,7 +226,6 @@
     }
   }
 
-  // Load Big Brother config from /api/big-brother-config (uses etc/operator.json)
   async function loadBigBrotherConfig() {
     try {
       const res = await apiFetch('/api/big-brother-config');
@@ -249,7 +241,6 @@
     }
   }
 
-  // Save Big Brother config
   async function saveBigBrotherConfig() {
     savingBigBrother = true;
     error = null;
@@ -272,7 +263,6 @@
 
       if (res.ok) {
         await loadBigBrotherConfig();
-        // Trigger status refresh for other components
         statusRefreshTrigger.update(n => n + 1);
       } else {
         const data = await res.json();
@@ -285,7 +275,6 @@
     }
   }
 
-  // Get Big Brother provider label
   function getBigBrotherProviderLabel(provider: BigBrotherProvider): string {
     const opt = bigBrotherProviderOptions.find(o => o.value === provider);
     return opt?.label || provider;
@@ -307,7 +296,6 @@
         const data = await res.json();
         error = data.error || 'Failed to save embedding config';
       } else {
-        // Reload to confirm
         await loadEmbeddingConfig();
       }
     } catch (err) {
@@ -332,8 +320,6 @@
       if (res.ok) {
         activeBackend = to;
         await loadStatus();
-
-        // Dispatch event and trigger status refresh for other components
         window.dispatchEvent(new CustomEvent('backend-changed', { detail: { backend: to } }));
         statusRefreshTrigger.update(n => n + 1);
       } else {
@@ -349,10 +335,7 @@
 
   async function testRemoteServerConnection() {
     if (!remoteServerUrl) {
-      remoteServerTestResult = {
-        success: false,
-        error: 'Please enter a server URL',
-      };
+      remoteServerTestResult = { success: false, error: 'Please enter a server URL' };
       return;
     }
 
@@ -362,8 +345,6 @@
 
     try {
       const payload: Record<string, any> = { serverUrl: remoteServerUrl };
-
-      // Include credentials if provided
       if (remoteServerUsername && remoteServerPassword) {
         payload.username = remoteServerUsername;
         payload.password = remoteServerPassword;
@@ -376,20 +357,9 @@
       });
 
       const data = await res.json();
-
-      if (res.ok) {
-        remoteServerTestResult = data;
-      } else {
-        remoteServerTestResult = {
-          success: false,
-          error: data.error || 'Test failed',
-        };
-      }
+      remoteServerTestResult = res.ok ? data : { success: false, error: data.error || 'Test failed' };
     } catch (err) {
-      remoteServerTestResult = {
-        success: false,
-        error: 'Failed to test connection',
-      };
+      remoteServerTestResult = { success: false, error: 'Failed to test connection' };
     } finally {
       testingRemoteServer = false;
     }
@@ -406,8 +376,6 @@
 
     try {
       const payload: Record<string, any> = { serverUrl: remoteServerUrl };
-
-      // Include credentials if provided
       if (remoteServerUsername && remoteServerPassword) {
         payload.username = remoteServerUsername;
         payload.password = remoteServerPassword;
@@ -421,7 +389,6 @@
       });
 
       const data = await res.json();
-
       if (res.ok && data.success) {
         remoteServerTestResult = {
           success: true,
@@ -429,14 +396,10 @@
           serverVersion: data.serverVersion,
           models: data.models,
         };
-        // Refresh status to show new configuration
         await loadStatus();
         statusRefreshTrigger.update(n => n + 1);
       } else {
-        remoteServerTestResult = {
-          success: false,
-          error: data.error || 'Connection failed',
-        };
+        remoteServerTestResult = { success: false, error: data.error || 'Connection failed' };
       }
     } catch (err) {
       error = 'Failed to connect to server';
@@ -450,10 +413,7 @@
     error = null;
 
     try {
-      const res = await apiFetch('/api/remote-server/disconnect', {
-        method: 'DELETE',
-      });
-
+      const res = await apiFetch('/api/remote-server/disconnect', { method: 'DELETE' });
       if (res.ok) {
         remoteServerUrl = '';
         remoteServerTestResult = null;
@@ -493,7 +453,6 @@
       });
 
       if (res.ok) {
-        // Reload to confirm what was saved
         await loadStatus();
       } else {
         const data = await res.json();
@@ -514,11 +473,7 @@
       const res = await apiFetch('/api/llm-backend/vllm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'start',
-          model: vllmModel,
-          gpuMemoryUtilization: vllmGpuUtil,
-        }),
+        body: JSON.stringify({ action: 'start', model: vllmModel, gpuMemoryUtilization: vllmGpuUtil }),
       });
 
       const data = await res.json();
@@ -631,26 +586,6 @@
     }
   }
 
-  function getHealthColor(health: string): string {
-    switch (health) {
-      case 'healthy': return '#22c55e';
-      case 'starting': return '#f59e0b';
-      case 'degraded': return '#f59e0b';
-      case 'offline': return '#ef4444';
-      default: return '#6b7280';
-    }
-  }
-
-  function getHealthLabel(health: string): string {
-    switch (health) {
-      case 'healthy': return 'Running';
-      case 'starting': return 'Starting...';
-      case 'degraded': return 'Degraded';
-      case 'offline': return 'Stopped';
-      default: return 'Unknown';
-    }
-  }
-
   function getBackendIcon(backend: BackendType): string {
     switch (backend) {
       case 'ollama': return '🦙';
@@ -668,78 +603,80 @@
       default: return 'Unknown';
     }
   }
-
 </script>
 
-<div class="backend-settings">
-  <h3>LLM Backend</h3>
-  <p class="description">
+<div>
+  <h3 class="text-lg font-semibold mb-2 text-gray-900 dark:text-gray-100">LLM Backend</h3>
+  <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">
     Configure local backends (Ollama/vLLM) and connect to remote servers.
   </p>
 
   {#if error}
-    <div class="error-banner">{error}</div>
+    <div class="banner banner-error mb-4">{error}</div>
   {/if}
 
-  <!-- Remote Server Connection (runs in parallel with local backends) -->
-  <div class="remote-server-section">
-    <h4>🌐 Remote Server Connection</h4>
-    <p class="config-desc">
+  <!-- Remote Server Connection -->
+  <div class="panel p-4 mb-6 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
+    <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">🌐 Remote Server Connection</h4>
+    <p class="text-sm text-blue-700 dark:text-blue-400 mb-3">
       Connect to a remote MetaHuman server to use its LLM. Remote models appear in dropdowns
       alongside local models. This runs in parallel - doesn't compete for local VRAM.
     </p>
 
-    <div class="config-row">
-      <label for="remote-server">Server URL</label>
+    <div class="mb-3">
+      <label for="remote-server" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
       <input
         id="remote-server"
         type="text"
         bind:value={remoteServerUrl}
         placeholder="https://your-tunnel.trycloudflare.com"
         disabled={savingRemoteConfig || testingRemoteServer}
+        class="input-field font-mono"
       />
     </div>
 
-    <div class="config-row credentials-row">
-      <div class="credential-field">
-        <label for="remote-username">Username</label>
+    <div class="flex gap-4 mb-3">
+      <div class="flex-1">
+        <label for="remote-username" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Username</label>
         <input
           id="remote-username"
           type="text"
           bind:value={remoteServerUsername}
           placeholder="Your MetaHuman username"
           disabled={savingRemoteConfig || testingRemoteServer}
+          class="input-field"
         />
       </div>
-      <div class="credential-field">
-        <label for="remote-password">Password</label>
+      <div class="flex-1">
+        <label for="remote-password" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Password</label>
         <input
           id="remote-password"
           type="password"
           bind:value={remoteServerPassword}
           placeholder="Your password"
           disabled={savingRemoteConfig || testingRemoteServer}
+          class="input-field"
         />
       </div>
     </div>
 
-    <div class="config-row checkbox-row">
-      <label class="checkbox-label">
-        <input type="checkbox" bind:checked={remoteServerSaveCredentials} />
+    <div class="mb-3">
+      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+        <input type="checkbox" bind:checked={remoteServerSaveCredentials} class="w-4 h-4 accent-violet-600" />
         <span>Save credentials for auto-connect</span>
       </label>
     </div>
 
-    <div class="config-actions remote-actions">
+    <div class="flex gap-3 flex-wrap">
       <button
-        class="test-btn"
+        class="btn-primary"
         on:click={testRemoteServerConnection}
         disabled={savingRemoteConfig || testingRemoteServer || !remoteServerUrl}
       >
         {testingRemoteServer ? '🔄 Testing...' : '🔍 Test Connection'}
       </button>
       <button
-        class="save-btn"
+        class="btn-success"
         on:click={connectToRemoteServer}
         disabled={savingRemoteConfig || testingRemoteServer || !remoteServerUrl}
       >
@@ -747,7 +684,7 @@
       </button>
       {#if remoteServerUrl && remoteServerTestResult?.success}
         <button
-          class="disconnect-btn"
+          class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-md transition-colors disabled:opacity-50"
           on:click={disconnectRemoteServer}
           disabled={savingRemoteConfig}
         >
@@ -756,111 +693,119 @@
       {/if}
     </div>
 
-    <!-- Test Results -->
     {#if remoteServerTestResult}
-      <div class="test-result" class:success={remoteServerTestResult.success} class:error={!remoteServerTestResult.success}>
+      <div class="mt-4 p-3 rounded-lg text-sm {remoteServerTestResult.success ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700' : 'bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700'}">
         {#if remoteServerTestResult.success}
-          <div class="result-header">
-            <span class="status-icon">✅</span>
-            <span class="status-text">Connected successfully</span>
+          <div class="flex items-center gap-2 font-medium text-green-700 dark:text-green-300">
+            <span>✅</span>
+            <span>Connected successfully</span>
             {#if remoteServerTestResult.latencyMs}
-              <span class="latency">({remoteServerTestResult.latencyMs}ms)</span>
+              <span class="text-xs opacity-70">({remoteServerTestResult.latencyMs}ms)</span>
             {/if}
           </div>
           {#if remoteServerTestResult.serverVersion}
-            <div class="result-detail">
-              <span class="detail-label">Server Version:</span>
-              <span class="detail-value">{remoteServerTestResult.serverVersion}</span>
+            <div class="mt-2 flex gap-2 text-gray-600 dark:text-gray-400">
+              <span class="font-medium">Server Version:</span>
+              <span>{remoteServerTestResult.serverVersion}</span>
             </div>
           {/if}
           {#if remoteServerTestResult.models && remoteServerTestResult.models.length > 0}
-            <div class="result-detail">
-              <span class="detail-label">Available Models:</span>
-              <div class="models-list">
+            <div class="mt-2">
+              <span class="font-medium text-gray-600 dark:text-gray-400">Available Models:</span>
+              <div class="flex flex-wrap gap-1.5 mt-1">
                 {#each remoteServerTestResult.models as model}
-                  <span class="model-badge">{model.model}</span>
+                  <span class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono">{model.model}</span>
                 {/each}
               </div>
             </div>
           {/if}
           {#if remoteServerTestResult.needsAuth}
-            <div class="result-note warning">
+            <div class="mt-2 text-xs text-amber-600 dark:text-amber-400">
               ⚠️ Authentication required - provide username and password
             </div>
           {/if}
         {:else}
-          <div class="result-header">
-            <span class="status-icon">❌</span>
-            <span class="status-text">Connection failed</span>
+          <div class="flex items-center gap-2 font-medium text-red-700 dark:text-red-300">
+            <span>❌</span>
+            <span>Connection failed</span>
           </div>
-          <div class="result-error">
+          <div class="mt-1 text-red-600 dark:text-red-400">
             {remoteServerTestResult.error || 'Unknown error'}
           </div>
         {/if}
       </div>
     {/if}
 
-    <p class="config-note">
+    <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 italic">
       On your desktop, start a Cloudflare Tunnel from Settings → Network to get a public URL.
     </p>
   </div>
 
   <hr class="section-divider" />
 
-  <h4>Local LLM Backends</h4>
+  <h4 class="text-base font-semibold mb-3 text-gray-700 dark:text-gray-200">Local LLM Backends</h4>
 
   {#if loading}
-    <div class="loading">Loading backend status...</div>
+    <div class="text-center py-8 text-gray-500">Loading backend status...</div>
   {:else}
     <!-- Status Summary -->
-    <div class="status-summary">
-      <div class="summary-header">
-        <span class="summary-label">Active Backend:</span>
-        <span class="summary-value">{getBackendIcon(activeBackend)} {getBackendLabel(activeBackend)}</span>
+    <div class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-6">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-sm text-gray-500 dark:text-gray-400 font-medium">Active Backend:</span>
+        <span class="text-base font-semibold text-gray-900 dark:text-gray-100">{getBackendIcon(activeBackend)} {getBackendLabel(activeBackend)}</span>
         {#if resolvedBackend && resolvedBackend !== activeBackend}
-          <span class="resolved-badge">→ {getBackendIcon(resolvedBackend)} {getBackendLabel(resolvedBackend)}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">→ {getBackendIcon(resolvedBackend)} {getBackendLabel(resolvedBackend)}</span>
         {/if}
       </div>
-      <div class="summary-details">
+      <div class="flex items-center gap-3 flex-wrap">
         {#if activeBackend === 'ollama'}
           {#if available?.ollama.running}
-            <span class="status-badge running">Running</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
+              Running
+            </span>
             {#if available.ollama.model}
-              <span class="model-badge">{available.ollama.model}</span>
+              <span class="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono font-medium">{available.ollama.model}</span>
             {/if}
           {:else}
-            <span class="status-badge stopped">Stopped</span>
-            <span class="status-hint">Start Ollama with: ollama serve</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Stopped</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Start Ollama with: ollama serve</span>
           {/if}
         {:else if activeBackend === 'vllm'}
           {#if available?.vllm.running}
-            <span class="status-badge running">Running</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
+              Running
+            </span>
             {#if available.vllm.model}
-              <span class="model-badge">{available.vllm.model}</span>
-              <span class="model-note">(restart to change model)</span>
+              <span class="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono font-medium">{available.vllm.model}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500 italic">(restart to change model)</span>
             {/if}
           {:else}
-            <span class="status-badge stopped">Stopped</span>
-            <span class="status-hint">Configure and start below</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Stopped</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Configure and start below</span>
           {/if}
         {:else if activeBackend === 'auto'}
           {#if resolvedBackend === 'offline'}
-            <span class="status-badge stopped">Offline</span>
-            <span class="status-hint">No backends available</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Offline</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">No backends available</span>
           {:else if resolvedBackend}
-            <span class="status-badge running">Using {getBackendLabel(resolvedBackend)}</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
+              Using {getBackendLabel(resolvedBackend)}
+            </span>
           {:else}
-            <span class="status-badge running">Auto-selecting</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">Auto-selecting</span>
           {/if}
         {/if}
       </div>
     </div>
 
     <!-- Backend Mode Selector -->
-    <div class="backend-mode-selector">
+    <div class="flex gap-2 mb-6 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
       <button
-        class="mode-btn"
-        class:active={activeBackend === 'auto'}
+        class="flex-1 px-3 py-2 rounded-md text-sm font-medium transition-all
+               {activeBackend === 'auto' ? 'bg-white dark:bg-gray-700 border-2 border-violet-500 dark:border-violet-400 text-violet-700 dark:text-violet-300 shadow-sm' : 'bg-transparent border-2 border-transparent text-gray-500 dark:text-gray-400 hover:bg-violet-100/50 dark:hover:bg-violet-900/20 hover:text-violet-600 dark:hover:text-violet-400'}"
         on:click={() => switchBackend('auto')}
         disabled={switching}
         title="Automatically select best available backend"
@@ -868,8 +813,9 @@
         🔄 Auto
       </button>
       <button
-        class="mode-btn"
-        class:active={activeBackend === 'ollama'}
+        class="flex-1 px-3 py-2 rounded-md text-sm font-medium transition-all
+               {activeBackend === 'ollama' ? 'bg-white dark:bg-gray-700 border-2 border-violet-500 dark:border-violet-400 text-violet-700 dark:text-violet-300 shadow-sm' : 'bg-transparent border-2 border-transparent text-gray-500 dark:text-gray-400 hover:bg-violet-100/50 dark:hover:bg-violet-900/20 hover:text-violet-600 dark:hover:text-violet-400'}
+               disabled:opacity-40 disabled:cursor-not-allowed"
         on:click={() => switchBackend('ollama')}
         disabled={switching || !available?.ollama.installed}
         title="Use Ollama for local inference"
@@ -877,8 +823,9 @@
         🦙 Ollama
       </button>
       <button
-        class="mode-btn"
-        class:active={activeBackend === 'vllm'}
+        class="flex-1 px-3 py-2 rounded-md text-sm font-medium transition-all
+               {activeBackend === 'vllm' ? 'bg-white dark:bg-gray-700 border-2 border-violet-500 dark:border-violet-400 text-violet-700 dark:text-violet-300 shadow-sm' : 'bg-transparent border-2 border-transparent text-gray-500 dark:text-gray-400 hover:bg-violet-100/50 dark:hover:bg-violet-900/20 hover:text-violet-600 dark:hover:text-violet-400'}
+               disabled:opacity-40 disabled:cursor-not-allowed"
         on:click={() => switchBackend('vllm')}
         disabled={switching || !available?.vllm.installed}
         title="Use vLLM for high-throughput inference"
@@ -887,64 +834,54 @@
       </button>
     </div>
 
-    <div class="backend-cards">
+    <!-- Backend Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
       <!-- Ollama Card -->
-      <div class="backend-card" class:active={activeBackend === 'ollama'} class:unavailable={!available?.ollama.installed}>
-        <div class="backend-header">
-          <span class="backend-icon">🦙</span>
-          <span class="backend-name">Ollama</span>
-          {#if available?.ollama.running}
-            <span class="status-dot running"></span>
-          {:else if available?.ollama.installed}
-            <span class="status-dot stopped"></span>
-          {:else}
-            <span class="status-dot unavailable"></span>
-          {/if}
+      <div class="panel p-4 {activeBackend === 'ollama' ? 'border-2 border-violet-500 dark:border-violet-400 shadow-lg shadow-violet-500/10' : ''} {!available?.ollama.installed ? 'opacity-60 pointer-events-none' : ''}">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-2xl">🦙</span>
+          <span class="text-lg font-semibold text-gray-900 dark:text-gray-100">Ollama</span>
+          <span class="ml-auto w-2.5 h-2.5 rounded-full {available?.ollama.running ? 'bg-green-500 shadow-lg shadow-green-500/50' : available?.ollama.installed ? 'bg-red-500' : 'bg-gray-400'}"></span>
         </div>
 
-        <div class="backend-info">
-          <p class="backend-desc">Local inference with GGUF models</p>
-          <div class="backend-detail">
-            <span class="label">Status:</span>
-            <span class="value" style="color: {available?.ollama.running ? '#22c55e' : '#ef4444'}">
+        <div class="mb-3">
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Local inference with GGUF models</p>
+          <div class="flex gap-2 text-sm mb-1">
+            <span class="text-gray-500 dark:text-gray-400">Status:</span>
+            <span class="font-medium {available?.ollama.running ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
               {available?.ollama.running ? 'Running' : available?.ollama.installed ? 'Stopped' : 'Not Installed'}
             </span>
           </div>
           {#if available?.ollama.model}
-            <div class="backend-detail">
-              <span class="label">Model:</span>
-              <span class="value model">{available.ollama.model}</span>
+            <div class="flex gap-2 text-sm mb-1">
+              <span class="text-gray-500 dark:text-gray-400">Model:</span>
+              <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300">{available.ollama.model}</span>
             </div>
           {/if}
-          <div class="backend-detail">
-            <span class="label">Endpoint:</span>
-            <span class="value endpoint">{ollamaEndpoint}</span>
+          <div class="flex gap-2 text-sm">
+            <span class="text-gray-500 dark:text-gray-400">Endpoint:</span>
+            <span class="font-mono text-xs text-gray-500">{ollamaEndpoint}</span>
           </div>
         </div>
 
-        <div class="backend-actions">
+        <div class="flex justify-center gap-2">
           {#if activeBackend === 'ollama'}
-            <span class="active-badge">Active</span>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-violet-600 text-white">
+              <span class="text-xs">●</span>
+              Active
+            </span>
             {#if available?.ollama.running}
-              <button
-                class="stop-btn small"
-                on:click={stopOllama}
-                disabled={ollamaStopping}
-              >
+              <button class="btn-danger btn-sm" on:click={stopOllama} disabled={ollamaStopping}>
                 {ollamaStopping ? 'Stopping...' : 'Stop'}
               </button>
             {:else}
-              <button
-                class="start-btn small"
-                on:click={startOllama}
-                disabled={ollamaStarting}
-              >
+              <button class="btn-success btn-sm" on:click={startOllama} disabled={ollamaStarting}>
                 {ollamaStarting ? 'Starting...' : 'Start'}
               </button>
             {/if}
           {:else}
             <button
-              class="switch-btn"
+              class="btn-secondary btn-sm"
               on:click={() => switchBackend('ollama')}
               disabled={switching || !available?.ollama.installed}
             >
@@ -955,45 +892,42 @@
       </div>
 
       <!-- vLLM Card -->
-      <div class="backend-card" class:active={activeBackend === 'vllm'} class:unavailable={!available?.vllm.installed}>
-        <div class="backend-header">
-          <span class="backend-icon">⚡</span>
-          <span class="backend-name">vLLM</span>
-          {#if available?.vllm.running}
-            <span class="status-dot running"></span>
-          {:else if available?.vllm.installed}
-            <span class="status-dot stopped"></span>
-          {:else}
-            <span class="status-dot unavailable"></span>
-          {/if}
+      <div class="panel p-4 {activeBackend === 'vllm' ? 'border-2 border-violet-500 dark:border-violet-400 shadow-lg shadow-violet-500/10' : ''} {!available?.vllm.installed ? 'opacity-60 pointer-events-none' : ''}">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-2xl">⚡</span>
+          <span class="text-lg font-semibold text-gray-900 dark:text-gray-100">vLLM</span>
+          <span class="ml-auto w-2.5 h-2.5 rounded-full {available?.vllm.running ? 'bg-green-500 shadow-lg shadow-green-500/50' : available?.vllm.installed ? 'bg-red-500' : 'bg-gray-400'}"></span>
         </div>
 
-        <div class="backend-info">
-          <p class="backend-desc">High-throughput with HuggingFace models</p>
-          <div class="backend-detail">
-            <span class="label">Status:</span>
-            <span class="value" style="color: {available?.vllm.running ? '#22c55e' : '#ef4444'}">
+        <div class="mb-3">
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">High-throughput with HuggingFace models</p>
+          <div class="flex gap-2 text-sm mb-1">
+            <span class="text-gray-500 dark:text-gray-400">Status:</span>
+            <span class="font-medium {available?.vllm.running ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
               {available?.vllm.running ? 'Running' : available?.vllm.installed ? 'Stopped' : 'Not Installed'}
             </span>
           </div>
           {#if available?.vllm.model}
-            <div class="backend-detail">
-              <span class="label">Model:</span>
-              <span class="value model">{available.vllm.model}</span>
+            <div class="flex gap-2 text-sm mb-1">
+              <span class="text-gray-500 dark:text-gray-400">Model:</span>
+              <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300">{available.vllm.model}</span>
             </div>
           {/if}
-          <div class="backend-detail">
-            <span class="label">Endpoint:</span>
-            <span class="value endpoint">{vllmEndpoint}</span>
+          <div class="flex gap-2 text-sm">
+            <span class="text-gray-500 dark:text-gray-400">Endpoint:</span>
+            <span class="font-mono text-xs text-gray-500">{vllmEndpoint}</span>
           </div>
         </div>
 
-        <div class="backend-actions">
+        <div class="flex justify-center">
           {#if activeBackend === 'vllm'}
-            <span class="active-badge">Active</span>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-violet-600 text-white">
+              <span class="text-xs">●</span>
+              Active
+            </span>
           {:else}
             <button
-              class="switch-btn"
+              class="btn-secondary btn-sm"
               on:click={() => switchBackend('vllm')}
               disabled={switching || !available?.vllm.installed}
             >
@@ -1002,1473 +936,219 @@
           {/if}
         </div>
       </div>
-
     </div>
 
-    <!-- Big Brother Escalation Provider -->
-    <div class="remote-config big-brother-config">
-      <h4>🛡️ Big Brother Escalation</h4>
-      <p class="config-desc">
+    <!-- Big Brother Escalation -->
+    <div class="panel p-4 mb-4 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
+      <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">🛡️ Big Brother Escalation</h4>
+      <p class="text-sm text-blue-700 dark:text-blue-400 mb-3">
         When Big Brother mode is enabled, complex tasks are delegated to this backend.
         Claude Code uses your Pro subscription; Open Interpreter uses RunPod or other configured LLMs.
       </p>
 
-      <div class="config-row checkbox-row">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={bigBrotherEnabled}
-            on:change={saveBigBrotherConfig}
-            disabled={savingBigBrother}
-          />
+      <div class="mb-3">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={bigBrotherEnabled} on:change={saveBigBrotherConfig} disabled={savingBigBrother} class="w-4 h-4 accent-violet-600" />
           <span>Enable Big Brother Mode</span>
         </label>
-        <span class="config-hint">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
           {bigBrotherEnabled ? 'Complex tasks will be delegated to the selected backend' : 'Big Brother delegation is disabled'}
-        </span>
+        </p>
       </div>
 
-      <div class="config-row checkbox-row">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={bigBrotherDelegateAll}
-            on:change={saveBigBrotherConfig}
-            disabled={savingBigBrother || !bigBrotherEnabled}
-          />
+      <div class="mb-3">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={bigBrotherDelegateAll} on:change={saveBigBrotherConfig} disabled={savingBigBrother || !bigBrotherEnabled} class="w-4 h-4 accent-violet-600" />
           <span>Delegate All Tasks</span>
         </label>
-        <span class="config-hint">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
           {bigBrotherDelegateAll ? 'All autonomous tasks will be sent directly to Big Brother' : 'Only complex/stuck tasks will be escalated'}
-        </span>
+        </p>
       </div>
 
-      <div class="config-row">
-        <label for="big-brother-provider">Escalation Backend</label>
-        <select
-          id="big-brother-provider"
-          bind:value={bigBrotherProvider}
-          on:change={saveBigBrotherConfig}
-          disabled={savingBigBrother}
-        >
+      <div class="mb-3">
+        <label for="big-brother-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Escalation Backend</label>
+        <select id="big-brother-provider" bind:value={bigBrotherProvider} on:change={saveBigBrotherConfig} disabled={savingBigBrother} class="select-field w-full">
           {#each bigBrotherProviderOptions as opt}
-            <option value={opt.value}>
-              {opt.label} - {opt.description}
-            </option>
+            <option value={opt.value}>{opt.label} - {opt.description}</option>
           {/each}
         </select>
       </div>
 
-      <!-- Current Config Display -->
-      <div class="config-details">
-        <div class="config-detail">
-          <span class="detail-label">Status:</span>
-          <span class="detail-value" style="color: {bigBrotherEnabled ? '#22c55e' : '#6b7280'}">
-            {bigBrotherEnabled ? 'Enabled' : 'Disabled'}
-          </span>
+      <div class="bg-black/5 dark:bg-white/5 rounded-lg p-3">
+        <div class="flex justify-between text-sm py-1">
+          <span class="text-gray-500 dark:text-gray-400">Status:</span>
+          <span class="font-medium {bigBrotherEnabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}">{bigBrotherEnabled ? 'Enabled' : 'Disabled'}</span>
         </div>
-        <div class="config-detail">
-          <span class="detail-label">Provider:</span>
-          <span class="detail-value">{getBigBrotherProviderLabel(bigBrotherProvider)}</span>
+        <div class="flex justify-between text-sm py-1">
+          <span class="text-gray-500 dark:text-gray-400">Provider:</span>
+          <span class="font-medium text-gray-700 dark:text-gray-300">{getBigBrotherProviderLabel(bigBrotherProvider)}</span>
         </div>
       </div>
 
-      <!-- Open Interpreter Controls (when selected as provider) -->
       {#if bigBrotherProvider === 'open-interpreter'}
-        <div class="interpreter-controls">
-          <h5>🐍 Open Interpreter Server</h5>
-          <div class="interpreter-status-row">
-            <span class="status-label">Status:</span>
+        <div class="mt-3 bg-black/5 dark:bg-white/5 rounded-lg p-3">
+          <h5 class="text-sm font-semibold mb-2">🐍 Open Interpreter Server</h5>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm text-gray-500 dark:text-gray-400">Status:</span>
             {#if interpreterStatus?.running}
-              <span class="status-badge running">Running</span>
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">Running</span>
               {#if interpreterStatus.version}
-                <span class="version-badge">v{interpreterStatus.version}</span>
+                <span class="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-[0.7rem]">v{interpreterStatus.version}</span>
               {/if}
             {:else if interpreterStatus?.available}
-              <span class="status-badge stopped">Stopped (can start)</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">Stopped (can start)</span>
             {:else}
-              <span class="status-badge unavailable">Not available</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">Not available</span>
             {/if}
           </div>
-          <div class="interpreter-actions">
+          <div class="flex items-center gap-2">
             {#if interpreterStatus?.running}
-              <button
-                class="stop-btn small"
-                on:click={stopInterpreter}
-                disabled={interpreterStopping}
-              >
+              <button class="btn-danger btn-sm" on:click={stopInterpreter} disabled={interpreterStopping}>
                 {interpreterStopping ? 'Stopping...' : 'Stop Server'}
               </button>
             {:else if interpreterStatus?.available}
-              <button
-                class="start-btn small"
-                on:click={startInterpreter}
-                disabled={interpreterStarting}
-              >
+              <button class="btn-success btn-sm" on:click={startInterpreter} disabled={interpreterStarting}>
                 {interpreterStarting ? 'Starting...' : 'Start Server'}
               </button>
             {:else}
-              <span class="hint-text">Run: bin/start-interpreter</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">Run: bin/start-interpreter</span>
             {/if}
           </div>
         </div>
       {/if}
 
       {#if savingBigBrother}
-        <span class="saving-indicator">Saving...</span>
+        <span class="text-xs text-gray-500 italic mt-2 block">Saving...</span>
       {/if}
     </div>
 
     <!-- vLLM Configuration -->
     {#if available?.vllm.installed}
-      <div class="vllm-config">
-        <h4>vLLM Configuration</h4>
+      <div class="panel p-4 mb-4 bg-gray-50 dark:bg-gray-900/50">
+        <h4 class="text-base font-semibold mb-3 text-gray-700 dark:text-gray-200">vLLM Configuration</h4>
 
-        <div class="config-row">
-          <label for="vllm-model">Model (HuggingFace ID - Auto Download)</label>
-          <input
-            id="vllm-model"
-            type="text"
-            bind:value={vllmModel}
-            placeholder="Qwen/Qwen2.5-14B-Instruct"
-          />
+        <div class="mb-4">
+          <label for="vllm-model" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model (HuggingFace ID - Auto Download)</label>
+          <input id="vllm-model" type="text" bind:value={vllmModel} placeholder="Qwen/Qwen2.5-14B-Instruct" class="input-field font-mono" />
         </div>
 
-        <div class="config-row">
-          <label for="vllm-gpu">GPU Memory Utilization</label>
-          <div class="slider-row">
-            <input
-              id="vllm-gpu"
-              type="range"
-              min="0.5"
-              max="0.95"
-              step="0.05"
-              bind:value={vllmGpuUtil}
-              disabled={vllmAutoUtilization}
-            />
-            <span class="slider-value">{vllmAutoUtilization ? 'Auto' : `${Math.round(vllmGpuUtil * 100)}%`}</span>
+        <div class="mb-4">
+          <label for="vllm-gpu" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">GPU Memory Utilization</label>
+          <div class="flex items-center gap-3">
+            <input id="vllm-gpu" type="range" min="0.5" max="0.95" step="0.05" bind:value={vllmGpuUtil} disabled={vllmAutoUtilization}
+                   class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600 disabled:opacity-50" />
+            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[3rem]">{vllmAutoUtilization ? 'Auto' : `${Math.round(vllmGpuUtil * 100)}%`}</span>
           </div>
         </div>
 
-        <div class="config-row">
-          <label for="vllm-maxlen">Context Length (maxModelLen)</label>
-          <div class="slider-row">
-            <input
-              id="vllm-maxlen"
-              type="range"
-              min="2048"
-              max="16384"
-              step="1024"
-              bind:value={vllmMaxModelLen}
-            />
-            <span class="slider-value">{vllmMaxModelLen.toLocaleString()}</span>
+        <div class="mb-4">
+          <label for="vllm-maxlen" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Context Length (maxModelLen)</label>
+          <div class="flex items-center gap-3">
+            <input id="vllm-maxlen" type="range" min="2048" max="16384" step="1024" bind:value={vllmMaxModelLen}
+                   class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600" />
+            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[3rem]">{vllmMaxModelLen.toLocaleString()}</span>
           </div>
-          <span class="config-hint">Lower = less KV cache memory. 4096 saves ~3GB vs 8192.</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Lower = less KV cache memory. 4096 saves ~3GB vs 8192.</p>
         </div>
 
-        <div class="config-row">
-          <label for="vllm-maxtokens">Max Output Tokens</label>
-          <div class="slider-row">
-            <input
-              id="vllm-maxtokens"
-              type="range"
-              min="512"
-              max="8192"
-              step="256"
-              bind:value={vllmMaxTokens}
-            />
-            <span class="slider-value">{vllmMaxTokens.toLocaleString()}</span>
+        <div class="mb-4">
+          <label for="vllm-maxtokens" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Output Tokens</label>
+          <div class="flex items-center gap-3">
+            <input id="vllm-maxtokens" type="range" min="512" max="8192" step="256" bind:value={vllmMaxTokens}
+                   class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600" />
+            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[3rem]">{vllmMaxTokens.toLocaleString()}</span>
           </div>
-          <span class="config-hint">Max tokens per response. {vllmEnableThinking ? 'With thinking enabled, increase this to prevent cutoff (4096+ recommended).' : 'Higher = longer responses possible.'}</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{vllmEnableThinking ? 'With thinking enabled, increase this to prevent cutoff (4096+ recommended).' : 'Higher = longer responses possible.'}</p>
         </div>
 
-        <div class="config-row checkbox-row">
-          <label class="checkbox-label">
-            <input
-              type="checkbox"
-              bind:checked={vllmEnforceEager}
-            />
+        <div class="mb-3">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" bind:checked={vllmEnforceEager} class="w-4 h-4 accent-violet-600" />
             <span>Eager Mode (disable CUDA graphs)</span>
           </label>
-          <span class="config-hint">Reduces memory ~0.5-1GB. Slightly slower, but prevents OOM on memory-constrained GPUs.</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">Reduces memory ~0.5-1GB. Slightly slower, but prevents OOM.</p>
         </div>
 
-        <div class="config-row checkbox-row">
-          <label class="checkbox-label">
-            <input
-              type="checkbox"
-              bind:checked={vllmAutoUtilization}
-            />
+        <div class="mb-3">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" bind:checked={vllmAutoUtilization} class="w-4 h-4 accent-violet-600" />
             <span>Auto GPU Allocation</span>
           </label>
-          <span class="config-hint">Automatically detect optimal GPU utilization based on available memory.</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">Automatically detect optimal GPU utilization based on available memory.</p>
         </div>
 
-        <div class="config-row checkbox-row">
-          <label class="checkbox-label">
-            <input
-              type="checkbox"
-              bind:checked={vllmEnableThinking}
-            />
+        <div class="mb-4">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+            <input type="checkbox" bind:checked={vllmEnableThinking} class="w-4 h-4 accent-violet-600" />
             <span>Thinking Mode (Qwen3)</span>
           </label>
-          <span class="config-hint">
-            {vllmEnableThinking
-              ? 'Enabled: Model will show reasoning steps in <think> tags.'
-              : 'Disabled: No <think> tags in output (direct responses only).'}
-          </span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+            {vllmEnableThinking ? 'Enabled: Model will show reasoning steps in <think> tags.' : 'Disabled: No <think> tags in output (direct responses only).'}
+          </p>
         </div>
 
-        <div class="config-actions">
-          <button
-            class="save-btn"
-            on:click={saveVllmConfig}
-            disabled={savingConfig}
-          >
+        <div class="flex gap-3 flex-wrap">
+          <button class="btn-primary" on:click={saveVllmConfig} disabled={savingConfig}>
             {savingConfig ? 'Saving...' : 'Save Config'}
           </button>
-
-          <button
-            class="refresh-btn"
-            on:click={loadStatus}
-            disabled={loading}
-            title="Reload config from server"
-          >
+          <button class="btn-secondary" on:click={loadStatus} disabled={loading} title="Reload config from server">
             ↻ Refresh
           </button>
-
           {#if available.vllm.running}
-            <button
-              class="stop-btn"
-              on:click={stopVllm}
-              disabled={vllmStopping}
-            >
+            <button class="btn-danger" on:click={stopVllm} disabled={vllmStopping}>
               {vllmStopping ? 'Stopping...' : 'Stop vLLM'}
             </button>
           {:else}
-            <button
-              class="start-btn"
-              on:click={startVllm}
-              disabled={vllmStarting}
-            >
+            <button class="btn-success" on:click={startVllm} disabled={vllmStarting}>
               {vllmStarting ? 'Starting...' : 'Start vLLM'}
             </button>
           {/if}
         </div>
 
-        <p class="config-note">
-          Note: Changing the model requires restarting the vLLM server.
-        </p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-3 italic">Note: Changing the model requires restarting the vLLM server.</p>
       </div>
     {:else}
-      <div class="install-hint">
-        <h4>Install vLLM</h4>
-        <p>vLLM is not installed. Create a virtual environment and install:</p>
-        <code>python3 -m venv .venv-vllm && .venv-vllm/bin/pip install vllm</code>
+      <div class="banner banner-warning mb-4">
+        <h4 class="font-semibold mb-1">Install vLLM</h4>
+        <p class="text-sm mb-2">vLLM is not installed. Create a virtual environment and install:</p>
+        <code class="block bg-black/10 dark:bg-black/20 px-3 py-2 rounded text-sm font-mono">python3 -m venv .venv-vllm && .venv-vllm/bin/pip install vllm</code>
       </div>
     {/if}
 
-    <!-- Embedding Settings (Semantic Memory Search) -->
-    <div class="embedding-config">
-      <h4>Semantic Memory Search</h4>
-      <p class="config-desc">
+    <!-- Embedding Settings -->
+    <div class="panel p-4 mb-4 bg-green-50/50 dark:bg-green-900/10 border-green-200 dark:border-green-800">
+      <h4 class="text-base font-semibold mb-2 text-green-800 dark:text-green-300">Semantic Memory Search</h4>
+      <p class="text-sm text-green-700 dark:text-green-400 mb-3">
         Uses {embeddingModel} via Ollama for vector embeddings.
         CPU mode leaves GPU free for the chat model.
       </p>
 
-      <div class="config-row checkbox-row">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={embeddingEnabled}
-            on:change={saveEmbeddingConfig}
-            disabled={embeddingSaving}
-          />
+      <div class="mb-3">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={embeddingEnabled} on:change={saveEmbeddingConfig} disabled={embeddingSaving} class="w-4 h-4 accent-violet-600" />
           <span>Enable Semantic Search</span>
         </label>
       </div>
 
-      <div class="config-row checkbox-row">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={embeddingCpuOnly}
-            on:change={saveEmbeddingConfig}
-            disabled={embeddingSaving || !embeddingEnabled}
-          />
+      <div class="mb-2">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={embeddingCpuOnly} on:change={saveEmbeddingConfig} disabled={embeddingSaving || !embeddingEnabled} class="w-4 h-4 accent-violet-600" />
           <span>CPU-Only Mode</span>
         </label>
-        <span class="config-hint">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
           {embeddingCpuOnly ? 'Embeddings run on CPU (GPU free for vLLM)' : 'Embeddings use GPU (may conflict with vLLM)'}
-        </span>
+        </p>
       </div>
 
       {#if embeddingSaving}
-        <span class="saving-indicator">Saving...</span>
+        <span class="text-xs text-gray-500 italic">Saving...</span>
       {/if}
     </div>
 
-    <!-- Local Models (Transformers.js - for mobile/offline) -->
-    <div class="local-models-section">
+    <!-- Local Models -->
+    <div class="panel p-4 bg-fuchsia-50/50 dark:bg-fuchsia-900/10 border-fuchsia-200 dark:border-fuchsia-800">
       <LocalModelsSettings />
     </div>
   {/if}
 </div>
-
-<style>
-  .backend-settings {
-    padding: 0;
-  }
-
-  h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin: 0 0 0.5rem 0;
-    color: #1f2937;
-  }
-
-  :global(.dark) h3 {
-    color: #f3f4f6;
-  }
-
-  h4 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0 0 0.75rem 0;
-    color: #374151;
-  }
-
-  :global(.dark) h4 {
-    color: #e5e7eb;
-  }
-
-  .description {
-    font-size: 0.875rem;
-    color: #6b7280;
-    margin: 0 0 1.25rem 0;
-  }
-
-  :global(.dark) .description {
-    color: #9ca3af;
-  }
-
-  .error-banner {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #dc2626;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .error-banner {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #f87171;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 2rem;
-    color: #6b7280;
-  }
-
-  .status-summary {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border: 1px solid #e2e8f0;
-    border-radius: 0.75rem;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .status-summary {
-    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-    border-color: #334155;
-  }
-
-  .summary-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .summary-label {
-    font-size: 0.875rem;
-    color: #64748b;
-    font-weight: 500;
-  }
-
-  :global(.dark) .summary-label {
-    color: #94a3b8;
-  }
-
-  .summary-value {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #1e293b;
-  }
-
-  :global(.dark) .summary-value {
-    color: #f1f5f9;
-  }
-
-  .summary-details {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.25rem 0.625rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .status-badge.running {
-    background: rgba(34, 197, 94, 0.15);
-    color: #16a34a;
-  }
-
-  .status-badge.running::before {
-    content: '●';
-    font-size: 0.5rem;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-
-  :global(.dark) .status-badge.running {
-    background: rgba(34, 197, 94, 0.2);
-    color: #4ade80;
-  }
-
-  .status-badge.stopped {
-    background: rgba(239, 68, 68, 0.15);
-    color: #dc2626;
-  }
-
-  :global(.dark) .status-badge.stopped {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-  }
-
-  .model-badge {
-    background: #e0e7ff;
-    color: #3730a3;
-    padding: 0.25rem 0.625rem;
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    font-family: monospace;
-    font-weight: 500;
-  }
-
-  :global(.dark) .model-badge {
-    background: rgba(99, 102, 241, 0.2);
-    color: #a5b4fc;
-  }
-
-  .model-note {
-    font-size: 0.75rem;
-    color: #94a3b8;
-    font-style: italic;
-  }
-
-  :global(.dark) .model-note {
-    color: #64748b;
-  }
-
-  .status-hint {
-    font-size: 0.75rem;
-    color: #64748b;
-  }
-
-  :global(.dark) .status-hint {
-    color: #94a3b8;
-  }
-
-  .backend-cards {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .backend-card {
-    background: #ffffff;
-    border: 2px solid #e5e7eb;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-
-  :global(.dark) .backend-card {
-    background: #1f2937;
-    border-color: #374151;
-  }
-
-  .backend-card.active {
-    border-color: #8b5cf6;
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  :global(.dark) .backend-card.active {
-    border-color: #a78bfa;
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.1);
-  }
-
-  .backend-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .backend-icon {
-    font-size: 1.5rem;
-  }
-
-  .backend-name {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  :global(.dark) .backend-name {
-    color: #f3f4f6;
-  }
-
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-left: auto;
-  }
-
-  .status-dot.running {
-    background: #22c55e;
-    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
-  }
-
-  .status-dot.stopped {
-    background: #ef4444;
-  }
-
-  .status-dot.unavailable {
-    background: #6b7280;
-  }
-
-  .backend-info {
-    margin-bottom: 0.75rem;
-  }
-
-  .backend-desc {
-    font-size: 0.8125rem;
-    color: #6b7280;
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .backend-desc {
-    color: #9ca3af;
-  }
-
-  .backend-detail {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .backend-detail .label {
-    color: #6b7280;
-  }
-
-  :global(.dark) .backend-detail .label {
-    color: #9ca3af;
-  }
-
-  .backend-detail .value {
-    color: #374151;
-    font-weight: 500;
-  }
-
-  :global(.dark) .backend-detail .value {
-    color: #e5e7eb;
-  }
-
-  .backend-detail .value.model {
-    font-family: monospace;
-    font-size: 0.75rem;
-  }
-
-  .backend-detail .value.endpoint {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  .backend-actions {
-    display: flex;
-    justify-content: center;
-  }
-
-  .active-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    background: #8b5cf6;
-    color: white;
-    padding: 0.375rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.8125rem;
-    font-weight: 500;
-  }
-
-  .active-badge::before {
-    content: '●';
-    font-size: 0.625rem;
-  }
-
-  .switch-btn {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.375rem;
-    font-size: 0.8125rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  :global(.dark) .switch-btn {
-    background: #374151;
-    color: #e5e7eb;
-    border-color: #4b5563;
-  }
-
-  .switch-btn:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .switch-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .switch-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .stop-btn.small, .start-btn.small {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    margin-left: 0.5rem;
-  }
-
-  .vllm-config {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    margin-top: 1rem;
-  }
-
-  :global(.dark) .vllm-config {
-    background: #111827;
-    border-color: #374151;
-  }
-
-  .config-row {
-    margin-bottom: 1rem;
-  }
-
-  .config-row label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: #374151;
-    margin-bottom: 0.375rem;
-  }
-
-  :global(.dark) .config-row label {
-    color: #d1d5db;
-  }
-
-  .config-row input[type="text"] {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-family: monospace;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .config-row input[type="text"] {
-    background: #1f2937;
-    border-color: #4b5563;
-    color: #f3f4f6;
-  }
-
-  .slider-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .slider-row input[type="range"] {
-    flex: 1;
-    height: 6px;
-    background: #e5e7eb;
-    border-radius: 3px;
-    appearance: none;
-    cursor: pointer;
-  }
-
-  :global(.dark) .slider-row input[type="range"] {
-    background: #374151;
-  }
-
-  .slider-row input[type="range"]::-webkit-slider-thumb {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    background: #8b5cf6;
-    border-radius: 50%;
-    cursor: pointer;
-  }
-
-  .slider-value {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #374151;
-    min-width: 3rem;
-  }
-
-  :global(.dark) .slider-value {
-    color: #e5e7eb;
-  }
-
-  .config-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 1rem;
-  }
-
-  .save-btn, .start-btn, .stop-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .save-btn {
-    background: #8b5cf6;
-    color: white;
-    border: none;
-  }
-
-  .save-btn:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  .start-btn {
-    background: #22c55e;
-    color: white;
-    border: none;
-  }
-
-  .start-btn:hover:not(:disabled) {
-    background: #16a34a;
-  }
-
-  .stop-btn {
-    background: #ef4444;
-    color: white;
-    border: none;
-  }
-
-  .stop-btn:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  .save-btn:disabled, .start-btn:disabled, .stop-btn:disabled, .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .refresh-btn {
-    background: #6b7280;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .config-note {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin: 0.75rem 0 0 0;
-    font-style: italic;
-  }
-
-  :global(.dark) .config-note {
-    color: #9ca3af;
-  }
-
-  .config-hint {
-    display: block;
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-top: 0.25rem;
-  }
-
-  :global(.dark) .config-hint {
-    color: #9ca3af;
-  }
-
-  .checkbox-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  :global(.dark) .checkbox-label {
-    color: #d1d5db;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: 1rem;
-    height: 1rem;
-    accent-color: #8b5cf6;
-    cursor: pointer;
-  }
-
-  .slider-row input[type="range"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .install-hint {
-    background: #fef3c7;
-    border: 1px solid #fcd34d;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    margin-top: 1rem;
-  }
-
-  :global(.dark) .install-hint {
-    background: rgba(251, 191, 36, 0.1);
-    border-color: rgba(251, 191, 36, 0.3);
-  }
-
-  .install-hint h4 {
-    margin: 0 0 0.5rem 0;
-    color: #92400e;
-  }
-
-  :global(.dark) .install-hint h4 {
-    color: #fbbf24;
-  }
-
-  .install-hint p {
-    font-size: 0.875rem;
-    color: #78350f;
-    margin: 0 0 0.5rem 0;
-  }
-
-  :global(.dark) .install-hint p {
-    color: #fcd34d;
-  }
-
-  .install-hint code {
-    display: block;
-    background: rgba(0, 0, 0, 0.1);
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.375rem;
-    font-family: monospace;
-    font-size: 0.8125rem;
-    color: #78350f;
-  }
-
-  :global(.dark) .install-hint code {
-    background: rgba(0, 0, 0, 0.2);
-    color: #fcd34d;
-  }
-
-  .embedding-config {
-    background: #f0fdf4;
-    border: 1px solid #86efac;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    margin-top: 1.5rem;
-  }
-
-  :global(.dark) .embedding-config {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.3);
-  }
-
-  .embedding-config h4 {
-    margin: 0 0 0.5rem 0;
-    color: #166534;
-  }
-
-  :global(.dark) .embedding-config h4 {
-    color: #4ade80;
-  }
-
-  .config-desc {
-    font-size: 0.8125rem;
-    color: #166534;
-    margin: 0 0 0.75rem 0;
-  }
-
-  :global(.dark) .config-desc {
-    color: #86efac;
-  }
-
-  .saving-indicator {
-    font-size: 0.75rem;
-    color: #6b7280;
-    font-style: italic;
-  }
-
-  @media (max-width: 640px) {
-    .backend-cards {
-      grid-template-columns: 1fr;
-    }
-
-    .backend-mode-selector {
-      flex-wrap: wrap;
-    }
-
-    .mode-btn {
-      flex: 1 1 45%;
-    }
-  }
-
-  /* Backend Mode Selector */
-  .backend-mode-selector {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    padding: 0.5rem;
-    background: #f3f4f6;
-    border-radius: 0.75rem;
-  }
-
-  :global(.dark) .backend-mode-selector {
-    background: #1f2937;
-  }
-
-  .mode-btn {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    background: transparent;
-    border: 2px solid transparent;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: #6b7280;
-  }
-
-  :global(.dark) .mode-btn {
-    color: #9ca3af;
-  }
-
-  .mode-btn:hover:not(:disabled) {
-    background: rgba(139, 92, 246, 0.1);
-    color: #7c3aed;
-  }
-
-  :global(.dark) .mode-btn:hover:not(:disabled) {
-    background: rgba(167, 139, 250, 0.15);
-    color: #a78bfa;
-  }
-
-  .mode-btn.active {
-    background: white;
-    border-color: #8b5cf6;
-    color: #7c3aed;
-    box-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
-  }
-
-  :global(.dark) .mode-btn.active {
-    background: #374151;
-    border-color: #a78bfa;
-    color: #c4b5fd;
-  }
-
-  .mode-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  /* Resolved Badge */
-  .resolved-badge {
-    font-size: 0.8125rem;
-    color: #6b7280;
-    margin-left: 0.5rem;
-  }
-
-  :global(.dark) .resolved-badge {
-    color: #9ca3af;
-  }
-
-  /* Remote Config Section */
-  .remote-config {
-    background: #faf5ff;
-    border: 1px solid #e9d5ff;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    margin-top: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .remote-config {
-    background: rgba(168, 85, 247, 0.1);
-    border-color: rgba(168, 85, 247, 0.3);
-  }
-
-  .remote-config h4 {
-    margin: 0 0 0.75rem 0;
-    color: #7c3aed;
-  }
-
-  :global(.dark) .remote-config h4 {
-    color: #c4b5fd;
-  }
-
-  /* Select dropdown */
-  .config-row select {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-    cursor: pointer;
-  }
-
-  :global(.dark) .config-row select {
-    background: #1f2937;
-    border-color: #4b5563;
-    color: #f3f4f6;
-  }
-
-  .config-row select:focus {
-    outline: none;
-    border-color: #8b5cf6;
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-  }
-
-  /* Dimmed card for unavailable backends (not installed) */
-  .backend-card.unavailable {
-    opacity: 0.6;
-    pointer-events: none;
-  }
-
-  /* Config details section */
-  .config-details {
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    margin-top: 0.75rem;
-  }
-
-  :global(.dark) .config-details {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .config-detail {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8125rem;
-    padding: 0.25rem 0;
-  }
-
-  .detail-label {
-    color: #6b7280;
-  }
-
-  :global(.dark) .detail-label {
-    color: #9ca3af;
-  }
-
-  .detail-value {
-    font-weight: 500;
-    color: #374151;
-  }
-
-  :global(.dark) .detail-value {
-    color: #e5e7eb;
-  }
-
-  .interpreter-controls {
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    margin-top: 0.75rem;
-  }
-
-  :global(.dark) .interpreter-controls {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .interpreter-controls h5 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .interpreter-status-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .status-label {
-    font-size: 0.8125rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .status-label {
-    color: #9ca3af;
-  }
-
-  .version-badge {
-    font-size: 0.6875rem;
-    background: #e0e7ff;
-    color: #3730a3;
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .version-badge {
-    background: rgba(99, 102, 241, 0.2);
-    color: #a5b4fc;
-  }
-
-  .interpreter-actions {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .hint-text {
-    font-size: 0.75rem;
-    color: #6b7280;
-    font-family: monospace;
-  }
-
-  :global(.dark) .hint-text {
-    color: #9ca3af;
-  }
-
-  /* Big Brother config styling */
-  .big-brother-config {
-    background: #eff6ff;
-    border-color: #93c5fd;
-  }
-
-  :global(.dark) .big-brother-config {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
-  }
-
-  .big-brother-config h4 {
-    color: #1d4ed8;
-  }
-
-  :global(.dark) .big-brother-config h4 {
-    color: #93c5fd;
-  }
-
-  .big-brother-config .config-desc {
-    color: #1e40af;
-  }
-
-  :global(.dark) .big-brother-config .config-desc {
-    color: #93c5fd;
-  }
-
-  /* Remote Server Section */
-  .remote-server-section {
-    background: rgba(59, 130, 246, 0.05);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: 0.5rem;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.dark) .remote-server-section {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
-  }
-
-  .remote-server-section h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1rem;
-    color: #1e40af;
-  }
-
-  :global(.dark) .remote-server-section h4 {
-    color: #60a5fa;
-  }
-
-  .section-divider {
-    border: none;
-    border-top: 1px solid #e5e7eb;
-    margin: 1.5rem 0;
-  }
-
-  :global(.dark) .section-divider {
-    border-color: #374151;
-  }
-
-  /* Remote Server Styles */
-  .credentials-row {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .credential-field {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .credential-field label {
-    font-size: 0.875rem;
-    color: #4b5563;
-  }
-
-  :global(.dark) .credential-field label {
-    color: #9ca3af;
-  }
-
-  .credential-field input {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #111827;
-  }
-
-  :global(.dark) .credential-field input {
-    background: #374151;
-    border-color: #4b5563;
-    color: #f3f4f6;
-  }
-
-  .credential-field input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-  }
-
-  .remote-actions {
-    flex-wrap: wrap;
-  }
-
-  .test-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-    background: #3b82f6;
-    color: white;
-    border: none;
-  }
-
-  .test-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .test-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .disconnect-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-    background: #f97316;
-    color: white;
-    border: none;
-  }
-
-  .disconnect-btn:hover:not(:disabled) {
-    background: #ea580c;
-  }
-
-  .disconnect-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .test-result {
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .test-result.success {
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-
-  .test-result.error {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  :global(.dark) .test-result.success {
-    background: rgba(34, 197, 94, 0.15);
-    border-color: rgba(34, 197, 94, 0.4);
-  }
-
-  :global(.dark) .test-result.error {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.4);
-  }
-
-  .result-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 500;
-  }
-
-  .test-result.success .result-header {
-    color: #16a34a;
-  }
-
-  .test-result.error .result-header {
-    color: #dc2626;
-  }
-
-  :global(.dark) .test-result.success .result-header {
-    color: #4ade80;
-  }
-
-  :global(.dark) .test-result.error .result-header {
-    color: #f87171;
-  }
-
-  .latency {
-    font-size: 0.75rem;
-    opacity: 0.7;
-  }
-
-  .result-detail {
-    margin-top: 0.5rem;
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-  }
-
-  .result-detail .detail-label {
-    font-weight: 500;
-    color: #6b7280;
-    flex-shrink: 0;
-  }
-
-  :global(.dark) .result-detail .detail-label {
-    color: #9ca3af;
-  }
-
-  .result-detail .detail-value {
-    color: #374151;
-  }
-
-  :global(.dark) .result-detail .detail-value {
-    color: #e5e7eb;
-  }
-
-  .models-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-
-  .result-error {
-    margin-top: 0.5rem;
-    color: #dc2626;
-  }
-
-  :global(.dark) .result-error {
-    color: #f87171;
-  }
-
-  .result-note {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-  }
-
-  .result-note.warning {
-    color: #d97706;
-  }
-
-  :global(.dark) .result-note.warning {
-    color: #fbbf24;
-  }
-
-  /* Local Models Section */
-  .local-models-section {
-    background: #fdf4ff;
-    border: 1px solid #e879f9;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    margin-top: 1.5rem;
-  }
-
-  :global(.dark) .local-models-section {
-    background: rgba(232, 121, 249, 0.1);
-    border-color: rgba(232, 121, 249, 0.3);
-  }
-</style>

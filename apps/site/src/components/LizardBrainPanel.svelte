@@ -142,11 +142,11 @@
   });
 </script>
 
-<div class="lizard-brain-panel">
-  <div class="panel-header">
-    <h3>Lizard Brain Activity</h3>
-    <div class="controls">
-      <select bind:value={selectedDate} on:change={handleDateChange}>
+<div class="card p-4 max-h-[600px] overflow-y-auto">
+  <div class="flex justify-between items-center mb-4">
+    <h3 class="m-0 text-base font-semibold text-white">Lizard Brain Activity</h3>
+    <div class="flex gap-2 items-center">
+      <select class="form-input py-1 px-2 text-sm" bind:value={selectedDate} on:change={handleDateChange}>
         {#if availableDates.length === 0}
           <option value={selectedDate}>{selectedDate}</option>
         {:else}
@@ -157,7 +157,7 @@
       </select>
       {#if $isOwner}
         <button
-          class="trigger-button"
+          class="py-1 px-3 bg-orange-500 hover:bg-orange-600 border-0 rounded text-white text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           on:click={triggerReview}
           disabled={triggeringReview}
         >
@@ -168,77 +168,64 @@
   </div>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="banner banner-error mb-4">{error}</div>
   {/if}
 
   {#if reviewResult}
     <div class="review-result" class:success={reviewResult.success}>
-      <div class="review-header">
+      <div class="font-semibold mb-2" class:text-green-500={reviewResult.success} class:text-orange-500={!reviewResult.success}>
         Big Brother Review {reviewResult.success ? 'Complete' : 'Failed'}
       </div>
       {#if reviewResult.reasoning}
-        <div class="review-reasoning">{reviewResult.reasoning}</div>
+        <div class="text-sm text-gray-400 mb-2">{reviewResult.reasoning}</div>
       {/if}
       {#if reviewResult.suggestions && reviewResult.suggestions.length > 0}
-        <ul class="review-suggestions">
+        <ul class="m-0 pl-5 text-xs text-gray-500">
           {#each reviewResult.suggestions as suggestion}
             <li>{suggestion}</li>
           {/each}
         </ul>
       {/if}
-      <button class="dismiss-button" on:click={() => reviewResult = null}>Dismiss</button>
+      <button class="btn-ghost text-xs mt-2" on:click={() => reviewResult = null}>Dismiss</button>
     </div>
   {/if}
 
   {#if summary}
-    <div class="summary-grid">
-      <div class="stat">
-        <span class="value">{summary.totalCycles}</span>
-        <span class="label">Cycles</span>
-      </div>
-      <div class="stat">
-        <span class="value">{summary.tasksExecuted}</span>
-        <span class="label">Tasks</span>
-      </div>
-      <div class="stat">
-        <span class="value">{(summary.successRate * 100).toFixed(0)}%</span>
-        <span class="label">Success</span>
-      </div>
-      <div class="stat">
-        <span class="value">{summary.bigBrotherReviews}</span>
-        <span class="label">Reviews</span>
-      </div>
-      <div class="stat">
-        <span class="value">{summary.errorsDetected}</span>
-        <span class="label">Errors</span>
-      </div>
+    <div class="grid grid-cols-5 gap-2 mb-4">
+      {#each [
+        { value: summary.totalCycles, label: 'Cycles' },
+        { value: summary.tasksExecuted, label: 'Tasks' },
+        { value: `${(summary.successRate * 100).toFixed(0)}%`, label: 'Success' },
+        { value: summary.bigBrotherReviews, label: 'Reviews' },
+        { value: summary.errorsDetected, label: 'Errors' }
+      ] as stat}
+        <div class="bg-white/5 p-2 rounded text-center">
+          <span class="block text-xl font-semibold text-white">{stat.value}</span>
+          <span class="text-[0.7rem] text-gray-500 uppercase">{stat.label}</span>
+        </div>
+      {/each}
     </div>
   {/if}
 
   {#if loading && entries.length === 0}
-    <div class="loading">Loading...</div>
+    <div class="py-8 text-center text-gray-500">Loading...</div>
   {:else if entries.length === 0}
-    <div class="empty">No activity logged for {selectedDate}</div>
+    <div class="py-8 text-center text-gray-500">No activity logged for {selectedDate}</div>
   {:else}
-    <div class="log-list">
+    <div class="flex flex-col gap-2">
       {#each [...entries].reverse() as entry (entry.id)}
-        <div
-          class="log-entry"
-          class:success={entry.execution?.success}
-          class:error={entry.execution && !entry.execution.success}
-          class:no-task={!entry.decision.task}
-        >
-          <div class="entry-header">
-            <span class="cycle">#{entry.cycleNumber}</span>
-            <span class="time">{formatTime(entry.timestamp)}</span>
+        <div class="log-entry" class:success={entry.execution?.success} class:error={entry.execution && !entry.execution.success} class:no-task={!entry.decision.task}>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="font-semibold text-sm text-white">#{entry.cycleNumber}</span>
+            <span class="text-xs text-gray-500">{formatTime(entry.timestamp)}</span>
             {#if entry.bigBrotherReview}
-              <span class="bb-badge" title={entry.bigBrotherReview.reason}>BB</span>
+              <span class="bg-orange-500 text-white px-1.5 py-0.5 rounded text-[0.65rem] font-semibold" title={entry.bigBrotherReview.reason}>BB</span>
             {/if}
           </div>
 
-          <div class="entry-task">
+          <div class="flex items-center gap-2 mb-1">
             {#if entry.decision.task}
-              <span class="task-name">{entry.decision.task}</span>
+              <span class="font-medium text-blue-400">{entry.decision.task}</span>
               {#if entry.execution}
                 <span class="execution-status" class:success={entry.execution.success}>
                   {entry.execution.success ? 'OK' : 'FAIL'}
@@ -246,23 +233,23 @@
                 </span>
               {/if}
             {:else}
-              <span class="no-task-label">No task</span>
+              <span class="text-gray-500 italic">No task</span>
             {/if}
           </div>
 
-          <div class="entry-reasoning">{entry.decision.reasoning}</div>
+          <div class="text-sm text-gray-400 leading-relaxed">{entry.decision.reasoning}</div>
 
           {#if entry.execution?.error}
-            <div class="entry-error">{entry.execution.error}</div>
+            <div class="text-xs text-red-400 mt-1 p-1 bg-red-500/10 rounded">{entry.execution.error}</div>
           {/if}
 
           {#if entry.bigBrotherReview}
-            <div class="bb-review">
-              <div class="bb-header">
+            <div class="mt-2 p-2 bg-orange-500/10 rounded border-l-2 border-orange-500">
+              <div class="text-xs font-semibold text-orange-500 mb-1">
                 Big Brother ({entry.bigBrotherReview.reason})
               </div>
               {#if entry.bigBrotherReview.suggestions?.length > 0}
-                <ul class="bb-suggestions">
+                <ul class="m-0 pl-4 text-xs text-gray-400">
                   {#each entry.bigBrotherReview.suggestions as suggestion}
                     <li>{suggestion}</li>
                   {/each}
@@ -277,267 +264,33 @@
 </div>
 
 <style>
-  .lizard-brain-panel {
-    background: var(--card-bg, #1a1a1a);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 8px;
-    padding: 1rem;
-    max-height: 600px;
-    overflow-y: auto;
-  }
-
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .panel-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .controls select {
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-secondary, #252525);
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    color: var(--text-primary, #fff);
-    font-size: 0.8rem;
-  }
-
-  .trigger-button {
-    padding: 0.25rem 0.75rem;
-    background: #f97316;
-    border: none;
-    border-radius: 4px;
-    color: white;
-    font-size: 0.8rem;
-    cursor: pointer;
-  }
-
-  .trigger-button:hover {
-    background: #ea580c;
-  }
-
-  .trigger-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-message {
-    background: #ef4444;
-    color: white;
-    padding: 0.5rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    margin-bottom: 1rem;
-  }
-
+  /* Review result card */
   .review-result {
-    background: var(--bg-secondary, #252525);
-    border: 1px solid #f97316;
-    border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 1rem;
+    @apply bg-white/5 rounded-md p-3 mb-4 border border-orange-500;
   }
-
   .review-result.success {
-    border-color: #22c55e;
+    @apply border-green-500;
   }
 
-  .review-header {
-    font-weight: 600;
-    color: #f97316;
-    margin-bottom: 0.5rem;
-  }
-
-  .review-result.success .review-header {
-    color: #22c55e;
-  }
-
-  .review-reasoning {
-    font-size: 0.85rem;
-    color: var(--text-secondary, #ccc);
-    margin-bottom: 0.5rem;
-  }
-
-  .review-suggestions {
-    margin: 0;
-    padding-left: 1.25rem;
-    font-size: 0.8rem;
-    color: var(--text-muted, #999);
-  }
-
-  .dismiss-button {
-    margin-top: 0.5rem;
-    padding: 0.25rem 0.5rem;
-    background: transparent;
-    border: 1px solid var(--border-color, #333);
-    border-radius: 4px;
-    color: var(--text-muted, #999);
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  .summary-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .stat {
-    background: var(--bg-secondary, #252525);
-    padding: 0.5rem;
-    border-radius: 4px;
-    text-align: center;
-  }
-
-  .stat .value {
-    display: block;
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--text-primary, #fff);
-  }
-
-  .stat .label {
-    font-size: 0.7rem;
-    color: var(--text-muted, #999);
-    text-transform: uppercase;
-  }
-
-  .loading,
-  .empty {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted, #999);
-  }
-
-  .log-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
+  /* Log entry with colored left border */
   .log-entry {
-    background: var(--bg-secondary, #252525);
-    border-radius: 6px;
-    padding: 0.75rem;
-    border-left: 3px solid var(--border-color, #333);
+    @apply bg-white/5 rounded-md p-3 border-l-[3px] border-l-gray-600;
   }
-
   .log-entry.success {
-    border-left-color: #22c55e;
+    @apply border-l-green-500;
   }
-
   .log-entry.error {
-    border-left-color: #ef4444;
+    @apply border-l-red-500;
   }
-
   .log-entry.no-task {
-    border-left-color: #6b7280;
-    opacity: 0.7;
+    @apply border-l-gray-500 opacity-70;
   }
 
-  .entry-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .cycle {
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: var(--text-primary, #fff);
-  }
-
-  .time {
-    font-size: 0.75rem;
-    color: var(--text-muted, #999);
-  }
-
-  .bb-badge {
-    background: #f97316;
-    color: white;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-    font-size: 0.65rem;
-    font-weight: 600;
-  }
-
-  .entry-task {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .task-name {
-    font-weight: 500;
-    color: #3b82f6;
-  }
-
-  .no-task-label {
-    color: var(--text-muted, #999);
-    font-style: italic;
-  }
-
+  /* Execution status badge */
   .execution-status {
-    font-size: 0.75rem;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-    background: #ef4444;
-    color: white;
+    @apply text-xs px-1.5 py-0.5 rounded bg-red-500 text-white;
   }
-
   .execution-status.success {
-    background: #22c55e;
-  }
-
-  .entry-reasoning {
-    font-size: 0.8rem;
-    color: var(--text-secondary, #ccc);
-    line-height: 1.4;
-  }
-
-  .entry-error {
-    font-size: 0.75rem;
-    color: #ef4444;
-    margin-top: 0.25rem;
-    padding: 0.25rem;
-    background: rgba(239, 68, 68, 0.1);
-    border-radius: 3px;
-  }
-
-  .bb-review {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: rgba(249, 115, 22, 0.1);
-    border-radius: 4px;
-    border-left: 2px solid #f97316;
-  }
-
-  .bb-header {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #f97316;
-    margin-bottom: 0.25rem;
-  }
-
-  .bb-suggestions {
-    margin: 0;
-    padding-left: 1rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary, #ccc);
+    @apply bg-green-500;
   }
 </style>

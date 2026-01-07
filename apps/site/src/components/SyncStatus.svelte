@@ -329,12 +329,12 @@
 {#if compact}
   <!-- Compact: just icon and count -->
   <button
-    class="sync-compact"
+    class="inline-flex items-center gap-1 px-2 py-1 border-none bg-transparent cursor-pointer text-base relative disabled:cursor-wait"
     on:click={handleOpenSyncManager}
     disabled={syncing}
     title={`Sync: ${getStatusLabel()}${showUpdateNotice ? ' - Update available!' : ''}`}
   >
-    <span class="sync-icon" class:spinning={syncing} style="color: {getStatusColor()}">
+    <span class="text-base {syncing ? 'animate-spin' : ''}" style="color: {getStatusColor()}">
       {#if syncing}
         ↻
       {:else if conflicts}
@@ -346,56 +346,60 @@
       {/if}
     </span>
     {#if state.pendingCount > 0 || state.conflictCount > 0}
-      <span class="sync-badge">{state.pendingCount + state.conflictCount}</span>
+      <span class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 bg-red-500 text-white text-[0.625rem] font-semibold rounded-full flex items-center justify-center">{state.pendingCount + state.conflictCount}</span>
     {:else if showUpdateNotice}
-      <span class="sync-badge update-badge">⬆️</span>
+      <span class="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 bg-green-500 text-[0.5rem] rounded-full flex items-center justify-center">⬆️</span>
     {/if}
   </button>
 {:else}
   <!-- Full: detailed sync status -->
-  <div class="sync-status">
-    <div class="sync-header">
-      <h4>Sync Status</h4>
-      <button class="sync-btn" on:click={handleOpenSyncManager} disabled={syncing}>
+  <div class="p-4 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg">
+    <div class="flex justify-between items-center mb-3">
+      <h4 class="m-0 text-sm font-semibold text-gray-700 dark:text-gray-200">Sync Status</h4>
+      <button
+        class="px-2 py-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md text-xs cursor-pointer flex items-center gap-1 text-gray-900 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-wait"
+        on:click={handleOpenSyncManager}
+        disabled={syncing}
+      >
         {#if syncing}
-          <span class="spinning">↻</span> Syncing...
+          <span class="inline-block animate-spin">↻</span> Syncing...
         {:else}
           ↻ Sync Now
         {/if}
       </button>
     </div>
 
-    <div class="sync-info">
-      <div class="status-row">
-        <span class="status-indicator" style="background-color: {getStatusColor()}"></span>
-        <span class="status-label">{getStatusLabel()}</span>
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full" style="background-color: {getStatusColor()}"></span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{getStatusLabel()}</span>
       </div>
 
-      <div class="info-row">
-        <span class="info-label">Last sync:</span>
-        <span class="info-value">{formatTimestamp(state.lastSyncTimestamp)}</span>
+      <div class="flex justify-between text-xs">
+        <span class="text-gray-500">Last sync:</span>
+        <span class="text-gray-700 dark:text-gray-300">{formatTimestamp(state.lastSyncTimestamp)}</span>
       </div>
 
       <!-- Remote Server Status -->
       {#if isRemoteConfigured && remoteServerUrl}
-        <div class="info-row remote-server">
-          <span class="info-label">Remote:</span>
-          <span class="info-value remote-url">
-            <span class="connected-icon">🔗</span>
+        <div class="flex justify-between text-xs">
+          <span class="text-gray-500">Remote:</span>
+          <span class="flex items-center gap-1 font-mono text-green-500 dark:text-green-400">
+            <span class="text-xs">🔗</span>
             {new URL(remoteServerUrl).hostname}
           </span>
         </div>
         {#if lastRemoteSync}
-          <div class="info-row">
-            <span class="info-label">Remote sync:</span>
-            <span class="info-value">{formatTimestamp(lastRemoteSync)}</span>
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-500">Remote sync:</span>
+            <span class="text-gray-700 dark:text-gray-300">{formatTimestamp(lastRemoteSync)}</span>
           </div>
         {/if}
       {:else if isMobile}
-        <div class="info-row not-configured">
-          <span class="info-label">Remote:</span>
-          <span class="info-value">
-            <button class="link-btn config-link" on:click={handleOpenSyncManager}>
+        <div class="flex justify-between text-xs">
+          <span class="text-gray-500">Remote:</span>
+          <span class="text-gray-400">
+            <button class="bg-transparent border-none text-blue-500 cursor-pointer underline text-xs p-0" on:click={handleOpenSyncManager}>
               Configure server
             </button>
           </span>
@@ -403,44 +407,44 @@
       {/if}
 
       {#if state.pendingCount > 0}
-        <div class="info-row warning">
-          <span class="info-label">Pending:</span>
-          <span class="info-value">{state.pendingCount} change{state.pendingCount > 1 ? 's' : ''}</span>
+        <div class="flex justify-between text-xs">
+          <span class="text-gray-500">Pending:</span>
+          <span class="text-amber-500">{state.pendingCount} change{state.pendingCount > 1 ? 's' : ''}</span>
         </div>
       {/if}
 
       {#if state.conflictCount > 0}
-        <div class="info-row error">
-          <span class="info-label">Conflicts:</span>
-          <span class="info-value">
+        <div class="flex justify-between text-xs">
+          <span class="text-gray-500">Conflicts:</span>
+          <span class="text-red-500">
             {state.conflictCount}
-            <button class="link-btn" on:click={handleShowConflicts}>Resolve</button>
+            <button class="bg-transparent border-none text-blue-500 cursor-pointer underline text-xs p-0 ml-2" on:click={handleShowConflicts}>Resolve</button>
           </span>
         </div>
       {/if}
 
       {#if state.lastSyncError}
-        <div class="error-message">{state.lastSyncError}</div>
+        <div class="text-xs text-red-500 p-2 bg-red-50 dark:bg-red-900/50 rounded">{state.lastSyncError}</div>
       {/if}
 
       <!-- App Update Available (mobile only) -->
       {#if isMobile && showUpdateNotice && appUpdate?.latestMobileVersion}
-        <div class="update-available">
-          <div class="update-header">
-            <span class="update-icon">⬆️</span>
-            <span class="update-text">Update Available</span>
+        <div class="mt-3 p-3 bg-gradient-to-br from-green-500/10 to-emerald-500/10 dark:from-green-500/15 dark:to-emerald-500/15 border border-green-500/30 rounded-lg">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-base">⬆️</span>
+            <span class="text-sm font-semibold text-green-600 dark:text-green-400">Update Available</span>
           </div>
-          <div class="update-details">
-            <span class="update-version">v{appUpdate.currentVersion} → v{appUpdate.latestMobileVersion.version}</span>
+          <div class="text-xs text-gray-500 mb-2">
+            <span class="font-mono">v{appUpdate.currentVersion} → v{appUpdate.latestMobileVersion.version}</span>
             {#if appUpdate.latestMobileVersion.fileSize}
-              <span class="update-size">({formatFileSize(appUpdate.latestMobileVersion.fileSize)})</span>
+              <span class="ml-2 text-gray-400">({formatFileSize(appUpdate.latestMobileVersion.fileSize)})</span>
             {/if}
           </div>
-          <div class="update-actions">
-            <button class="btn-update" on:click={() => showUpdateModal = true}>
+          <div class="flex gap-2">
+            <button class="flex-1 py-1.5 px-2 bg-green-500 text-white border-none rounded text-xs cursor-pointer font-medium hover:bg-green-600" on:click={() => showUpdateModal = true}>
               View Details
             </button>
-            <button class="btn-dismiss" on:click={handleDismissUpdate}>
+            <button class="py-1.5 px-2 bg-transparent text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded text-xs cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" on:click={handleDismissUpdate}>
               Later
             </button>
           </div>
@@ -449,9 +453,9 @@
 
       <!-- App Version (mobile only, when no update) -->
       {#if isMobile && !showUpdateNotice && appUpdate?.currentVersion}
-        <div class="info-row">
-          <span class="info-label">App version:</span>
-          <span class="info-value">{appUpdate.currentVersion}</span>
+        <div class="flex justify-between text-xs">
+          <span class="text-gray-500">App version:</span>
+          <span class="text-gray-700 dark:text-gray-300">{appUpdate.currentVersion}</span>
         </div>
       {/if}
     </div>
@@ -460,32 +464,32 @@
 
 <!-- Conflict Resolution Modal -->
 {#if showConflictModal}
-  <div class="modal-overlay" on:click={() => showConflictModal = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <div class="modal-header">
-        <h3>Resolve Conflicts</h3>
-        <button class="close-btn" on:click={() => showConflictModal = false}>×</button>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showConflictModal = false}>
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[500px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+      <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">Resolve Conflicts</h3>
+        <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showConflictModal = false}>×</button>
       </div>
 
-      <div class="conflict-list">
+      <div class="p-4 overflow-y-auto">
         {#each conflictList as memory}
-          <div class="conflict-item">
-            <div class="conflict-info">
-              <span class="conflict-type">{memory.type}</span>
-              <span class="conflict-id">{memory.id.slice(0, 8)}...</span>
+          <div class="p-3 border border-gray-200 dark:border-gray-700 rounded-md mb-3">
+            <div class="flex gap-2 mb-2">
+              <span class="text-xs px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300">{memory.type}</span>
+              <span class="text-xs text-gray-500 font-mono">{memory.id.slice(0, 8)}...</span>
             </div>
-            <div class="conflict-preview">
+            <div class="text-xs text-gray-500 mb-3 leading-relaxed">
               {memory.content.slice(0, 100)}...
             </div>
-            <div class="conflict-actions">
+            <div class="flex gap-2">
               <button
-                class="btn-local"
+                class="flex-1 py-1.5 px-2 bg-amber-500 text-white border-none rounded text-xs cursor-pointer hover:bg-amber-600"
                 on:click={() => handleResolve(memory.id, 'keep-local')}
               >
                 Keep Local
               </button>
               <button
-                class="btn-server"
+                class="flex-1 py-1.5 px-2 bg-blue-500 text-white border-none rounded text-xs cursor-pointer hover:bg-blue-600"
                 on:click={() => handleResolve(memory.id, 'keep-server')}
               >
                 Keep Server
@@ -493,7 +497,7 @@
             </div>
           </div>
         {:else}
-          <p class="no-conflicts">No conflicts to resolve</p>
+          <p class="text-center text-gray-500 py-8">No conflicts to resolve</p>
         {/each}
       </div>
     </div>
@@ -502,58 +506,58 @@
 
 <!-- App Update Modal -->
 {#if showUpdateModal && appUpdate?.latestMobileVersion}
-  <div class="modal-overlay" on:click={() => showUpdateModal = false}>
-    <div class="modal-content update-modal" on:click|stopPropagation>
-      <div class="modal-header">
-        <h3>App Update Available</h3>
-        <button class="close-btn" on:click={() => showUpdateModal = false}>×</button>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showUpdateModal = false}>
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+      <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">App Update Available</h3>
+        <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showUpdateModal = false}>×</button>
       </div>
 
-      <div class="update-modal-body">
-        <div class="version-info">
-          <div class="version-badge current">
-            <span class="version-label">Current</span>
-            <span class="version-number">v{appUpdate.currentVersion}</span>
+      <div class="p-6">
+        <div class="flex items-center justify-center gap-4 mb-6">
+          <div class="text-center p-3 rounded-lg bg-gray-500/10 border border-gray-500/20">
+            <span class="block text-[0.625rem] uppercase text-gray-500 mb-1">Current</span>
+            <span class="text-base font-semibold font-mono text-gray-700 dark:text-gray-200">v{appUpdate.currentVersion}</span>
           </div>
-          <span class="version-arrow">→</span>
-          <div class="version-badge new">
-            <span class="version-label">New</span>
-            <span class="version-number">v{appUpdate.latestMobileVersion.version}</span>
+          <span class="text-xl text-gray-400">→</span>
+          <div class="text-center p-3 rounded-lg bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/30">
+            <span class="block text-[0.625rem] uppercase text-gray-500 mb-1">New</span>
+            <span class="text-base font-semibold font-mono text-green-600 dark:text-green-400">v{appUpdate.latestMobileVersion.version}</span>
           </div>
         </div>
 
         {#if appUpdate.latestMobileVersion.releaseNotes && appUpdate.latestMobileVersion.releaseNotes !== 'No release notes provided.'}
-          <div class="release-notes">
-            <h4>What's New</h4>
-            <p>{appUpdate.latestMobileVersion.releaseNotes}</p>
+          <div class="mb-4 p-3 bg-black/[0.02] dark:bg-white/[0.03] rounded-md">
+            <h4 class="m-0 mb-2 text-xs font-semibold text-gray-700 dark:text-gray-200">What's New</h4>
+            <p class="m-0 text-[0.8125rem] leading-relaxed text-gray-500">{appUpdate.latestMobileVersion.releaseNotes}</p>
           </div>
         {/if}
 
-        <div class="update-meta">
+        <div class="flex flex-col gap-1 mb-4">
           {#if appUpdate.latestMobileVersion.fileSize}
-            <div class="meta-item">
-              <span class="meta-label">Download size:</span>
-              <span class="meta-value">{formatFileSize(appUpdate.latestMobileVersion.fileSize)}</span>
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500">Download size:</span>
+              <span class="text-gray-700 dark:text-gray-300">{formatFileSize(appUpdate.latestMobileVersion.fileSize)}</span>
             </div>
           {/if}
           {#if appUpdate.lastChecked}
-            <div class="meta-item">
-              <span class="meta-label">Checked:</span>
-              <span class="meta-value">{formatTimestamp(appUpdate.lastChecked)}</span>
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500">Checked:</span>
+              <span class="text-gray-700 dark:text-gray-300">{formatTimestamp(appUpdate.lastChecked)}</span>
             </div>
           {/if}
         </div>
 
-        <div class="update-modal-actions">
-          <button class="btn-download" on:click={handleDownloadUpdate}>
+        <div class="flex flex-col gap-2 mb-4">
+          <button class="w-full py-3 px-4 bg-gradient-to-br from-green-500 to-green-600 text-white border-none rounded-lg text-sm font-semibold cursor-pointer hover:from-green-600 hover:to-green-700" on:click={handleDownloadUpdate}>
             Download Update
           </button>
-          <button class="btn-later" on:click={handleDismissUpdate}>
+          <button class="w-full py-2 px-4 bg-transparent text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded-lg text-sm cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" on:click={handleDismissUpdate}>
             Remind Me Later
           </button>
         </div>
 
-        <p class="update-note">
+        <p class="m-0 text-[0.6875rem] text-gray-400 text-center leading-relaxed">
           The download will open in your browser. After downloading, open the APK to install.
         </p>
       </div>
@@ -572,816 +576,56 @@
 
 <!-- Sync Report Modal - ALWAYS shows after sync to prevent silent failures -->
 {#if showSyncReport && syncReport}
-  <div class="modal-overlay" on:click={() => showSyncReport = false}>
-    <div class="modal-content sync-report-modal" on:click|stopPropagation>
-      <div class="modal-header">
-        <h3>{syncReport.success ? '✅ Sync Complete' : '❌ Sync Failed'}</h3>
-        <button class="close-btn" on:click={() => showSyncReport = false}>×</button>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showSyncReport = false}>
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+      <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">{syncReport.success ? '✅ Sync Complete' : '❌ Sync Failed'}</h3>
+        <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showSyncReport = false}>×</button>
       </div>
 
-      <div class="sync-report-content">
+      <div class="py-4 px-4">
         {#if syncReport.success}
-          <div class="report-stats">
+          <div class="bg-green-500/10 rounded-lg p-4 mb-4">
             {#if syncReport.profileFiles !== undefined}
-              <div class="stat-item">
-                <span class="stat-label">Profile files imported:</span>
-                <span class="stat-value">{syncReport.profileFiles}</span>
+              <div class="flex justify-between py-2 border-b border-green-500/20 last:border-b-0">
+                <span class="text-gray-500 dark:text-gray-400">Profile files imported:</span>
+                <span class="font-semibold text-green-500 dark:text-green-400">{syncReport.profileFiles}</span>
               </div>
             {/if}
             {#if syncReport.memoriesImported !== undefined}
-              <div class="stat-item">
-                <span class="stat-label">Memories synced:</span>
-                <span class="stat-value">{syncReport.memoriesImported}</span>
+              <div class="flex justify-between py-2 border-b border-green-500/20 last:border-b-0">
+                <span class="text-gray-500 dark:text-gray-400">Memories synced:</span>
+                <span class="font-semibold text-green-500 dark:text-green-400">{syncReport.memoriesImported}</span>
               </div>
             {/if}
             {#if syncReport.credentialsSynced}
-              <div class="stat-item">
-                <span class="stat-label">Credentials:</span>
-                <span class="stat-value">✓ Synced</span>
+              <div class="flex justify-between py-2">
+                <span class="text-gray-500 dark:text-gray-400">Credentials:</span>
+                <span class="font-semibold text-green-500 dark:text-green-400">✓ Synced</span>
               </div>
             {/if}
           </div>
-          <p class="sync-success-message">Your profile has been synced successfully from the remote server.</p>
+          <p class="text-green-500 dark:text-green-400 text-sm text-center m-0">Your profile has been synced successfully from the remote server.</p>
         {:else}
-          <div class="error-details">
-            <p class="error-label">Error:</p>
-            <p class="error-message">{syncReport.error || 'Unknown error occurred'}</p>
+          <div class="bg-red-500/10 rounded-lg p-4 mb-4">
+            <p class="font-semibold text-red-500 dark:text-red-400 m-0 mb-2">Error:</p>
+            <p class="text-red-500 dark:text-red-400 m-0 font-mono text-sm break-words">{syncReport.error || 'Unknown error occurred'}</p>
           </div>
-          <p class="sync-error-hint">
+          <p class="text-gray-500 text-sm text-center m-0">
             Please check your sync server settings and try again.
           </p>
         {/if}
 
-        <div class="sync-timestamp">
+        <div class="text-center text-xs text-gray-400 mt-4 pt-4 border-t border-gray-400/20">
           Completed: {new Date(syncReport.timestamp).toLocaleString()}
         </div>
       </div>
 
-      <div class="modal-actions">
-        <button class="btn-primary" on:click={() => showSyncReport = false}>
+      <div class="flex justify-center pt-4 pb-4">
+        <button class="btn-primary px-8" on:click={() => showSyncReport = false}>
           OK
         </button>
       </div>
     </div>
   </div>
 {/if}
-
-<style>
-  .sync-compact {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.5rem;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    font-size: 1rem;
-    position: relative;
-  }
-
-  .sync-compact:disabled {
-    cursor: wait;
-  }
-
-  .sync-icon {
-    font-size: 1rem;
-  }
-
-  .sync-icon.spinning {
-    animation: spin 1s linear infinite;
-  }
-
-  .sync-badge {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    background: #ef4444;
-    color: white;
-    font-size: 0.625rem;
-    font-weight: 600;
-    border-radius: 9999px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .sync-badge.update-badge {
-    background: #22c55e;
-    font-size: 0.5rem;
-    min-width: 14px;
-    height: 14px;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-
-  .sync-status {
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .sync-status {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .sync-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
-  }
-
-  .sync-header h4 {
-    margin: 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) .sync-header h4 {
-    color: #e5e7eb;
-  }
-
-  .sync-btn {
-    padding: 0.25rem 0.5rem;
-    border: 1px solid #d1d5db;
-    background: white;
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  :global(.dark) .sync-btn {
-    background: #374151;
-    border-color: #4b5563;
-    color: #e5e7eb;
-  }
-
-  .sync-btn:hover:not(:disabled) {
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .sync-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .sync-btn:disabled {
-    opacity: 0.5;
-    cursor: wait;
-  }
-
-  .sync-btn .spinning {
-    display: inline-block;
-    animation: spin 1s linear infinite;
-  }
-
-  .sync-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .status-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  :global(.dark) .status-label {
-    color: #e5e7eb;
-  }
-
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-  }
-
-  .info-label {
-    color: #6b7280;
-  }
-
-  .info-value {
-    color: #374151;
-  }
-
-  :global(.dark) .info-value {
-    color: #d1d5db;
-  }
-
-  .info-row.warning .info-value {
-    color: #f59e0b;
-  }
-
-  .info-row.error .info-value {
-    color: #ef4444;
-  }
-
-  .link-btn {
-    background: none;
-    border: none;
-    color: #3b82f6;
-    cursor: pointer;
-    text-decoration: underline;
-    font-size: 0.75rem;
-    padding: 0;
-    margin-left: 0.5rem;
-  }
-
-  .error-message {
-    font-size: 0.75rem;
-    color: #ef4444;
-    padding: 0.5rem;
-    background: #fef2f2;
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #450a0a;
-  }
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 0.5rem;
-    width: 90%;
-    max-width: 500px;
-    max-height: 80vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  :global(.dark) .modal-content {
-    background: #1f2937;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .modal-header {
-    border-color: #374151;
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    color: #111827;
-  }
-
-  :global(.dark) .modal-header h3 {
-    color: #f9fafb;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    color: #6b7280;
-    cursor: pointer;
-    line-height: 1;
-  }
-
-  .conflict-list {
-    padding: 1rem;
-    overflow-y: auto;
-  }
-
-  .conflict-item {
-    padding: 0.75rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.375rem;
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .conflict-item {
-    border-color: #374151;
-  }
-
-  .conflict-info {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .conflict-type {
-    font-size: 0.75rem;
-    padding: 0.125rem 0.375rem;
-    background: #e5e7eb;
-    border-radius: 0.25rem;
-    color: #374151;
-  }
-
-  :global(.dark) .conflict-type {
-    background: #374151;
-    color: #d1d5db;
-  }
-
-  .conflict-id {
-    font-size: 0.75rem;
-    color: #6b7280;
-    font-family: monospace;
-  }
-
-  .conflict-preview {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-bottom: 0.75rem;
-    line-height: 1.4;
-  }
-
-  .conflict-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .conflict-actions button {
-    flex: 1;
-    padding: 0.375rem 0.5rem;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  .btn-local {
-    background: #f59e0b;
-    color: white;
-  }
-
-  .btn-local:hover {
-    background: #d97706;
-  }
-
-  .btn-server {
-    background: #3b82f6;
-    color: white;
-  }
-
-  .btn-server:hover {
-    background: #2563eb;
-  }
-
-  .no-conflicts {
-    text-align: center;
-    color: #6b7280;
-    padding: 2rem;
-  }
-
-  /* Update Available Notification */
-  .update-available {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .update-available {
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(16, 185, 129, 0.15) 100%);
-  }
-
-  .update-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .update-icon {
-    font-size: 1rem;
-  }
-
-  .update-text {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #16a34a;
-  }
-
-  :global(.dark) .update-text {
-    color: #4ade80;
-  }
-
-  .update-details {
-    font-size: 0.75rem;
-    color: #6b7280;
-    margin-bottom: 0.5rem;
-  }
-
-  .update-version {
-    font-family: monospace;
-  }
-
-  .update-size {
-    margin-left: 0.5rem;
-    color: #9ca3af;
-  }
-
-  .update-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .btn-update {
-    flex: 1;
-    padding: 0.375rem 0.5rem;
-    background: #22c55e;
-    color: white;
-    border: none;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .btn-update:hover {
-    background: #16a34a;
-  }
-
-  .btn-dismiss {
-    padding: 0.375rem 0.5rem;
-    background: transparent;
-    color: #6b7280;
-    border: 1px solid #d1d5db;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-  }
-
-  :global(.dark) .btn-dismiss {
-    border-color: #4b5563;
-    color: #9ca3af;
-  }
-
-  .btn-dismiss:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .btn-dismiss:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  /* Update Modal */
-  .update-modal {
-    max-width: 400px;
-  }
-
-  .update-modal-body {
-    padding: 1.5rem;
-  }
-
-  .version-info {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .version-badge {
-    text-align: center;
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-  }
-
-  .version-badge.current {
-    background: rgba(107, 114, 128, 0.1);
-    border: 1px solid rgba(107, 114, 128, 0.2);
-  }
-
-  .version-badge.new {
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-
-  .version-label {
-    display: block;
-    font-size: 0.625rem;
-    text-transform: uppercase;
-    color: #6b7280;
-    margin-bottom: 0.25rem;
-  }
-
-  .version-number {
-    font-size: 1rem;
-    font-weight: 600;
-    font-family: monospace;
-    color: #374151;
-  }
-
-  :global(.dark) .version-number {
-    color: #e5e7eb;
-  }
-
-  .version-badge.new .version-number {
-    color: #16a34a;
-  }
-
-  :global(.dark) .version-badge.new .version-number {
-    color: #4ade80;
-  }
-
-  .version-arrow {
-    font-size: 1.25rem;
-    color: #9ca3af;
-  }
-
-  .release-notes {
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.375rem;
-  }
-
-  :global(.dark) .release-notes {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .release-notes h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) .release-notes h4 {
-    color: #e5e7eb;
-  }
-
-  .release-notes p {
-    margin: 0;
-    font-size: 0.8125rem;
-    line-height: 1.5;
-    color: #6b7280;
-  }
-
-  .update-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 1rem;
-  }
-
-  .meta-item {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-  }
-
-  .meta-label {
-    color: #6b7280;
-  }
-
-  .meta-value {
-    color: #374151;
-  }
-
-  :global(.dark) .meta-value {
-    color: #d1d5db;
-  }
-
-  .update-modal-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .btn-download {
-    width: 100%;
-    padding: 0.75rem 1rem;
-    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-    color: white;
-    border: none;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .btn-download:hover {
-    background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-  }
-
-  .btn-later {
-    width: 100%;
-    padding: 0.5rem 1rem;
-    background: transparent;
-    color: #6b7280;
-    border: 1px solid #d1d5db;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-  }
-
-  :global(.dark) .btn-later {
-    border-color: #4b5563;
-    color: #9ca3af;
-  }
-
-  .btn-later:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .btn-later:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .update-note {
-    margin: 0;
-    font-size: 0.6875rem;
-    color: #9ca3af;
-    text-align: center;
-    line-height: 1.4;
-  }
-
-  /* Remote Server Status */
-  .remote-server .info-value {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .connected-icon {
-    font-size: 0.75rem;
-  }
-
-  .remote-url {
-    font-family: monospace;
-    color: #22c55e;
-  }
-
-  :global(.dark) .remote-url {
-    color: #4ade80;
-  }
-
-  .not-configured .info-value {
-    color: #9ca3af;
-  }
-
-  .config-link {
-    color: #3b82f6;
-    font-size: 0.75rem;
-  }
-
-  .config-link:hover {
-    text-decoration: underline;
-  }
-
-  /* Sync Report Modal */
-  .sync-report-modal {
-    max-width: 400px;
-  }
-
-  .sync-report-content {
-    padding: 1rem 0;
-  }
-
-  .report-stats {
-    background: rgba(34, 197, 94, 0.1);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .stat-item {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(34, 197, 94, 0.2);
-  }
-
-  .stat-item:last-child {
-    border-bottom: none;
-  }
-
-  .stat-label {
-    color: #6b7280;
-  }
-
-  .stat-value {
-    font-weight: 600;
-    color: #22c55e;
-  }
-
-  :global(.dark) .stat-label {
-    color: #9ca3af;
-  }
-
-  :global(.dark) .stat-value {
-    color: #4ade80;
-  }
-
-  .sync-success-message {
-    color: #22c55e;
-    font-size: 0.875rem;
-    text-align: center;
-    margin: 0;
-  }
-
-  :global(.dark) .sync-success-message {
-    color: #4ade80;
-  }
-
-  .error-details {
-    background: rgba(239, 68, 68, 0.1);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .error-label {
-    font-weight: 600;
-    color: #ef4444;
-    margin: 0 0 0.5rem 0;
-  }
-
-  .error-message {
-    color: #ef4444;
-    margin: 0;
-    font-family: monospace;
-    font-size: 0.875rem;
-    word-break: break-word;
-  }
-
-  :global(.dark) .error-label,
-  :global(.dark) .error-message {
-    color: #f87171;
-  }
-
-  .sync-error-hint {
-    color: #6b7280;
-    font-size: 0.875rem;
-    text-align: center;
-    margin: 0;
-  }
-
-  .sync-timestamp {
-    text-align: center;
-    font-size: 0.75rem;
-    color: #9ca3af;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(156, 163, 175, 0.2);
-  }
-
-  .modal-actions {
-    display: flex;
-    justify-content: center;
-    padding-top: 1rem;
-  }
-
-  .btn-primary {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 0.5rem 2rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-primary:hover {
-    background: #2563eb;
-  }
-</style>

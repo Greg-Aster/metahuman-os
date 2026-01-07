@@ -109,20 +109,20 @@
   }
 </script>
 
-<div class="chat-settings">
-  <h3>Chat Behavior Settings</h3>
+<div class="p-4 text-gray-200">
+  <h3 class="m-0 mb-4 text-xl text-white">Chat Behavior Settings</h3>
 
   {#if loading}
-    <p class="loading">Loading settings...</p>
+    <p class="text-gray-500 text-sm italic">Loading settings...</p>
   {:else}
-    <div class="scope-info">
-      <p>
+    <div class="bg-white/5 rounded-md p-3 mb-4">
+      <p class="my-1 text-sm">
         <strong>Scope:</strong> {scope?.scope === 'user' ? 'User-specific' : 'Global'}
         {#if scope?.hasUserOverride}
-          <span class="badge">Custom</span>
+          <span class="bg-purple-500 text-white py-0.5 px-2 rounded-full text-xs ml-2">Custom</span>
         {/if}
       </p>
-      <p class="help-text">
+      <p class="text-gray-500 text-sm my-1">
         {scope?.scope === 'user'
           ? 'Your personal chat settings (overrides global defaults)'
           : 'Global settings (applies to all users without custom settings)'}
@@ -130,16 +130,16 @@
     </div>
 
     <!-- Presets -->
-    <div class="presets">
-      <h4>Quick Presets</h4>
-      <div class="preset-buttons">
+    <div class="mb-6">
+      <h4 class="mt-6 mb-3 text-base text-gray-300">Quick Presets</h4>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
         <button
           class="preset-btn"
           on:click={() => applyPreset('focused')}
           disabled={applyingPreset}
         >
           🎯 Focused
-          <span class="preset-desc">Prioritize current question</span>
+          <span class="text-xs text-gray-500">Prioritize current question</span>
         </button>
         <button
           class="preset-btn"
@@ -147,7 +147,7 @@
           disabled={applyingPreset}
         >
           ⚖️ Balanced
-          <span class="preset-desc">Equal context & responsiveness</span>
+          <span class="text-xs text-gray-500">Equal context & responsiveness</span>
         </button>
         <button
           class="preset-btn"
@@ -155,7 +155,7 @@
           disabled={applyingPreset}
         >
           🌊 Immersive
-          <span class="preset-desc">Deep context awareness</span>
+          <span class="text-xs text-gray-500">Deep context awareness</span>
         </button>
         <button
           class="preset-btn"
@@ -163,195 +163,124 @@
           disabled={applyingPreset}
         >
           ✨ Minimal
-          <span class="preset-desc">Clean, direct responses</span>
+          <span class="text-xs text-gray-500">Clean, direct responses</span>
         </button>
       </div>
     </div>
 
     <!-- Custom Settings -->
-    <div class="custom-settings">
-      <h4>Custom Settings</h4>
+    <div>
+      <h4 class="mt-6 mb-3 text-base text-gray-300">Custom Settings</h4>
 
       <!-- Context Influence -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Context Influence: {contextInfluence.toFixed(1)}
-          <span class="help">How much weight to give memory context</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">How much weight to give memory context</span>
         </label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.1"
-          bind:value={contextInfluence}
-          on:change={saveSettings}
-        />
+        <input type="range" min="0" max="1" step="0.1" bind:value={contextInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- History Influence -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           History Influence: {historyInfluence.toFixed(1)}
-          <span class="help">How much weight to give conversation history</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">How much weight to give conversation history</span>
         </label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.1"
-          bind:value={historyInfluence}
-          on:change={saveSettings}
-        />
+        <input type="range" min="0" max="1" step="0.1" bind:value={historyInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Facet Influence -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Facet Influence: {facetInfluence.toFixed(1)}
-          <span class="help">How strongly to apply persona facet traits</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">How strongly to apply persona facet traits</span>
         </label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.1"
-          bind:value={facetInfluence}
-          on:change={saveSettings}
-        />
+        <input type="range" min="0" max="1" step="0.1" bind:value={facetInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Temperature -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Temperature: {temperature.toFixed(2)}
-          <span class="help">Model creativity (0 = deterministic, 1 = very creative)</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Model creativity (0 = deterministic, 1 = very creative)</span>
         </label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          bind:value={temperature}
-          on:change={saveSettings}
-        />
+        <input type="range" min="0" max="1" step="0.05" bind:value={temperature} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Semantic Search Threshold -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Memory Relevance: {semanticSearchThreshold.toFixed(2)}
-          <span class="help">Minimum similarity for memory retrieval</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Minimum similarity for memory retrieval</span>
         </label>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          bind:value={semanticSearchThreshold}
-          on:change={saveSettings}
-        />
+        <input type="range" min="0" max="1" step="0.05" bind:value={semanticSearchThreshold} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Max Context Chars -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Max Context Size: {maxContextChars} chars
-          <span class="help">Maximum context characters in prompts</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum context characters in prompts</span>
         </label>
-        <input
-          type="range"
-          min="200"
-          max="4000"
-          step="100"
-          bind:value={maxContextChars}
-          on:change={saveSettings}
-        />
+        <input type="range" min="200" max="4000" step="100" bind:value={maxContextChars} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Max History Messages -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Max History: {maxHistoryMessages} messages
-          <span class="help">Maximum conversation history to retain</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum conversation history to retain</span>
         </label>
-        <input
-          type="range"
-          min="5"
-          max="100"
-          step="5"
-          bind:value={maxHistoryMessages}
-          on:change={saveSettings}
-        />
+        <input type="range" min="5" max="100" step="5" bind:value={maxHistoryMessages} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- User Input Priority -->
       <div class="setting-group">
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            bind:checked={userInputPriority}
-            on:change={saveSettings}
-          />
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" bind:checked={userInputPriority} on:change={saveSettings} class="w-[18px] h-[18px] cursor-pointer" />
           Prioritize User Input
-          <span class="help">Always focus on current question over context</span>
+          <span class="block text-xs text-gray-500 font-normal">Always focus on current question over context</span>
         </label>
       </div>
 
       <!-- Inner Dialog History Settings -->
-      <h4 style="margin-top: 1.5rem;">Inner Dialog Display</h4>
+      <h4 class="mt-6 mb-3 text-base text-gray-300">Inner Dialog Display</h4>
 
       <!-- Inner Dialog History Limit -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Inner Dialog Messages: {innerDialogHistoryLimit}
-          <span class="help">Max messages (reflections/dreams) to display in Inner Dialog tab</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Max messages (reflections/dreams) to display in Inner Dialog tab</span>
         </label>
-        <input
-          type="range"
-          min="20"
-          max="500"
-          step="10"
-          bind:value={innerDialogHistoryLimit}
-          on:change={saveSettings}
-        />
+        <input type="range" min="20" max="500" step="10" bind:value={innerDialogHistoryLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Inner Dialog History Days -->
       <div class="setting-group">
-        <label>
+        <label class="block mb-2 text-sm font-medium">
           Inner Dialog History: {innerDialogHistoryDays} days
-          <span class="help">Days of audit logs to scan for reflections/dreams</span>
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Days of audit logs to scan for reflections/dreams</span>
         </label>
-        <input
-          type="range"
-          min="1"
-          max="365"
-          step="1"
-          bind:value={innerDialogHistoryDays}
-          on:change={saveSettings}
-        />
+        <input type="range" min="1" max="365" step="1" bind:value={innerDialogHistoryDays} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Consciousness Settings -->
-      <h4 style="margin-top: 1.5rem;">🧠 Consciousness Integration</h4>
+      <h4 class="mt-6 mb-3 text-base text-gray-300">🧠 Consciousness Integration</h4>
 
       <!-- Unified Consciousness -->
       <div class="setting-group">
-        <label class="checkbox-label consciousness-toggle">
-          <input
-            type="checkbox"
-            bind:checked={unifiedConsciousness}
-            on:change={saveSettings}
-          />
-          <span class="toggle-text">
+        <label class="consciousness-toggle">
+          <input type="checkbox" bind:checked={unifiedConsciousness} on:change={saveSettings} class="absolute left-4 top-4 w-[18px] h-[18px] cursor-pointer" />
+          <span class="flex items-center gap-2 font-semibold pl-7">
             Unified Consciousness
             {#if unifiedConsciousness}
-              <span class="status-badge active">Active</span>
+              <span class="text-[0.7rem] py-0.5 px-2 rounded-full bg-green-500/20 text-green-500">Active</span>
             {:else}
-              <span class="status-badge">Off</span>
+              <span class="text-[0.7rem] py-0.5 px-2 rounded-full bg-white/10 text-gray-500">Off</span>
             {/if}
           </span>
-          <span class="help">
+          <span class="block text-xs text-gray-500 font-normal pl-7 mt-2 leading-relaxed">
             When enabled, inner thoughts (reflections, dreams) influence conversation responses.
             Creates more integrated consciousness but may cause inner thoughts to "bleed" into conversation.
           </span>
@@ -359,202 +288,45 @@
       </div>
 
       {#if saving}
-        <p class="saving">Saving...</p>
+        <p class="text-gray-500 text-sm italic">Saving...</p>
       {/if}
     </div>
   {/if}
 </div>
 
 <style>
-  .chat-settings {
-    padding: 1rem;
-    color: var(--color-text, #e0e0e0);
-  }
-
-  h3 {
-    margin: 0 0 1rem 0;
-    font-size: 1.2rem;
-    color: var(--color-heading, #ffffff);
-  }
-
-  h4 {
-    margin: 1.5rem 0 0.75rem 0;
-    font-size: 1rem;
-    color: var(--color-subheading, #cccccc);
-  }
-
-  .scope-info {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 6px;
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .scope-info p {
-    margin: 0.25rem 0;
-    font-size: 0.9rem;
-  }
-
-  .help-text {
-    color: var(--color-muted, #999);
-    font-size: 0.85rem;
-  }
-
-  .badge {
-    background: var(--color-primary, #8b5cf6);
-    color: white;
-    padding: 0.15rem 0.5rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    margin-left: 0.5rem;
-  }
-
-  .presets {
-    margin-bottom: 1.5rem;
-  }
-
-  .preset-buttons {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 0.5rem;
-  }
-
+  /* Preset button */
   .preset-btn {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: var(--color-text, #e0e0e0);
-    padding: 0.75rem;
-    border-radius: 6px;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-    transition: all 0.2s;
-    font-size: 0.9rem;
+    @apply bg-white/[0.08] border border-white/15 text-gray-200 p-3 rounded-md cursor-pointer flex flex-col items-start gap-1 transition-all text-sm;
   }
-
   .preset-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.3);
+    @apply bg-white/[0.12] border-white/30;
   }
-
   .preset-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    @apply opacity-50 cursor-not-allowed;
   }
 
-  .preset-desc {
-    font-size: 0.75rem;
-    color: var(--color-muted, #999);
-  }
-
+  /* Setting group spacing */
   .setting-group {
-    margin-bottom: 1.25rem;
+    @apply mb-5;
   }
 
-  label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-  }
-
-  .help {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--color-muted, #999);
-    font-weight: normal;
-    margin-top: 0.15rem;
-  }
-
-  input[type="range"] {
-    width: 100%;
-    height: 6px;
+  /* Range slider styling */
+  .range-slider {
+    @apply w-full h-1.5 rounded-sm outline-none;
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    outline: none;
     -webkit-appearance: none;
   }
-
-  input[type="range"]::-webkit-slider-thumb {
+  .range-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    background: var(--color-primary, #8b5cf6);
-    border-radius: 50%;
-    cursor: pointer;
+    @apply w-4 h-4 bg-purple-500 rounded-full cursor-pointer;
+  }
+  .range-slider::-moz-range-thumb {
+    @apply w-4 h-4 bg-purple-500 rounded-full cursor-pointer border-0;
   }
 
-  input[type="range"]::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    background: var(--color-primary, #8b5cf6);
-    border-radius: 50%;
-    cursor: pointer;
-    border: none;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-
-  .loading,
-  .saving {
-    color: var(--color-muted, #999);
-    font-size: 0.9rem;
-    font-style: italic;
-  }
-
+  /* Consciousness toggle special card */
   .consciousness-toggle {
-    flex-direction: column;
-    align-items: flex-start;
-    background: rgba(139, 92, 246, 0.1);
-    border: 1px solid rgba(139, 92, 246, 0.3);
-    border-radius: 8px;
-    padding: 1rem;
-  }
-
-  .consciousness-toggle input[type="checkbox"] {
-    position: absolute;
-    left: 1rem;
-    top: 1rem;
-  }
-
-  .toggle-text {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 600;
-    padding-left: 1.75rem;
-  }
-
-  .status-badge {
-    font-size: 0.7rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--color-muted, #999);
-  }
-
-  .status-badge.active {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-  }
-
-  .consciousness-toggle .help {
-    padding-left: 1.75rem;
-    margin-top: 0.5rem;
-    line-height: 1.4;
+    @apply relative flex flex-col items-start bg-purple-500/10 border border-purple-500/30 rounded-lg p-4 cursor-pointer;
   }
 </style>

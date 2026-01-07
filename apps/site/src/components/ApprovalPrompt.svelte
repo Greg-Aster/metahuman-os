@@ -247,21 +247,32 @@
 </script>
 
 {#if $isOwner && pendingDesires.length > 0}
-  <div class="approval-bar">
+  <div class="bg-gradient-to-r from-blue-500/15 to-blue-500/5 border border-blue-500/30 rounded-lg mx-3 my-2 overflow-hidden">
     <!-- Compact Header -->
-    <div class="bar-header">
-      <span class="bar-icon">⚡</span>
-      <span class="bar-count">{pendingDesires.length}</span>
-      <span class="bar-label">approval{pendingDesires.length !== 1 ? 's' : ''} needed</span>
+    <div class="flex items-center gap-1.5 px-3 py-2 text-[13px]">
+      <span class="animate-pulse">⚡</span>
+      <span class="font-bold text-blue-400">{pendingDesires.length}</span>
+      <span class="text-slate-400 flex-1">approval{pendingDesires.length !== 1 ? 's' : ''} needed</span>
 
-      <div class="bar-actions">
-        <button class="bar-btn approve" on:click={handleApproveAll} title="Approve all">
+      <div class="flex gap-1">
+        <button
+          class="px-2 py-1 rounded text-xs cursor-pointer transition-all bg-green-500 text-white hover:bg-green-600"
+          on:click={handleApproveAll}
+          title="Approve all"
+        >
           ✓ All
         </button>
-        <button class="bar-btn trust" on:click={() => showTrustPanel = !showTrustPanel} title="Change trust level">
+        <button
+          class="px-2 py-1 rounded text-xs cursor-pointer transition-all bg-white/10 text-slate-400 hover:bg-white/20"
+          on:click={() => showTrustPanel = !showTrustPanel}
+          title="Change trust level"
+        >
           🔐
         </button>
-        <button class="bar-btn expand" on:click={() => expanded = !expanded}>
+        <button
+          class="px-2 py-1 rounded text-xs cursor-pointer transition-all bg-white/10 text-slate-400 hover:bg-white/20"
+          on:click={() => expanded = !expanded}
+        >
           {expanded ? '▼' : '▲'}
         </button>
       </div>
@@ -269,10 +280,10 @@
 
     <!-- Trust Level Selector -->
     {#if showTrustPanel}
-      <div class="trust-selector">
+      <div class="flex gap-1 px-3 py-1.5 border-t border-white/10 bg-black/10">
         {#each TRUST_LEVELS as level}
           <button
-            class="trust-btn {currentTrustLevel === level.value ? 'active' : ''}"
+            class="flex-1 px-2 py-1 rounded border text-[11px] cursor-pointer transition-all {currentTrustLevel === level.value ? 'bg-blue-500/30 border-blue-500 text-blue-400' : 'border-blue-500/20 bg-transparent text-slate-400 hover:bg-blue-500/10'}"
             on:click={() => updateTrustLevel(level.value)}
           >
             {level.label}
@@ -283,30 +294,30 @@
 
     <!-- Expanded List -->
     {#if expanded}
-      <div class="desire-list">
+      <div class="border-t border-white/10 max-h-[350px] overflow-y-auto">
         {#each pendingDesires as desire}
-          <div class="desire-item-wrapper">
+          <div class="border-b border-white/5 last:border-b-0">
             <!-- Collapsed Row -->
             <div
-              class="desire-item {expandedDesireId === desire.id ? 'selected' : ''}"
+              class="flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors {expandedDesireId === desire.id ? 'bg-blue-500/10' : 'hover:bg-white/5'}"
               on:click={() => toggleDesireExpand(desire.id)}
               on:keydown={(e) => e.key === 'Enter' && toggleDesireExpand(desire.id)}
               role="button"
               tabindex="0"
             >
-              <span class="expand-icon">{expandedDesireId === desire.id ? '▼' : '▶'}</span>
-              <span class="desire-title">{desire.title}</span>
-              <span class="desire-source">{SOURCE_LABELS[desire.source] || desire.source}</span>
-              <span class="desire-risk {getRiskColor(desire.plan?.estimatedRisk || desire.risk || 'medium')}">
+              <span class="text-[10px] text-slate-500 w-3">{expandedDesireId === desire.id ? '▼' : '▶'}</span>
+              <span class="flex-1 text-xs text-slate-200 whitespace-nowrap overflow-hidden text-ellipsis">{desire.title}</span>
+              <span class="text-[10px] text-slate-500 whitespace-nowrap">{SOURCE_LABELS[desire.source] || desire.source}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-medium {(desire.plan?.estimatedRisk || desire.risk || 'medium') === 'low' || (desire.plan?.estimatedRisk || desire.risk || 'medium') === 'none' ? 'bg-green-500/20 text-green-400' : (desire.plan?.estimatedRisk || desire.risk || 'medium') === 'medium' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-red-500/20 text-red-400'}">
                 {desire.plan?.estimatedRisk || desire.risk || 'medium'}
               </span>
               <button
-                class="item-btn approve"
+                class="w-6 h-6 rounded border-none cursor-pointer text-xs transition-all bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={processingId === desire.id}
                 on:click={(e) => handleApprove(desire.id, e)}
               >✓</button>
               <button
-                class="item-btn reject"
+                class="w-6 h-6 rounded border-none cursor-pointer text-xs transition-all bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={processingId === desire.id}
                 on:click={(e) => handleReject(desire.id, e)}
               >✗</button>
@@ -314,59 +325,59 @@
 
             <!-- Expanded Details -->
             {#if expandedDesireId === desire.id}
-              <div class="desire-details">
+              <div class="px-4 py-3 bg-black/20 border-t border-blue-500/20">
                 <!-- Description -->
-                <div class="detail-section">
-                  <div class="detail-label">What</div>
-                  <div class="detail-value">{desire.description}</div>
+                <div class="mb-3">
+                  <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">What</div>
+                  <div class="text-[13px] text-slate-200 leading-relaxed">{desire.description}</div>
                 </div>
 
                 <!-- Reason -->
                 {#if desire.reason}
-                  <div class="detail-section">
-                    <div class="detail-label">Why</div>
-                    <div class="detail-value">{desire.reason}</div>
+                  <div class="mb-3">
+                    <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Why</div>
+                    <div class="text-[13px] text-slate-200 leading-relaxed">{desire.reason}</div>
                   </div>
                 {/if}
 
                 <!-- Metrics Row -->
-                <div class="metrics-row">
-                  <div class="metric">
-                    <span class="metric-label">Strength</span>
-                    <span class="metric-value strength">{formatStrength(desire.strength)}</span>
+                <div class="flex gap-4 mb-3 flex-wrap">
+                  <div class="flex flex-col gap-0.5">
+                    <span class="text-[10px] text-slate-500">Strength</span>
+                    <span class="text-[13px] font-semibold text-blue-400">{formatStrength(desire.strength)}</span>
                   </div>
-                  <div class="metric">
-                    <span class="metric-label">Created</span>
-                    <span class="metric-value">{formatDate(desire.createdAt)}</span>
+                  <div class="flex flex-col gap-0.5">
+                    <span class="text-[10px] text-slate-500">Created</span>
+                    <span class="text-[13px] font-semibold text-slate-200">{formatDate(desire.createdAt)}</span>
                   </div>
-                  <div class="metric">
-                    <span class="metric-label">Reinforced</span>
-                    <span class="metric-value">{desire.reinforcements || 0}x</span>
+                  <div class="flex flex-col gap-0.5">
+                    <span class="text-[10px] text-slate-500">Reinforced</span>
+                    <span class="text-[13px] font-semibold text-slate-200">{desire.reinforcements || 0}x</span>
                   </div>
                   {#if desire.metrics?.cycleCount > 0}
-                    <div class="metric">
-                      <span class="metric-label">Cycles</span>
-                      <span class="metric-value">{desire.metrics.cycleCount}</span>
+                    <div class="flex flex-col gap-0.5">
+                      <span class="text-[10px] text-slate-500">Cycles</span>
+                      <span class="text-[13px] font-semibold text-slate-200">{desire.metrics.cycleCount}</span>
                     </div>
                   {/if}
                 </div>
 
                 <!-- Plan Steps -->
                 {#if desire.plan?.steps?.length > 0}
-                  <div class="detail-section">
-                    <div class="detail-label">Plan ({desire.plan.steps.length} steps)</div>
-                    <div class="plan-steps">
+                  <div class="mb-3">
+                    <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Plan ({desire.plan.steps.length} steps)</div>
+                    <div class="flex flex-col gap-1">
                       {#each desire.plan.steps.slice(0, 5) as step, i}
-                        <div class="plan-step">
-                          <span class="step-num">{i + 1}</span>
-                          <span class="step-action">{step.action}</span>
+                        <div class="flex items-center gap-2 px-2 py-1 bg-white/[0.03] rounded text-xs">
+                          <span class="w-[18px] h-[18px] flex items-center justify-center bg-blue-500/20 text-blue-400 rounded-full text-[10px] font-semibold">{i + 1}</span>
+                          <span class="flex-1 text-slate-300">{step.action}</span>
                           {#if step.risk && step.risk !== 'none'}
-                            <span class="step-risk {getRiskColor(step.risk)}">{step.risk}</span>
+                            <span class="text-[9px] px-1 py-0.5 rounded {step.risk === 'low' ? 'bg-green-500/20 text-green-400' : step.risk === 'medium' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-red-500/20 text-red-400'}">{step.risk}</span>
                           {/if}
                         </div>
                       {/each}
                       {#if desire.plan.steps.length > 5}
-                        <div class="plan-more">+{desire.plan.steps.length - 5} more steps...</div>
+                        <div class="text-[11px] text-slate-500 px-2 py-1">+{desire.plan.steps.length - 5} more steps...</div>
                       {/if}
                     </div>
                   </div>
@@ -375,33 +386,33 @@
                 <!-- Trust Requirement (with maturity-based degradation) -->
                 {#if true}
                   {@const degradation = calculateTrustDegradation(desire)}
-                  <div class="trust-info">
-                    <span class="trust-label">Requires:</span>
+                  <div class="flex items-center gap-1.5 text-[11px] p-2 bg-white/[0.03] rounded mb-3">
+                    <span class="text-slate-500">Requires:</span>
                     {#if degradation.reduction > 0}
-                      <span class="trust-value degraded">{degradation.effectiveLevel}</span>
-                      <span class="trust-reduction" title={degradation.reason}>
+                      <span class="text-green-500 font-medium">{degradation.effectiveLevel}</span>
+                      <span class="text-[10px] text-green-500 bg-green-500/15 px-1.5 py-0.5 rounded cursor-help" title={degradation.reason}>
                         ↓{degradation.reduction} from {desire.requiredTrustLevel || 'supervised_auto'}
                       </span>
                     {:else}
-                      <span class="trust-value">{desire.requiredTrustLevel || 'supervised_auto'}</span>
+                      <span class="text-amber-500 font-medium">{desire.requiredTrustLevel || 'supervised_auto'}</span>
                     {/if}
-                    <span class="trust-current">
+                    <span class="text-slate-500">
                       (You: {currentTrustLevel})
                     </span>
                   </div>
                 {/if}
 
                 <!-- Action Buttons -->
-                <div class="detail-actions">
+                <div class="flex gap-2">
                   <button
-                    class="action-btn approve"
+                    class="flex-1 px-4 py-2.5 rounded-md border-none text-[13px] font-medium cursor-pointer transition-all bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={processingId === desire.id}
                     on:click={(e) => handleApprove(desire.id, e)}
                   >
                     {processingId === desire.id ? 'Approving...' : '✓ Approve & Execute'}
                   </button>
                   <button
-                    class="action-btn reject"
+                    class="flex-1 px-4 py-2.5 rounded-md text-[13px] font-medium cursor-pointer transition-all bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={processingId === desire.id}
                     on:click={(e) => handleReject(desire.id, e)}
                   >
@@ -416,424 +427,8 @@
     {/if}
 
     {#if error}
-      <div class="error-msg">{error}</div>
+      <div class="px-3 py-1 bg-red-500/20 text-red-300 text-[11px]">{error}</div>
     {/if}
   </div>
 {/if}
 
-<style>
-  .approval-bar {
-    background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.05) 100%);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 8px;
-    margin: 8px 12px;
-    overflow: hidden;
-  }
-
-  .bar-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    font-size: 13px;
-  }
-
-  .bar-icon {
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-
-  .bar-count {
-    font-weight: 700;
-    color: #60a5fa;
-  }
-
-  .bar-label {
-    color: #94a3b8;
-    flex: 1;
-  }
-
-  .bar-actions {
-    display: flex;
-    gap: 4px;
-  }
-
-  .bar-btn {
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: none;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .bar-btn.approve {
-    background: #22c55e;
-    color: white;
-  }
-
-  .bar-btn.approve:hover {
-    background: #16a34a;
-  }
-
-  .bar-btn.trust, .bar-btn.expand {
-    background: rgba(255, 255, 255, 0.1);
-    color: #94a3b8;
-  }
-
-  .bar-btn.trust:hover, .bar-btn.expand:hover {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  .trust-selector {
-    display: flex;
-    gap: 4px;
-    padding: 6px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .trust-btn {
-    flex: 1;
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    background: transparent;
-    color: #94a3b8;
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .trust-btn:hover {
-    background: rgba(59, 130, 246, 0.1);
-  }
-
-  .trust-btn.active {
-    background: rgba(59, 130, 246, 0.3);
-    border-color: #3b82f6;
-    color: #60a5fa;
-  }
-
-  .desire-list {
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    max-height: 350px;
-    overflow-y: auto;
-  }
-
-  .desire-item-wrapper {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .desire-item-wrapper:last-child {
-    border-bottom: none;
-  }
-
-  .desire-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .desire-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .desire-item.selected {
-    background: rgba(59, 130, 246, 0.1);
-  }
-
-  .expand-icon {
-    font-size: 10px;
-    color: #64748b;
-    width: 12px;
-  }
-
-  .desire-title {
-    flex: 1;
-    font-size: 12px;
-    color: #e2e8f0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .desire-source {
-    font-size: 10px;
-    color: #64748b;
-    white-space: nowrap;
-  }
-
-  .desire-risk {
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-weight: 500;
-  }
-
-  .risk-low { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
-  .risk-medium { background: rgba(234, 179, 8, 0.2); color: #facc15; }
-  .risk-high { background: rgba(239, 68, 68, 0.2); color: #f87171; }
-
-  .item-btn {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    border: none;
-    cursor: pointer;
-    font-size: 12px;
-    transition: all 0.15s;
-  }
-
-  .item-btn.approve {
-    background: rgba(34, 197, 94, 0.2);
-    color: #4ade80;
-  }
-
-  .item-btn.approve:hover:not(:disabled) {
-    background: #22c55e;
-    color: white;
-  }
-
-  .item-btn.reject {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-  }
-
-  .item-btn.reject:hover:not(:disabled) {
-    background: #ef4444;
-    color: white;
-  }
-
-  .item-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Expanded Details */
-  .desire-details {
-    padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.2);
-    border-top: 1px solid rgba(59, 130, 246, 0.2);
-  }
-
-  .detail-section {
-    margin-bottom: 12px;
-  }
-
-  .detail-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-  }
-
-  .detail-value {
-    font-size: 13px;
-    color: #e2e8f0;
-    line-height: 1.4;
-  }
-
-  .metrics-row {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-
-  .metric {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .metric-label {
-    font-size: 10px;
-    color: #64748b;
-  }
-
-  .metric-value {
-    font-size: 13px;
-    font-weight: 600;
-    color: #e2e8f0;
-  }
-
-  .metric-value.strength {
-    color: #60a5fa;
-  }
-
-  .plan-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .plan-step {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
-    font-size: 12px;
-  }
-
-  .step-num {
-    width: 18px;
-    height: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    border-radius: 50%;
-    font-size: 10px;
-    font-weight: 600;
-  }
-
-  .step-action {
-    flex: 1;
-    color: #cbd5e1;
-  }
-
-  .step-risk {
-    font-size: 9px;
-    padding: 1px 4px;
-    border-radius: 2px;
-  }
-
-  .plan-more {
-    font-size: 11px;
-    color: #64748b;
-    padding: 4px 8px;
-  }
-
-  .trust-info {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 4px;
-    margin-bottom: 12px;
-  }
-
-  .trust-label {
-    color: #64748b;
-  }
-
-  .trust-value {
-    color: #f59e0b;
-    font-weight: 500;
-  }
-
-  .trust-value.degraded {
-    color: #22c55e;
-  }
-
-  .trust-reduction {
-    font-size: 10px;
-    color: #22c55e;
-    background: rgba(34, 197, 94, 0.15);
-    padding: 2px 6px;
-    border-radius: 3px;
-    cursor: help;
-  }
-
-  .trust-current {
-    color: #64748b;
-  }
-
-  .detail-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .action-btn {
-    flex: 1;
-    padding: 10px 16px;
-    border-radius: 6px;
-    border: none;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .action-btn.approve {
-    background: #22c55e;
-    color: white;
-  }
-
-  .action-btn.approve:hover:not(:disabled) {
-    background: #16a34a;
-  }
-
-  .action-btn.reject {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-
-  .action-btn.reject:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.3);
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .error-msg {
-    padding: 4px 12px;
-    background: rgba(239, 68, 68, 0.2);
-    color: #fca5a5;
-    font-size: 11px;
-  }
-
-  /* Light mode */
-  :global(.light) .approval-bar {
-    background: linear-gradient(90deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.03) 100%);
-  }
-
-  :global(.light) .bar-label,
-  :global(.light) .desire-source,
-  :global(.light) .detail-label,
-  :global(.light) .metric-label,
-  :global(.light) .trust-label,
-  :global(.light) .trust-current {
-    color: #64748b;
-  }
-
-  :global(.light) .desire-title,
-  :global(.light) .detail-value,
-  :global(.light) .metric-value,
-  :global(.light) .step-action {
-    color: #1e293b;
-  }
-
-  :global(.light) .bar-btn.trust,
-  :global(.light) .bar-btn.expand {
-    background: rgba(0, 0, 0, 0.05);
-    color: #64748b;
-  }
-
-  :global(.light) .desire-details {
-    background: rgba(255, 255, 255, 0.5);
-  }
-
-  :global(.light) .plan-step,
-  :global(.light) .trust-info {
-    background: rgba(0, 0, 0, 0.03);
-  }
-</style>

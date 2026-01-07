@@ -39,7 +39,6 @@
       });
       if (!response.ok) throw new Error('Failed to update boredom level');
 
-      // Show success feedback
       feedback = {
         type: 'success',
         text: 'Settings applied. Reflections are internal thoughts only.'
@@ -51,132 +50,36 @@
   }
 </script>
 
-<div class="boredom-control">
-  <p class="description">
+<div class="flex flex-col gap-3">
+  <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
     How often your AI generates internal reflections on memories when idle. These are inner thoughts only, visible in the Inner Dialogue tab.
   </p>
+
   {#if feedback}
-    <div class="banner" class:success={feedback.type === 'success'} class:error={feedback.type === 'error'}>
+    <div class="banner {feedback.type === 'success' ? 'banner-success' : 'banner-error'}">
       {feedback.text}
     </div>
   {/if}
+
   {#if isLoading}
-    <p class="loading">Loading...</p>
+    <p class="text-sm m-0 text-gray-500 dark:text-gray-400">Loading...</p>
   {:else if error}
-    <p class="error">Error: {error}</p>
+    <p class="text-sm m-0 text-red-600 dark:text-red-400">Error: {error}</p>
   {:else}
-    <div class="levels-list">
+    <div class="flex flex-col gap-2">
       {#each levels as l}
-        <label class="level-option">
+        <label class="flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors hover:bg-black/5 dark:hover:bg-white/5">
           <input
             type="radio"
             name="boredom-level"
             bind:group={level}
             value={l.id}
             on:change={() => handleLevelChange(l.id)}
-            class="level-radio"
+            class="w-4 h-4 cursor-pointer accent-violet-600"
           />
-          <span class="level-label">{l.label}</span>
+          <span class="text-sm text-gray-900 dark:text-gray-100">{l.label}</span>
         </label>
       {/each}
     </div>
   {/if}
 </div>
-
-<style>
-  .boredom-control {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .description {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .description {
-    color: rgb(156 163 175);
-  }
-
-  .loading,
-  .error {
-    font-size: 0.875rem;
-    margin: 0;
-  }
-
-  .error {
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .error {
-    color: rgb(252 165 165);
-  }
-
-  .banner {
-    font-size: 0.8rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.5rem;
-    line-height: 1.4;
-  }
-
-  .banner.success {
-    background: rgba(34, 197, 94, 0.15);
-    color: rgb(21 128 61);
-  }
-
-  :global(.dark) .banner.success {
-    background: rgba(34, 197, 94, 0.2);
-    color: rgb(134 239 172);
-  }
-
-  .banner.error {
-    background: rgba(239, 68, 68, 0.15);
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .banner.error {
-    background: rgba(239, 68, 68, 0.2);
-    color: rgb(248 113 113);
-  }
-
-  .levels-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .level-option {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    transition: background-color 0.2s;
-  }
-
-  .level-option:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .level-option:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .level-radio {
-    width: 1rem;
-    height: 1rem;
-    cursor: pointer;
-  }
-
-  .level-label {
-    font-size: 0.875rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .level-label {
-    color: rgb(243 244 246);
-  }
-</style>

@@ -72,7 +72,7 @@ export interface AuditEntry {
   timestamp: string;
   level: 'info' | 'warn' | 'error' | 'critical' | 'debug';
   category: 'system' | 'decision' | 'action' | 'security' | 'data' | 'agent' | 'data_change';
-  event: string;
+  event?: string; // Event type/name (optional - can use message or action instead)
   details?: any;
   actor?: string; // 'human' | 'system' | 'agent' or specific agent/service name or username
   userId?: string; // Track which user performed the action

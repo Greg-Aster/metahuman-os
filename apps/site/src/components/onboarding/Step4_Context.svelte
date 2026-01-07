@@ -141,19 +141,18 @@
   }
 </script>
 
-<div class="step-context">
-  <div class="step-header">
-    <h2>Import Your Context</h2>
-    <p class="step-description">
+<div class="flex flex-col gap-8 max-w-3xl mx-auto p-8 md:p-4">
+  <div>
+    <h2 class="text-3xl font-semibold mb-2 text-gray-900 dark:text-gray-50">Import Your Context</h2>
+    <p class="text-base leading-relaxed text-gray-500 dark:text-gray-400">
       Upload documents, journals, notes, or any text files that provide context about your life,
       work, or interests. Your MetaHuman will process these to better understand you.
     </p>
   </div>
 
-  <div class="upload-section">
+  <div class="flex flex-col gap-6">
     <div
-      class="dropzone"
-      class:active={dragActive}
+      class="flex flex-col items-center justify-center gap-4 py-12 px-8 md:py-8 md:px-4 border-2 border-dashed rounded-xl cursor-pointer transition-all {dragActive ? 'border-indigo-500 bg-blue-50 dark:bg-blue-900 scale-[1.02]' : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800'}"
       on:dragenter={handleDragEnter}
       on:dragleave={handleDragLeave}
       on:dragover={handleDragOver}
@@ -161,11 +160,11 @@
       role="button"
       tabindex="0"
     >
-      <div class="dropzone-icon">📁</div>
-      <h3>Drag & Drop Files Here</h3>
-      <p>or</p>
+      <div class="text-6xl">📁</div>
+      <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-50">Drag & Drop Files Here</h3>
+      <p class="text-base text-gray-500 dark:text-gray-400">or</p>
       <button
-        class="btn btn-upload"
+        class="px-8 py-3 text-base font-semibold bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-none rounded-lg cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none disabled:hover:shadow-none"
         on:click={() => fileInput.click()}
         disabled={uploading}
       >
@@ -179,18 +178,18 @@
         on:change={handleFileSelect}
         style="display: none"
       />
-      <p class="supported-types">
+      <p class="text-sm text-gray-400">
         Supported: Text (.txt), Markdown (.md), PDF (.pdf), JSON (.json), CSV (.csv)
       </p>
     </div>
 
     {#if uploadedFiles.length > 0}
-      <div class="file-list">
-        <h3>Files to Upload ({uploadedFiles.length})</h3>
-        <div class="files">
+      <div class="flex flex-col gap-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-50">Files to Upload ({uploadedFiles.length})</h3>
+        <div class="flex flex-col gap-2">
           {#each uploadedFiles as file, i}
-            <div class="file-item">
-              <div class="file-icon">
+            <div class="flex items-center gap-4 px-4 py-3 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg transition-all hover:shadow-md">
+              <div class="text-2xl flex-shrink-0">
                 {#if file.type === 'application/pdf' || file.name.endsWith('.pdf')}
                   📄
                 {:else if file.name.endsWith('.md')}
@@ -203,12 +202,12 @@
                   📃
                 {/if}
               </div>
-              <div class="file-info">
-                <div class="file-name">{file.name}</div>
-                <div class="file-size">{formatFileSize(file.size)}</div>
+              <div class="flex-1 flex flex-col gap-1 min-w-0">
+                <div class="text-base font-medium text-gray-900 dark:text-gray-50 overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</div>
               </div>
               <button
-                class="btn-remove"
+                class="px-2 py-1 text-xl text-red-500 bg-transparent border-none rounded cursor-pointer transition-all flex-shrink-0 hover:bg-red-100 dark:hover:bg-red-900 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 on:click={() => removeFile(i)}
                 disabled={uploading}
                 aria-label="Remove file"
@@ -222,56 +221,56 @@
     {/if}
 
     {#if uploading}
-      <div class="upload-progress">
-        <div class="progress-bar">
-          <div class="progress-fill" style="width: {uploadProgress}%"></div>
+      <div class="flex flex-col gap-2">
+        <div class="h-3 bg-gray-200 dark:bg-gray-700 rounded-md overflow-hidden">
+          <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300" style="width: {uploadProgress}%"></div>
         </div>
-        <p class="progress-status">{uploadStatus}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 text-center">{uploadStatus}</p>
       </div>
     {/if}
 
     {#if error}
-      <div class="error-message">
-        <span class="error-icon">⚠️</span>
+      <div class="flex items-center gap-2 px-4 py-3 bg-red-100 dark:bg-red-900 border border-red-500 rounded-md text-red-800 dark:text-red-200 text-sm">
+        <span>⚠️</span>
         {error}
       </div>
     {/if}
   </div>
 
-  <div class="context-info">
-    <div class="info-icon">💡</div>
-    <div class="info-text">
-      <strong>What to upload:</strong>
-      <ul>
+  <div class="flex items-start gap-3 p-4 bg-blue-50 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-400 rounded">
+    <div class="text-2xl flex-shrink-0">💡</div>
+    <div class="text-sm leading-relaxed text-blue-800 dark:text-blue-100">
+      <strong class="text-blue-900 dark:text-blue-200">What to upload:</strong>
+      <ul class="my-2 pl-6">
         <li>Personal journals or diary entries</li>
         <li>Work documents or project notes</li>
         <li>Creative writing or blog posts</li>
         <li>Meeting notes or conversation logs</li>
         <li>Any text that represents your thoughts, interests, or experiences</li>
       </ul>
-      <p>
-        <strong>Privacy:</strong> All files are processed locally on your machine.
+      <p class="mt-2">
+        <strong class="text-blue-900 dark:text-blue-200">Privacy:</strong> All files are processed locally on your machine.
         Nothing is uploaded to external servers.
       </p>
     </div>
   </div>
 
-  <div class="skip-notice">
-    <p>
-      <strong>Don't have files to upload?</strong> No problem! You can skip this step
+  <div class="p-4 px-6 bg-amber-100 dark:bg-amber-900 border-l-4 border-amber-400 dark:border-amber-500 rounded">
+    <p class="text-sm leading-relaxed text-amber-800 dark:text-amber-200">
+      <strong class="text-amber-900 dark:text-amber-300">Don't have files to upload?</strong> No problem! You can skip this step
       and add context later through Memory Capture, Chat, or the File Ingestion utility.
     </p>
   </div>
 
-  <div class="step-actions">
-    <button class="btn btn-secondary" on:click={onBack} disabled={uploading}>
+  <div class="flex justify-between gap-4 pt-4 border-t border-gray-200 dark:border-gray-700 md:flex-col">
+    <button class="px-6 py-3 text-base font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer transition-all hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={onBack} disabled={uploading}>
       ← Back
     </button>
-    <button class="btn btn-ghost" on:click={onSkip} disabled={uploading}>
+    <button class="px-6 py-3 text-base font-semibold bg-transparent text-gray-500 dark:text-gray-400 border-none rounded-lg cursor-pointer transition-all hover:text-gray-900 dark:hover:text-gray-50 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed" on:click={onSkip} disabled={uploading}>
       Skip
     </button>
     <button
-      class="btn btn-primary"
+      class="px-6 py-3 text-base font-semibold bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-none rounded-lg cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none disabled:hover:shadow-none"
       on:click={handleUpload}
       disabled={uploading}
     >
@@ -279,448 +278,3 @@
     </button>
   </div>
 </div>
-
-<style>
-  .step-context {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .step-header h2 {
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin: 0 0 0.5rem 0;
-    color: #111827;
-  }
-
-  :global(.dark) .step-header h2 {
-    color: #f9fafb;
-  }
-
-  .step-description {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .step-description {
-    color: #9ca3af;
-  }
-
-  .upload-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .dropzone {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    padding: 3rem 2rem;
-    border: 2px dashed #d1d5db;
-    border-radius: 12px;
-    background: #f9fafb;
-    transition: all 0.2s ease;
-    cursor: pointer;
-  }
-
-  :global(.dark) .dropzone {
-    background: #1f2937;
-    border-color: #4b5563;
-  }
-
-  .dropzone.active {
-    border-color: #667eea;
-    background: #eff6ff;
-    transform: scale(1.02);
-  }
-
-  :global(.dark) .dropzone.active {
-    background: #1e3a8a;
-    border-color: #818cf8;
-  }
-
-  .dropzone-icon {
-    font-size: 4rem;
-  }
-
-  .dropzone h3 {
-    font-size: 1.3rem;
-    font-weight: 600;
-    margin: 0;
-    color: #111827;
-  }
-
-  :global(.dark) .dropzone h3 {
-    color: #f9fafb;
-  }
-
-  .dropzone p {
-    margin: 0;
-    font-size: 1rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .dropzone p {
-    color: #9ca3af;
-  }
-
-  .btn-upload {
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
-    font-weight: 600;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn-upload:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-upload:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .supported-types {
-    font-size: 0.85rem !important;
-    color: #9ca3af !important;
-  }
-
-  .file-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .file-list h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 0;
-    color: #111827;
-  }
-
-  :global(.dark) .file-list h3 {
-    color: #f9fafb;
-  }
-
-  .files {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .file-item {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.75rem 1rem;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-  }
-
-  :global(.dark) .file-item {
-    background: #374151;
-    border-color: #4b5563;
-  }
-
-  .file-item:hover {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  }
-
-  .file-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .file-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 0;
-  }
-
-  .file-name {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: #111827;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global(.dark) .file-name {
-    color: #f9fafb;
-  }
-
-  .file-size {
-    font-size: 0.8rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .file-size {
-    color: #9ca3af;
-  }
-
-  .btn-remove {
-    padding: 0.25rem 0.5rem;
-    font-size: 1.2rem;
-    color: #ef4444;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    flex-shrink: 0;
-  }
-
-  .btn-remove:hover:not(:disabled) {
-    background: #fee2e2;
-    color: #dc2626;
-  }
-
-  :global(.dark) .btn-remove:hover:not(:disabled) {
-    background: #7f1d1d;
-  }
-
-  .btn-remove:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .upload-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .progress-bar {
-    height: 12px;
-    background: #e5e7eb;
-    border-radius: 6px;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: #374151;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    transition: width 0.3s ease;
-  }
-
-  .progress-status {
-    margin: 0;
-    font-size: 0.9rem;
-    color: #6b7280;
-    text-align: center;
-  }
-
-  :global(.dark) .progress-status {
-    color: #9ca3af;
-  }
-
-  .error-message {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: #fee2e2;
-    border: 1px solid #ef4444;
-    border-radius: 6px;
-    color: #991b1b;
-    font-size: 0.9rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #ef4444;
-    color: #fecaca;
-  }
-
-  .context-info {
-    display: flex;
-    align-items: start;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: #eff6ff;
-    border-left: 4px solid #3b82f6;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .context-info {
-    background: #1e3a8a;
-    border-color: #60a5fa;
-  }
-
-  .info-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .info-text {
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #1e40af;
-  }
-
-  :global(.dark) .info-text {
-    color: #bfdbfe;
-  }
-
-  .info-text strong {
-    color: #1e3a8a;
-  }
-
-  :global(.dark) .info-text strong {
-    color: #93c5fd;
-  }
-
-  .info-text ul {
-    margin: 0.5rem 0;
-    padding-left: 1.5rem;
-  }
-
-  .info-text p {
-    margin: 0.5rem 0 0 0;
-  }
-
-  .skip-notice {
-    padding: 1rem 1.5rem;
-    background: #fef3c7;
-    border-left: 4px solid #fbbf24;
-    border-radius: 4px;
-  }
-
-  :global(.dark) .skip-notice {
-    background: #451a03;
-    border-color: #f59e0b;
-  }
-
-  .skip-notice p {
-    margin: 0;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: #92400e;
-  }
-
-  :global(.dark) .skip-notice p {
-    color: #fcd34d;
-  }
-
-  .skip-notice strong {
-    color: #78350f;
-  }
-
-  :global(.dark) .skip-notice strong {
-    color: #fbbf24;
-  }
-
-  .step-actions {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .step-actions {
-    border-color: #374151;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .btn-secondary {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: #374151;
-    color: #d1d5db;
-    border-color: #4b5563;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  :global(.dark) .btn-secondary:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: #6b7280;
-  }
-
-  :global(.dark) .btn-ghost {
-    color: #9ca3af;
-  }
-
-  .btn-ghost:hover:not(:disabled) {
-    color: #111827;
-    background: #f3f4f6;
-  }
-
-  :global(.dark) .btn-ghost:hover:not(:disabled) {
-    color: #f9fafb;
-    background: #374151;
-  }
-
-  @media (max-width: 768px) {
-    .step-context {
-      padding: 1rem;
-    }
-
-    .dropzone {
-      padding: 2rem 1rem;
-    }
-
-    .step-actions {
-      flex-direction: column;
-    }
-  }
-</style>

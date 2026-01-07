@@ -348,7 +348,7 @@
       await loadModelInfo();
     } catch (err) {
       console.error('[SystemSettings] Error toggling LoRA:', err);
-      loraEnabled = !loraEnabled; // Revert on error
+      loraEnabled = !loraEnabled;
     } finally {
       loraToggling = false;
     }
@@ -440,7 +440,6 @@
       const res = await apiFetch('/api/scheduler-config');
       if (res.ok) {
         const data = await res.json();
-        // Check global setting first, then agent-specific
         const mode = data.globalSettings?.memoryContentMode
           || data.agents?.reflector?.contentMode;
         if (mode && ['all', 'user', 'agent'].includes(mode)) {
@@ -462,7 +461,6 @@
     reflectorContentModeSaving = true;
 
     try {
-      // Update global setting so all memory-reflecting agents use it
       const res = await apiFetch('/api/scheduler-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -480,7 +478,6 @@
       reflectorContentMode = newMode;
     } catch (err) {
       console.error('[SystemSettings] Error updating memory content mode:', err);
-      // Revert on error
       target.value = reflectorContentMode;
       alert(`Failed to update memory content mode: ${(err as Error).message}`);
     } finally {
@@ -529,7 +526,6 @@
       indexContentMode = newMode;
     } catch (err) {
       console.error('[SystemSettings] Error updating index content mode:', err);
-      // Revert on error
       target.value = indexContentMode;
       alert(`Failed to update index content mode: ${(err as Error).message}`);
     } finally {
@@ -538,11 +534,11 @@
   }
 </script>
 
-<div class="system-settings">
+<div class="w-full">
   <!-- Welcome Modal Toggle -->
   <div class="setting-group">
-    <div class="lora-toggle-container">
-      <div class="lora-toggle-header">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
         <span class="setting-label">Welcome Screen</span>
         <label class="toggle-switch" for="welcome-modal-toggle" aria-label="Show welcome modal on startup">
           <input
@@ -554,7 +550,7 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <p class="lora-toggle-description">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {showWelcomeModal ? 'Welcome screen will appear on next startup' : 'Welcome screen disabled'}
       </p>
     </div>
@@ -563,35 +559,35 @@
   <!-- Resources Section -->
   <div class="setting-group">
     <label class="setting-label">Resources</label>
-    <div class="resources-container">
-      <a href="/user-guide" class="resource-link">
-        <span class="resource-icon">📖</span>
-        <div class="resource-content">
-          <span class="resource-title">User Guide</span>
-          <span class="resource-description">Complete documentation and manual</span>
+    <div class="flex flex-col gap-3">
+      <a href="/user-guide" class="flex items-center gap-3 p-3.5 rounded-lg bg-violet-500/5 dark:bg-violet-400/10 border border-violet-500/15 dark:border-violet-400/20 no-underline text-inherit transition-all hover:bg-violet-500/10 dark:hover:bg-violet-400/15 hover:border-violet-500/30 dark:hover:border-violet-400/35 hover:translate-x-0.5">
+        <span class="text-2xl shrink-0">📖</span>
+        <div class="flex flex-col gap-0.5 flex-1">
+          <span class="text-[0.9375rem] font-semibold text-gray-800 dark:text-gray-100">User Guide</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">Complete documentation and manual</span>
         </div>
       </a>
-      <a href="https://github.com/gregjacobs/metahuman" target="_blank" rel="noopener noreferrer" class="resource-link">
-        <span class="resource-icon">🔗</span>
-        <div class="resource-content">
-          <span class="resource-title">GitHub Repository</span>
-          <span class="resource-description">Source code and development</span>
+      <a href="https://github.com/gregjacobs/metahuman" target="_blank" rel="noopener noreferrer" class="flex items-center gap-3 p-3.5 rounded-lg bg-violet-500/5 dark:bg-violet-400/10 border border-violet-500/15 dark:border-violet-400/20 no-underline text-inherit transition-all hover:bg-violet-500/10 dark:hover:bg-violet-400/15 hover:border-violet-500/30 dark:hover:border-violet-400/35 hover:translate-x-0.5">
+        <span class="text-2xl shrink-0">🔗</span>
+        <div class="flex flex-col gap-0.5 flex-1">
+          <span class="text-[0.9375rem] font-semibold text-gray-800 dark:text-gray-100">GitHub Repository</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">Source code and development</span>
         </div>
       </a>
     </div>
   </div>
 
-  <h3 class="section-title" style="margin-top: 2rem;">Agent Settings</h3>
+  <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Agent Settings</h3>
 
   <!-- Reflector Content Mode -->
   <div class="setting-group">
     <label class="setting-label">Idle Thoughts Content</label>
-    <div class="lora-toggle-container">
-      <p class="lora-toggle-description" style="margin-bottom: 0.75rem;">
+    <div class="flex flex-col gap-2">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
         Controls what content agents (reflector, curiosity, etc.) reflect on when generating idle thoughts and inner dialogue.
       </p>
       <select
-        class="content-mode-select"
+        class="select-field"
         bind:value={reflectorContentMode}
         on:change={handleReflectorContentModeChange}
         disabled={reflectorContentModeLoading || reflectorContentModeSaving}
@@ -600,11 +596,11 @@
           <option value={mode}>{mode === 'user' ? '👤' : mode === 'agent' ? '🤖' : '📄'} {mode.charAt(0).toUpperCase() + mode.slice(1)}</option>
         {/each}
       </select>
-      <p class="content-mode-description">
+      <p class="text-[0.8125rem] text-gray-500 dark:text-gray-400 m-0 mt-2 p-2 bg-violet-500/5 dark:bg-violet-400/10 rounded border-l-[3px] border-violet-600 dark:border-violet-400">
         {contentModeOptions[reflectorContentMode]}
       </p>
       {#if reflectorContentModeSaving}
-        <p class="saving-indicator">Saving...</p>
+        <p class="text-xs text-violet-600 dark:text-violet-400 m-0 mt-2 italic">Saving...</p>
       {/if}
     </div>
   </div>
@@ -612,12 +608,12 @@
   <!-- Index Content Mode -->
   <div class="setting-group">
     <label class="setting-label">Memory Search Index</label>
-    <div class="lora-toggle-container">
-      <p class="lora-toggle-description" style="margin-bottom: 0.75rem;">
+    <div class="flex flex-col gap-2">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
         Controls what content is included in the semantic search index. Affects what memories can be found when searching.
       </p>
       <select
-        class="content-mode-select"
+        class="select-field"
         bind:value={indexContentMode}
         on:change={handleIndexContentModeChange}
         disabled={indexContentModeLoading || indexContentModeSaving}
@@ -626,13 +622,13 @@
           <option value={mode}>{mode === 'user' ? '👤' : mode === 'agent' ? '🤖' : '📄'} {mode.charAt(0).toUpperCase() + mode.slice(1)}</option>
         {/each}
       </select>
-      <p class="content-mode-description">
+      <p class="text-[0.8125rem] text-gray-500 dark:text-gray-400 m-0 mt-2 p-2 bg-violet-500/5 dark:bg-violet-400/10 rounded border-l-[3px] border-violet-600 dark:border-violet-400">
         {indexContentModeOptions[indexContentMode]}
       </p>
       {#if indexContentModeSaving}
-        <p class="saving-indicator">Saving...</p>
+        <p class="text-xs text-violet-600 dark:text-violet-400 m-0 mt-2 italic">Saving...</p>
       {/if}
-      <p class="content-mode-note">
+      <p class="text-xs text-gray-400 dark:text-gray-500 m-0 mt-2 italic">
         Note: Changes require rebuilding the index to take effect.
       </p>
     </div>
@@ -641,13 +637,13 @@
   <!-- Active Operator Settings -->
   <ActiveOperatorSettings />
 
-  <h3 class="section-title" style="margin-top: 2rem;">Developer Settings</h3>
+  <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Developer Settings</h3>
 
   <!-- Node Pipeline Toggle -->
   <div class="setting-group">
     <label class="setting-label">Node Pipeline</label>
-    <div class="lora-toggle-container">
-      <div class="lora-toggle-header">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
         <span class="setting-label">
           {#if nodePipelineLocked}
             Locked by environment
@@ -670,7 +666,7 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <p class="lora-toggle-description">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {#if nodePipelineLocked}
           Node pipeline controlled by server environment. Contact an administrator to change it.
         {:else if nodePipelineEnabled}
@@ -683,10 +679,10 @@
   </div>
 
   <!-- Audit Logging Control -->
-  <div class="setting-group" style="margin-top: 1.5rem;">
+  <div class="setting-group mt-6">
     <label class="setting-label">Audit Logging</label>
-    <div class="lora-toggle-container">
-      <div class="lora-toggle-header">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
         <span class="setting-label">Enable detailed activity logs</span>
         <label
           class="toggle-switch"
@@ -703,19 +699,18 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <p class="lora-toggle-description">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {#if auditLoggingEnabled}
           ⚠️ Audit logging is ON. This creates large log files (24MB+/day) and causes 100% CPU when viewing Agent Monitor. Disable for better performance.
         {:else}
           ✓ Audit logging is OFF. System runs smoothly. Enable only when debugging issues.
         {/if}
       </p>
-      <div style="margin-top: 0.5rem;">
+      <div class="mt-2">
         <button
-          class="action-button"
+          class="btn-secondary btn-sm"
           on:click={purgeOldAuditLogs}
           disabled={auditLoggingSaving}
-          style="padding: 0.4rem 0.8rem; font-size: 0.85rem;"
         >
           🗑️ Purge Logs Older Than 7 Days
         </button>
@@ -724,10 +719,10 @@
   </div>
 
   <!-- Embedding Model Control -->
-  <div class="setting-group" style="margin-top: 1.5rem;">
+  <div class="setting-group mt-6">
     <label class="setting-label">Embedding Model (Semantic Memory)</label>
-    <div class="lora-toggle-container">
-      <div class="lora-toggle-header">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
         <span class="setting-label">Enable semantic memory search</span>
         <label
           class="toggle-switch"
@@ -744,7 +739,7 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <p class="lora-toggle-description">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {#if embeddingEnabled}
           ✓ Semantic search is ON. The "{embeddingModel}" model enables memory-based conversations.
         {:else}
@@ -753,8 +748,8 @@
       </p>
 
       {#if embeddingEnabled}
-        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color, #333);">
-          <div class="lora-toggle-header">
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between">
             <span class="setting-label">Preload model at startup</span>
             <label
               class="toggle-switch"
@@ -771,7 +766,7 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <p class="lora-toggle-description" style="font-size: 0.85rem; margin-top: 0.5rem;">
+          <p class="text-[0.85rem] text-gray-500 dark:text-gray-400 m-0 mt-2">
             {#if embeddingPreload}
               ✓ Model will load automatically on system startup (keeps it in memory)
             {:else}
@@ -780,16 +775,15 @@
           </p>
         </div>
 
-        <div style="margin-top: 0.75rem;">
+        <div class="mt-3">
           <button
-            class="action-button"
+            class="btn-secondary btn-sm"
             on:click={preloadEmbeddingNow}
             disabled={embeddingSaving}
-            style="padding: 0.4rem 0.8rem; font-size: 0.85rem;"
           >
             🔄 Load Model Now
           </button>
-          <p style="font-size: 0.8rem; color: var(--text-muted, #999); margin-top: 0.3rem;">
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
             Current model: <strong>{embeddingModel}</strong> (~791MB VRAM)
           </p>
         </div>
@@ -804,38 +798,36 @@
       <div class="info-grid">
         <div class="info-item">
           <span class="info-key">Base Model:</span>
-          <span class="info-value model-mono">{modelInfo.activeModel}</span>
+          <span class="info-value font-mono">{modelInfo.activeModel}</span>
         </div>
         {#if modelInfo.adapter2}
-          <!-- Dual-adapter mode -->
           <div class="info-item">
             <span class="info-key">📚 Historical:</span>
-            <span class="info-value adapter-highlight">history-merged</span>
+            <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">history-merged</span>
           </div>
           <div class="info-item">
             <span class="info-key">🆕 Recent:</span>
-            <span class="info-value adapter-highlight">
+            <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">
               {modelInfo.adapter.dataset}
               {#if modelInfo.adapter.evalScore}
-                <span class="adapter-score">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
+                <span class="text-xs text-emerald-500 dark:text-emerald-400 ml-1">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
               {/if}
             </span>
           </div>
         {:else if modelInfo.adapter}
-          <!-- Single adapter -->
           <div class="info-item">
             <span class="info-key">LoRA Adapter:</span>
-            <span class="info-value adapter-highlight">
+            <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">
               {modelInfo.adapter.dataset}
               {#if modelInfo.adapter.evalScore}
-                <span class="adapter-score">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
+                <span class="text-xs text-emerald-500 dark:text-emerald-400 ml-1">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
               {/if}
             </span>
           </div>
         {:else}
           <div class="info-item">
             <span class="info-key">LoRA Adapter:</span>
-            <span class="info-value muted-value">None</span>
+            <span class="info-value text-gray-400 dark:text-gray-500">None</span>
           </div>
         {/if}
       </div>
@@ -846,7 +838,7 @@
       <div class="info-grid">
         <div class="info-item">
           <span class="info-key">Status:</span>
-          <span class="info-value muted-value">Unavailable</span>
+          <span class="info-value text-gray-400 dark:text-gray-500">Unavailable</span>
         </div>
       </div>
     </div>
@@ -854,8 +846,8 @@
 
   <!-- LoRA Enable/Disable Toggle -->
   <div class="setting-group">
-    <div class="lora-toggle-container">
-      <div class="lora-toggle-header">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
         <span class="setting-label">LoRA Adapters</span>
         <label class="toggle-switch" for="lora-toggle-input" aria-label="Enable LoRA Adapters">
           <input
@@ -868,7 +860,7 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <p class="lora-toggle-description">
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {loraEnabled ? 'LoRA adapters enabled - personalized responses active' : 'LoRA adapters disabled - using base model only'}
       </p>
     </div>
@@ -878,16 +870,16 @@
   {#if loraDatasets.length > 0 && loraEnabled}
     <div class="setting-group">
       <label class="setting-label" for="adapter-selector">Switch Adapter</label>
-      <div id="adapter-selector" class="adapter-controls">
-        <select class="adapter-select" on:change={handleLoraSelect} disabled={selecting}>
+      <div id="adapter-selector" class="flex gap-2 items-center flex-wrap">
+        <select class="select-field flex-1 min-w-[200px]" on:change={handleLoraSelect} disabled={selecting}>
           <option value="">Select adapter to load...</option>
           {#each loraDatasets as d}
             <option value={d.date}>{d.date} {d.evalScore ? `(${(d.evalScore * 100).toFixed(0)}%)` : ''}</option>
           {/each}
         </select>
         {#if dualAvailable}
-          <label class="dual-toggle-label" for="dual-mode-checkbox">
-            <input id="dual-mode-checkbox" type="checkbox" bind:checked={dualEnabled} class="dual-checkbox" />
+          <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer" for="dual-mode-checkbox">
+            <input id="dual-mode-checkbox" type="checkbox" bind:checked={dualEnabled} class="cursor-pointer accent-violet-600" />
             <span>Dual Mode</span>
           </label>
         {/if}
@@ -898,10 +890,10 @@
   <!-- Logging Configuration -->
   <div class="setting-group">
     <label class="setting-label">Logging Configuration</label>
-    <div class="logging-config-container">
-      <div class="logging-field">
-        <label for="log-level-select" class="field-label">Log Level</label>
-        <select id="log-level-select" bind:value={logLevel} class="logging-select">
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-1">
+        <label for="log-level-select" class="text-sm font-medium text-gray-600 dark:text-gray-400">Log Level</label>
+        <select id="log-level-select" bind:value={logLevel} class="select-field">
           <option value="error">Error</option>
           <option value="warn">Warning</option>
           <option value="info">Info</option>
@@ -909,32 +901,32 @@
         </select>
       </div>
 
-      <div class="logging-field">
-        <label for="slow-threshold-input" class="field-label">Slow Request Threshold (ms)</label>
-        <input id="slow-threshold-input" type="number" min="100" max="10000" step="100" bind:value={slowRequestThresholdMs} class="logging-input" />
+      <div class="flex flex-col gap-1">
+        <label for="slow-threshold-input" class="text-sm font-medium text-gray-600 dark:text-gray-400">Slow Request Threshold (ms)</label>
+        <input id="slow-threshold-input" type="number" min="100" max="10000" step="100" bind:value={slowRequestThresholdMs} class="input-field" />
       </div>
 
-      <div class="logging-field">
-        <label for="suppress-patterns-input" class="field-label">Suppress Patterns (comma-separated)</label>
-        <input id="suppress-patterns-input" type="text" bind:value={suppressPatterns} placeholder="/api/status, /api/monitor" class="logging-input" />
+      <div class="flex flex-col gap-1">
+        <label for="suppress-patterns-input" class="text-sm font-medium text-gray-600 dark:text-gray-400">Suppress Patterns (comma-separated)</label>
+        <input id="suppress-patterns-input" type="text" bind:value={suppressPatterns} placeholder="/api/status, /api/monitor" class="input-field" />
       </div>
 
-      <div class="logging-checkboxes">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={logColorize} />
+      <div class="flex flex-col gap-2">
+        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={logColorize} class="cursor-pointer accent-violet-600" />
           <span>Colorize output</span>
         </label>
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={logTimestamp} />
+        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={logTimestamp} class="cursor-pointer accent-violet-600" />
           <span>Show timestamps</span>
         </label>
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={logSlowRequests} />
+        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input type="checkbox" bind:checked={logSlowRequests} class="cursor-pointer accent-violet-600" />
           <span>Log slow requests</span>
         </label>
       </div>
 
-      <button class="save-logging-button" on:click={saveLoggingConfig} disabled={savingLogging}>
+      <button class="btn-primary" on:click={saveLoggingConfig} disabled={savingLogging}>
         {savingLogging ? 'Saving...' : 'Save Logging Config'}
       </button>
     </div>
@@ -947,11 +939,11 @@
   </div>
 
   <!-- File Path Manager -->
-  <div class="setting-group" style="margin-top: 1.5rem;">
-    <div class="path-manager-header">
+  <div class="setting-group mt-6">
+    <div class="flex items-center justify-between mb-3">
       <label class="setting-label">File Path Manager</label>
       <button
-        class="refresh-button"
+        class="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 cursor-pointer text-base transition-all hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={refreshStorageStatus}
         disabled={storageLoading}
         title="Refresh storage status"
@@ -961,19 +953,19 @@
     </div>
 
     {#if storageLoading && !storageStatus}
-      <p class="lora-toggle-description">Loading storage status...</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">Loading storage status...</p>
     {:else if storageStatus && !storageStatus.authenticated}
-      <div class="storage-warning">
-        <span class="warning-icon">⚠️</span>
+      <div class="flex items-center gap-2 p-3 rounded-md mb-3 bg-amber-500/10 dark:bg-amber-400/10 border border-amber-500/30 dark:border-amber-400/25 text-amber-600 dark:text-amber-400">
+        <span>⚠️</span>
         <span>Login required to view storage paths</span>
       </div>
     {:else if storageStatus}
       <!-- Storage Status Summary -->
-      <div class="storage-summary">
-        <div class="storage-status-badge" class:available={storageStatus.status?.available} class:unavailable={!storageStatus.status?.available}>
+      <div class="flex gap-2 flex-wrap mb-4">
+        <div class="inline-flex items-center px-2 py-1 rounded text-xs font-medium {storageStatus.status?.available ? 'bg-emerald-500/10 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 dark:bg-red-400/15 text-red-600 dark:text-red-400'}">
           {storageStatus.status?.available ? '✓ Available' : '✗ Unavailable'}
         </div>
-        <div class="storage-type-badge">
+        <div class="inline-flex items-center px-2 py-1 rounded text-xs bg-violet-500/10 dark:bg-violet-400/15 text-violet-700 dark:text-violet-400">
           {#if storageStatus.status?.type === 'external'}
             💾 External
           {:else if storageStatus.status?.type === 'network'}
@@ -983,112 +975,98 @@
           {/if}
         </div>
         {#if storageStatus.status?.configured}
-          <span class="storage-configured-badge">Custom</span>
+          <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-500/10 dark:bg-blue-400/15 text-blue-600 dark:text-blue-400">Custom</span>
         {:else}
-          <span class="storage-default-badge">Default</span>
+          <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-500/10 dark:bg-gray-400/15 text-gray-600 dark:text-gray-400">Default</span>
         {/if}
       </div>
 
       {#if storageStatus.status?.error}
-        <div class="storage-error">
-          <span class="error-icon">⚠️</span>
+        <div class="flex items-center gap-2 p-3 rounded-md mb-3 bg-red-500/10 dark:bg-red-400/10 border border-red-500/30 dark:border-red-400/25 text-red-600 dark:text-red-400 text-sm">
+          <span>⚠️</span>
           <span>{storageStatus.status.error}</span>
         </div>
       {/if}
 
       <!-- Profile Root -->
-      <div class="path-item">
-        <span class="path-label">Profile Root</span>
-        <code class="path-value">{storageStatus.status?.path || 'Not configured'}</code>
+      <div class="flex flex-col gap-1 mb-4 p-3 bg-violet-500/5 dark:bg-violet-400/10 rounded-md border border-violet-500/15 dark:border-violet-400/20">
+        <span class="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">Profile Root</span>
+        <code class="font-mono text-[0.8125rem] text-gray-700 dark:text-gray-200 break-all">{storageStatus.status?.path || 'Not configured'}</code>
       </div>
 
       <!-- Storage Paths by Category -->
       {#if storageStatus.paths}
-        <div class="paths-grid">
-          <div class="path-category">
-            <span class="category-icon">🧠</span>
-            <span class="category-label">Memory</span>
+        <div class="grid grid-cols-[auto_1fr] gap-3 gap-x-4 mb-4">
+          <div class="flex items-start gap-1.5 pt-1">
+            <span class="text-base">🧠</span>
+            <span class="text-[0.8125rem] font-semibold text-gray-700 dark:text-gray-300">Memory</span>
           </div>
-          <div class="path-details">
-            <div class="path-row">
-              <span class="path-sublabel">Episodic:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.episodic?.available}>
-                {storageStatus.paths.episodic?.path || 'N/A'}
-              </code>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Episodic:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.episodic?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.episodic?.path || 'N/A'}</code>
             </div>
-            <div class="path-row">
-              <span class="path-sublabel">Procedural:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.procedural?.available}>
-                {storageStatus.paths.procedural?.path || 'N/A'}
-              </code>
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Procedural:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.procedural?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.procedural?.path || 'N/A'}</code>
             </div>
           </div>
 
-          <div class="path-category">
-            <span class="category-icon">⚙️</span>
-            <span class="category-label">Config</span>
+          <div class="flex items-start gap-1.5 pt-1">
+            <span class="text-base">⚙️</span>
+            <span class="text-[0.8125rem] font-semibold text-gray-700 dark:text-gray-300">Config</span>
           </div>
-          <div class="path-details">
-            <div class="path-row">
-              <span class="path-sublabel">Persona:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.persona?.available}>
-                {storageStatus.paths.persona?.path || 'N/A'}
-              </code>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Persona:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.persona?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.persona?.path || 'N/A'}</code>
             </div>
-            <div class="path-row">
-              <span class="path-sublabel">Settings:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.etc?.available}>
-                {storageStatus.paths.etc?.path || 'N/A'}
-              </code>
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Settings:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.etc?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.etc?.path || 'N/A'}</code>
             </div>
           </div>
 
-          <div class="path-category">
-            <span class="category-icon">🎤</span>
-            <span class="category-label">Voice</span>
+          <div class="flex items-start gap-1.5 pt-1">
+            <span class="text-base">🎤</span>
+            <span class="text-[0.8125rem] font-semibold text-gray-700 dark:text-gray-300">Voice</span>
           </div>
-          <div class="path-details">
-            <div class="path-row">
-              <span class="path-sublabel">Training:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.voice?.available}>
-                {storageStatus.paths.voice?.path || 'N/A'}
-              </code>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Training:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.voice?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.voice?.path || 'N/A'}</code>
             </div>
           </div>
 
-          <div class="path-category">
-            <span class="category-icon">📊</span>
-            <span class="category-label">Training</span>
+          <div class="flex items-start gap-1.5 pt-1">
+            <span class="text-base">📊</span>
+            <span class="text-[0.8125rem] font-semibold text-gray-700 dark:text-gray-300">Training</span>
           </div>
-          <div class="path-details">
-            <div class="path-row">
-              <span class="path-sublabel">Data:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.training?.available}>
-                {storageStatus.paths.training?.path || 'N/A'}
-              </code>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Data:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.training?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.training?.path || 'N/A'}</code>
             </div>
           </div>
 
-          <div class="path-category">
-            <span class="category-icon">📤</span>
-            <span class="category-label">Output</span>
+          <div class="flex items-start gap-1.5 pt-1">
+            <span class="text-base">📤</span>
+            <span class="text-[0.8125rem] font-semibold text-gray-700 dark:text-gray-300">Output</span>
           </div>
-          <div class="path-details">
-            <div class="path-row">
-              <span class="path-sublabel">Artifacts:</span>
-              <code class="path-code" class:unavailable={!storageStatus.paths.output?.available}>
-                {storageStatus.paths.output?.path || 'N/A'}
-              </code>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-xs text-gray-500 dark:text-gray-400">Artifacts:</span>
+              <code class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all bg-black/5 dark:bg-white/5 px-1.5 py-1 rounded {!storageStatus.paths.output?.available ? 'text-gray-400 dark:text-gray-500 bg-red-500/5 dark:bg-red-400/5' : ''}">{storageStatus.paths.output?.path || 'N/A'}</code>
             </div>
           </div>
         </div>
       {/if}
 
-      <p class="storage-hint">
-        Configure custom storage locations in the <strong>Storage</strong> tab.
+      <p class="text-[0.8125rem] text-gray-500 dark:text-gray-400 m-0">
+        Configure custom storage locations in the <strong class="text-gray-600 dark:text-gray-300">Storage</strong> tab.
       </p>
     {:else}
-      <p class="lora-toggle-description">Unable to load storage status</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">Unable to load storage status</p>
     {/if}
   </div>
 
@@ -1106,657 +1084,4 @@
       </div>
     </div>
   </div>
-
 </div>
-
-<style>
-  .system-settings {
-    width: 100%;
-  }
-
-  .section-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #1f2937;
-    margin: 0 0 1rem 0;
-  }
-
-  :global(.dark) .section-title {
-    color: #f3f4f6;
-  }
-
-  .lora-toggle-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .lora-toggle-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .lora-toggle-description {
-    font-size: 0.875rem;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .lora-toggle-description {
-    color: #9ca3af;
-  }
-
-  .model-mono {
-    font-family: monospace;
-  }
-
-  .adapter-highlight {
-    color: #7c3aed;
-    font-weight: 600;
-  }
-
-  :global(.dark) .adapter-highlight {
-    color: #a78bfa;
-  }
-
-  .adapter-score {
-    font-size: 0.75rem;
-    color: #10b981;
-    margin-left: 0.25rem;
-  }
-
-  :global(.dark) .adapter-score {
-    color: #34d399;
-  }
-
-  .muted-value {
-    color: #9ca3af;
-  }
-
-  :global(.dark) .muted-value {
-    color: #6b7280;
-  }
-
-  .adapter-controls {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .adapter-select {
-    flex: 1;
-    min-width: 200px;
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .adapter-select {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .adapter-select:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  .dual-toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: 0.875rem;
-    color: #374151;
-    cursor: pointer;
-  }
-
-  :global(.dark) .dual-toggle-label {
-    color: #d1d5db;
-  }
-
-  .dual-checkbox {
-    cursor: pointer;
-  }
-
-  .opt-input {
-    width: 100%;
-    padding: 0.375rem 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.25rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .opt-input {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .opt-input:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
-  }
-
-  .logging-config-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .logging-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .field-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #4b5563;
-  }
-
-  :global(.dark) .field-label {
-    color: #9ca3af;
-  }
-
-  .logging-select,
-  .logging-input {
-    padding: 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    background: white;
-    color: #1f2937;
-  }
-
-  :global(.dark) .logging-select,
-  :global(.dark) .logging-input {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .logging-select:focus,
-  .logging-input:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  .logging-checkboxes {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-    color: #374151;
-    cursor: pointer;
-  }
-
-  :global(.dark) .checkbox-label {
-    color: #d1d5db;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    cursor: pointer;
-    accent-color: #7c3aed;
-  }
-
-  .save-logging-button {
-    padding: 0.625rem 1rem;
-    border: none;
-    border-radius: 0.375rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: #7c3aed;
-    color: white;
-  }
-
-  .save-logging-button:hover:not(:disabled) {
-    background: #6d28d9;
-  }
-
-  .save-logging-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Resources Section */
-  .resources-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .resource-link {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.875rem;
-    border-radius: 0.5rem;
-    background: rgba(124, 58, 237, 0.05);
-    border: 1px solid rgba(124, 58, 237, 0.15);
-    text-decoration: none;
-    color: inherit;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .resource-link {
-    background: rgba(167, 139, 250, 0.08);
-    border-color: rgba(167, 139, 250, 0.2);
-  }
-
-  .resource-link:hover {
-    background: rgba(124, 58, 237, 0.1);
-    border-color: rgba(124, 58, 237, 0.3);
-    transform: translateX(2px);
-  }
-
-  :global(.dark) .resource-link:hover {
-    background: rgba(167, 139, 250, 0.15);
-    border-color: rgba(167, 139, 250, 0.35);
-  }
-
-  .resource-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .resource-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    flex: 1;
-  }
-
-  .resource-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  :global(.dark) .resource-title {
-    color: #f3f4f6;
-  }
-
-  .resource-description {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .resource-description {
-    color: #9ca3af;
-  }
-
-  /* File Path Manager styles */
-  .path-manager-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-  }
-
-  .refresh-button {
-    padding: 0.25rem 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.25rem;
-    background: white;
-    color: #4b5563;
-    cursor: pointer;
-    font-size: 1rem;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .refresh-button {
-    background: #374151;
-    border-color: #4b5563;
-    color: #d1d5db;
-  }
-
-  .refresh-button:hover:not(:disabled) {
-    background: #f3f4f6;
-    border-color: #9ca3af;
-  }
-
-  :global(.dark) .refresh-button:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  .refresh-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .storage-summary {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 1rem;
-  }
-
-  .storage-status-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .storage-status-badge.available {
-    background: rgba(16, 185, 129, 0.1);
-    color: #059669;
-  }
-
-  :global(.dark) .storage-status-badge.available {
-    background: rgba(52, 211, 153, 0.15);
-    color: #34d399;
-  }
-
-  .storage-status-badge.unavailable {
-    background: rgba(239, 68, 68, 0.1);
-    color: #dc2626;
-  }
-
-  :global(.dark) .storage-status-badge.unavailable {
-    background: rgba(248, 113, 113, 0.15);
-    color: #f87171;
-  }
-
-  .storage-type-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    background: rgba(124, 58, 237, 0.1);
-    color: #6d28d9;
-  }
-
-  :global(.dark) .storage-type-badge {
-    background: rgba(167, 139, 250, 0.15);
-    color: #a78bfa;
-  }
-
-  .storage-configured-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    background: rgba(59, 130, 246, 0.1);
-    color: #2563eb;
-  }
-
-  :global(.dark) .storage-configured-badge {
-    background: rgba(96, 165, 250, 0.15);
-    color: #60a5fa;
-  }
-
-  .storage-default-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    background: rgba(107, 114, 128, 0.1);
-    color: #4b5563;
-  }
-
-  :global(.dark) .storage-default-badge {
-    background: rgba(156, 163, 175, 0.15);
-    color: #9ca3af;
-  }
-
-  .storage-warning,
-  .storage-error {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border-radius: 0.375rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .storage-warning {
-    background: rgba(245, 158, 11, 0.1);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: #d97706;
-  }
-
-  :global(.dark) .storage-warning {
-    background: rgba(251, 191, 36, 0.1);
-    border-color: rgba(251, 191, 36, 0.25);
-    color: #fbbf24;
-  }
-
-  .storage-error {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #dc2626;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .storage-error {
-    background: rgba(248, 113, 113, 0.1);
-    border-color: rgba(248, 113, 113, 0.25);
-    color: #f87171;
-  }
-
-  .path-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.375rem;
-    border: 1px solid rgba(124, 58, 237, 0.15);
-  }
-
-  :global(.dark) .path-item {
-    background: rgba(167, 139, 250, 0.08);
-    border-color: rgba(167, 139, 250, 0.2);
-  }
-
-  .path-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #6d28d9;
-  }
-
-  :global(.dark) .path-label {
-    color: #a78bfa;
-  }
-
-  .path-value {
-    font-family: monospace;
-    font-size: 0.8125rem;
-    color: #374151;
-    word-break: break-all;
-    background: transparent;
-    padding: 0;
-  }
-
-  :global(.dark) .path-value {
-    color: #e5e7eb;
-  }
-
-  .paths-grid {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.75rem 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .path-category {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.375rem;
-    padding-top: 0.25rem;
-  }
-
-  .category-icon {
-    font-size: 1rem;
-  }
-
-  .category-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  :global(.dark) .category-label {
-    color: #d1d5db;
-  }
-
-  .path-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .path-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-
-  .path-sublabel {
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .path-sublabel {
-    color: #9ca3af;
-  }
-
-  .path-code {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: #4b5563;
-    word-break: break-all;
-    background: rgba(0, 0, 0, 0.03);
-    padding: 0.25rem 0.375rem;
-    border-radius: 0.25rem;
-  }
-
-  :global(.dark) .path-code {
-    color: #d1d5db;
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .path-code.unavailable {
-    color: #9ca3af;
-    background: rgba(239, 68, 68, 0.05);
-  }
-
-  :global(.dark) .path-code.unavailable {
-    color: #6b7280;
-    background: rgba(248, 113, 113, 0.05);
-  }
-
-  .storage-hint {
-    font-size: 0.8125rem;
-    color: #6b7280;
-    margin: 0;
-  }
-
-  :global(.dark) .storage-hint {
-    color: #9ca3af;
-  }
-
-  .storage-hint strong {
-    color: #4b5563;
-  }
-
-  :global(.dark) .storage-hint strong {
-    color: #d1d5db;
-  }
-
-  /* Content Mode Select Styles */
-  .content-mode-select {
-    width: 100%;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 0.9375rem;
-    background: white;
-    color: #1f2937;
-    cursor: pointer;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-
-  :global(.dark) .content-mode-select {
-    background: #1f2937;
-    border-color: #374151;
-    color: #f3f4f6;
-  }
-
-  .content-mode-select:focus {
-    outline: none;
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
-  }
-
-  .content-mode-select:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .content-mode-description {
-    font-size: 0.8125rem;
-    color: #6b7280;
-    margin: 0.5rem 0 0 0;
-    padding: 0.5rem 0.75rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.25rem;
-    border-left: 3px solid #7c3aed;
-  }
-
-  :global(.dark) .content-mode-description {
-    color: #9ca3af;
-    background: rgba(167, 139, 250, 0.08);
-    border-left-color: #a78bfa;
-  }
-
-  .saving-indicator {
-    font-size: 0.75rem;
-    color: #7c3aed;
-    margin: 0.5rem 0 0 0;
-    font-style: italic;
-  }
-
-  :global(.dark) .saving-indicator {
-    color: #a78bfa;
-  }
-
-  .content-mode-note {
-    font-size: 0.75rem;
-    color: #9ca3af;
-    margin: 0.5rem 0 0 0;
-    font-style: italic;
-  }
-
-  :global(.dark) .content-mode-note {
-    color: #6b7280;
-  }
-</style>

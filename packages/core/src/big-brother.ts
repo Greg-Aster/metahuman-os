@@ -24,7 +24,27 @@ import {
   escalate as escalateViaBackend,
   ensureBackendsInitialized,
   type EscalationResult,
+  type ReasoningStep,
 } from './escalation-backend.js';
+import {
+  bigBrotherTerminal,
+  ensureBigBrotherTerminal,
+  sendToBigBrother,
+  isBigBrotherReady,
+} from './big-brother-terminal.js';
+
+/**
+ * Optional streaming callbacks for real-time UI display.
+ * These allow the UI to show Claude's output as it happens.
+ */
+export interface EscalationStreamingCallbacks {
+  /** Called for each raw output chunk (for terminal display) */
+  onChunk?: (chunk: string) => void;
+  /** Called when backend is waiting for user input */
+  onWaitingForInput?: (question: string) => void;
+  /** Called for each reasoning step detected */
+  onReasoningStep?: (step: ReasoningStep) => void;
+}
 
 // ============================================================================
 // Types
@@ -188,11 +208,16 @@ function extractAlternativeApproach(response: string): string | undefined {
 // ============================================================================
 
 /**
- * Escalate a stuck state to Big Brother (configurable backend) for guidance
+ * Escalate a stuck state to Big Brother (configurable backend) for guidance.
+ *
+ * @param request - The escalation request with goal, context, etc.
+ * @param config - Operator configuration
+ * @param streamingCallbacks - Optional callbacks for real-time UI streaming
  */
 export async function escalateToBigBrother(
   request: EscalationRequest,
-  config: OperatorConfig
+  config: OperatorConfig,
+  streamingCallbacks?: EscalationStreamingCallbacks
 ): Promise<EscalationResponse> {
   const bigBrotherConfig = config.bigBrotherMode;
 
@@ -211,6 +236,41 @@ export async function escalateToBigBrother(
       reasoning: 'Big Brother mode is disabled',
       error: 'Feature disabled',
     };
+  }
+
+  // Auto-start the interactive terminal when Big Brother is first activated
+  // This ensures the user can see Claude working in real-time within the program
+  if (!isBigBrotherReady()) {
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'big_brother_terminal_auto_starting',
+      details: { goal: request.goal },
+      actor: 'big-brother',
+    });
+
+    const terminalStarted = await ensureBigBrotherTerminal();
+    if (terminalStarted) {
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'big_brother_terminal_auto_started',
+        details: { port: 3099 },
+        actor: 'big-brother',
+      });
+
+      // Emit event for UI to open the terminal tab
+      bigBrotherTerminal.emit('open_tab', { port: 3099, url: 'http://localhost:3099' });
+    } else {
+      audit({
+        level: 'warn',
+        category: 'action',
+        event: 'big_brother_terminal_auto_start_failed',
+        details: { goal: request.goal },
+        actor: 'big-brother',
+      });
+      // Continue with background mode if terminal fails
+    }
   }
 
   // Determine which backend to use
@@ -256,10 +316,13 @@ export async function escalateToBigBrother(
       timeout: 180000,
       sessionId: request.sessionId,
       preferredBackend: backendId,
+      // Forward streaming callbacks for real-time UI display
+      onChunk: streamingCallbacks?.onChunk,
+      onWaitingForInput: streamingCallbacks?.onWaitingForInput,
       onReasoningStep: (step) => {
         const label = step.toolName ? `${step.type}(${step.toolName})` : step.type;
         console.log(`[big-brother] 🧠 ${label}: ${step.content.substring(0, 80)}`);
-        
+
         // Collect reasoning steps for return
         reasoningSteps.push({
           type: step.type,
@@ -267,6 +330,9 @@ export async function escalateToBigBrother(
           timestamp: step.timestamp,
           toolName: step.toolName,
         });
+
+        // Also forward to caller's callback if provided
+        streamingCallbacks?.onReasoningStep?.(step);
       },
     });
 

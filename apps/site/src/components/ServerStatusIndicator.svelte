@@ -117,87 +117,70 @@
   });
 </script>
 
-<div class="server-status-indicator">
+<div class="bg-gray-100 dark:bg-neutral-900 border border-gray-200 dark:border-neutral-700 rounded-lg p-3">
   {#if loading && !status}
-    <div class="status-loading">
-      <span class="loading-spinner"></span>
+    <div class="flex items-center gap-2 p-2 text-gray-500 dark:text-gray-400">
+      <span class="spinner"></span>
       <span>Loading status...</span>
     </div>
   {:else if error && !status}
-    <div class="status-error">
-      <span class="status-icon">⚠️</span>
-      <span class="status-text">Error loading status</span>
+    <div class="flex items-center gap-2 p-2 text-gray-500 dark:text-gray-400">
+      <span>⚠️</span>
+      <span>Error loading status</span>
     </div>
   {:else if status}
-    <div class="status-content">
-      <div class="status-display">
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center gap-3 flex-wrap">
         {#if !status.installed}
           <div class="status-badge not-installed">
             <span class="status-dot"></span>
-            <span class="status-label">Not Installed</span>
+            <span>Not Installed</span>
           </div>
         {:else if status.running && status.healthy}
-          <div class="status-badge running healthy">
+          <div class="status-badge running">
             <span class="status-dot pulsing"></span>
-            <span class="status-label">Running</span>
+            <span>Running</span>
           </div>
         {:else if status.running && !status.healthy}
-          <div class="status-badge running unhealthy">
+          <div class="status-badge starting">
             <span class="status-dot"></span>
-            <span class="status-label">Starting...</span>
+            <span>Starting...</span>
           </div>
         {:else}
           <div class="status-badge stopped">
             <span class="status-dot"></span>
-            <span class="status-label">Stopped</span>
+            <span>Stopped</span>
           </div>
         {/if}
 
         {#if status.running && status.pid}
-          <span class="status-detail">PID: {status.pid}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400 px-2 py-1 bg-white dark:bg-black rounded">PID: {status.pid}</span>
         {/if}
 
         {#if status.port}
-          <span class="status-detail">Port: {status.port}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400 px-2 py-1 bg-white dark:bg-black rounded">Port: {status.port}</span>
         {/if}
       </div>
 
       {#if status.installed}
-        <div class="status-controls">
+        <div class="flex gap-2 flex-wrap">
           {#if status.running}
-            <button
-              class="control-btn stop-btn"
-              on:click={stopServer}
-              disabled={stopping}
-            >
+            <button class="control-btn bg-red-500 hover:bg-red-600 dark:bg-red-700 dark:hover:bg-red-800" on:click={stopServer} disabled={stopping}>
               {stopping ? '⏳' : '⏹️'} {stopping ? 'Stopping...' : 'Stop'}
             </button>
           {:else}
-            <button
-              class="control-btn start-btn"
-              on:click={startServer}
-              disabled={starting}
-            >
+            <button class="control-btn bg-green-500 hover:bg-green-600 dark:bg-green-700 dark:hover:bg-green-800" on:click={startServer} disabled={starting}>
               {starting ? '⏳' : '▶️'} {starting ? 'Starting...' : 'Start'}
             </button>
           {/if}
 
           {#if status.serverUrl && status.healthy}
-            <a
-              href={status.serverUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="control-btn link-btn"
-            >
+            <a href={status.serverUrl} target="_blank" rel="noopener noreferrer" class="control-btn bg-blue-500 hover:bg-blue-600 dark:bg-blue-700 dark:hover:bg-blue-800 no-underline">
               🔗 Open
             </a>
           {/if}
 
-          <button
-            class="control-btn refresh-btn"
-            on:click={fetchStatus}
-            disabled={loading}
-          >
+          <button class="control-btn bg-gray-500 hover:bg-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600" on:click={fetchStatus} disabled={loading}>
             🔄
           </button>
         </div>
@@ -205,266 +188,56 @@
     </div>
 
     {#if error}
-      <div class="error-message">{error}</div>
+      <div class="banner banner-error mt-3">{error}</div>
     {/if}
   {/if}
 </div>
 
 <style>
-  .server-status-indicator {
-    background: var(--bg-secondary, #f5f5f5);
-    border: 1px solid var(--border, #ddd);
-    border-radius: 8px;
-    padding: 12px;
-  }
-
-  :global(.dark) .server-status-indicator {
-    background: #1a1a1a;
-    border-color: #333;
-  }
-
-  .status-loading,
-  .status-error {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    color: var(--text-secondary, #666);
-  }
-
-  :global(.dark) .status-loading,
-  :global(.dark) .status-error {
-    color: #999;
-  }
-
-  .loading-spinner {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--border, #ddd);
-    border-top-color: var(--accent, #2196F3);
-    border-radius: 50%;
+  /* Spinner animation */
+  .spinner {
+    @apply inline-block w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full;
     animation: spin 0.8s linear infinite;
   }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .status-content {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .status-display {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
+  /* Status badge variants */
   .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border-radius: 16px;
-    font-size: 0.9rem;
-    font-weight: 600;
+    @apply inline-flex items-center gap-2 py-1.5 px-3 rounded-full text-sm font-semibold;
   }
-
   .status-badge.not-installed {
-    background: #f3f4f6;
-    color: #6b7280;
+    @apply bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400;
   }
-
-  :global(.dark) .status-badge.not-installed {
-    background: #374151;
-    color: #9ca3af;
+  .status-badge.running {
+    @apply bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300;
   }
-
-  .status-badge.running.healthy {
-    background: #d1fae5;
-    color: #065f46;
+  .status-badge.starting {
+    @apply bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300;
   }
-
-  :global(.dark) .status-badge.running.healthy {
-    background: #064e3b;
-    color: #6ee7b7;
-  }
-
-  .status-badge.running.unhealthy {
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  :global(.dark) .status-badge.running.unhealthy {
-    background: #78350f;
-    color: #fcd34d;
-  }
-
   .status-badge.stopped {
-    background: #fee2e2;
-    color: #991b1b;
+    @apply bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300;
   }
 
-  :global(.dark) .status-badge.stopped {
-    background: #7f1d1d;
-    color: #fca5a5;
-  }
-
+  /* Status dot with pulse animation */
   .status-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: currentColor;
+    @apply inline-block w-2 h-2 rounded-full bg-current;
   }
-
   .status-dot.pulsing {
     animation: pulse 2s ease-in-out infinite;
   }
-
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
 
-  .status-detail {
-    font-size: 0.85rem;
-    color: var(--text-secondary, #666);
-    padding: 4px 8px;
-    background: var(--bg-tertiary, #fff);
-    border-radius: 4px;
-  }
-
-  :global(.dark) .status-detail {
-    background: #0f0f0f;
-    color: #999;
-  }
-
-  .status-controls {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
+  /* Control button base */
   .control-btn {
-    padding: 6px 12px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+    @apply py-1.5 px-3 text-sm font-medium border-0 rounded-md cursor-pointer transition-all
+           inline-flex items-center gap-1 text-white;
   }
-
   .control-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .start-btn {
-    background: #10b981;
-    color: white;
-  }
-
-  .start-btn:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  :global(.dark) .start-btn {
-    background: #047857;
-  }
-
-  :global(.dark) .start-btn:hover:not(:disabled) {
-    background: #065f46;
-  }
-
-  .stop-btn {
-    background: #ef4444;
-    color: white;
-  }
-
-  .stop-btn:hover:not(:disabled) {
-    background: #dc2626;
-  }
-
-  :global(.dark) .stop-btn {
-    background: #b91c1c;
-  }
-
-  :global(.dark) .stop-btn:hover:not(:disabled) {
-    background: #991b1b;
-  }
-
-  .link-btn {
-    background: #3b82f6;
-    color: white;
-    text-decoration: none;
-  }
-
-  .link-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  :global(.dark) .link-btn {
-    background: #1e40af;
-  }
-
-  :global(.dark) .link-btn:hover:not(:disabled) {
-    background: #1e3a8a;
-  }
-
-  .refresh-btn {
-    background: #6b7280;
-    color: white;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: #4b5563;
-  }
-
-  :global(.dark) .refresh-btn {
-    background: #374151;
-  }
-
-  :global(.dark) .refresh-btn:hover:not(:disabled) {
-    background: #1f2937;
-  }
-
-  .error-message {
-    padding: 8px 12px;
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    border-radius: 6px;
-    color: #991b1b;
-    font-size: 0.85rem;
-  }
-
-  :global(.dark) .error-message {
-    background: #7f1d1d;
-    border-color: #991b1b;
-    color: #fca5a5;
-  }
-
-  @media (max-width: 640px) {
-    .status-display {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .status-controls {
-      width: 100%;
-    }
-
-    .control-btn {
-      flex: 1;
-      justify-content: center;
-    }
+    @apply opacity-50 cursor-not-allowed;
   }
 </style>

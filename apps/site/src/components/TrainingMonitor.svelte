@@ -110,118 +110,117 @@
   });
 </script>
 
-<div class="training-monitor">
+<div class="flex flex-col h-full">
   {#if loading}
-    <div class="loading-state">Loading training operations...</div>
+    <div class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">Loading training operations...</div>
   {:else if error}
-    <div class="error-state">Error: {error}</div>
+    <div class="flex flex-col items-center justify-center h-full text-red-600 dark:text-red-400">Error: {error}</div>
   {:else if operations.length === 0}
-    <div class="empty-state">
-      <div class="empty-icon">🔥</div>
-      <div class="empty-title">No training operations found</div>
-      <div class="empty-description">Training runs will appear here when started</div>
+    <div class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+      <div class="text-6xl mb-4 opacity-50">🔥</div>
+      <div class="text-xl font-semibold mb-2 text-gray-900 dark:text-gray-100">No training operations found</div>
+      <div class="text-sm">Training runs will appear here when started</div>
     </div>
   {:else}
-    <div class="monitor-layout">
+    <div class="grid grid-cols-[280px_1fr] gap-6 h-full overflow-hidden">
       <!-- Operations List -->
-      <div class="operations-list">
-        <div class="operations-header">
-          <h3>Recent Operations</h3>
-          <button on:click={loadOperations} class="refresh-btn-small">↻</button>
+      <div class="flex flex-col gap-2 overflow-y-auto p-4 bg-white dark:bg-white/5 rounded-lg border border-black/10 dark:border-white/10">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Recent Operations</h3>
+          <button on:click={loadOperations} class="bg-transparent border-none text-xl cursor-pointer text-gray-500 dark:text-gray-400 p-1 hover:text-violet-600 dark:hover:text-violet-400">↻</button>
         </div>
         {#each operations as op}
           <button
-            class="operation-item"
-            class:active={selectedOperation?.operation === op.operation}
+            class="flex flex-col gap-1 p-3 bg-transparent border border-black/10 dark:border-white/10 rounded-md cursor-pointer text-left transition-all hover:bg-black/5 dark:hover:bg-white/5 {selectedOperation?.operation === op.operation ? 'bg-violet-600 dark:bg-violet-400 text-white dark:text-gray-900 border-violet-600 dark:border-violet-400' : ''}"
             on:click={() => loadOperationDetails(op.operation)}
           >
-            <div class="op-name">{op.operation}</div>
-            <div class="op-status {getStatusColor(op.overallStatus)}">
+            <div class="text-sm font-medium whitespace-nowrap overflow-hidden text-ellipsis">{op.operation}</div>
+            <div class="text-xs uppercase font-semibold {op.overallStatus === 'running' ? 'text-blue-500 dark:text-blue-400' : op.overallStatus === 'completed' ? 'text-green-500 dark:text-green-400' : op.overallStatus === 'failed' ? 'text-red-500 dark:text-red-400' : ''}">
               {op.overallStatus}
             </div>
-            <div class="op-progress">{op.overallProgress}%</div>
+            <div class="text-xs font-semibold">{op.overallProgress}%</div>
           </button>
         {/each}
       </div>
 
       <!-- Operation Details -->
       {#if selectedOperation}
-        <div class="operation-details">
+        <div class="flex flex-col gap-6 overflow-y-auto p-6 bg-white dark:bg-white/5 rounded-lg border border-black/10 dark:border-white/10">
           <!-- Status Header -->
-          <div class="details-header">
-            <h2>{selectedOperation.operation}</h2>
-            <div class="status-badge {getStatusColor(selectedOperation.overallStatus)}">
+          <div class="flex justify-between items-center">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">{selectedOperation.operation}</h2>
+            <div class="px-3 py-1 rounded-full text-xs font-semibold {selectedOperation.overallStatus === 'running' ? 'text-blue-500 dark:text-blue-400 bg-blue-500/10' : selectedOperation.overallStatus === 'completed' ? 'text-green-500 dark:text-green-400 bg-green-500/10' : selectedOperation.overallStatus === 'failed' ? 'text-red-500 dark:text-red-400 bg-red-500/10' : 'bg-gray-500/10'}">
               {selectedOperation.overallStatus.toUpperCase()}
             </div>
           </div>
 
           <!-- Hung Process Warning -->
           {#if selectedOperation.isHung}
-            <div class="warning-banner">
+            <div class="p-4 bg-red-500/10 dark:bg-red-500/20 border border-red-500/30 rounded-lg text-red-600 dark:text-red-400 font-medium">
               ⚠️ No heartbeat for over 2 minutes - process may be stuck!
             </div>
           {/if}
 
           <!-- Metadata -->
           {#if selectedOperation.metadata}
-            <div class="metadata">
+            <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
               {#if selectedOperation.metadata.model}
-                <div class="meta-item">
-                  <span class="meta-label">Model:</span>
-                  <span class="meta-value">{selectedOperation.metadata.model}</span>
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Model:</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedOperation.metadata.model}</span>
                 </div>
               {/if}
               {#if selectedOperation.metadata.samples}
-                <div class="meta-item">
-                  <span class="meta-label">Samples:</span>
-                  <span class="meta-value">{selectedOperation.metadata.samples}</span>
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Samples:</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedOperation.metadata.samples}</span>
                 </div>
               {/if}
               {#if selectedOperation.metadata.pod_id}
-                <div class="meta-item">
-                  <span class="meta-label">Pod ID:</span>
-                  <span class="meta-value mono">{selectedOperation.metadata.pod_id}</span>
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Pod ID:</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100 font-mono">{selectedOperation.metadata.pod_id}</span>
                 </div>
               {/if}
               {#if selectedOperation.elapsedSeconds !== undefined}
-                <div class="meta-item">
-                  <span class="meta-label">Elapsed:</span>
-                  <span class="meta-value">{formatElapsedTime(selectedOperation.elapsedSeconds)}</span>
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Elapsed:</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{formatElapsedTime(selectedOperation.elapsedSeconds)}</span>
                 </div>
               {/if}
             </div>
           {/if}
 
           <!-- Overall Progress -->
-          <div class="overall-progress">
-            <div class="progress-header">
+          <div class="flex flex-col gap-2">
+            <div class="flex justify-between text-sm font-semibold text-gray-900 dark:text-gray-100">
               <span>Overall Progress</span>
-              <span class="progress-percent">{selectedOperation.overallProgress}%</span>
+              <span>{selectedOperation.overallProgress}%</span>
             </div>
-            <div class="progress-bar">
+            <div class="h-6 bg-black/5 dark:bg-white/5 rounded-xl overflow-hidden">
               <div
-                class="progress-fill"
+                class="h-full bg-violet-600 dark:bg-violet-400 transition-all duration-300"
                 style="width: {selectedOperation.overallProgress}%"
               ></div>
             </div>
           </div>
 
           <!-- Stage Details -->
-          <div class="stages">
-            <h3>Stages</h3>
+          <div>
+            <h3 class="text-base font-semibold mb-4 text-gray-900 dark:text-gray-100">Stages</h3>
             {#each selectedOperation.stages as stage}
-              <div class="stage-item" class:stage-active={stage.status === 'in_progress'}>
-                <div class="stage-header">
-                  <span class="stage-icon">{getStageIcon(stage.status)}</span>
-                  <span class="stage-name">{stage.name}</span>
-                  <span class="stage-percent">{stage.progress}%</span>
+              <div class="p-4 border border-black/10 dark:border-white/10 rounded-lg mb-3 {stage.status === 'in_progress' ? 'border-violet-600 dark:border-violet-400 bg-violet-600/5 dark:bg-violet-400/5' : ''}">
+                <div class="flex items-center gap-3 mb-2">
+                  <span class="text-xl">{getStageIcon(stage.status)}</span>
+                  <span class="flex-1 font-medium capitalize text-gray-900 dark:text-gray-100">{stage.name}</span>
+                  <span class="text-sm font-semibold text-gray-500 dark:text-gray-400">{stage.progress}%</span>
                 </div>
                 {#if stage.message}
-                  <div class="stage-message">{stage.message}</div>
+                  <div class="text-sm text-gray-500 dark:text-gray-400 my-2">{stage.message}</div>
                 {/if}
-                <div class="stage-progress-bar">
+                <div class="h-2 bg-black/5 dark:bg-white/5 rounded overflow-hidden">
                   <div
-                    class="stage-progress-fill stage-{stage.status}"
+                    class="h-full transition-all duration-300 {stage.status === 'pending' ? 'bg-gray-400 opacity-30' : stage.status === 'in_progress' ? 'bg-blue-500' : stage.status === 'completed' ? 'bg-green-500' : 'bg-red-500'}"
                     style="width: {stage.progress}%"
                   ></div>
                 </div>
@@ -230,7 +229,7 @@
           </div>
 
           <!-- Last Heartbeat -->
-          <div class="heartbeat">
+          <div class="text-xs text-gray-500 dark:text-gray-400 text-right">
             Last heartbeat: {new Date(selectedOperation.lastHeartbeat).toLocaleString()}
           </div>
         </div>
@@ -239,451 +238,3 @@
   {/if}
 </div>
 
-<style>
-  .training-monitor {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
-
-  .loading-state,
-  .error-state,
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .loading-state,
-  :global(.dark) .error-state,
-  :global(.dark) .empty-state {
-    color: rgb(156 163 175);
-  }
-
-  .error-state {
-    color: rgb(220 38 38);
-  }
-
-  :global(.dark) .error-state {
-    color: rgb(248 113 113);
-  }
-
-  .empty-icon {
-    font-size: 4rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-
-  .empty-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .empty-title {
-    color: rgb(243 244 246);
-  }
-
-  .empty-description {
-    font-size: 0.875rem;
-  }
-
-  .monitor-layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 1.5rem;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  /* Operations List */
-  .operations-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    overflow-y: auto;
-    padding: 1rem;
-    background: white;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .operations-list {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .operations-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .operations-header h3 {
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: rgb(107 114 128);
-    margin: 0;
-  }
-
-  :global(.dark) .operations-header h3 {
-    color: rgb(156 163 175);
-  }
-
-  .refresh-btn-small {
-    background: none;
-    border: none;
-    font-size: 1.25rem;
-    cursor: pointer;
-    color: rgb(107 114 128);
-    padding: 0.25rem;
-  }
-
-  :global(.dark) .refresh-btn-small {
-    color: rgb(156 163 175);
-  }
-
-  .refresh-btn-small:hover {
-    color: rgb(124 58 237);
-  }
-
-  :global(.dark) .refresh-btn-small:hover {
-    color: rgb(167 139 250);
-  }
-
-  .operation-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.75rem;
-    background: transparent;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 0.375rem;
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .operation-item {
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .operation-item:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .operation-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .operation-item.active {
-    background: rgb(124 58 237);
-    color: white;
-    border-color: rgb(124 58 237);
-  }
-
-  :global(.dark) .operation-item.active {
-    background: rgb(167 139 250);
-    color: rgb(17 24 39);
-  }
-
-  .op-name {
-    font-size: 0.875rem;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .op-status {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    font-weight: 600;
-  }
-
-  .status-running {
-    color: rgb(59 130 246);
-  }
-
-  :global(.dark) .status-running {
-    color: rgb(96 165 250);
-  }
-
-  .status-completed {
-    color: rgb(34 197 94);
-  }
-
-  :global(.dark) .status-completed {
-    color: rgb(74 222 128);
-  }
-
-  .status-failed {
-    color: rgb(239 68 68);
-  }
-
-  :global(.dark) .status-failed {
-    color: rgb(248 113 113);
-  }
-
-  .op-progress {
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  /* Operation Details */
-  .operation-details {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    overflow-y: auto;
-    padding: 1.5rem;
-    background: white;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .operation-details {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .details-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .details-header h2 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin: 0;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .details-header h2 {
-    color: rgb(243 244 246);
-  }
-
-  .status-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .warning-banner {
-    padding: 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 0.5rem;
-    color: rgb(220 38 38);
-    font-weight: 500;
-  }
-
-  :global(.dark) .warning-banner {
-    background: rgba(239, 68, 68, 0.2);
-    color: rgb(248 113 113);
-  }
-
-  /* Metadata */
-  .metadata {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-  }
-
-  .meta-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .meta-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .meta-label {
-    color: rgb(156 163 175);
-  }
-
-  .meta-value {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .meta-value {
-    color: rgb(243 244 246);
-  }
-
-  .mono {
-    font-family: monospace;
-  }
-
-  /* Progress Bars */
-  .overall-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .progress-header {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .progress-header {
-    color: rgb(243 244 246);
-  }
-
-  .progress-bar {
-    height: 1.5rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.75rem;
-    overflow: hidden;
-  }
-
-  :global(.dark) .progress-bar {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: rgb(124 58 237);
-    transition: width 0.3s ease;
-  }
-
-  :global(.dark) .progress-fill {
-    background: rgb(167 139 250);
-  }
-
-  /* Stages */
-  .stages h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0 0 1rem 0;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .stages h3 {
-    color: rgb(243 244 246);
-  }
-
-  .stage-item {
-    padding: 1rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  :global(.dark) .stage-item {
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .stage-item.stage-active {
-    border-color: rgb(124 58 237);
-    background: rgba(124, 58, 237, 0.05);
-  }
-
-  :global(.dark) .stage-item.stage-active {
-    border-color: rgb(167 139 250);
-    background: rgba(167, 139, 250, 0.05);
-  }
-
-  .stage-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .stage-icon {
-    font-size: 1.25rem;
-  }
-
-  .stage-name {
-    flex: 1;
-    font-weight: 500;
-    text-transform: capitalize;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .stage-name {
-    color: rgb(243 244 246);
-  }
-
-  .stage-percent {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .stage-percent {
-    color: rgb(156 163 175);
-  }
-
-  .stage-message {
-    font-size: 0.875rem;
-    color: rgb(107 114 128);
-    margin: 0.5rem 0;
-  }
-
-  :global(.dark) .stage-message {
-    color: rgb(156 163 175);
-  }
-
-  .stage-progress-bar {
-    height: 0.5rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.25rem;
-    overflow: hidden;
-  }
-
-  :global(.dark) .stage-progress-bar {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .stage-progress-fill {
-    height: 100%;
-    transition: width 0.3s ease;
-  }
-
-  .stage-progress-fill.stage-pending {
-    background: rgb(156 163 175);
-    opacity: 0.3;
-  }
-
-  .stage-progress-fill.stage-in_progress {
-    background: rgb(59 130 246);
-  }
-
-  .stage-progress-fill.stage-completed {
-    background: rgb(34 197 94);
-  }
-
-  .stage-progress-fill.stage-failed {
-    background: rgb(239 68 68);
-  }
-
-  .heartbeat {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    text-align: right;
-  }
-
-  :global(.dark) .heartbeat {
-    color: rgb(156 163 175);
-  }
-</style>

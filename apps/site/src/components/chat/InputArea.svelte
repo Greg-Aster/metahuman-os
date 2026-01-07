@@ -159,11 +159,11 @@
 <div class="input-wrapper">
   <!-- Reply-to indicator -->
   {#if selectedMessage}
-    <div class="reply-indicator">
-      <span class="reply-label">↩ Replying to:</span>
-      <span class="reply-preview">{selectedMessage.content.substring(0, 60)}{selectedMessage.content.length > 60 ? '...' : ''}</span>
+    <div class="reply-indicator flex items-center gap-2 px-3 py-2 bg-blue-500/10 dark:bg-blue-500/20 rounded-t-lg text-sm">
+      <span class="text-blue-500 dark:text-blue-400 font-medium">↩ Replying to:</span>
+      <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.content.substring(0, 60)}{selectedMessage.content.length > 60 ? '...' : ''}</span>
       <button
-        class="reply-cancel"
+        class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
         on:click={handleClearSelection}
         title="Cancel reply"
       >✕</button>
@@ -172,15 +172,15 @@
 
   <!-- Interim transcript preview (shows words as you speak in native mode) -->
   {#if interimTranscript}
-    <div class="interim-transcript">
-      <span class="interim-icon">🎤</span>
-      <span class="interim-text">{interimTranscript}</span>
+    <div class="interim-transcript flex items-center gap-2 px-3 py-2 bg-blue-500/10 dark:bg-blue-500/20 rounded-lg mb-2">
+      <span class="interim-icon text-base">🎤</span>
+      <span class="text-sm text-blue-500 dark:text-blue-400 italic">{interimTranscript}</span>
     </div>
   {/if}
 
   <div class="input-row">
     <!-- Feedback buttons - left side -->
-    <div class="feedback-area">
+    <div class="flex items-center flex-shrink-0 mr-2">
       <FeedbackButtons targetType="conversation" />
     </div>
 
@@ -285,127 +285,65 @@
 </div>
 
 <style>
-  /* Feedback area - left side of input row */
-  .feedback-area {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    margin-right: 0.5rem;
-  }
-
-  /* Interim transcript preview - shows words as you speak */
+  /* Interim transcript animations */
   .interim-transcript {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(59, 130, 246, 0.1);
-    border-radius: 0.5rem;
-    margin-bottom: 0.5rem;
     animation: pulse 1.5s ease-in-out infinite;
   }
-
-  :global(.dark) .interim-transcript {
-    background: rgba(59, 130, 246, 0.2);
-  }
-
   .interim-icon {
-    font-size: 1rem;
     animation: bounce 0.5s ease-in-out infinite;
-  }
-
-  .interim-text {
-    font-size: 0.875rem;
-    color: #3b82f6;
-    font-style: italic;
-  }
-
-  :global(.dark) .interim-text {
-    color: #60a5fa;
   }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
   }
-
   @keyframes bounce {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-2px); }
   }
 
-  /* Prevent text selection and browser context menu on mic button during long press */
+  /* Mic button - prevent long-press browser behavior */
   .mic-btn {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
-    touch-action: none; /* Prevents browser long-press menu, gives us full control */
+    touch-action: none;
   }
 
-  /* Wake word listening mode - distinctive purple color */
+  /* Wake word mode - purple */
   .mic-btn.wake-word {
-    background: rgba(147, 51, 234, 0.15);
-    border-color: rgb(147, 51, 234);
-    color: rgb(147, 51, 234);
+    @apply bg-purple-500/15 border-purple-600 text-purple-600 dark:bg-purple-400/20 dark:border-purple-400 dark:text-purple-400;
   }
+  .wake-word-icon { animation: pulse 2s ease-in-out infinite; }
 
-  :global(.dark) .mic-btn.wake-word {
-    background: rgba(167, 139, 250, 0.2);
-    border-color: rgb(167, 139, 250);
-    color: rgb(167, 139, 250);
-  }
-
-  .wake-word-icon {
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  /* Conversation mode (mobile long-press) - distinctive green color */
+  /* Conversation mode - green */
   .mic-btn.conversation {
-    background: rgba(34, 197, 94, 0.15);
-    border-color: rgb(34, 197, 94);
-    color: rgb(34, 197, 94);
+    @apply bg-green-500/15 border-green-500 text-green-500 dark:bg-green-400/20 dark:border-green-400 dark:text-green-400;
+  }
+  .conversation-icon { animation: pulse 2s ease-in-out infinite; }
+  .mic-btn.conversation:not(.recording) {
+    animation: ready-pulse 2s ease-in-out infinite;
   }
 
-  :global(.dark) .mic-btn.conversation {
-    background: rgba(74, 222, 128, 0.2);
-    border-color: rgb(74, 222, 128);
-    color: rgb(74, 222, 128);
-  }
-
-  .conversation-icon {
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  /* Interrupt ready state - when TTS is playing, mic pulses to show tap-to-interrupt */
+  /* Interrupt ready - red pulsing */
   .mic-btn.interrupt-ready {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgb(239, 68, 68);
-    color: rgb(239, 68, 68);
+    @apply bg-red-500/15 border-red-500 text-red-500 dark:bg-red-400/20 dark:border-red-400 dark:text-red-400;
     animation: interrupt-pulse 1s ease-in-out infinite;
   }
 
-  :global(.dark) .mic-btn.interrupt-ready {
-    background: rgba(248, 113, 113, 0.2);
-    border-color: rgb(248, 113, 113);
-    color: rgb(248, 113, 113);
-  }
-
   @keyframes interrupt-pulse {
-    0%, 100% {
-      transform: scale(1);
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
-    }
-    50% {
-      transform: scale(1.05);
-      box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
-    }
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+    50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  }
+  @keyframes ready-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
   }
 
-  /* Recording state - animated waveform bars */
+  /* Recording waveform animation */
   .mic-btn.recording .recording-icon rect {
     animation: waveform 0.8s ease-in-out infinite;
   }
-
   .mic-btn.recording .recording-icon rect:nth-child(1) { animation-delay: 0s; }
   .mic-btn.recording .recording-icon rect:nth-child(2) { animation-delay: 0.1s; }
   .mic-btn.recording .recording-icon rect:nth-child(3) { animation-delay: 0.2s; }
@@ -413,25 +351,7 @@
   .mic-btn.recording .recording-icon rect:nth-child(5) { animation-delay: 0.4s; }
 
   @keyframes waveform {
-    0%, 100% {
-      transform: scaleY(0.5);
-    }
-    50% {
-      transform: scaleY(1);
-    }
-  }
-
-  /* Conversation mode not recording - pulsing border to show "ready" state */
-  .mic-btn.conversation:not(.recording) {
-    animation: ready-pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes ready-pulse {
-    0%, 100% {
-      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
-    }
-    50% {
-      box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
-    }
+    0%, 100% { transform: scaleY(0.5); }
+    50% { transform: scaleY(1); }
   }
 </style>

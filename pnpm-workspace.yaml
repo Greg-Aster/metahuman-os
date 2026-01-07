@@ -6,6 +6,7 @@ ignoredBuiltDependencies:
   - esbuild
   - node-pty
   - sharp
+  - electron
 
 onlyBuiltDependencies:
   - bcrypt

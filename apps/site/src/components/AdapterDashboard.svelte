@@ -381,7 +381,7 @@
       trainingModelsError = 'Failed to load training models';
     }
   }
-  
+
   async function loadFullCycleLogs() {
     try {
       // ROBUSTNESS: 5s timeout for log polling (fails silently if slow)
@@ -564,17 +564,17 @@
   function statusBadge(status: DatasetStatus['status']) {
     switch (status) {
       case 'pending':
-        return { label: 'Pending', class: 'status-pending' };
+        return { label: 'Pending', class: 'bg-gray-400/20 text-gray-600 dark:text-gray-400' };
       case 'approved':
-        return { label: 'Approved', class: 'status-approved' };
+        return { label: 'Approved', class: 'bg-blue-500/20 text-blue-600 dark:text-blue-400' };
       case 'trained':
-        return { label: 'Trained', class: 'status-trained' };
+        return { label: 'Trained', class: 'bg-violet-500/20 text-violet-600 dark:text-violet-400' };
       case 'evaluated':
-        return { label: 'Evaluated', class: 'status-evaluated' };
+        return { label: 'Evaluated', class: 'bg-amber-500/20 text-amber-600 dark:text-amber-400' };
       case 'active':
-        return { label: 'Active', class: 'status-active' };
+        return { label: 'Active', class: 'bg-green-500/20 text-green-600 dark:text-green-400' };
       default:
-        return { label: status, class: 'status-pending' };
+        return { label: status, class: 'bg-gray-400/20 text-gray-600 dark:text-gray-400' };
     }
   }
 
@@ -636,36 +636,40 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="adapter-dashboard">
-  <div class="header">
+<div class="flex flex-col gap-6 p-6 overflow-y-auto">
+  <div class="flex items-center justify-between gap-4">
     <div>
-      <h2>🧠 LoRA Adaptation</h2>
-      <p>Manage datasets, training, and activation directly from the UI.</p>
+      <h2 class="m-0 text-2xl font-semibold">🧠 LoRA Adaptation</h2>
+      <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Manage datasets, training, and activation directly from the UI.</p>
     </div>
-    <button class="refresh-btn" on:click={loadData} disabled={loading}>
+    <button
+      class="px-4 py-2 rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 text-gray-900 dark:text-gray-100 cursor-pointer"
+      on:click={loadData}
+      disabled={loading}
+    >
       {loading ? 'Refreshing…' : 'Refresh'}
     </button>
   </div>
 
   <!-- Error/Warning Banner -->
   {#if error}
-    <div class="error-banner">
-      <div class="error-icon">⚠️</div>
-      <div class="error-content">
-        <strong>Connection Issue</strong>
-        <p>{error}</p>
+    <div class="flex items-start gap-4 p-4 mt-4 bg-red-500/10 border border-red-500/30 rounded-lg animate-slideDown">
+      <div class="text-2xl flex-shrink-0">⚠️</div>
+      <div class="flex-1 text-red-900 dark:text-red-200">
+        <strong class="block mb-1 text-red-800 dark:text-red-400">Connection Issue</strong>
+        <p class="my-1 text-sm">{error}</p>
         {#if error.includes('timeout') || error.includes('timed out')}
-          <p class="error-hint">The server may be overloaded. Try refreshing or check if Ollama is stuck.</p>
+          <p class="mt-2 p-2 bg-black/5 dark:bg-white/5 rounded text-[0.8125rem] text-red-900 dark:text-red-300">The server may be overloaded. Try refreshing or check if Ollama is stuck.</p>
         {/if}
       </div>
-      <button class="error-dismiss" on:click={() => error = null}>×</button>
+      <button class="p-1 bg-transparent border-none text-red-900 dark:text-red-200 text-2xl cursor-pointer opacity-60 hover:opacity-100 flex-shrink-0" on:click={() => error = null}>×</button>
     </div>
   {/if}
 
   <!-- Animated status line -->
-  <div class="status-line">
+  <div class="flex items-center gap-2 py-2 border-t border-b border-dashed border-black/10 dark:border-white/10 mb-3">
     {#if activeAdapter}
-      <div class="dot {activeAdapter?.status === 'loaded' ? 'ok' : 'pending'}"></div>
+      <div class="w-2.5 h-2.5 rounded-full relative animate-status-dot {activeAdapter?.status === 'loaded' ? 'bg-emerald-500' : 'bg-amber-500'}"></div>
       <span>
         {#if activeAdapter?.status === 'loaded'}
           Active model loaded in Ollama: {activeAdapter.modelName}
@@ -674,62 +678,62 @@
         {/if}
       </span>
     {:else}
-      <div class="dot pending"></div>
+      <div class="w-2.5 h-2.5 rounded-full bg-amber-500 relative animate-status-dot"></div>
       <span>No active adapter</span>
     {/if}
   </div>
 
   {#if error}
-    <div class="error-box">
+    <div class="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
       <strong>Error:</strong> {error}
     </div>
   {/if}
 
-  <section class="card">
+  <section class="panel">
     <header>
-      <h3>Autonomy Controls</h3>
-      <p>Nightly LoRA pipeline settings (no file edits needed).</p>
+      <h3 class="m-0 text-lg font-semibold">Autonomy Controls</h3>
+      <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Nightly LoRA pipeline settings (no file edits needed).</p>
     </header>
-    <div class="actions-row">
-      <button class="action" on:click={runBuilderNow}>Run Builder Now</button>
-      <button class="action" on:click={runDreamerNow}>Run Dreamer</button>
-      <button class="action" on:click={runNightProcessorNow}>Run Night Processor</button>
-      <button class="action" on:click={startSleepService}>Start Sleep Service</button>
-      <button class="action" on:click={runFullCycleNow}>Run Full Cycle Now</button>
-      <button class="action" on:click={exportConversationsNow}>Export Conversations</button>
-      <button class="action highlight" on:click={mergeHistoricalAdapters}>🔀 Merge Historical Adapters</button>
+    <div class="flex flex-wrap gap-2 mt-4">
+      <button class="btn-sm" on:click={runBuilderNow}>Run Builder Now</button>
+      <button class="btn-sm" on:click={runDreamerNow}>Run Dreamer</button>
+      <button class="btn-sm" on:click={runNightProcessorNow}>Run Night Processor</button>
+      <button class="btn-sm" on:click={startSleepService}>Start Sleep Service</button>
+      <button class="btn-sm" on:click={runFullCycleNow}>Run Full Cycle Now</button>
+      <button class="btn-sm" on:click={exportConversationsNow}>Export Conversations</button>
+      <button class="btn-sm bg-gradient-to-r from-violet-600 to-blue-500 text-white border-transparent font-semibold hover:from-violet-700 hover:to-blue-600" on:click={mergeHistoricalAdapters}>🔀 Merge Historical Adapters</button>
     </div>
-    <div class="config-grid">
-      <label class="switch-row">
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4 mt-4 items-start">
+      <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
         <span>Enable LoRA (sleep.json)</span>
         <input type="checkbox" checked={loraEnabled} on:change={onToggleLoraEnabled} />
       </label>
       {#if autoApproval}
-        <label class="switch-row">
+        <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
           <span>Auto-Approval Enabled</span>
           <input type="checkbox" checked={autoApproval.enabled} disabled={updatingConfig} on:change={onToggleEnabled} />
         </label>
-        <label class="switch-row">
+        <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
           <span>Dry Run Mode</span>
           <input type="checkbox" checked={autoApproval.dryRun} disabled={updatingConfig} on:change={onToggleDryRun} />
         </label>
-        <label class="switch-row">
+        <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
           <span>Auto Train</span>
           <input type="checkbox" checked={getAutoFlag('autoTrain')} on:change={onToggleAutoTrain} />
         </label>
-        <label class="switch-row">
+        <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
           <span>Auto Evaluate</span>
           <input type="checkbox" checked={getAutoFlag('autoEval')} on:change={onToggleAutoEval} />
         </label>
-        <label class="switch-row">
+        <label class="flex items-center justify-between bg-black/5 dark:bg-white/5 rounded-lg px-4 py-3">
           <span>Auto Activate</span>
           <input type="checkbox" checked={getAutoFlag('autoActivate')} on:change={onToggleAutoActivate} />
         </label>
-        <div class="thresholds">
-          <div class="threshold">Min pairs: <strong>{autoApproval.thresholds.minPairs}</strong></div>
-          <div class="threshold">High confidence ≥ <strong>{Math.round(autoApproval.thresholds.minHighConfidence * 100)}%</strong></div>
-          <div class="threshold">Reflections ≥ <strong>{Math.round(autoApproval.thresholds.minReflectionPct * 100)}%</strong></div>
-          <div class="threshold">Low confidence ≤ <strong>{Math.round(autoApproval.thresholds.maxLowConfidence * 100)}%</strong></div>
+        <div class="flex flex-col gap-1 text-sm bg-black/5 dark:bg-white/5 rounded-lg p-3">
+          <div>Min pairs: <strong class="font-semibold">{autoApproval.thresholds.minPairs}</strong></div>
+          <div>High confidence ≥ <strong class="font-semibold">{Math.round(autoApproval.thresholds.minHighConfidence * 100)}%</strong></div>
+          <div>Reflections ≥ <strong class="font-semibold">{Math.round(autoApproval.thresholds.minReflectionPct * 100)}%</strong></div>
+          <div>Low confidence ≤ <strong class="font-semibold">{Math.round(autoApproval.thresholds.maxLowConfidence * 100)}%</strong></div>
         </div>
       {:else}
         <p class="muted">Auto-approval config not available.</p>
@@ -739,17 +743,17 @@
 
   <!-- Training Data Configuration -->
   {#if trainingConfig}
-    <section class="card">
+    <section class="panel">
       <header>
-        <h3>📊 Training Data Configuration</h3>
-        <p>Configure data collection and curation settings for LoRA adapter training.</p>
+        <h3 class="m-0 text-lg font-semibold">📊 Training Data Configuration</h3>
+        <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Configure data collection and curation settings for LoRA adapter training.</p>
       </header>
 
-      <div class="training-config-grid">
-        <div class="config-section">
-          <h4>Curator Settings</h4>
-          <div class="form-row">
-            <label for="batch-size">Batch Size:</label>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-6 mb-6 mt-4">
+        <div>
+          <h4 class="m-0 mb-4 text-base font-semibold">Curator Settings</h4>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="batch-size" class="text-sm font-medium text-gray-700 dark:text-gray-300">Batch Size:</label>
             <input
               id="batch-size"
               type="number"
@@ -759,11 +763,12 @@
               value={trainingConfig.curator.batchSize}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ curator: { batchSize: parseInt(e.currentTarget.value) } })}
+              class="input-field"
             />
-            <span class="help-hint">Samples processed per curator call (10-200)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 italic">Samples processed per curator call (10-200)</span>
           </div>
-          <div class="form-row">
-            <label for="quality-threshold">Quality Threshold:</label>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="quality-threshold" class="text-sm font-medium text-gray-700 dark:text-gray-300">Quality Threshold:</label>
             <input
               id="quality-threshold"
               type="number"
@@ -773,11 +778,12 @@
               value={trainingConfig.curator.qualityThreshold}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ curator: { qualityThreshold: parseFloat(e.currentTarget.value) } })}
+              class="input-field"
             />
-            <span class="help-hint">Minimum quality score (0-10)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 italic">Minimum quality score (0-10)</span>
           </div>
-          <div class="form-row">
-            <label for="temperature">Temperature:</label>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="temperature" class="text-sm font-medium text-gray-700 dark:text-gray-300">Temperature:</label>
             <input
               id="temperature"
               type="number"
@@ -787,15 +793,16 @@
               value={trainingConfig.curator.temperature}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ curator: { temperature: parseFloat(e.currentTarget.value) } })}
+              class="input-field"
             />
-            <span class="help-hint">LLM temperature (0-2)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 italic">LLM temperature (0-2)</span>
           </div>
         </div>
 
-        <div class="config-section">
-          <h4>Collection Settings</h4>
-          <div class="form-row">
-            <label for="max-samples">Max Samples/Source:</label>
+        <div>
+          <h4 class="m-0 mb-4 text-base font-semibold">Collection Settings</h4>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="max-samples" class="text-sm font-medium text-gray-700 dark:text-gray-300">Max Samples/Source:</label>
             <input
               id="max-samples"
               type="number"
@@ -805,11 +812,12 @@
               value={trainingConfig.collection.maxSamplesPerSource}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ collection: { maxSamplesPerSource: parseInt(e.currentTarget.value) } })}
+              class="input-field"
             />
-            <span class="help-hint">Maximum samples per memory type (100-10000)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 italic">Maximum samples per memory type (100-10000)</span>
           </div>
-          <div class="form-row">
-            <label for="max-days">Max Days:</label>
+          <div class="flex flex-col gap-2 mb-4">
+            <label for="max-days" class="text-sm font-medium text-gray-700 dark:text-gray-300">Max Days:</label>
             <input
               id="max-days"
               type="number"
@@ -818,65 +826,78 @@
               value={trainingConfig.collection.maxDays}
               disabled={updatingTrainingConfig}
               on:change={(e) => updateTrainingConfig({ collection: { maxDays: parseInt(e.currentTarget.value) } })}
+              class="input-field"
             />
-            <span class="help-hint">Days of history to include (999999 = all time)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 italic">Days of history to include (999999 = all time)</span>
           </div>
         </div>
       </div>
 
-      <div class="phase-presets">
-        <h4>Quick Presets</h4>
-        <div class="preset-buttons">
-          <button class="preset-btn" on:click={() => applyPhasePreset('phase1_conservative')} disabled={updatingTrainingConfig}>
-            <span class="preset-name">Phase 1: Conservative</span>
-            <span class="preset-desc">~800-1200 samples, ~15 mins</span>
+      <div class="mt-6 pt-6 border-t border-black/10 dark:border-white/10">
+        <h4 class="m-0 mb-4 text-base font-semibold">Quick Presets</h4>
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
+          <button
+            class="flex flex-col items-start p-4 bg-white dark:bg-white/5 border-2 border-black/10 dark:border-white/10 rounded-lg cursor-pointer transition-all hover:border-violet-600 dark:hover:border-violet-400 hover:bg-violet-500/5 disabled:opacity-50 disabled:cursor-not-allowed"
+            on:click={() => applyPhasePreset('phase1_conservative')}
+            disabled={updatingTrainingConfig}
+          >
+            <span class="font-semibold text-sm mb-1">Phase 1: Conservative</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">~800-1200 samples, ~15 mins</span>
           </button>
-          <button class="preset-btn active" on:click={() => applyPhasePreset('phase2_optimal')} disabled={updatingTrainingConfig}>
-            <span class="preset-name">Phase 2: Optimal (Current)</span>
-            <span class="preset-desc">~2500-3000 samples, ~30 mins</span>
+          <button
+            class="flex flex-col items-start p-4 bg-violet-500/10 border-2 border-violet-600 dark:border-violet-400 rounded-lg cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            on:click={() => applyPhasePreset('phase2_optimal')}
+            disabled={updatingTrainingConfig}
+          >
+            <span class="font-semibold text-sm mb-1">Phase 2: Optimal (Current)</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">~2500-3000 samples, ~30 mins</span>
           </button>
-          <button class="preset-btn" on:click={() => applyPhasePreset('phase3_maximum')} disabled={updatingTrainingConfig}>
-            <span class="preset-name">Phase 3: Maximum</span>
-            <span class="preset-desc">~4000-5000 samples, ~45-60 mins</span>
+          <button
+            class="flex flex-col items-start p-4 bg-white dark:bg-white/5 border-2 border-black/10 dark:border-white/10 rounded-lg cursor-pointer transition-all hover:border-violet-600 dark:hover:border-violet-400 hover:bg-violet-500/5 disabled:opacity-50 disabled:cursor-not-allowed"
+            on:click={() => applyPhasePreset('phase3_maximum')}
+            disabled={updatingTrainingConfig}
+          >
+            <span class="font-semibold text-sm mb-1">Phase 3: Maximum</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">~4000-5000 samples, ~45-60 mins</span>
           </button>
         </div>
       </div>
 
-      <div class="current-status">
+      <div class="mt-4 p-3 bg-violet-500/5 dark:bg-violet-400/10 rounded-lg text-sm text-gray-700 dark:text-gray-300">
         <strong>Current Configuration:</strong>
-        Batch size: <span class="highlight">{trainingConfig.curator.batchSize}</span> |
-        Max samples: <span class="highlight">{trainingConfig.collection.maxSamplesPerSource}</span> |
-        Quality threshold: <span class="highlight">{trainingConfig.curator.qualityThreshold}</span>
+        Batch size: <span class="font-semibold text-violet-600 dark:text-violet-400">{trainingConfig.curator.batchSize}</span> |
+        Max samples: <span class="font-semibold text-violet-600 dark:text-violet-400">{trainingConfig.collection.maxSamplesPerSource}</span> |
+        Quality threshold: <span class="font-semibold text-violet-600 dark:text-violet-400">{trainingConfig.curator.qualityThreshold}</span>
       </div>
     </section>
   {/if}
 
   <!-- Full Cycle Modal (Simplified - Config Only) -->
   {#if showFullCycleModal}
-    <div class="modal-overlay" role="presentation" on:click={closeFullCycleModal}>
-      <div class="modal-content" role="dialog" aria-modal="true" on:click|stopPropagation>
-        <div class="modal-header">
-          <h3>Run Full Cycle</h3>
-          <button class="modal-close" on:click={closeFullCycleModal}>×</button>
+    <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] p-4" role="presentation" on:click={closeFullCycleModal}>
+      <div class="bg-white dark:bg-gray-900 rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl" role="dialog" aria-modal="true" on:click|stopPropagation>
+        <div class="flex justify-between items-center px-6 py-5 border-b border-black/10 dark:border-white/10">
+          <h3 class="m-0 text-xl font-semibold">Run Full Cycle</h3>
+          <button class="bg-transparent border-none text-2xl cursor-pointer p-1 w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/10" on:click={closeFullCycleModal}>×</button>
         </div>
-        <div class="modal-body">
+        <div class="p-6">
           {#if trainingModelsError || trainingModels.length === 0}
-            <div class="warning-box">
-              <strong>⚠️ No Ollama Models Available</strong>
-              <p>No models found in your local Ollama installation. Please pull at least one model using <code>ollama pull &lt;model&gt;</code></p>
-              <p>
-                <a href={setupGuideLink} target="_blank" class="setup-link">
+            <div class="p-5 bg-orange-500/10 dark:bg-orange-500/15 border border-orange-500/30 dark:border-orange-500/40 rounded-lg mb-4">
+              <strong class="block mb-2 text-orange-700 dark:text-orange-400">⚠️ No Ollama Models Available</strong>
+              <p class="my-2 text-orange-900 dark:text-orange-300 text-sm">No models found in your local Ollama installation. Please pull at least one model using <code class="bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded text-[0.85em] font-mono">ollama pull &lt;model&gt;</code></p>
+              <p class="my-2">
+                <a href={setupGuideLink} target="_blank" class="inline-block px-4 py-2 bg-orange-500 text-white no-underline rounded-md font-medium transition-colors hover:bg-orange-600">
                   📖 View Setup Guide →
                 </a>
               </p>
               {#if trainingModelsError}
-                <p class="error-detail">{trainingModelsError}</p>
+                <p class="mt-3 p-2 bg-black/5 dark:bg-white/5 rounded text-xs font-mono">{trainingModelsError}</p>
               {/if}
             </div>
           {:else}
-            <div class="form-group">
-              <label for="model-select">Ollama Base Model:</label>
-              <select id="model-select" bind:value={selectedModel}>
+            <div class="mb-6">
+              <label for="model-select" class="block mb-2 font-medium">Ollama Base Model:</label>
+              <select id="model-select" bind:value={selectedModel} class="select-field">
                 <option value="">Use default from etc/training.json</option>
                 {#each trainingModels as model}
                   <option value={model.id}>
@@ -884,23 +905,23 @@
                   </option>
                 {/each}
               </select>
-              <p class="help-text">
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 Select an Ollama model from your local installation to use as the base for LoRA fine-tuning.
               </p>
             </div>
           {/if}
-          <div class="form-group">
-            <label class="checkbox-label">
-              <input type="checkbox" bind:checked={dualModeEnabled} />
+          <div class="mb-6">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={dualModeEnabled} class="cursor-pointer" />
               <span>Enable Dual Mode (combine historical + recent adapters)</span>
             </label>
-            <p class="help-text">If enabled, combines historical knowledge with recent learnings. Requires historical adapters to be present.</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">If enabled, combines historical knowledge with recent learnings. Requires historical adapters to be present.</p>
           </div>
-          <div class="info-box">
-            <p><strong>ℹ️ After starting:</strong> Follow training progress in the <strong>Training Monitor</strong> section below.</p>
+          <div class="p-4 bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/20 dark:border-blue-500/30 rounded-lg mt-2">
+            <p class="m-0 text-blue-800 dark:text-blue-300 text-sm"><strong class="text-blue-700 dark:text-blue-400">ℹ️ After starting:</strong> Follow training progress in the <strong>Training Monitor</strong> section below.</p>
           </div>
         </div>
-        <div class="modal-footer">
+        <div class="px-6 py-4 flex gap-3 justify-end border-t border-black/10 dark:border-white/10">
           <button class="btn-secondary" on:click={closeFullCycleModal}>Cancel</button>
           <button class="btn-primary" on:click={runFullCycleWithParams}>Start Training</button>
         </div>
@@ -909,65 +930,72 @@
   {/if}
 
   <!-- Training Monitor -->
-  <section class="card training-monitor">
+  <section class="panel border-2 border-violet-500/20 dark:border-violet-400/30">
     <header>
-      <div class="monitor-header-content">
+      <div class="flex justify-between items-start gap-4 w-full">
         <div>
-          <h3>🖥️ Training Monitor</h3>
-          <p>Real-time view of active training processes and recent activity.</p>
+          <h3 class="m-0 text-lg font-semibold">🖥️ Training Monitor</h3>
+          <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Real-time view of active training processes and recent activity.</p>
         </div>
-        <button class="toggle-btn" on:click={() => monitorExpanded = !monitorExpanded}>
+        <button
+          class="px-4 py-2 rounded-lg border border-violet-500/30 dark:border-violet-400/30 bg-violet-500/5 dark:bg-violet-400/5 text-violet-600 dark:text-violet-400 cursor-pointer font-medium whitespace-nowrap transition-all hover:bg-violet-500/10 dark:hover:bg-violet-400/10 hover:border-violet-500/50 dark:hover:border-violet-400/50"
+          on:click={() => monitorExpanded = !monitorExpanded}
+        >
           {monitorExpanded ? '▼ Collapse' : '▶ Expand'}
         </button>
       </div>
     </header>
 
     <!-- Status Indicator -->
-    <div class="monitor-status">
+    <div class="flex items-center justify-between gap-4 p-4 bg-black/5 dark:bg-white/5 rounded-lg mt-4">
       {#if fullCycleRunningPid}
-        <div class="status-badge running">
-          <div class="spinner-small"></div>
+        <div class="flex items-center gap-3 px-4 py-2 rounded-lg font-medium text-[0.95rem] bg-green-500/10 dark:bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/30 dark:border-green-500/40">
+          <div class="w-4 h-4 border-2 border-green-500/20 dark:border-green-400/20 border-t-green-600 dark:border-t-green-400 rounded-full animate-spin"></div>
           <span>Training in Progress (PID: {fullCycleRunningPid})</span>
         </div>
-        <button class="btn-danger-small" on:click={cancelFullCycle} disabled={cancelling}>
+        <button
+          class="px-3 py-1.5 rounded-lg border border-red-500/40 dark:border-red-400/40 bg-red-500/10 dark:bg-red-400/10 text-red-600 dark:text-red-400 cursor-pointer text-sm font-medium transition-all hover:bg-red-500/20 dark:hover:bg-red-400/20 hover:border-red-500/60 dark:hover:border-red-400/60 disabled:opacity-50 disabled:cursor-not-allowed"
+          on:click={cancelFullCycle}
+          disabled={cancelling}
+        >
           {cancelling ? 'Cancelling...' : '🛑 Cancel'}
         </button>
       {:else}
-        <div class="status-badge idle">
+        <div class="flex items-center gap-3 px-4 py-2 rounded-lg font-medium text-[0.95rem] bg-gray-500/10 dark:bg-gray-400/10 text-gray-600 dark:text-gray-400 border border-gray-500/20 dark:border-gray-400/20">
           <span>No active training</span>
         </div>
       {/if}
     </div>
 
     {#if monitorExpanded}
-      <div class="monitor-content">
+      <div class="flex flex-col gap-6 mt-4">
         <!-- Console Output (Local Processing) -->
-        <div class="logs-container">
-          <h4>🖥️ Console Output (Dataset Building, Curator)</h4>
-          <div class="logs-scroll console-output" bind:this={consoleLogsScrollContainer}>
+        <div class="flex-1 flex flex-col min-h-[300px]">
+          <h4 class="m-0 mb-3 text-base font-semibold">🖥️ Console Output (Dataset Building, Curator)</h4>
+          <div class="flex-1 overflow-y-auto border border-black/10 dark:border-white/10 rounded-lg p-3 bg-gray-900 dark:bg-black/95 text-gray-300 dark:text-gray-200 font-mono text-sm leading-relaxed max-h-[350px]" bind:this={consoleLogsScrollContainer}>
             {#if fullCycleConsoleLogs.length === 0}
-              <div class="log-empty">No console output yet. {fullCycleRunningPid ? 'Waiting for process to start...' : 'Start a training cycle to see output.'}</div>
+              <div class="p-8 text-center text-gray-500 dark:text-gray-400 italic">No console output yet. {fullCycleRunningPid ? 'Waiting for process to start...' : 'Start a training cycle to see output.'}</div>
             {:else}
               {#each fullCycleConsoleLogs as line}
-                <div class="console-line">{line}</div>
+                <div class="py-1 whitespace-pre-wrap break-all hover:bg-violet-500/10">{line}</div>
               {/each}
             {/if}
           </div>
         </div>
 
         <!-- Audit Events (High-Level Status) -->
-        <div class="logs-container compact">
-          <h4>📋 Training Events</h4>
-          <div class="logs-scroll events-output" bind:this={eventsLogsScrollContainer}>
+        <div class="flex-1 flex flex-col min-h-[150px]">
+          <h4 class="m-0 mb-3 text-base font-semibold">📋 Training Events</h4>
+          <div class="flex-1 overflow-y-auto border border-black/10 dark:border-white/10 rounded-lg p-3 bg-black/5 dark:bg-white/5 font-mono text-sm max-h-[200px]" bind:this={eventsLogsScrollContainer}>
             {#if fullCycleLogs.length === 0}
-              <div class="log-empty">No training events yet. {fullCycleRunningPid ? 'Waiting for events...' : 'Start a training cycle to see events.'}</div>
+              <div class="p-8 text-center text-gray-500 dark:text-gray-400 italic">No training events yet. {fullCycleRunningPid ? 'Waiting for events...' : 'Start a training cycle to see events.'}</div>
             {:else}
               {#each fullCycleLogs as log}
-                <div class="log-entry">
-                  <span class="log-timestamp">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                  <span class="log-event">{(log.event || 'unknown').replace('full_cycle_', '').replace(/_/g, ' ')}</span>
+                <div class="flex gap-3 py-2 border-b border-black/5 dark:border-white/5 last:border-b-0">
+                  <span class="flex-shrink-0 text-gray-500 dark:text-gray-400 text-xs">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span class="flex-shrink-0 font-semibold text-violet-600 dark:text-violet-400 capitalize">{(log.event || 'unknown').replace('full_cycle_', '').replace(/_/g, ' ')}</span>
                   {#if log.details}
-                    <span class="log-details">{JSON.stringify(log.details)}</span>
+                    <span class="flex-1 text-gray-600 dark:text-gray-300 text-xs overflow-hidden text-ellipsis whitespace-nowrap">{JSON.stringify(log.details)}</span>
                   {/if}
                 </div>
               {/each}
@@ -976,8 +1004,8 @@
         </div>
 
         {#if fullCycleRunningPid}
-          <div class="progress-footer">
-            <p class="help-text">
+          <div class="p-4 bg-orange-500/5 dark:bg-orange-500/10 rounded-lg">
+            <p class="m-0 text-sm text-gray-500 dark:text-gray-400">
               <strong>Note:</strong> The training process may take 30-60 minutes depending on dataset size.
               You can navigate away and check back later.
             </p>
@@ -988,77 +1016,77 @@
 
     <!-- Recent Activity (Compact View) -->
     {#if !monitorExpanded}
-      <div class="recent-activity-compact">
-        <h4>Recent Activity</h4>
-        <div class="log-list">
+      <div class="mt-4 pt-4 border-t border-black/5 dark:border-white/5">
+        <h4 class="m-0 mb-3 text-[0.95rem] font-semibold text-gray-600 dark:text-gray-400">Recent Activity</h4>
+        <div class="grid gap-1 max-h-[200px] overflow-auto">
           {#each recentLogs.slice(0, 5) as log}
-            <div class="log-item">
-              <span class="log-time">{new Date(log.timestamp).toLocaleTimeString()}</span>
-              <span class="log-evt">{log.event}</span>
-              {#if log.details?.dataset}<span class="log-ds">{log.details.dataset}</span>{/if}
-              {#if log.details?.modelName}<span class="log-ds">{log.details.modelName}</span>{/if}
+            <div class="grid grid-flow-col auto-cols-max gap-2 text-sm items-baseline">
+              <span class="text-gray-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
+              <span class="font-semibold">{log.event}</span>
+              {#if log.details?.dataset}<span class="text-blue-600">{log.details.dataset}</span>{/if}
+              {#if log.details?.modelName}<span class="text-blue-600">{log.details.modelName}</span>{/if}
             </div>
           {/each}
           {#if recentLogs.length === 0}
-            <div class="empty">No recent events</div>
+            <div class="text-gray-500 italic">No recent events</div>
           {/if}
         </div>
       </div>
     {/if}
   </section>
 
-  <section class="card">
+  <section class="panel">
     <header>
-      <h3>Datasets</h3>
-      <p>Review, approve, and run the LoRA pipeline for each nightly dataset.</p>
+      <h3 class="m-0 text-lg font-semibold">Datasets</h3>
+      <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Review, approve, and run the LoRA pipeline for each nightly dataset.</p>
     </header>
 
     {#if loading}
-      <div class="loading">Loading datasets…</div>
+      <div class="p-4 text-center text-gray-500">Loading datasets…</div>
     {:else if datasets.length === 0}
-      <div class="empty">
-        <div class="empty-title">No datasets available</div>
+      <div class="p-4 text-center text-gray-500">
+        <div class="font-semibold mb-1">No datasets available</div>
         <p class="muted">Run sleep-service or adapter-builder to generate instruction pairs.</p>
       </div>
     {:else}
-      <table class="dataset-table">
+      <table class="w-full border-collapse text-[0.95rem] mt-4">
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Status</th>
-            <th>Pairs</th>
-            <th>Approval</th>
-            <th>Eval</th>
-            <th>Actions</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Date</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Status</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Pairs</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Approval</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Eval</th>
+            <th class="px-2 py-3 text-left align-top border-b border-black/5 dark:border-white/5">Actions</th>
           </tr>
         </thead>
         <tbody>
           {#each datasets as dataset}
             {#key dataset.date}
               <tr>
-                <td>
-                  <div class="date-cell">
-                    <div class="date-value">{dataset.date}</div>
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">
+                  <div class="flex flex-wrap gap-1 items-center">
+                    <div class="font-semibold">{dataset.date}</div>
                     {#if dataset.status === 'active'}
-                      <span class="badge badge-active">Active</span>
+                      <span class="text-[0.7rem] px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400">Active</span>
                     {/if}
                     {#if dataset.autoApproved}
-                      <span class="badge badge-auto">Auto</span>
+                      <span class="text-[0.7rem] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400">Auto</span>
                     {/if}
                     {#if dataset.dryRun}
-                      <span class="badge badge-dry">Dry Run</span>
+                      <span class="text-[0.7rem] px-1.5 py-0.5 rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400">Dry Run</span>
                     {/if}
                   </div>
                 </td>
-                <td>
-                  <span class={"status-badge " + statusBadge(dataset.status).class}>
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">
+                  <span class="inline-flex items-center justify-center min-w-[4.5rem] rounded-full px-2.5 py-1 text-xs capitalize {statusBadge(dataset.status).class}">
                     {statusBadge(dataset.status).label}
                   </span>
                 </td>
-                <td>{dataset.pairCount}</td>
-                <td>
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">{dataset.pairCount}</td>
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">
                   {#if dataset.approvedAt}
-                    <div class="meta">
+                    <div class="flex flex-col gap-0.5">
                       <div>{new Date(dataset.approvedAt).toLocaleString()}</div>
                       <div class="muted">by {dataset.approvedBy || 'unknown'}</div>
                       {#if dataset.notes}
@@ -1072,11 +1100,11 @@
                     <span class="muted">Pending</span>
                   {/if}
                 </td>
-                <td>
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">
                   {#if typeof dataset.evalScore === 'number'}
-                    <div class="meta">
+                    <div class="flex flex-col gap-0.5">
                       <div>{dataset.evalScore.toFixed(3)}</div>
-                      <div class={`muted ${dataset.evalPassed ? 'pass' : 'fail'}`}>
+                      <div class="text-sm {dataset.evalPassed ? 'text-green-600' : 'text-red-600'}">
                         {dataset.evalPassed ? 'Passed' : 'Failed'}
                       </div>
                     </div>
@@ -1084,33 +1112,33 @@
                     <span class="muted">Not run</span>
                   {/if}
                 </td>
-                <td>
-                  <div class="actions">
+                <td class="px-2 py-3 align-top border-b border-black/5 dark:border-white/5">
+                  <div class="flex flex-wrap gap-1">
                     {#if dataset.status === 'pending'}
-                      <button class="action" on:click={() => handleApprove(dataset.date)} disabled={isWorking(dataset.date, 'approve')}>
+                      <button class="btn-xs" on:click={() => handleApprove(dataset.date)} disabled={isWorking(dataset.date, 'approve')}>
                         {isWorking(dataset.date, 'approve') ? 'Approving…' : 'Approve'}
                       </button>
-                      <button class="action danger" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
+                      <button class="btn-xs btn-danger" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
                         {isWorking(dataset.date, 'reject') ? 'Rejecting…' : 'Reject'}
                       </button>
                     {/if}
                     {#if dataset.status === 'approved'}
-                      <button class="action" on:click={() => handleTrain(dataset.date)} disabled={isWorking(dataset.date, 'train')}>
+                      <button class="btn-xs" on:click={() => handleTrain(dataset.date)} disabled={isWorking(dataset.date, 'train')}>
                         {isWorking(dataset.date, 'train') ? 'Starting…' : 'Train'}
                       </button>
                     {/if}
                     {#if dataset.status === 'trained'}
-                      <button class="action" on:click={() => handleEval(dataset.date)} disabled={isWorking(dataset.date, 'eval')}>
+                      <button class="btn-xs" on:click={() => handleEval(dataset.date)} disabled={isWorking(dataset.date, 'eval')}>
                         {isWorking(dataset.date, 'eval') ? 'Evaluating…' : 'Evaluate'}
                       </button>
                     {/if}
                     {#if dataset.status === 'evaluated' && dataset.evalPassed}
-                      <button class="action" on:click={() => handleActivate(dataset.date)} disabled={isWorking(dataset.date, 'activate')}>
+                      <button class="btn-xs" on:click={() => handleActivate(dataset.date)} disabled={isWorking(dataset.date, 'activate')}>
                         {isWorking(dataset.date, 'activate') ? 'Activating…' : 'Activate'}
                       </button>
                     {/if}
                     {#if dataset.status !== 'pending'}
-                      <button class="action danger subtle" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
+                      <button class="btn-xs border-dashed border-red-400/40 text-red-600 dark:text-red-400" on:click={() => handleReject(dataset.date)} disabled={isWorking(dataset.date, 'reject')}>
                         {isWorking(dataset.date, 'reject') ? 'Rejecting…' : 'Archive'}
                       </button>
                     {/if}
@@ -1124,13 +1152,13 @@
     {/if}
   </section>
 
-  <section class="card">
+  <section class="panel">
     <header>
-      <h3>Active Adapter</h3>
-      <p>Current LoRA adapter in use by the chat system.</p>
+      <h3 class="m-0 text-lg font-semibold">Active Adapter</h3>
+      <p class="mt-1 mb-0 text-gray-500 dark:text-gray-400">Current LoRA adapter in use by the chat system.</p>
     </header>
     {#if activeAdapter}
-      <div class="meta-grid">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3 text-[0.95rem] mt-4">
         <div><strong>Model:</strong> {activeAdapter.modelName}</div>
         <div><strong>Dataset:</strong> {activeAdapter.dataset || 'unknown'}</div>
         <div><strong>Activated:</strong> {new Date(activeAdapter.activatedAt).toLocaleString()}</div>
@@ -1138,1156 +1166,48 @@
           <div><strong>Eval Score:</strong> {activeAdapter.evalScore.toFixed(3)}</div>
         {/if}
         <div><strong>Status:</strong> {activeAdapter.status || 'loaded'}</div>
-        <div class="path-label">
+        <div class="col-span-full break-all">
           <strong>Adapter Path:</strong>
-          <code>{activeAdapter.adapterPath}</code>
+          <code class="ml-2 bg-black/5 dark:bg-white/5 px-2 py-1 rounded text-sm font-mono">{activeAdapter.adapterPath}</code>
         </div>
         {#if activeAdapter.modelfilePath}
-          <div class="path-label">
+          <div class="col-span-full break-all">
             <strong>Modelfile:</strong>
-            <code>{activeAdapter.modelfilePath}</code>
+            <code class="ml-2 bg-black/5 dark:bg-white/5 px-2 py-1 rounded text-sm font-mono">{activeAdapter.modelfilePath}</code>
           </div>
         {/if}
       </div>
     {:else}
-      <p class="muted">No active adapter configured. Chat will use the base model.</p>
+      <p class="muted mt-4">No active adapter configured. Chat will use the base model.</p>
     {/if}
   </section>
 </div>
 
 <style>
-  .adapter-dashboard {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    padding: 1.5rem 2rem;
-    overflow-y: auto;
-  }
-
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  .header h2 {
-    margin: 0;
-    font-size: 1.5rem;
-  }
-
-  .header p {
-    margin: 0.25rem 0 0;
-    color: rgb(107 114 128);
-  }
-
-  .refresh-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: white;
-    cursor: pointer;
-  }
-
-  .status-line { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-top: 1px dashed rgba(0,0,0,0.1); border-bottom: 1px dashed rgba(0,0,0,0.1); margin-bottom: 0.75rem; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; position: relative; }
-  .dot::after { content: ''; position: absolute; inset: -6px; border: 2px solid currentColor; border-radius: 50%; animation: pulse 1.5s infinite ease-out; opacity: 0.5; }
-  .dot.ok { color: #10b981; background: #10b981; }
-  .dot.pending { color: #f59e0b; background: #f59e0b; }
-  @keyframes pulse { 0% { transform: scale(0.7); opacity: 0.6 } 80% { transform: scale(1.4); opacity: 0 } 100% { transform: scale(1.6); opacity: 0 } }
-
-  .log-list { display: grid; gap: 0.25rem; max-height: 200px; overflow: auto; }
-  .log-item { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; gap: 0.5rem; font-size: 0.85rem; align-items: baseline; }
-  .log-time { color: #6b7280; }
-  .log-evt { font-weight: 600; }
-  .log-ds { color: #2563eb; }
-  .empty { color: #6b7280; font-style: italic; }
-
-  :global(.dark) .refresh-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: rgb(243 244 246);
-  }
-
-  .card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 0.75rem;
-    padding: 1.25rem;
-    background: white;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  :global(.dark) .card {
-    background: rgba(17, 24, 39, 0.6);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-
-  header h3 {
-    margin: 0;
-    font-size: 1.2rem;
-  }
-
-  header p {
-    margin: 0.25rem 0 0;
-    color: rgb(107 114 128);
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-    align-items: flex-start;
-  }
-
-  .switch-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: rgba(0, 0, 0, 0.04);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-  }
-
-  :global(.dark) .switch-row {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .thresholds {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    font-size: 0.9rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-  }
-
-  :global(.dark) .thresholds {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .threshold strong {
-    font-weight: 600;
-  }
-
-  .dataset-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.95rem;
-  }
-
-  .dataset-table th,
-  .dataset-table td {
-    padding: 0.75rem 0.5rem;
-    text-align: left;
-    vertical-align: top;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .dataset-table th,
-  :global(.dark) .dataset-table td {
-    border-bottom-color: rgba(255, 255, 255, 0.06);
-  }
-
-  .date-cell {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    align-items: center;
-  }
-
-  .date-value {
-    font-weight: 600;
-  }
-
-  .badge {
-    font-size: 0.7rem;
-    padding: 0.1rem 0.4rem;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.08);
-  }
-
-  .badge-auto {
-    background: rgba(59, 130, 246, 0.15);
-    color: rgb(37, 99, 235);
-  }
-
-  .badge-active {
-    background: rgba(34, 197, 94, 0.15);
-    color: rgb(22, 163, 74);
-  }
-
-  .badge-dry {
-    background: rgba(249, 115, 22, 0.15);
-    color: rgb(217, 119, 6);
-  }
-
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 4.5rem;
-    border-radius: 999px;
-    padding: 0.2rem 0.6rem;
-    font-size: 0.75rem;
-    text-transform: capitalize;
-  }
-
-  .status-pending { background: rgba(156, 163, 175, 0.2); color: rgb(75, 85, 99); }
-  .status-approved { background: rgba(59, 130, 246, 0.2); color: rgb(37, 99, 235); }
-  .status-trained { background: rgba(139, 92, 246, 0.2); color: rgb(124, 58, 237); }
-  .status-evaluated { background: rgba(251, 191, 36, 0.2); color: rgb(217, 119, 6); }
-  .status-active { background: rgba(34, 197, 94, 0.2); color: rgb(22, 163, 74); }
-
-  .meta {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-
-  .muted {
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .muted {
-    color: rgb(156 163 175);
-  }
-
-  .muted.pass { color: rgb(22, 163, 74); }
-  .muted.fail { color: rgb(220, 38, 38); }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
-
-  .actions-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .action {
-    padding: 0.4rem 0.7rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: white;
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-
-  .action:disabled {
-    opacity: 0.6;
-    cursor: wait;
-  }
-
-  .action.danger {
-    border-color: rgba(248, 113, 113, 0.4);
-    color: rgb(220, 38, 38);
-  }
-
-  .action.danger.subtle {
-    border-style: dashed;
-  }
-
-  .action.highlight {
-    background: linear-gradient(135deg, rgb(124 58 237), rgb(59 130 246));
-    color: white;
-    border-color: transparent;
-    font-weight: 600;
-  }
-
-  .action.highlight:hover:not(:disabled) {
-    background: linear-gradient(135deg, rgb(109 40 217), rgb(37 99 235));
-  }
-
-  :global(.dark) .action {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgb(243 244 246);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .loading,
-  .empty {
-    padding: 1rem;
-    text-align: center;
-    color: rgb(107 114 128);
-  }
-
-  .empty-title {
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-  }
-
-  .error-box {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.2);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-  }
-
-  .meta-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.75rem;
-    font-size: 0.95rem;
-  }
-
-  .path-label {
-    grid-column: 1 / -1;
-    word-break: break-all;
-  }
-  
-  /* Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1rem;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 0.75rem;
-    width: 100%;
-    max-width: 500px;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-  }
-
-  :global(.dark) .modal-content {
-    background: #111827;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.25rem 1.5rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .modal-header {
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-
-  .modal-close {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: 0.25rem;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-  }
-
-  .modal-close:hover {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .modal-close:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .modal-body {
-    padding: 1.5rem;
-  }
-
-  .modal-footer {
-    padding: 1rem 1.5rem;
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .modal-footer {
-    border-top-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .btn-primary {
-    background: #7c3aed;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .btn-primary:hover {
-    background: #6d28d9;
-  }
-
-  .btn-secondary {
-    background: rgba(0, 0, 0, 0.08);
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    cursor: pointer;
-  }
-
-  :global(.dark) .btn-secondary {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgb(243 244 246);
-  }
-
-  .form-group {
-    margin-bottom: 1.5rem;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-  }
-
-  .form-group select {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    border-radius: 0.5rem;
-    background: white;
-  }
-
-  :global(.dark) .form-group select {
-    background: #1f2937;
-    color: white;
-    border-color: rgba(255, 255, 255, 0.2);
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  .checkbox-label input {
-    cursor: pointer;
-  }
-
-  .help-text {
-    margin-top: 0.25rem;
-    font-size: 0.85rem;
-    color: #6b7280;
-  }
-
-  :global(.dark) .help-text {
-    color: #9ca3af;
-  }
-
-  .warning-box {
-    padding: 1.25rem;
-    background: rgba(249, 115, 22, 0.1);
-    border: 1px solid rgba(249, 115, 22, 0.3);
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.dark) .warning-box {
-    background: rgba(249, 115, 22, 0.15);
-    border-color: rgba(249, 115, 22, 0.4);
-  }
-
-  .warning-box strong {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: rgb(194, 65, 12);
-    font-size: 1rem;
-  }
-
-  :global(.dark) .warning-box strong {
-    color: rgb(251, 146, 60);
-  }
-
-  .warning-box p {
-    margin: 0.5rem 0;
-    color: rgb(124, 45, 18);
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .warning-box p {
-    color: rgb(253, 186, 116);
-  }
-
-  .warning-box code {
-    background: rgba(0, 0, 0, 0.1);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-family: monospace;
-    font-size: 0.85em;
-  }
-
-  :global(.dark) .warning-box code {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .setup-link {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    background: rgb(249, 115, 22);
-    color: white;
-    text-decoration: none;
-    border-radius: 0.375rem;
-    font-weight: 500;
-    transition: background 0.2s;
-  }
-
-  .setup-link:hover {
-    background: rgb(234, 88, 12);
-  }
-
-  .error-detail {
-    margin-top: 0.75rem;
-    padding: 0.5rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.25rem;
-    font-size: 0.8rem;
-    font-family: monospace;
-  }
-
-  :global(.dark) .error-detail {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  /* Training Data Configuration Styles */
-  .training-config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .config-section h4 {
-    margin: 0 0 1rem 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .config-section h4 {
-    color: rgb(243 244 246);
-  }
-
-  .form-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .form-row label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .form-row label {
-    color: rgb(209 213 219);
-  }
-
-  .form-row input[type="number"] {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    border-radius: 0.375rem;
-    background: white;
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .form-row input[type="number"] {
-    background: #1f2937;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: white;
-  }
-
-  .form-row input[type="number"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .help-hint {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-    font-style: italic;
-  }
-
-  :global(.dark) .help-hint {
-    color: rgb(156 163 175);
-  }
-
-  .phase-presets {
-    margin-top: 1.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  :global(.dark) .phase-presets {
-    border-top-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .phase-presets h4 {
-    margin: 0 0 1rem 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .phase-presets h4 {
-    color: rgb(243 244 246);
-  }
-
-  .preset-buttons {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .preset-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 1rem;
-    background: white;
-    border: 2px solid rgba(0, 0, 0, 0.1);
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  :global(.dark) .preset-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .preset-btn:hover:not(:disabled) {
-    border-color: rgb(124 58 237);
-    background: rgba(124, 58, 237, 0.05);
-  }
-
-  :global(.dark) .preset-btn:hover:not(:disabled) {
-    border-color: rgb(167 139 250);
-    background: rgba(167, 139, 250, 0.05);
-  }
-
-  .preset-btn.active {
-    border-color: rgb(124 58 237);
-    background: rgba(124, 58, 237, 0.1);
-  }
-
-  :global(.dark) .preset-btn.active {
-    border-color: rgb(167 139 250);
-    background: rgba(167, 139, 250, 0.1);
-  }
-
-  .preset-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .preset-name {
-    font-weight: 600;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .preset-name {
-    color: rgb(243 244 246);
-  }
-
-  .preset-desc {
-    font-size: 0.75rem;
-    color: rgb(107 114 128);
-  }
-
-  :global(.dark) .preset-desc {
-    color: rgb(156 163 175);
-  }
-
-  .current-status {
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    background: rgba(124, 58, 237, 0.05);
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    color: rgb(55 65 81);
-  }
-
-  :global(.dark) .current-status {
-    background: rgba(167, 139, 250, 0.1);
-    color: rgb(209 213 219);
-  }
-
-  .current-status .highlight {
-    font-weight: 600;
-    color: rgb(124 58 237);
-  }
-
-  :global(.dark) .current-status .highlight {
-    color: rgb(167 139 250);
-  }
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  /* Logs Container Styles (used in Training Monitor) */
-  .logs-container {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 300px;
-  }
-
-  .logs-container h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgb(17 24 39);
-  }
-
-  :global(.dark) .logs-container h4 {
-    color: rgb(243 244 246);
-  }
-
-  .logs-scroll {
-    flex: 1;
-    overflow-y: auto;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.02);
-    font-family: 'Courier New', monospace;
-    font-size: 0.875rem;
-    max-height: 350px;
-  }
-
-  :global(.dark) .logs-scroll {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.02);
-  }
-
-  .log-empty {
-    padding: 2rem;
-    text-align: center;
-    color: rgb(107 114 128);
-    font-style: italic;
-  }
-
-  :global(.dark) .log-empty {
-    color: rgb(156 163 175);
-  }
-
-  .log-entry {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  }
-
-  .log-entry:last-child {
-    border-bottom: none;
-  }
-
-  :global(.dark) .log-entry {
-    border-bottom-color: rgba(255, 255, 255, 0.05);
-  }
-
-  .log-timestamp {
-    flex-shrink: 0;
-    color: rgb(107 114 128);
-    font-size: 0.75rem;
-  }
-
-  :global(.dark) .log-timestamp {
-    color: rgb(156 163 175);
-  }
-
-  .log-event {
-    flex-shrink: 0;
-    font-weight: 600;
-    color: rgb(124 58 237);
-    text-transform: capitalize;
-  }
-
-  :global(.dark) .log-event {
-    color: rgb(167 139 250);
-  }
-
-  .log-details {
-    flex: 1;
-    color: rgb(75 85 99);
-    font-size: 0.75rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global(.dark) .log-details {
-    color: rgb(209 213 219);
-  }
-
-  .progress-footer {
-    padding: 1rem;
-    background: rgba(249, 115, 22, 0.05);
-    border-radius: 0.5rem;
-  }
-
-  :global(.dark) .progress-footer {
-    background: rgba(249, 115, 22, 0.1);
-  }
-
-  .progress-footer .help-text {
-    margin: 0;
-  }
-
-  /* Console Output Styles */
-  .logs-container.compact {
-    min-height: 150px;
-  }
-
-  .logs-container.compact .logs-scroll {
-    max-height: 180px;
-  }
-
-  .console-output {
-    background: rgba(0, 0, 0, 0.85);
-    color: rgb(209 213 219);
-    font-family: 'Courier New', Consolas, monospace;
-    font-size: 0.8rem;
-    line-height: 1.4;
-  }
-
-  :global(.dark) .console-output {
-    background: rgba(0, 0, 0, 0.95);
-    color: rgb(229 231 235);
-  }
-
-  .console-line {
-    padding: 0.25rem 0;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .console-line:hover {
-    background: rgba(124, 58, 237, 0.1);
-  }
-
-  .events-output {
-    max-height: 200px !important;
-  }
-
-  /* Training Monitor Styles */
-  .training-monitor {
-    border: 2px solid rgba(124, 58, 237, 0.2);
-  }
-
-  :global(.dark) .training-monitor {
-    border-color: rgba(167, 139, 250, 0.3);
-  }
-
-  .monitor-header-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-    width: 100%;
-  }
-
-  .toggle-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(124, 58, 237, 0.3);
-    background: rgba(124, 58, 237, 0.05);
-    color: rgb(124 58 237);
-    cursor: pointer;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: all 0.2s;
-  }
-
-  .toggle-btn:hover {
-    background: rgba(124, 58, 237, 0.1);
-    border-color: rgba(124, 58, 237, 0.5);
-  }
-
-  :global(.dark) .toggle-btn {
-    border-color: rgba(167, 139, 250, 0.3);
-    background: rgba(167, 139, 250, 0.05);
-    color: rgb(167 139 250);
-  }
-
-  :global(.dark) .toggle-btn:hover {
-    background: rgba(167, 139, 250, 0.1);
-    border-color: rgba(167, 139, 250, 0.5);
-  }
-
-  .monitor-status {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.02);
-    border-radius: 0.5rem;
-    margin-top: 1rem;
-  }
-
-  :global(.dark) .monitor-status {
-    background: rgba(255, 255, 255, 0.02);
-  }
-
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    font-weight: 500;
-    font-size: 0.95rem;
-  }
-
-  .status-badge.running {
-    background: rgba(34, 197, 94, 0.1);
-    color: rgb(22, 163, 74);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-
-  :global(.dark) .status-badge.running {
-    background: rgba(34, 197, 94, 0.15);
-    color: rgb(74, 222, 128);
-    border-color: rgba(34, 197, 94, 0.4);
-  }
-
-  .status-badge.idle {
-    background: rgba(107, 114, 128, 0.1);
-    color: rgb(75, 85, 99);
-    border: 1px solid rgba(107, 114, 128, 0.2);
-  }
-
-  :global(.dark) .status-badge.idle {
-    background: rgba(156, 163, 175, 0.1);
-    color: rgb(156, 163, 175);
-    border-color: rgba(156, 163, 175, 0.2);
-  }
-
-  .spinner-small {
-    width: 16px;
-    height: 16px;
-    border: 2px solid rgba(34, 197, 94, 0.2);
-    border-top-color: rgb(22, 163, 74);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  :global(.dark) .spinner-small {
-    border-color: rgba(74, 222, 128, 0.2);
-    border-top-color: rgb(74, 222, 128);
-  }
-
-  .btn-danger-small {
-    padding: 0.4rem 0.8rem;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    background: rgba(239, 68, 68, 0.1);
-    color: rgb(220, 38, 38);
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 500;
-    transition: all 0.2s;
-  }
-
-  .btn-danger-small:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.6);
-  }
-
-  .btn-danger-small:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  :global(.dark) .btn-danger-small {
-    border-color: rgba(248, 113, 113, 0.4);
-    background: rgba(248, 113, 113, 0.1);
-    color: rgb(248, 113, 113);
-  }
-
-  :global(.dark) .btn-danger-small:hover:not(:disabled) {
-    background: rgba(248, 113, 113, 0.2);
-    border-color: rgba(248, 113, 113, 0.6);
-  }
-
-  .monitor-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    margin-top: 1rem;
-  }
-
-  .recent-activity-compact {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.05);
-  }
-
-  :global(.dark) .recent-activity-compact {
-    border-top-color: rgba(255, 255, 255, 0.05);
-  }
-
-  .recent-activity-compact h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: rgb(75, 85, 99);
-  }
-
-  :global(.dark) .recent-activity-compact h4 {
-    color: rgb(156, 163, 175);
-  }
-
-  .info-box {
-    padding: 1rem;
-    background: rgba(59, 130, 246, 0.05);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  :global(.dark) .info-box {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
-  }
-
-  .info-box p {
-    margin: 0;
-    color: rgb(30, 64, 175);
-    font-size: 0.875rem;
-  }
-
-  :global(.dark) .info-box p {
-    color: rgb(147, 197, 253);
-  }
-
-  .info-box strong {
-    color: rgb(29, 78, 216);
-  }
-
-  :global(.dark) .info-box strong {
-    color: rgb(96, 165, 250);
-  }
-
-  /* Error Banner Styles */
-  .error-banner {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 1rem;
-    margin-top: 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 0.5rem;
-    animation: slideDown 0.3s ease-out;
-  }
-
-  :global(.dark) .error-banner {
-    background: rgba(248, 113, 113, 0.1);
-    border-color: rgba(248, 113, 113, 0.3);
+  @keyframes pulse {
+    0% { transform: scale(0.7); opacity: 0.6; }
+    80% { transform: scale(1.4); opacity: 0; }
+    100% { transform: scale(1.6); opacity: 0; }
   }
 
   @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
-  .error-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  .error-content {
-    flex: 1;
-    color: rgb(127, 29, 29);
-  }
-
-  :global(.dark) .error-content {
-    color: rgb(254, 202, 202);
-  }
-
-  .error-content strong {
-    display: block;
-    margin-bottom: 0.25rem;
-    color: rgb(153, 27, 27);
-  }
-
-  :global(.dark) .error-content strong {
-    color: rgb(248, 113, 113);
-  }
-
-  .error-content p {
-    margin: 0.25rem 0;
-    font-size: 0.875rem;
-  }
-
-  .error-hint {
-    margin-top: 0.5rem !important;
-    padding: 0.5rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 0.25rem;
-    font-size: 0.8125rem;
-    color: rgb(127, 29, 29);
-  }
-
-  :global(.dark) .error-hint {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgb(252, 165, 165);
-  }
-
-  .error-dismiss {
-    padding: 0.25rem 0.5rem;
-    background: none;
-    border: none;
-    color: rgb(127, 29, 29);
-    font-size: 1.5rem;
-    cursor: pointer;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-    flex-shrink: 0;
-  }
-
-  .error-dismiss:hover {
-    opacity: 1;
-  }
-
-  :global(.dark) .error-dismiss {
-    color: rgb(254, 202, 202);
+  .animate-spin { animation: spin 0.8s linear infinite; }
+  .animate-slideDown { animation: slideDown 0.3s ease-out; }
+  .animate-status-dot::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    animation: pulse 1.5s infinite ease-out;
+    opacity: 0.5;
   }
 </style>

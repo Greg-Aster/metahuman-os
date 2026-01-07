@@ -256,10 +256,10 @@
     : 0;
 </script>
 
-<div class="reference-audio-selector">
-  <div class="selector-header">
-    <h3>Select Reference Audio Samples</h3>
-    <p class="help-text">
+<div class="bg-gray-900 dark:bg-gray-900 rounded-lg p-6 text-white">
+  <div class="mb-6">
+    <h3 class="m-0 mb-2 text-xl text-white">Select Reference Audio Samples</h3>
+    <p class="m-0 text-sm text-gray-400 opacity-80">
       {#if provider === 'gpt-sovits' || provider === 'sovits'}
         GPT-SoVITS voice cloning - Select a sample and click "🎯 Set Reference" to use it, then "🔊 Test" to hear your cloned voice
       {:else}
@@ -270,98 +270,98 @@
 
   <!-- Current Reference Display for GPT-SoVITS -->
   {#if (provider === 'gpt-sovits' || provider === 'sovits') && currentReference?.sampleId}
-    <div class="current-reference">
-      <div class="current-reference-header">
-        <span class="reference-icon">🎯</span>
+    <div class="bg-blue-900/50 border border-blue-700 rounded-lg p-4 mb-6">
+      <div class="flex items-center gap-2 text-[0.95rem]">
+        <span class="text-xl">🎯</span>
         <strong>Active Reference:</strong>
-        <span class="reference-id">{currentReference.sampleId}</span>
+        <span class="text-blue-300 font-mono bg-black/20 px-2 py-0.5 rounded">{currentReference.sampleId}</span>
       </div>
       {#if currentReference.transcript}
-        <div class="reference-transcript">"{currentReference.transcript}"</div>
+        <div class="mt-2 italic text-gray-400 text-sm">"{currentReference.transcript}"</div>
       {/if}
     </div>
   {:else if (provider === 'gpt-sovits' || provider === 'sovits')}
-    <div class="current-reference no-reference">
-      <span class="reference-icon">⚠️</span>
+    <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-4 mb-6 flex items-center gap-2">
+      <span class="text-xl">⚠️</span>
       <span>No reference set. Select a sample below and click "🎯 Set Reference"</span>
     </div>
   {/if}
 
   {#if loading}
-    <div class="loading">Loading samples...</div>
+    <div class="p-8 text-center">Loading samples...</div>
   {:else if error}
-    <div class="error">{error}</div>
+    <div class="p-8 text-center text-red-400">{error}</div>
   {:else}
-    <div class="selector-controls">
-      <div class="control-buttons">
-        <button on:click={selectAll} class="btn-sm">Select All ({samples.length})</button>
-        <button on:click={clearSelection} class="btn-sm">Clear</button>
-        <button on:click={() => selectBest(5)} class="btn-sm">Select Top 5</button>
-        <button on:click={() => selectBest(10)} class="btn-sm">Select Top 10</button>
+    <div class="flex justify-between items-center mb-4 pb-4 border-b border-gray-700 md:flex-col md:items-stretch md:gap-4">
+      <div class="flex gap-2 flex-wrap">
+        <button on:click={selectAll} class="px-3 py-1.5 text-sm bg-gray-700 text-white border border-gray-600 rounded cursor-pointer transition-all hover:bg-gray-600 hover:border-gray-500">Select All ({samples.length})</button>
+        <button on:click={clearSelection} class="px-3 py-1.5 text-sm bg-gray-700 text-white border border-gray-600 rounded cursor-pointer transition-all hover:bg-gray-600 hover:border-gray-500">Clear</button>
+        <button on:click={() => selectBest(5)} class="px-3 py-1.5 text-sm bg-gray-700 text-white border border-gray-600 rounded cursor-pointer transition-all hover:bg-gray-600 hover:border-gray-500">Select Top 5</button>
+        <button on:click={() => selectBest(10)} class="px-3 py-1.5 text-sm bg-gray-700 text-white border border-gray-600 rounded cursor-pointer transition-all hover:bg-gray-600 hover:border-gray-500">Select Top 10</button>
       </div>
 
-      <div class="selection-stats">
-        <div class="stat">
-          <label>Selected:</label>
-          <span class="value">{selectedIds.size} samples</span>
+      <div class="flex gap-4 md:justify-between md:w-full">
+        <div class="flex flex-col items-end">
+          <label class="text-xs text-gray-400 uppercase tracking-wide">Selected:</label>
+          <span class="text-base font-semibold mt-0.5">{selectedIds.size} samples</span>
         </div>
-        <div class="stat">
-          <label>Duration:</label>
-          <span class="value">{formatDuration(selectedDuration)}</span>
+        <div class="flex flex-col items-end">
+          <label class="text-xs text-gray-400 uppercase tracking-wide">Duration:</label>
+          <span class="text-base font-semibold mt-0.5">{formatDuration(selectedDuration)}</span>
         </div>
-        <div class="stat">
-          <label>Avg Quality:</label>
-          <span class="value quality-{Math.floor(selectedQuality * 10)}">
+        <div class="flex flex-col items-end">
+          <label class="text-xs text-gray-400 uppercase tracking-wide">Avg Quality:</label>
+          <span class="text-base font-semibold mt-0.5 {selectedQuality >= 0.9 ? 'text-green-400' : selectedQuality >= 0.7 ? 'text-yellow-400' : 'text-red-400'}">
             {(selectedQuality * 100).toFixed(0)}%
           </span>
         </div>
       </div>
     </div>
 
-    <div class="sample-list">
+    <div class="max-h-[400px] overflow-y-auto border border-gray-700 rounded-md bg-gray-950">
       {#if samples.length === 0}
-        <div class="no-samples">
+        <div class="p-8 text-center text-gray-400">
           No samples found above quality threshold ({minQuality}).
           <br>Try recording more voice samples or lowering the quality threshold.
         </div>
       {:else}
         {#each samples as sample (sample.id)}
           <div
-            class="sample-item"
-            class:selected={selectedIds.has(sample.id)}
+            class="flex items-center px-4 py-3 border-b border-gray-800 cursor-pointer transition-all relative hover:bg-gray-800 {selectedIds.has(sample.id) ? 'bg-blue-900/30 border-l-[3px] border-l-blue-500' : ''}"
             on:click={() => toggleSelection(sample.id)}
           >
-            <div class="sample-checkbox">
+            <div class="mr-3">
               <input
                 type="checkbox"
                 checked={selectedIds.has(sample.id)}
                 on:change={() => toggleSelection(sample.id)}
+                class="w-5 h-5 cursor-pointer"
               />
             </div>
 
-            <div class="sample-info">
-              <div class="sample-id">{sample.id}</div>
-              <div class="sample-meta">
-                <span class="meta-item">
-                  <span class="meta-label">Duration:</span>
-                  <span class="meta-value">{formatDuration(sample.duration)}</span>
+            <div class="flex-1">
+              <div class="font-medium mb-1 text-[0.95rem]">{sample.id}</div>
+              <div class="flex gap-4 text-sm md:flex-col md:gap-1">
+                <span class="flex gap-1">
+                  <span class="text-gray-400">Duration:</span>
+                  <span class="text-white font-medium">{formatDuration(sample.duration)}</span>
                 </span>
-                <span class="meta-item">
-                  <span class="meta-label">Quality:</span>
-                  <span class="meta-value quality-{Math.floor(sample.quality * 10)}">
+                <span class="flex gap-1">
+                  <span class="text-gray-400">Quality:</span>
+                  <span class="font-medium {sample.quality >= 0.9 ? 'text-green-400' : sample.quality >= 0.7 ? 'text-yellow-400' : 'text-red-400'}">
                     {(sample.quality * 100).toFixed(0)}%
                   </span>
                 </span>
-                <span class="meta-item">
-                  <span class="meta-label">Date:</span>
-                  <span class="meta-value">{formatTimestamp(sample.timestamp)}</span>
+                <span class="flex gap-1">
+                  <span class="text-gray-400">Date:</span>
+                  <span class="text-white font-medium">{formatTimestamp(sample.timestamp)}</span>
                 </span>
               </div>
             </div>
 
-            <div class="sample-actions">
+            <div class="flex items-center gap-2 mr-2">
               <button
-                class="play-button"
+                class="p-2 bg-blue-600 text-white border-none rounded-full w-10 h-10 flex items-center justify-center cursor-pointer text-base transition-all hover:bg-blue-700 hover:scale-110"
                 on:click={(e) => togglePlayAudio(sample, e)}
                 title={playingId === sample.id ? 'Stop' : 'Play sample'}
               >
@@ -370,8 +370,7 @@
 
               {#if provider === 'gpt-sovits' || provider === 'sovits'}
                 <button
-                  class="action-button set-reference"
-                  class:active={currentReference?.sampleId === sample.id}
+                  class="p-1.5 border rounded-md w-9 h-9 flex items-center justify-center cursor-pointer text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-110 {currentReference?.sampleId === sample.id ? 'bg-green-500 border-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-green-900/50 border-green-700 hover:bg-green-800/50'}"
                   on:click={(e) => setAsReference(sample.id, e)}
                   disabled={settingReference}
                   title="Set as active reference for voice cloning"
@@ -379,7 +378,7 @@
                   {currentReference?.sampleId === sample.id ? '✓' : '🎯'}
                 </button>
                 <button
-                  class="action-button test-voice"
+                  class="p-1.5 bg-blue-900/50 border border-blue-700 rounded-md w-9 h-9 flex items-center justify-center cursor-pointer text-sm transition-all hover:bg-blue-800/50 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
                   on:click={(e) => testVoiceWithSample(sample.id, e)}
                   disabled={testingVoice}
                   title="Test voice with this sample"
@@ -389,450 +388,30 @@
               {/if}
             </div>
 
-            <div class="sample-quality-bar">
-              <div class="quality-fill" style="width: {sample.quality * 100}%"></div>
+            <div class="w-20 h-1.5 bg-gray-800 rounded overflow-hidden ml-4 md:hidden">
+              <div class="h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 transition-all duration-300" style="width: {sample.quality * 100}%"></div>
             </div>
           </div>
         {/each}
       {/if}
     </div>
 
-    <div class="selector-footer">
-      <div class="total-stats">
-        <div class="stat-item">
-          <label>Total Available:</label>
-          <span>{samples.length} samples</span>
+    <div class="mt-4 pt-4 border-t border-gray-700">
+      <div class="flex justify-around gap-4">
+        <div class="flex flex-col items-center">
+          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Available:</label>
+          <span class="text-base font-semibold">{samples.length} samples</span>
         </div>
-        <div class="stat-item">
-          <label>Total Duration:</label>
-          <span>{formatDuration(totalDuration)}</span>
+        <div class="flex flex-col items-center">
+          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Duration:</label>
+          <span class="text-base font-semibold">{formatDuration(totalDuration)}</span>
         </div>
-        <div class="stat-item">
-          <label>Avg Quality:</label>
-          <span>{(avgQuality * 100).toFixed(0)}%</span>
+        <div class="flex flex-col items-center">
+          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Avg Quality:</label>
+          <span class="text-base font-semibold">{(avgQuality * 100).toFixed(0)}%</span>
         </div>
       </div>
     </div>
   {/if}
 </div>
 
-<style>
-  .reference-audio-selector {
-    background: var(--bg-secondary, #1a1a1a);
-    border-radius: 8px;
-    padding: 1.5rem;
-    color: var(--text-primary, #ffffff);
-  }
-
-  :global(.dark) .reference-audio-selector {
-    background: #1a1a1a;
-    color: #ffffff;
-  }
-
-  .selector-header {
-    margin-bottom: 1.5rem;
-  }
-
-  .selector-header h3 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.2rem;
-    color: var(--text-primary, #ffffff);
-  }
-
-  .help-text {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--text-secondary, #888);
-    opacity: 0.8;
-  }
-
-  /* Current Reference Display */
-  .current-reference {
-    background: var(--bg-accent, #1a3a5a);
-    border: 1px solid var(--border-accent, #2a5a8a);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .current-reference.no-reference {
-    background: var(--bg-warning, #3a3a1a);
-    border-color: var(--border-warning, #8a8a2a);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  :global(.dark) .current-reference {
-    background: #1a3a5a;
-    border-color: #2a5a8a;
-  }
-
-  :global(.dark) .current-reference.no-reference {
-    background: #3a3a1a;
-    border-color: #5a5a2a;
-  }
-
-  .current-reference-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.95rem;
-  }
-
-  .reference-icon {
-    font-size: 1.2rem;
-  }
-
-  .reference-id {
-    color: var(--text-accent, #8ab4ff);
-    font-family: monospace;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-  }
-
-  .reference-transcript {
-    margin-top: 0.5rem;
-    font-style: italic;
-    color: var(--text-secondary, #aaa);
-    font-size: 0.9rem;
-  }
-
-  .loading,
-  .error {
-    padding: 2rem;
-    text-align: center;
-  }
-
-  .error {
-    color: var(--error, #ff4444);
-  }
-
-  .selector-controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border, #333);
-  }
-
-  .control-buttons {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .btn-sm {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
-    background: var(--bg-button, #333);
-    color: var(--text-primary, #fff);
-    border: 1px solid var(--border, #444);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-sm:hover {
-    background: var(--bg-button-hover, #444);
-    border-color: var(--border-hover, #555);
-  }
-
-  .selection-stats {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .stat {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-  }
-
-  .stat label {
-    font-size: 0.75rem;
-    color: var(--text-secondary, #888);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .stat .value {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-top: 0.2rem;
-  }
-
-  .sample-list {
-    max-height: 400px;
-    overflow-y: auto;
-    border: 1px solid var(--border, #333);
-    border-radius: 6px;
-    background: var(--bg-tertiary, #0f0f0f);
-  }
-
-  :global(.dark) .sample-list {
-    background: #0f0f0f;
-    border-color: #333;
-  }
-
-  .no-samples {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-secondary, #888);
-  }
-
-  .sample-item {
-    display: flex;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border, #2a2a2a);
-    cursor: pointer;
-    transition: all 0.2s;
-    position: relative;
-  }
-
-  .sample-item:hover {
-    background: var(--bg-hover, #222);
-  }
-
-  .sample-item.selected {
-    background: var(--bg-selected, #1a3a5a);
-    border-left: 3px solid var(--accent, #4a9eff);
-  }
-
-  :global(.dark) .sample-item.selected {
-    background: #1a3a5a;
-  }
-
-  .sample-checkbox {
-    margin-right: 0.75rem;
-  }
-
-  .sample-checkbox input[type="checkbox"] {
-    width: 1.2rem;
-    height: 1.2rem;
-    cursor: pointer;
-  }
-
-  .play-button {
-    padding: 0.5rem;
-    background: var(--bg-button, #3b82f6);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 2.5rem;
-    height: 2.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 1rem;
-    transition: all 0.2s;
-    margin-right: 0.5rem;
-  }
-
-  .play-button:hover {
-    background: var(--bg-button-hover, #2563eb);
-    transform: scale(1.1);
-  }
-
-  :global(.dark) .play-button {
-    background: #1e40af;
-  }
-
-  :global(.dark) .play-button:hover {
-    background: #1e3a8a;
-  }
-
-  /* Sample Actions Container */
-  .sample-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-right: 0.5rem;
-  }
-
-  .action-button {
-    padding: 0.4rem;
-    background: var(--bg-button, #333);
-    color: white;
-    border: 1px solid var(--border, #444);
-    border-radius: 6px;
-    width: 2.2rem;
-    height: 2.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: all 0.2s;
-  }
-
-  .action-button:hover:not(:disabled) {
-    transform: scale(1.1);
-  }
-
-  .action-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .action-button.set-reference {
-    background: var(--bg-success, #1a4a3a);
-    border-color: var(--border-success, #2a6a4a);
-  }
-
-  .action-button.set-reference:hover:not(:disabled) {
-    background: var(--bg-success-hover, #2a5a4a);
-  }
-
-  .action-button.set-reference.active {
-    background: #22c55e;
-    border-color: #22c55e;
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
-  }
-
-  .action-button.test-voice {
-    background: var(--bg-info, #1a3a6a);
-    border-color: var(--border-info, #2a5a8a);
-  }
-
-  .action-button.test-voice:hover:not(:disabled) {
-    background: var(--bg-info-hover, #2a4a7a);
-  }
-
-  :global(.dark) .action-button.set-reference {
-    background: #1a4a3a;
-    border-color: #2a6a4a;
-  }
-
-  :global(.dark) .action-button.set-reference:hover:not(:disabled) {
-    background: #2a5a4a;
-  }
-
-  :global(.dark) .action-button.test-voice {
-    background: #1a3a6a;
-    border-color: #2a5a8a;
-  }
-
-  :global(.dark) .action-button.test-voice:hover:not(:disabled) {
-    background: #2a4a7a;
-  }
-
-  .sample-info {
-    flex: 1;
-  }
-
-  .sample-id {
-    font-weight: 500;
-    margin-bottom: 0.3rem;
-    font-size: 0.95rem;
-  }
-
-  .sample-meta {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.85rem;
-  }
-
-  .meta-item {
-    display: flex;
-    gap: 0.3rem;
-  }
-
-  .meta-label {
-    color: var(--text-secondary, #888);
-  }
-
-  .meta-value {
-    color: var(--text-primary, #fff);
-    font-weight: 500;
-  }
-
-  .sample-quality-bar {
-    width: 80px;
-    height: 6px;
-    background: var(--bg-bar, #2a2a2a);
-    border-radius: 3px;
-    overflow: hidden;
-    margin-left: 1rem;
-  }
-
-  .quality-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #ff4444, #ffaa44, #44ff44);
-    transition: width 0.3s;
-  }
-
-  .selector-footer {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border, #333);
-  }
-
-  .total-stats {
-    display: flex;
-    justify-content: space-around;
-    gap: 1rem;
-  }
-
-  .stat-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .stat-item label {
-    font-size: 0.75rem;
-    color: var(--text-secondary, #888);
-    margin-bottom: 0.2rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .stat-item span {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-
-  /* Quality color classes */
-  .quality-10, .quality-9 {
-    color: #44ff44;
-  }
-  .quality-8 {
-    color: #88ff44;
-  }
-  .quality-7 {
-    color: #ffaa44;
-  }
-  .quality-6, .quality-5, .quality-4 {
-    color: #ff8844;
-  }
-  .quality-3, .quality-2, .quality-1, .quality-0 {
-    color: #ff4444;
-  }
-
-  @media (max-width: 768px) {
-    .selector-controls {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 1rem;
-    }
-
-    .selection-stats {
-      justify-content: space-between;
-      width: 100%;
-    }
-
-    .sample-meta {
-      flex-direction: column;
-      gap: 0.3rem;
-    }
-
-    .sample-quality-bar {
-      display: none;
-    }
-  }
-</style>

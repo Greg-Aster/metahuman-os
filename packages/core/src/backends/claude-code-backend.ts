@@ -1,22 +1,17 @@
 /**
- * Claude Code Backend
+ * Claude Code Backend - Interactive Terminal Mode
  *
- * Escalation backend using Anthropic's Claude Code CLI.
- * Manages a persistent CLI session with terminal visibility.
+ * This backend runs Claude Code in a visible, interactive terminal
+ * within the MetaHuman OS program. All Claude interactions happen
+ * in the terminal where the user can see and interact with them.
  *
- * Features:
- * - PTY-based session management
- * - Streaming output with reasoning step parsing
- * - Terminal log visibility
- * - Auto-restart on idle timeout
+ * NO background processes - everything is visible in the terminal.
  */
 
-import { spawn, execSync, type ChildProcess } from 'child_process';
-import type { Writable } from 'stream';
+import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { audit } from '../audit.js';
-import { systemPaths } from '../paths.js';
 import {
   type EscalationBackend,
   type EscalationOptions,
@@ -25,34 +20,44 @@ import {
   registerBackend,
 } from '../escalation-backend.js';
 import { BACKEND_IDS } from '../escalation-constants.js';
+import {
+  bigBrotherTerminal,
+  ensureBigBrotherTerminal,
+  isBigBrotherReady,
+  getBigBrotherState,
+  onBigBrotherOutput,
+  type TerminalOutputEvent,
+} from '../big-brother-terminal.js';
 
-// Backend display name - used in error messages for consistency
+// Backend display name
 const BACKEND_DISPLAY_NAME = 'Claude Code CLI';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface ClaudeSession {
-  process: ChildProcess | null;
-  ready: boolean;
-  buffer: string;
-  responseCallback?: (response: string) => void;
-  startTime: Date;
-  terminalPort?: number;
-  terminalPid?: number;
-  // For bidirectional communication
-  stdinPipe?: Writable;
-  waitingForInput: boolean;
-  activeSessionId?: string;
+interface PendingPrompt {
+  prompt: string;
+  resolve: (response: string) => void;
+  reject: (error: Error) => void;
+  outputBuffer: string;
+  startTime: number;
+  timeout: NodeJS.Timeout;
+  streaming?: {
+    onReasoningStep?: (step: ReasoningStep) => void;
+    onChunk?: (chunk: string) => void;
+    onWaitingForInput?: (question: string) => void;
+    sessionId?: string;
+  };
 }
 
 // ============================================================================
-// Session State
+// State
 // ============================================================================
 
-let currentSession: ClaudeSession | null = null;
-const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes idle timeout
+let pendingPrompt: PendingPrompt | null = null;
+let outputUnsubscribe: (() => void) | null = null;
+let isInitialized = false;
 
 // ============================================================================
 // Claude Code Backend Implementation
@@ -61,7 +66,7 @@ const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes idle timeout
 class ClaudeCodeBackendImpl implements EscalationBackend {
   readonly id = BACKEND_IDS.CLAUDE_CODE;
   readonly name = BACKEND_DISPLAY_NAME;
-  readonly description = "Anthropic's official Claude Code command-line interface";
+  readonly description = "Anthropic's Claude Code CLI running in an interactive terminal";
   readonly supportsStreaming = true;
 
   /**
@@ -72,56 +77,75 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
   }
 
   /**
-   * Check if session is ready
+   * Check if terminal session is ready
    */
   isReady(): boolean {
-    return currentSession?.ready ?? false;
+    return isBigBrotherReady();
   }
 
   /**
-   * Start Claude session
+   * Start the interactive terminal session
    */
   async start(): Promise<boolean> {
-    return startClaudeSession(true);
+    const started = await ensureBigBrotherTerminal();
+    if (started && !isInitialized) {
+      initializeOutputCapture();
+      isInitialized = true;
+    }
+    return started;
   }
 
   /**
-   * Stop Claude session
+   * Stop the terminal session
    */
   stop(): void {
-    stopClaudeSession();
+    if (outputUnsubscribe) {
+      outputUnsubscribe();
+      outputUnsubscribe = null;
+    }
+    isInitialized = false;
+    bigBrotherTerminal.stop();
   }
 
   /**
-   * Execute a prompt using Claude CLI
+   * Execute a prompt by sending it to the interactive terminal
    */
   async execute(prompt: string, options?: EscalationOptions): Promise<EscalationResult> {
     const startTime = Date.now();
 
     try {
-      // Ensure session is ready
+      // Ensure terminal is running
       if (!this.isReady()) {
         const started = await this.start();
         if (!started) {
           return {
             success: false,
             output: '',
-            error: 'Failed to start Claude Code session',
+            error: 'Failed to start Big Brother terminal',
             executionTime: Date.now() - startTime,
           };
         }
       }
 
-      // Send prompt and get response
-      const output = await sendPrompt(prompt, options?.timeout || 600000, {
+      // CRITICAL: Ensure output capture is initialized even if terminal was already running
+      // (e.g., started by boot endpoint before this backend was invoked)
+      if (!isInitialized) {
+        console.log('[claude-code-backend] Initializing output capture for existing terminal');
+        initializeOutputCapture();
+        isInitialized = true;
+      }
+
+      // Send prompt to terminal and wait for response
+      const response = await sendPromptToTerminal(prompt, options?.timeout || 600000, {
         onReasoningStep: options?.onReasoningStep,
         onChunk: options?.onChunk,
+        onWaitingForInput: options?.onWaitingForInput,
         sessionId: options?.sessionId,
       });
 
       return {
         success: true,
-        output,
+        output: response,
         executionTime: Date.now() - startTime,
       };
     } catch (error) {
@@ -145,21 +169,21 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
     const chunks: string[] = [];
 
     try {
-      // Ensure session is ready
+      // Ensure terminal is running
       if (!this.isReady()) {
         const started = await this.start();
         if (!started) {
           return {
             success: false,
             output: '',
-            error: 'Failed to start Claude Code session',
+            error: 'Failed to start Big Brother terminal',
             executionTime: Date.now() - startTime,
           };
         }
       }
 
-      // Use streaming execution
-      const streamPromise = spawnClaudeAsyncStreaming(prompt, options?.timeout || 600000, {
+      // Use sendPromptToTerminal with chunk callback
+      const response = await sendPromptToTerminal(prompt, options?.timeout || 600000, {
         onReasoningStep: options?.onReasoningStep,
         onChunk: (chunk) => {
           chunks.push(chunk);
@@ -168,12 +192,9 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
         sessionId: options?.sessionId,
       });
 
-      // Wait for completion
-      const output = await streamPromise;
-
       return {
         success: true,
-        output,
+        output: response,
         executionTime: Date.now() - startTime,
       };
     } catch (error) {
@@ -188,7 +209,7 @@ class ClaudeCodeBackendImpl implements EscalationBackend {
 }
 
 // ============================================================================
-// Helper Functions (moved from claude-session.ts)
+// Helper Functions
 // ============================================================================
 
 /**
@@ -221,130 +242,283 @@ export function isClaudeInstalled(): boolean {
 }
 
 /**
- * Start a Claude CLI session with terminal visibility
+ * Initialize output capture from the terminal
  */
-export async function startClaudeSession(spawnTerminal: boolean = true): Promise<boolean> {
-  if (currentSession?.ready) {
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'claude_session_already_running',
-      details: {
-        terminalPort: currentSession.terminalPort,
-        hasTerminal: !!currentSession.terminalPort,
-      },
-      actor: 'claude-code-backend',
-    });
-    return true;
+function initializeOutputCapture(): void {
+  if (outputUnsubscribe) {
+    outputUnsubscribe();
   }
 
-  if (!isClaudeInstalled()) {
-    audit({
-      level: 'error',
-      category: 'system',
-      event: 'claude_cli_not_installed',
-      details: {
-        message: 'Claude Code CLI not found. Install from https://claude.com/code',
-      },
-      actor: 'claude-code-backend',
-    });
-    return false;
-  }
+  console.log('[claude-code-backend] Setting up output capture listener');
 
-  try {
-    let terminalPort: number | undefined;
-    let terminalPid: number | undefined;
+  outputUnsubscribe = onBigBrotherOutput((event: TerminalOutputEvent) => {
+    // Log all output events for debugging
+    console.log(`[claude-code-backend] Output event: type=${event.type}, contentLen=${event.content?.length || 0}, hasPending=${!!pendingPrompt}`);
 
-    if (spawnTerminal) {
-      try {
-        terminalPort = 3099; // Big Brother dedicated port
-
-        audit({
-          level: 'info',
-          category: 'system',
-          event: 'claude_session_terminal_mode',
-          details: { terminalPort },
-          actor: 'claude-code-backend',
-        });
-      } catch (error) {
-        audit({
-          level: 'warn',
-          category: 'system',
-          event: 'claude_terminal_spawn_failed_fallback_to_print',
-          details: { error: (error as Error).message },
-          actor: 'claude-code-backend',
-        });
-      }
+    if (!pendingPrompt) {
+      console.log('[claude-code-backend] No pending prompt, ignoring output');
+      return;
     }
 
+    if (event.type === 'output') {
+      // Accumulate output
+      pendingPrompt.outputBuffer += event.content;
+      console.log(`[claude-code-backend] Buffer now: ${pendingPrompt.outputBuffer.length} chars`);
+
+      // Stream to callback
+      if (pendingPrompt.streaming?.onChunk) {
+        pendingPrompt.streaming.onChunk(event.content);
+      }
+
+      // Parse for reasoning steps
+      parseAndEmitReasoningSteps(event.content, pendingPrompt.streaming);
+
+      // Check if response is complete
+      // Claude shows its prompt again when ready for new input
+      if (isResponseComplete(pendingPrompt.outputBuffer)) {
+        console.log('[claude-code-backend] Response detected as complete');
+        completeCurrentPrompt();
+      }
+    }
+  });
+
+  audit({
+    level: 'info',
+    category: 'system',
+    event: 'claude_terminal_output_capture_initialized',
+    details: {},
+    actor: 'claude-code-backend',
+  });
+}
+
+/**
+ * Check if the response is complete
+ * Looks for patterns indicating Claude is done
+ */
+function isResponseComplete(buffer: string): boolean {
+  const recentOutput = buffer.slice(-200);
+
+  // Claude shows these patterns when done
+  const completionPatterns = [
+    /✓\s*Complete/i,
+    /\n>\s*$/,  // Claude's prompt
+    /Finished\s+in\s+\d+/i,
+    /\n\$\s*$/,  // Shell prompt returned
+  ];
+
+  for (const pattern of completionPatterns) {
+    if (pattern.test(recentOutput)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Complete the current pending prompt
+ */
+function completeCurrentPrompt(): void {
+  if (!pendingPrompt) return;
+
+  clearTimeout(pendingPrompt.timeout);
+
+  const response = cleanResponse(pendingPrompt.outputBuffer);
+
+  audit({
+    level: 'info',
+    category: 'action',
+    event: 'claude_terminal_response_complete',
+    details: {
+      responseLength: response.length,
+      duration: Date.now() - pendingPrompt.startTime,
+      sessionId: pendingPrompt.streaming?.sessionId,
+    },
+    actor: 'claude-code-backend',
+  });
+
+  pendingPrompt.resolve(response);
+  pendingPrompt = null;
+}
+
+/**
+ * Clean up the response text
+ */
+function cleanResponse(buffer: string): string {
+  // Remove ANSI escape codes
+  let cleaned = buffer.replace(/\x1b\[[0-9;]*m/g, '');
+
+  // Remove the prompt we sent
+  const promptEndIndex = cleaned.indexOf('\n');
+  if (promptEndIndex > 0) {
+    cleaned = cleaned.slice(promptEndIndex + 1);
+  }
+
+  // Remove trailing prompt indicators
+  cleaned = cleaned.replace(/\n>\s*$/, '');
+  cleaned = cleaned.replace(/\n\$\s*$/, '');
+
+  return cleaned.trim();
+}
+
+/**
+ * Parse output for reasoning steps and emit them
+ */
+function parseAndEmitReasoningSteps(
+  chunk: string,
+  streaming?: {
+    onReasoningStep?: (step: ReasoningStep) => void;
+    sessionId?: string;
+  }
+): void {
+  if (!streaming?.onReasoningStep) return;
+
+  // Tool use patterns
+  const toolUseMatch = chunk.match(/⏺\s*(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch)[:\s]/i);
+  if (toolUseMatch) {
+    streaming.onReasoningStep({
+      type: 'tool_use',
+      toolName: toolUseMatch[1],
+      content: chunk.substring(0, 200),
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Thought patterns
+  const thoughtPatterns = [
+    /^(Thinking|Let me|I'll|I need to|First,|Next,|Now|Looking at|Checking|Searching|Reading)/i,
+  ];
+
+  for (const pattern of thoughtPatterns) {
+    if (pattern.test(chunk) && chunk.length > 20 && chunk.length < 500) {
+      streaming.onReasoningStep({
+        type: 'thought',
+        content: chunk.substring(0, 300),
+        timestamp: new Date().toISOString(),
+      });
+      break;
+    }
+  }
+}
+
+/**
+ * Send a prompt to the interactive terminal
+ */
+async function sendPromptToTerminal(
+  prompt: string,
+  timeoutMs: number,
+  streaming?: {
+    onReasoningStep?: (step: ReasoningStep) => void;
+    onChunk?: (chunk: string) => void;
+    onWaitingForInput?: (question: string) => void;
+    sessionId?: string;
+  }
+): Promise<string> {
+  return new Promise(async (resolve, reject) => {
+    // Check if terminal is ready
+    if (!isBigBrotherReady()) {
+      reject(new Error('Big Brother terminal not ready'));
+      return;
+    }
+
+    // Cancel any pending prompt
+    if (pendingPrompt) {
+      clearTimeout(pendingPrompt.timeout);
+      pendingPrompt.reject(new Error('Cancelled by new prompt'));
+      pendingPrompt = null;
+    }
+
+    const timeout = setTimeout(() => {
+      if (pendingPrompt) {
+        const partialResponse = cleanResponse(pendingPrompt.outputBuffer);
+        pendingPrompt = null;
+
+        audit({
+          level: 'warn',
+          category: 'action',
+          event: 'claude_terminal_prompt_timeout',
+          details: {
+            timeoutMs,
+            partialResponseLength: partialResponse.length,
+            sessionId: streaming?.sessionId,
+          },
+          actor: 'claude-code-backend',
+        });
+
+        // Return partial response on timeout
+        if (partialResponse.length > 0) {
+          resolve(partialResponse);
+        } else {
+          reject(new Error(`Claude terminal timeout after ${timeoutMs}ms`));
+        }
+      }
+    }, timeoutMs);
+
+    // Set up pending prompt tracking
+    pendingPrompt = {
+      prompt,
+      resolve,
+      reject,
+      outputBuffer: '',
+      startTime: Date.now(),
+      timeout,
+      streaming,
+    };
+
     audit({
       level: 'info',
-      category: 'system',
-      event: 'claude_session_ready',
+      category: 'action',
+      event: 'claude_terminal_prompt_sent',
       details: {
-        hasTerminal: !!terminalPort,
-        terminalPort,
+        promptLength: prompt.length,
+        promptPreview: prompt.substring(0, 100),
+        sessionId: streaming?.sessionId,
       },
       actor: 'claude-code-backend',
     });
 
-    currentSession = {
-      process: null,
-      ready: true,
-      buffer: '',
-      startTime: new Date(),
-      terminalPort,
-      terminalPid,
-      waitingForInput: false,
-    };
+    // Send prompt to terminal via WebSocket
+    const success = await bigBrotherTerminal.sendPrompt(prompt);
+    if (!success) {
+      clearTimeout(timeout);
+      pendingPrompt = null;
+      reject(new Error('Failed to send prompt to terminal'));
+    }
+  });
+}
 
-    return true;
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'system',
-      event: 'claude_session_start_failed',
-      details: { error: (error as Error).message },
-      actor: 'claude-code-backend',
-    });
-    return false;
+// ============================================================================
+// Legacy API Compatibility
+// ============================================================================
+
+/**
+ * Start Claude session (now starts the terminal)
+ */
+export async function startClaudeSession(_spawnTerminal: boolean = true): Promise<boolean> {
+  const started = await ensureBigBrotherTerminal();
+  if (started && !isInitialized) {
+    initializeOutputCapture();
+    isInitialized = true;
   }
+  return started;
 }
 
 /**
- * Stop the Claude CLI session
+ * Stop Claude session (now stops the terminal)
  */
 export function stopClaudeSession(): void {
-  if (!currentSession) {
-    return;
+  if (outputUnsubscribe) {
+    outputUnsubscribe();
+    outputUnsubscribe = null;
   }
-
-  try {
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'claude_session_stopped',
-      details: {},
-      actor: 'claude-code-backend',
-    });
-
-    currentSession = null;
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'system',
-      event: 'claude_session_stop_failed',
-      details: { error: (error as Error).message },
-      actor: 'claude-code-backend',
-    });
-  }
+  isInitialized = false;
 }
 
 /**
- * Check if Claude session is running and ready
+ * Check if session is ready
  */
 export function isClaudeSessionReady(): boolean {
-  return currentSession?.ready ?? false;
+  return isBigBrotherReady();
 }
 
 /**
@@ -358,571 +532,51 @@ export function getSessionStatus(): {
   waitingForInput: boolean;
   activeSessionId?: string;
 } {
+  const state = getBigBrotherState();
   return {
-    running: currentSession !== null,
-    ready: currentSession?.ready ?? false,
-    uptime: currentSession ? Date.now() - currentSession.startTime.getTime() : undefined,
+    running: state.isRunning,
+    ready: state.claudeReady,
+    uptime: state.lastActivity ? Date.now() - state.lastActivity.getTime() : undefined,
     installed: isClaudeInstalled(),
-    waitingForInput: currentSession?.waitingForInput ?? false,
-    activeSessionId: currentSession?.activeSessionId,
+    waitingForInput: false,
+    activeSessionId: pendingPrompt?.streaming?.sessionId,
   };
 }
 
 /**
- * Send user input to the running Claude CLI session
- * Used for bidirectional communication when Claude asks questions
+ * Send user input (now sends to terminal)
  */
 export function sendStdinInput(input: string): boolean {
-  if (!currentSession?.stdinPipe || !currentSession.ready) {
-    audit({
-      level: 'warn',
-      category: 'action',
-      event: 'claude_stdin_no_session',
-      details: { hasSession: !!currentSession, hasStdin: !!currentSession?.stdinPipe },
-      actor: 'claude-code-backend',
-    });
-    return false;
-  }
-
-  try {
-    currentSession.stdinPipe.write(input + '\n');
-    currentSession.waitingForInput = false;
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'claude_stdin_input_sent',
-      details: {
-        inputLength: input.length,
-        inputPreview: input.substring(0, 50),
-        sessionId: currentSession.activeSessionId,
-      },
-      actor: 'claude-code-backend',
-    });
-
-    return true;
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'claude_stdin_write_failed',
-      details: { error: (error as Error).message },
-      actor: 'claude-code-backend',
-    });
-    return false;
-  }
+  bigBrotherTerminal.sendPrompt(input);
+  return true;
 }
 
 /**
- * Check if Claude is waiting for user input
+ * Check if waiting for input
  */
 export function isWaitingForInput(): boolean {
-  return currentSession?.waitingForInput ?? false;
+  return false; // Terminal mode handles this differently
 }
 
 /**
- * Streaming options for sendPrompt
- */
-interface StreamingOptions {
-  onReasoningStep?: (step: ReasoningStep) => void;
-  onChunk?: (chunk: string) => void;
-  onWaitingForInput?: (question: string) => void;
-  sessionId?: string;
-}
-
-/**
- * Patterns that indicate Claude is waiting for user input
- */
-const WAITING_FOR_INPUT_PATTERNS = [
-  /\?\s*$/m,                    // Ends with question mark
-  /\b(Continue|Proceed|Yes|No)\?\s*$/i,  // Confirmation prompts
-  /waiting for (your )?response/i,
-  /waiting for (your )?input/i,
-  /press enter/i,
-  /\[y\/n\]/i,
-  /\(yes\/no\)/i,
-];
-
-/**
- * Send a prompt to Claude and get a response
+ * Send a prompt (now sends to terminal)
  */
 export async function sendPrompt(
   prompt: string,
   timeoutMs: number = 600000,
-  streaming?: StreamingOptions
+  streaming?: {
+    onReasoningStep?: (step: ReasoningStep) => void;
+    onChunk?: (chunk: string) => void;
+    onWaitingForInput?: (question: string) => void;
+    sessionId?: string;
+  }
 ): Promise<string> {
-  if (!currentSession || !currentSession.ready) {
-    throw new Error('Claude session not ready. Call startClaudeSession() first.');
+  // Ensure terminal is started
+  if (!isBigBrotherReady()) {
+    await startClaudeSession(true);
   }
 
-  // Write to terminal log for visibility
-  if (currentSession.terminalPort) {
-    try {
-      await writeToTerminalLog(prompt, 'prompt');
-    } catch (error) {
-      audit({
-        level: 'warn',
-        category: 'action',
-        event: 'terminal_log_write_failed',
-        details: { error: (error as Error).message },
-        actor: 'claude-code-backend',
-      });
-    }
-  }
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'claude_prompt_sent',
-    details: {
-      promptLength: prompt.length,
-      promptPreview: prompt.substring(0, 100),
-      hasTerminal: !!currentSession.terminalPort,
-    },
-    actor: 'claude-code-backend',
-  });
-
-  try {
-    const response = await spawnClaudeAsync(prompt, timeoutMs, streaming);
-
-    if (currentSession.terminalPort) {
-      try {
-        await writeToTerminalLog(response, 'response');
-      } catch {
-        // Non-critical
-      }
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'claude_response_received',
-      details: {
-        responseLength: response.length,
-        sessionId: streaming?.sessionId,
-      },
-      actor: 'claude-code-backend',
-    });
-
-    return response;
-  } catch (error) {
-    const errorMsg = (error as Error).message;
-
-    if (currentSession.terminalPort) {
-      try {
-        await writeToTerminalLog(`ERROR: ${errorMsg}`, 'error');
-      } catch {
-        // Ignore
-      }
-    }
-
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'claude_prompt_failed',
-      details: {
-        error: errorMsg,
-      },
-      actor: 'claude-code-backend',
-    });
-    throw new Error(`${BACKEND_DISPLAY_NAME} request failed: ${errorMsg}`);
-  }
-}
-
-/**
- * Parse Claude CLI output for reasoning steps
- */
-function parseReasoningFromChunk(
-  buffer: string,
-  streaming?: StreamingOptions
-): { remainingBuffer: string; stepsEmitted: number } {
-  let stepsEmitted = 0;
-  let remainingBuffer = buffer;
-
-  // Pattern: Tool use blocks
-  const toolUsePattern =
-    /⏺\s*(Read|Write|Edit|Bash|Glob|Grep|Task|WebFetch|WebSearch)[^\n]*\n([^⏺]*?)(?=⏺|$)/gs;
-  let toolMatch;
-  while ((toolMatch = toolUsePattern.exec(buffer)) !== null) {
-    const toolName = toolMatch[1];
-    const toolContent = toolMatch[2].trim();
-
-    if (streaming?.onReasoningStep) {
-      streaming.onReasoningStep({
-        type: 'tool_use',
-        toolName,
-        content: toolContent.substring(0, 500),
-        timestamp: new Date().toISOString(),
-      });
-      stepsEmitted++;
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_reasoning_step',
-      details: {
-        stepType: 'tool_use',
-        toolName,
-        content: toolContent.substring(0, 200),
-        sessionId: streaming?.sessionId,
-      },
-      actor: 'claude-code-backend',
-    });
-  }
-
-  // Pattern: Thinking/reasoning text
-  const thinkingPatterns = [
-    /(?:^|\n)(?:Thinking|Let me|I'll|I need to|First,|Next,|Now|Looking at|Checking|Searching|Reading|The)[^.\n]*\./g,
-    /(?:^|\n)(?:I found|I see|This shows|Based on|According to)[^.\n]*\./g,
-  ];
-
-  for (const pattern of thinkingPatterns) {
-    let thoughtMatch;
-    while ((thoughtMatch = pattern.exec(buffer)) !== null) {
-      const thought = thoughtMatch[0].trim();
-      if (thought.length > 20 && thought.length < 500) {
-        if (streaming?.onReasoningStep) {
-          streaming.onReasoningStep({
-            type: 'thought',
-            content: thought,
-            timestamp: new Date().toISOString(),
-          });
-          stepsEmitted++;
-        }
-
-        audit({
-          level: 'info',
-          category: 'action',
-          event: 'big_brother_reasoning_step',
-          details: {
-            stepType: 'thought',
-            content: thought.substring(0, 200),
-            sessionId: streaming?.sessionId,
-          },
-          actor: 'claude-code-backend',
-        });
-      }
-    }
-  }
-
-  if (buffer.length > 500) {
-    remainingBuffer = buffer.slice(-500);
-  }
-
-  return { remainingBuffer, stepsEmitted };
-}
-
-/**
- * Spawn Claude CLI asynchronously
- */
-async function spawnClaudeAsync(
-  prompt: string,
-  timeoutMs: number,
-  streaming?: StreamingOptions
-): Promise<string> {
-  return spawnClaudeAsyncStreaming(prompt, timeoutMs, streaming);
-}
-
-/**
- * Detect if the buffer indicates Claude is waiting for user input
- */
-function detectWaitingForInput(buffer: string): { waiting: boolean; question: string } {
-  // Look at the last ~500 chars for question patterns
-  const recentBuffer = buffer.slice(-500);
-
-  for (const pattern of WAITING_FOR_INPUT_PATTERNS) {
-    if (pattern.test(recentBuffer)) {
-      // Extract the likely question (last 2-3 lines)
-      const lines = recentBuffer.trim().split('\n');
-      const question = lines.slice(-3).join('\n').trim();
-      return { waiting: true, question };
-    }
-  }
-
-  return { waiting: false, question: '' };
-}
-
-/**
- * Spawn Claude CLI with streaming support
- * Keeps stdin open for bidirectional communication
- */
-async function spawnClaudeAsyncStreaming(
-  prompt: string,
-  timeoutMs: number,
-  streaming?: StreamingOptions
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const errorChunks: Buffer[] = [];
-    let timedOut = false;
-    let streamBuffer = '';
-    let totalStepsEmitted = 0;
-    let fullOutputBuffer = ''; // For question detection
-    let lastActivityTime = Date.now();
-
-    console.log(`[claude-code-backend] 🚀 Spawning ${BACKEND_DISPLAY_NAME} (timeout: ${timeoutMs}ms)...`);
-
-    const child = spawn('claude', ['--print', '--dangerously-skip-permissions'], {
-      cwd: '/home/greggles/metahuman',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    // Store process and stdin reference for bidirectional communication
-    if (currentSession) {
-      currentSession.process = child;
-      currentSession.stdinPipe = child.stdin || undefined;
-      currentSession.activeSessionId = streaming?.sessionId;
-      currentSession.waitingForInput = false;
-    }
-
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      console.log(`[claude-code-backend] ⏰ ${BACKEND_DISPLAY_NAME} timed out after ${timeoutMs}ms`);
-
-      // Clean up session state
-      if (currentSession) {
-        currentSession.stdinPipe = undefined;
-        currentSession.process = null;
-        currentSession.waitingForInput = false;
-      }
-
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL');
-        }
-      }, 5000);
-
-      reject(new Error(`${BACKEND_DISPLAY_NAME} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    // Idle detection - check if Claude might be waiting for input
-    const idleCheckInterval = setInterval(() => {
-      const idleTime = Date.now() - lastActivityTime;
-      // If idle for 5+ seconds and buffer ends with question pattern
-      if (idleTime > 5000 && fullOutputBuffer.length > 0) {
-        const { waiting, question } = detectWaitingForInput(fullOutputBuffer);
-        if (waiting && currentSession && !currentSession.waitingForInput) {
-          currentSession.waitingForInput = true;
-          console.log(`[claude-code-backend] 🤔 Detected waiting for input: "${question.substring(0, 100)}..."`);
-
-          if (streaming?.onWaitingForInput) {
-            streaming.onWaitingForInput(question);
-          }
-
-          audit({
-            level: 'info',
-            category: 'action',
-            event: 'claude_waiting_for_input',
-            details: { question: question.substring(0, 200), sessionId: streaming?.sessionId },
-            actor: 'claude-code-backend',
-          });
-        }
-      }
-    }, 2000);
-
-    if (child.stdin) {
-      // Write prompt but DON'T close stdin - keep it open for user responses
-      child.stdin.write(prompt + '\n');
-      // Note: NOT calling child.stdin.end() - stdin stays open for sendStdinInput()
-    }
-
-    if (child.stdout) {
-      child.stdout.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-        lastActivityTime = Date.now(); // Reset activity timer
-
-        const text = chunk.toString();
-        fullOutputBuffer += text; // Track full output for question detection
-
-        // Reset waiting state when we receive new output
-        if (currentSession?.waitingForInput) {
-          currentSession.waitingForInput = false;
-        }
-
-        // Write streaming output to terminal log for visibility
-        if (currentSession?.terminalPort) {
-          try {
-            appendToTerminalLogSync(text);
-          } catch {
-            // Non-critical
-          }
-        }
-
-        if (streaming?.onChunk) {
-          streaming.onChunk(text);
-        }
-
-        if (streaming) {
-          streamBuffer += text;
-          const { remainingBuffer, stepsEmitted } = parseReasoningFromChunk(streamBuffer, streaming);
-          streamBuffer = remainingBuffer;
-          totalStepsEmitted += stepsEmitted;
-        }
-      });
-    }
-
-    if (child.stderr) {
-      child.stderr.on('data', (chunk: Buffer) => {
-        errorChunks.push(chunk);
-        lastActivityTime = Date.now(); // Also counts as activity
-        const text = chunk.toString();
-        if (text.trim()) {
-          console.log(`[claude-code-backend] stderr: ${text.trim()}`);
-          // Write stderr to terminal log for visibility
-          if (currentSession?.terminalPort) {
-            try {
-              appendToTerminalLogSync(`\x1b[33m${text}\x1b[0m`); // Yellow for stderr
-            } catch {
-              // Non-critical
-            }
-          }
-        }
-      });
-    }
-
-    child.on('error', (error) => {
-      clearTimeout(timeoutHandle);
-      clearInterval(idleCheckInterval);
-
-      // Clean up session state
-      if (currentSession) {
-        currentSession.stdinPipe = undefined;
-        currentSession.process = null;
-        currentSession.waitingForInput = false;
-      }
-
-      if (!timedOut) {
-        console.log(`[claude-code-backend] ❌ Spawn error: ${error.message}`);
-        reject(new Error(`Failed to spawn ${BACKEND_DISPLAY_NAME}: ${error.message}`));
-      }
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timeoutHandle);
-      clearInterval(idleCheckInterval);
-
-      // Clean up session state
-      if (currentSession) {
-        currentSession.stdinPipe = undefined;
-        currentSession.process = null;
-        currentSession.waitingForInput = false;
-      }
-
-      if (timedOut) {
-        return;
-      }
-
-      const stdout = Buffer.concat(chunks).toString('utf8');
-      const stderr = Buffer.concat(errorChunks).toString('utf8');
-
-      if (streaming && totalStepsEmitted > 0) {
-        console.log(`[claude-code-backend] 📊 Streamed ${totalStepsEmitted} reasoning steps`);
-      }
-
-      if (code === 0) {
-        console.log(`[claude-code-backend] ✅ ${BACKEND_DISPLAY_NAME} completed (${stdout.length} chars)`);
-        resolve(stdout);
-      } else {
-        const errorDetail = stderr || `Exit code ${code}`;
-        console.log(`[claude-code-backend] ❌ ${BACKEND_DISPLAY_NAME} failed: ${errorDetail}`);
-        reject(new Error(`${BACKEND_DISPLAY_NAME} exited with code ${code}: ${errorDetail}`));
-      }
-    });
-  });
-}
-
-/**
- * Get the terminal log path
- */
-function getTerminalLogPath(): string {
-  // Use systemPaths for reliable path resolution across all contexts
-  return path.join(systemPaths.logs, 'run', 'big-brother-session.log');
-}
-
-/**
- * Append raw streaming output to terminal log (sync, for use in data handlers)
- */
-function appendToTerminalLogSync(text: string): void {
-  const logPath = getTerminalLogPath();
-  fs.appendFileSync(logPath, text);
-}
-
-/**
- * Write to the Big Brother terminal log for visibility
- */
-async function writeToTerminalLog(
-  content: string,
-  type: 'prompt' | 'response' | 'error'
-): Promise<void> {
-  const logPath = getTerminalLogPath();
-
-  const timestamp = new Date().toISOString();
-  let prefix = '';
-  let color = '';
-
-  switch (type) {
-    case 'prompt':
-      prefix = '🔵 PROMPT';
-      color = '\x1b[34m';
-      break;
-    case 'response':
-      prefix = '🟢 RESPONSE';
-      color = '\x1b[32m';
-      break;
-    case 'error':
-      prefix = '🔴 ERROR';
-      color = '\x1b[31m';
-      break;
-  }
-
-  const reset = '\x1b[0m';
-  const separator = '─'.repeat(80);
-
-  const logEntry = `
-${color}${separator}${reset}
-${color}${prefix} [${timestamp}]${reset}
-${color}${separator}${reset}
-${content}
-${color}${separator}${reset}
-`;
-
-  fs.appendFileSync(logPath, logEntry + '\n');
-}
-
-/**
- * Restart the Claude session
- */
-export async function restartClaudeSession(): Promise<boolean> {
-  stopClaudeSession();
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  return startClaudeSession();
-}
-
-/**
- * Start session monitoring (auto-restart on failure, idle timeout)
- */
-export function startSessionMonitoring(): void {
-  setInterval(() => {
-    if (!currentSession) {
-      return;
-    }
-
-    const uptime = Date.now() - currentSession.startTime.getTime();
-
-    if (uptime > SESSION_TIMEOUT) {
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'claude_session_timeout_restart',
-        details: { uptime },
-        actor: 'claude-code-backend',
-      });
-      restartClaudeSession();
-    }
-  }, 5 * 60 * 1000);
+  return sendPromptToTerminal(prompt, timeoutMs, streaming);
 }
 
 // ============================================================================
