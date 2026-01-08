@@ -14,33 +14,44 @@ export const GET: APIRoute = async ({ request }) => {
 
   const stream = new ReadableStream({
     start(controller) {
+      let isClosed = false;
+
+      const safeEnqueue = (data: string) => {
+        if (isClosed) return;
+        try {
+          controller.enqueue(encoder.encode(data));
+        } catch {
+          isClosed = true;
+        }
+      };
+
       // Send initial connection event
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected' })}\n\n`));
+      safeEnqueue(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
 
       // Listen for terminal events
       const handleReady = (info: { port: number; url: string }) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        safeEnqueue(`data: ${JSON.stringify({
           type: 'terminal_ready',
           port: info.port,
           url: info.url,
-        })}\n\n`));
+        })}\n\n`);
       };
 
       const handleOpenTab = (info: { port: number; url: string }) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        safeEnqueue(`data: ${JSON.stringify({
           type: 'open_tab',
           port: info.port,
           url: info.url,
-        })}\n\n`));
+        })}\n\n`);
       };
 
       const handleOutput = (event: any) => {
         // Only send significant output events (not every character)
         if (event.type === 'prompt_sent' || event.type === 'ready') {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          safeEnqueue(`data: ${JSON.stringify({
             type: 'output',
             content: event.content?.substring(0, 200),
-          })}\n\n`));
+          })}\n\n`);
         }
       };
 
@@ -51,20 +62,25 @@ export const GET: APIRoute = async ({ request }) => {
       // Send current state
       const state = bigBrotherTerminal.getState();
       if (state.isRunning) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        safeEnqueue(`data: ${JSON.stringify({
           type: 'terminal_ready',
           port: state.port,
           url: `http://localhost:${state.port}`,
           alreadyRunning: true,
-        })}\n\n`));
+        })}\n\n`);
       }
 
       // Handle client disconnect
       request.signal.addEventListener('abort', () => {
+        isClosed = true;
         bigBrotherTerminal.off('ready', handleReady);
         bigBrotherTerminal.off('open_tab', handleOpenTab);
         bigBrotherTerminal.off('output', handleOutput);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Controller already closed
+        }
       });
     },
   });

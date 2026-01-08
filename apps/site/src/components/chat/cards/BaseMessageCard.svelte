@@ -51,6 +51,12 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Don't intercept keyboard events when user is typing in an input/textarea
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable) {
+      return;
+    }
+
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handleClick();

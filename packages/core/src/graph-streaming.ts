@@ -153,6 +153,8 @@ async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | nu
  * @param username - Optional username for Big Brother config lookup (bypasses getUserContext())
  */
 export async function loadGraphForMode(graphKey: string, username?: string): Promise<LoadedGraph | null> {
+  const loadStart = Date.now();
+
   if (!graphKey) {
     console.log('[graph-streaming] No graphKey provided');
     return null;
@@ -164,6 +166,8 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
   let useBigBrotherGraph = false;
   if (normalizedKey === 'dual') {
     try {
+      const bbCheckStart = Date.now();
+
       // Use provided username, or fall back to getUserContext()
       let resolvedUsername = username;
       if (!resolvedUsername) {
@@ -171,13 +175,16 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
         const userContext = getUserContext();
         resolvedUsername = userContext?.username;
       }
+      console.log(`[graph-streaming] ⏱️ Username resolved in ${Date.now() - bbCheckStart}ms`);
 
       // Skip Big Brother check if no authenticated user (all configs are user-specific)
       if (resolvedUsername) {
+        const configStart = Date.now();
         const { loadOperatorConfig } = await import('./config.js');
         const { ensureBackendsInitialized, getActiveBackend, getBackend } = await import('./escalation-backend.js');
         const operatorConfig = loadOperatorConfig(resolvedUsername);
         const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
+        console.log(`[graph-streaming] ⏱️ Config loaded in ${Date.now() - configStart}ms`);
 
         console.log(`[graph-streaming] Big Brother check: username=${resolvedUsername}, enabled=${bigBrotherEnabled}, provider=${operatorConfig.bigBrotherMode?.provider}`);
 
@@ -187,9 +194,14 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
             ? 'open-interpreter'
             : rawProvider;
 
+          const backendInitStart = Date.now();
           await ensureBackendsInitialized();
+          console.log(`[graph-streaming] ⏱️ Backends initialized in ${Date.now() - backendInitStart}ms`);
+
+          const availableCheckStart = Date.now();
           const backend = provider ? getBackend(provider) : getActiveBackend(resolvedUsername);
           const backendAvailable = backend ? await backend.isAvailable() : false;
+          console.log(`[graph-streaming] ⏱️ Backend available check in ${Date.now() - availableCheckStart}ms (result: ${backendAvailable})`);
 
           if (backendAvailable) {
             useBigBrotherGraph = true;
@@ -197,6 +209,7 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
           }
         }
       }
+      console.log(`[graph-streaming] ⏱️ Total Big Brother check: ${Date.now() - bbCheckStart}ms`);
     } catch (error) {
       console.warn('[graph-streaming] Could not check Big Brother status:', error);
     }
@@ -219,7 +232,7 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
 
       // Use cache if valid
       if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs) {
-        console.log(`[graph-streaming] Using cached graph`);
+        console.log(`[graph-streaming] ⏱️ Using cached graph (total: ${Date.now() - loadStart}ms)`);
         return { graph: cached.graph, source: filePath };
       }
 
@@ -227,6 +240,7 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
       const graph = await readGraphFromFile(filePath);
       if (graph) {
         graphCache[normalizedKey] = { source: filePath, mtimeMs: stats.mtimeMs, graph };
+        console.log(`[graph-streaming] ⏱️ Graph loaded fresh (total: ${Date.now() - loadStart}ms)`);
         return { graph, source: filePath };
       }
     } catch (error) {
@@ -441,42 +455,71 @@ export function streamGraphExecution(params: GraphStreamingParams): Response {
           () => executeGraph(loaded.graph, contextData, eventHandler)
         );
 
-        // Timeout handling
-        const timeoutPromise = new Promise<null>(resolve => {
-          timeoutHandle = setTimeout(() => {
-            if (closed) {
-              resolve(null);
-              return;
+        // Check if Big Brother mode - if so, skip timeout (cloud LLM can take as long as needed)
+        let skipTimeout = false;
+        if (userContext?.username) {
+          try {
+            const { loadOperatorConfig } = await import('./config.js');
+            const opConfig = loadOperatorConfig(userContext.username);
+            if (opConfig.bigBrotherMode?.enabled) {
+              skipTimeout = true;
+              console.log('[graph-streaming] Big Brother mode enabled - skipping timeout');
             }
-            timedOut = true;
-            push('error', { message: `Graph execution timed out after ${timeoutMs}ms` });
-            closed = true;
-            try { controller.close(); } catch {}
-            resolve(null);
-          }, timeoutMs);
-        });
-
-        // Race execution vs timeout
-        const raceResult = await Promise.race([
-          graphPromise.then(() => 'completed' as const).catch(() => 'failed' as const),
-          timeoutPromise.then(() => 'timeout' as const),
-        ]);
-
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-
-        if (timedOut || raceResult === 'timeout') {
-          return;
+          } catch {
+            // Config not available, use timeout
+          }
         }
 
-        // Get result
+        // Get result - skip timeout for Big Brother mode (cloud LLM can take as long as needed)
         let graphState: Awaited<ReturnType<typeof executeGraph>> | null = null;
-        try {
-          graphState = await graphPromise;
-        } catch (error) {
-          push('error', { message: (error as Error)?.message || 'Graph execution failed' });
-          closed = true;
-          try { controller.close(); } catch {}
-          return;
+
+        if (skipTimeout) {
+          // No timeout for Big Brother mode - just wait for completion
+          try {
+            graphState = await graphPromise;
+          } catch (error) {
+            push('error', { message: (error as Error)?.message || 'Graph execution failed' });
+            closed = true;
+            try { controller.close(); } catch {}
+            return;
+          }
+        } else {
+          // Timeout handling for non-Big Brother mode
+          const timeoutPromise = new Promise<null>(resolve => {
+            timeoutHandle = setTimeout(() => {
+              if (closed) {
+                resolve(null);
+                return;
+              }
+              timedOut = true;
+              push('error', { message: `Graph execution timed out after ${timeoutMs}ms` });
+              closed = true;
+              try { controller.close(); } catch {}
+              resolve(null);
+            }, timeoutMs);
+          });
+
+          // Race execution vs timeout
+          const raceResult = await Promise.race([
+            graphPromise.then(() => 'completed' as const).catch(() => 'failed' as const),
+            timeoutPromise.then(() => 'timeout' as const),
+          ]);
+
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+
+          if (timedOut || raceResult === 'timeout') {
+            return;
+          }
+
+          // Get result after timeout race
+          try {
+            graphState = await graphPromise;
+          } catch (error) {
+            push('error', { message: (error as Error)?.message || 'Graph execution failed' });
+            closed = true;
+            try { controller.close(); } catch {}
+            return;
+          }
         }
 
         if (!graphState) {

@@ -1,0 +1,25 @@
+{
+  "name": "desire-explorer",
+  "version": "1.0.0",
+  "description": "Explores desires before planning: researches feasibility, generates smart questions based on research",
+  "category": "agency",
+  "enabled": true,
+  "schedule": {
+    "trigger": "interval",
+    "intervalMs": 60000,
+    "runOnStart": false
+  },
+  "capabilities": [
+    "desire-read",
+    "desire-write",
+    "llm-call",
+    "memory-search"
+  ],
+  "dependencies": [
+    "desire-generator"
+  ],
+  "outputs": [
+    "desires-explored",
+    "questions-generated"
+  ]
+}

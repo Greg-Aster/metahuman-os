@@ -30,6 +30,7 @@
     pid: number;
     port: number;
     command?: string;
+    isBigBrother?: boolean;
   }
 
   async function fetchRunningTerminals(): Promise<RunningTerminal[]> {
@@ -47,12 +48,17 @@
   function inferTerminalTitle(terminal: RunningTerminal, index: number): { title: string; isServices: boolean; isBigBrother: boolean } {
     const command = terminal.command || '';
 
+    // Check if explicitly marked as Big Brother
+    if (terminal.isBigBrother) {
+      return { title: '🤖 Big Brother', isServices: false, isBigBrother: true };
+    }
+
     // Detect services terminal
     if (command.includes('start-services') || command.includes('run-with-agents')) {
       return { title: '⚡ Services', isServices: true, isBigBrother: false };
     }
 
-    // Detect Big Brother terminal
+    // Detect Big Brother terminal by port or command
     if (terminal.port === 3099 || command.includes('claude')) {
       return { title: '🤖 Big Brother', isServices: false, isBigBrother: true };
     }

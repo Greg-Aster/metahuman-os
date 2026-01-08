@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "decisionModel": "default",
   "energyBudget": {
     "enabled": false,
@@ -17,6 +17,7 @@
     "desire_generate",
     "desire_advance",
     "desire_execute",
+    "desire_review",
     "psychoanalyze"
   ],
   "cooldownMs": 5000,

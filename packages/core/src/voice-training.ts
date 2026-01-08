@@ -601,7 +601,10 @@ export function setVoiceTrainingEnabled(enabled: boolean): { enabled: boolean } 
     }
 
     voiceConfig.training.enabled = enabled;
-    fs.writeFileSync(configPath, JSON.stringify(voiceConfig, null, 2), 'utf-8');
+    // Atomic write to prevent empty file on crash
+    const tempConfigPath = `${configPath}.tmp`;
+    fs.writeFileSync(tempConfigPath, JSON.stringify(voiceConfig, null, 2), 'utf-8');
+    fs.renameSync(tempConfigPath, configPath);
 
     audit({
       level: 'info',

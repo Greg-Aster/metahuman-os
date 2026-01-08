@@ -376,6 +376,21 @@ export async function appendDreamToBuffer(userId: string, content: string, extra
 }
 
 /**
+ * Append a daydream to a user's inner dialogue buffer
+ * Convenience function for daydreamer agent
+ * @param userId - The user ID to append to
+ * @param content - The daydream content
+ * @param extraMeta - Optional additional metadata
+ */
+export async function appendDaydreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
+  return appendToUserBuffer(userId, 'inner', {
+    role: 'daydream',
+    content,
+    meta: { type: 'daydream', source: 'agent', dialogueSource: 'inner', ...extraMeta },
+  });
+}
+
+/**
  * Append execution progress to a user's system buffer
  * Used by desire executor to show Big Brother execution steps in real-time
  * @param userId - The user ID to append to
@@ -402,6 +417,29 @@ export async function appendSystemMessageToBuffer(userId: string, content: strin
     role: 'system',
     content,
     meta: { type: 'system_message', source: 'system', ...extraMeta },
+  });
+}
+
+/**
+ * Append an agency message to a user's CONVERSATION buffer
+ * Used for desire lifecycle events that need user visibility and interaction.
+ * These messages appear in the main chat (not hidden in Inner Dialogue tab).
+ *
+ * @param userId - The user ID to append to
+ * @param content - The message content
+ * @param extraMeta - Required metadata should include { dialogueSource: 'agency-system', type, desireId }
+ */
+export async function appendAgencyMessageToConversation(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
+  return appendToUserBuffer(userId, 'conversation', {
+    role: 'assistant',
+    content,
+    meta: {
+      type: 'agency_message',
+      source: 'agency',
+      dialogueSource: 'agency-system',
+      isAgencyMessage: true,
+      ...extraMeta
+    },
   });
 }
 

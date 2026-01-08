@@ -9,6 +9,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM } from '../../model-router.js';
 import { recordDecision } from '../../active-operator/state-persister.js';
 import { loadConfig } from '../../active-operator/state-persister.js';
+import { loadOperatorConfig } from '../../config.js';
 import { audit } from '../../audit.js';
 import type { TaskType, TaskDecision } from '../../active-operator/types.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
@@ -27,7 +28,8 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   inner_curiosity: 'Generate and answer internal curiosity questions',
   dream: 'Create surreal dreams from memory fragments',
   desire_generate: 'Generate new desires from goals, tasks, and memories',
-  desire_advance: 'Process PENDING desires through planning/review/approval (before they can execute)',
+  desire_explore: 'Research desire feasibility and generate smart context-aware questions (before planning)',
+  desire_advance: 'Process QUESTIONING/PENDING desires through planning/review/approval (after exploration)',
   desire_execute: 'Execute APPROVED desires only (after user or auto-approval)',
   desire_review: 'Review execution outcomes to determine: retry, escalate, complete, or abandon',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
@@ -115,20 +117,22 @@ Guidelines:
 4. If queue has items, consider executing those before adding more
 5. Balance reactive (triggers) with proactive (recommendations)
 6. ONLY consider memory_curate if user is INACTIVE and unprocessed memories > 5
-7. DESIRE SYSTEM (IMPORTANT - four-step flow):
+7. DESIRE SYSTEM (IMPORTANT - five-step flow):
    - desire_generate: Create new desires (when 0 pending, 0 active, 0 approved)
-   - desire_advance: Process desires through planning/review/approval pipeline
+   - desire_explore: Research feasibility & generate smart questions (when desires cross threshold)
+   - desire_advance: Process desires through planning/review/approval pipeline (after questioning)
    - desire_execute: Execute APPROVED desires ONLY (after approval granted)
    - desire_review: Review execution outcomes (after execution, decide: retry/escalate/complete/abandon)
-   - FLOW: pending → (build strength) → desire_advance → evaluating → planning → reviewing → awaiting_approval → approved → desire_execute → awaiting_review → desire_review → completed/retry/escalate/abandon
+   - FLOW: pending → (build strength) → desire_explore → questioning → (user answers) → desire_advance → planning → reviewing → awaiting_approval → approved → desire_execute → awaiting_review → desire_review → completed/retry/escalate/abandon
+   - 🔬 If pendingReadyToAdvance > 0 AND not yet explored: run desire_explore first!
    - 🚀 If approved > 0: run desire_execute immediately!
    - 🔍 If awaitingReview > 0: run desire_review immediately! (Post-execution review decides next steps)
    - 📋 Run desire_advance when:
-     * pendingReadyToAdvance > 0 (pending desires above threshold need to enter pipeline)
-     * OR inPipelineDesires > 0 (desires in evaluating/planning/reviewing need to continue!)
-   - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: those desires are below activation threshold, don't advance them
+     * questioningDesires > 0 with answers (ready to plan)
+     * OR inPipelineDesires > 0 (desires in planning/reviewing need to continue!)
+   - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: those desires are below activation threshold, don't explore them
    - ⏳ If awaiting_approval > 0: wait for user approval (these need manual approval) - DO NOT run desire_advance on those!
-   - 🔄 activeDesires includes ALL of: evaluating, planning, reviewing, executing - check inPipelineDesires for just the first 3!
+   - 🔄 activeDesires includes ALL of: questioning, planning, reviewing, executing
 8. TRUST LEVELS:
    - observe/suggest: desires need user approval before execution
    - supervised_auto: low-risk desires auto-approved, medium/high need user approval
@@ -220,6 +224,28 @@ What should I do next?`,
   ];
 
   try {
+    // Load operator config to check if Big Brother mode is enabled
+    const operatorConfig = loadOperatorConfig(username);
+    const isBigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled || false;
+    const isBigBrotherDelegateAll = operatorConfig.bigBrotherMode?.delegateAll || false;
+    
+    // Determine max tokens based on whether Big Brother mode is active
+    // When Big Brother delegates to external LLMs, they have much larger context windows
+    let maxTokens: number | undefined;
+    if (isBigBrotherEnabled && isBigBrotherDelegateAll) {
+      // Big Brother mode with full delegation - external LLMs like Claude have huge context windows
+      // Big Brother mode - but this is for the DECISION making, not execution
+      // The decision still happens locally with vLLM before delegating to Big Brother
+      maxTokens = 800;  // Conservative limit for vLLM decision making
+      console.log(`[UnifiedDecisionLLM] Big Brother mode active - using conservative limit for local decision`);
+    } else {
+      // Local LLM mode - must be conservative with context window
+      // Model context is 4096, input can grow to ~2700+ tokens with recent activity
+      // Setting to 1000 to ensure we stay within context limits (4096 - 2700 = ~1396 max)
+      maxTokens = 1000;
+      console.log(`[UnifiedDecisionLLM] Local LLM mode - using conservative token limit: ${maxTokens}`);
+    }
+    
     // Note: We don't pass cognitiveMode here because the lizard brain is a system utility,
     // not a cognitive mode. It uses the orchestrator role directly without mode-specific mappings.
     const response = await callLLM({
@@ -231,10 +257,8 @@ What should I do next?`,
         enableThinking: true,
         // Temperature for decision making - slightly higher for thoughtful reasoning
         temperature: properties?.temperature || 0.3,
-        // Limit output tokens to leave room for input in context window
-        // Model context is 4096, input can grow to ~2100+ tokens with recent activity
-        // Setting to 1500 to ensure we stay within context limits
-        maxTokens: 1500,
+        // Dynamic token limit based on Big Brother mode
+        maxTokens,
       },
     });
 
@@ -349,7 +373,9 @@ export const UnifiedDecisionLLMNode: NodeDefinition = defineNode({
   properties: {
     model: 'orchestrator',
     temperature: 0.3,
-    // maxTokens comes from backend config (etc/llm-backend.json)
+    // maxTokens is dynamically set based on operator mode:
+    // - Big Brother mode with delegateAll: 8000 tokens (external LLMs have large context)
+    // - Local LLM mode: 1000 tokens (conservative for 4K context window models)
   },
   propertySchemas: {
     model: {

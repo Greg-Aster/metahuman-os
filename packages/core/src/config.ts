@@ -241,6 +241,7 @@ export interface OperatorConfig {
   bigBrotherMode?: {
     enabled: boolean;
     provider: 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex' | 'ollama' | 'openai';
+    model?: 'opus' | 'sonnet' | 'haiku' | string; // Claude model to use (default: sonnet for faster responses)
     delegateAll?: boolean; // When true, delegate ALL tasks to Claude CLI instead of local skills
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;

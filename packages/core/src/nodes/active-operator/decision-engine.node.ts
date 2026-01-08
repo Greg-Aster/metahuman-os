@@ -43,6 +43,7 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   inner_curiosity: 'Generate and answer internal curiosity questions',
   dream: 'Create surreal dreams from memory fragments',
   desire_generate: 'Generate new desires from goals, tasks, and memories',
+  desire_explore: 'Research desire feasibility and generate smart context-aware questions',
   desire_advance: 'Advance pending desires through planning/review/approval pipeline',
   desire_execute: 'Execute a pending desire that has reached activation threshold',
   desire_review: 'Review execution outcomes to decide: retry, escalate, complete, or abandon',

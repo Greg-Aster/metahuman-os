@@ -152,68 +152,21 @@ function sanitizeSensitiveData(text: string, issue: SafetyIssue, redactionText: 
 
 /**
  * Sanitize security violations (file paths, IPs)
+ *
+ * NOTE: DISABLED - File paths and IPs are legitimate information in LLM responses.
+ * The LLM already has safety guardrails. Stripping paths was breaking Claude Code output.
  */
 function sanitizeSecurityViolations(
   text: string,
-  issue: SafetyIssue,
-  pathRedactionText: string,
-  ipRedactionText: string
+  _issue: SafetyIssue,
+  _pathRedactionText: string,
+  _ipRedactionText: string
 ): {
   sanitized: string;
   changes: RefinementChange[];
 } {
-  const changes: RefinementChange[] = [];
-  let sanitized = text;
-
-  // Absolute file paths (Unix: /path/to/file, Windows: C:\path\to\file)
-  const unixPathPattern = /\/(?:home|root|etc|var|usr|opt|mnt|tmp)\/[^\s,;)]+/gi;
-  const windowsPathPattern = /[A-Z]:\\[^\s,;)]+/gi;
-
-  const unixMatches = Array.from(sanitized.matchAll(unixPathPattern));
-  for (const match of unixMatches) {
-    const before = match[0];
-    const after = pathRedactionText;
-    sanitized = sanitized.replace(match[0], after);
-    changes.push({
-      type: 'security_violation',
-      description: 'File path redacted',
-      before: extractContext(text, match.index!, before.length, 20),
-      after: extractContext(sanitized, match.index!, after.length, 20),
-      position: match.index
-    });
-  }
-
-  const windowsMatches = Array.from(sanitized.matchAll(windowsPathPattern));
-  for (const match of windowsMatches) {
-    const before = match[0];
-    const after = pathRedactionText;
-    sanitized = sanitized.replace(match[0], after);
-    changes.push({
-      type: 'security_violation',
-      description: 'File path redacted',
-      before: extractContext(text, match.index!, before.length, 20),
-      after: extractContext(sanitized, match.index!, after.length, 20),
-      position: match.index
-    });
-  }
-
-  // Internal IP addresses
-  const ipPattern = /\b(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/g;
-  const ipMatches = Array.from(sanitized.matchAll(ipPattern));
-  for (const match of ipMatches) {
-    const before = match[0];
-    const after = ipRedactionText;
-    sanitized = sanitized.replace(match[0], after);
-    changes.push({
-      type: 'security_violation',
-      description: 'Internal IP address redacted',
-      before: extractContext(text, match.index!, before.length, 20),
-      after: extractContext(sanitized, match.index!, after.length, 20),
-      position: match.index
-    });
-  }
-
-  return { sanitized, changes };
+  // Return text unchanged - paths and IPs are legitimate info
+  return { sanitized: text, changes: [] };
 }
 
 /**

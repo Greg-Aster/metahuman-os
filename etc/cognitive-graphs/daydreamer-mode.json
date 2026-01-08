@@ -1,0 +1,285 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Daydreamer Agent Workflow",
+  "description": "Generates brief daydreams from weighted memory sampling - lighter version of dreams for waking hours, inner dialogue only",
+  "cognitiveMode": "agent",
+  "last_modified": "2025-01-07",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 100,
+        "y": 100
+      },
+      "data": {
+        "label": "Curate Memories",
+        "nodeType": "dreamer_memory_curator",
+        "properties": {
+          "sampleSize": 5,
+          "decayDays": 227
+        }
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "2",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 400,
+        "y": 100
+      },
+      "data": {
+        "label": "Generate Daydream",
+        "nodeType": "daydreamer_generator",
+        "properties": {
+          "temperature": 0.9,
+          "role": "persona",
+          "timeout": 120000,
+          "maxTokens": 200
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "3",
+      "type": "outputNode",
+      "position": {
+        "x": 700,
+        "y": 100
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "4",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 950,
+        "y": 100
+      },
+      "data": {
+        "label": "Save Daydream",
+        "nodeType": "dreamer_dream_saver",
+        "properties": {
+          "type": "daydream"
+        }
+      },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "5",
+      "type": "outputNode",
+      "position": {
+        "x": 950,
+        "y": 250
+      },
+      "data": {
+        "label": "Inner Dialogue",
+        "nodeType": "inner_dialogue_capture",
+        "schema": {
+          "id": "inner_dialogue_capture",
+          "name": "Inner Dialogue",
+          "category": "output",
+          "inputs": [
+            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
+          ],
+          "outputs": [
+            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
+          ],
+          "description": "Saves daydream thoughts as inner dialogue (visible in Inner Dialogue tab)",
+          "color": "#a855f7",
+          "bgColor": "#6b21a8"
+        },
+        "properties": {
+          "tags": ["daydream", "inner", "musing"],
+          "displayColor": "#a78bfa",
+          "dialogueSource": "daydreamer",
+          "role": "daydream"
+        },
+        "title": "Inner Dialogue"
+      },
+      "width": 220,
+      "height": 80
+    },
+    {
+      "id": "6",
+      "type": "outputNode",
+      "position": {
+        "x": 1200,
+        "y": 100
+      },
+      "data": {
+        "label": "Audit Completion",
+        "nodeType": "audit_logger",
+        "properties": {
+          "event": "daydream_completed"
+        }
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "7",
+      "type": "personaNode",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      },
+      "width": 180,
+      "height": 60
+    },
+    {
+      "id": "8",
+      "type": "personaNode",
+      "position": {
+        "x": 350,
+        "y": 0
+      },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includePersonality": true,
+          "includeValues": false,
+          "includeGoals": false
+        }
+      },
+      "width": 200,
+      "height": 80
+    },
+    {
+      "id": "9",
+      "type": "outputNode",
+      "position": {
+        "x": 1200,
+        "y": 250
+      },
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "daydreamer",
+          "defaultMode": "inner"
+        }
+      },
+      "width": 180,
+      "height": 80
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-1-memories-2-memories",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {
+        "type": "object",
+        "comment": "Curated memories -> Daydream Generator"
+      }
+    },
+    {
+      "id": "e-2-daydream-3-response",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "daydream",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Generated daydream -> Thinking Stripper"
+      }
+    },
+    {
+      "id": "e-3-stripped-4-dreamData",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "stripped",
+      "targetHandle": "dreamData",
+      "data": {
+        "type": "string",
+        "comment": "Stripped daydream -> Save Daydream"
+      }
+    },
+    {
+      "id": "e-1-memories-4-memoriesData",
+      "source": "1",
+      "target": "4",
+      "sourceHandle": "memories",
+      "targetHandle": "memoriesData",
+      "data": {
+        "type": "object",
+        "comment": "Source memories -> Save Daydream (for citations)"
+      }
+    },
+    {
+      "id": "e-3-stripped-5-text",
+      "source": "3",
+      "target": "5",
+      "sourceHandle": "stripped",
+      "targetHandle": "text",
+      "data": {
+        "type": "string",
+        "comment": "Stripped daydream -> Inner Dialogue (for UI display)"
+      }
+    },
+    {
+      "id": "e-4-saved-6-eventType",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "saved",
+      "targetHandle": "eventType",
+      "data": {
+        "type": "object",
+        "comment": "Save result -> Audit Logger"
+      }
+    },
+    {
+      "id": "e-7-persona-8-personaData",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "persona",
+      "targetHandle": "personaData",
+      "data": {
+        "type": "object",
+        "comment": "Persona data -> Persona Formatter"
+      }
+    },
+    {
+      "id": "e-8-formatted-2-personaPrompt",
+      "source": "8",
+      "target": "2",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaPrompt",
+      "data": {
+        "type": "string",
+        "comment": "Formatted persona -> Daydream Generator (for persona voice)"
+      }
+    },
+    {
+      "id": "e-3-stripped-9-innerDialogue",
+      "source": "3",
+      "target": "9",
+      "sourceHandle": "stripped",
+      "targetHandle": "innerDialogue",
+      "data": {
+        "type": "string",
+        "comment": "Stripped daydream -> TTS Output"
+      }
+    }
+  ]
+}

@@ -175,6 +175,29 @@ export {
   proposeFileDelete,
 } from './critic.js';
 
+// Pause Manager (intelligent pause/resume for user interaction)
+export {
+  // State updates
+  updateTTSState,
+  setCuriosityAwaiting,
+  clearCuriosityAwaiting,
+  setDesireAwaiting,
+  clearDesireAwaiting,
+  recordUserMessage,
+  setLLMStreaming,
+  // State queries
+  isTTSSpeaking,
+  isAwaitingCuriosity,
+  isAwaitingDesireInput,
+  isActiveConversation,
+  shouldPauseForUser,
+  getPauseState,
+  clearAllPauseState,
+  getUsersWithActivePauses,
+  // Types
+  type PauseCheckResult,
+} from './pause-manager.js';
+
 // Operator Proposals (Human-in-the-Loop approval system)
 export {
   // Types

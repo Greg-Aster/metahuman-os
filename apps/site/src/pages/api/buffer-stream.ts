@@ -134,23 +134,25 @@ export const GET: APIRoute = ({ request, cookies }) => {
       // The notification file is touched whenever the buffer is written
       // notifyPath is set above based on user type (guest uses temp dir, authenticated uses profile)
       const notifyDir = path.dirname(notifyPath);
-      const notifyFilename = path.basename(notifyPath);
 
       try {
-        // Ensure notification directory exists
+        // Ensure notification directory and file exist
         if (!fs.existsSync(notifyDir)) {
           fs.mkdirSync(notifyDir, { recursive: true });
         }
+        // Create notification file if it doesn't exist (fs.watch needs file to exist)
+        if (!fs.existsSync(notifyPath)) {
+          fs.writeFileSync(notifyPath, new Date().toISOString());
+        }
 
-        watcher = fs.watch(notifyDir, (eventType, filename) => {
-          if (filename === notifyFilename) {
-            // Debounce: wait 300ms after notification before reading buffer
-            if (debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-              console.log(`[buffer-stream] ${mode} notification received, reading buffer`);
-              sendBufferUpdate();
-            }, 300);
-          }
+        // Watch the FILE directly (not directory) - required on Linux for content change detection
+        watcher = fs.watch(notifyPath, (eventType) => {
+          // Debounce: wait 100ms after notification before reading buffer (reduced from 300ms for faster updates)
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            console.log(`[buffer-stream] ${mode} notification received (${eventType}), reading buffer`);
+            sendBufferUpdate();
+          }, 100);
         });
 
         watcher.on('error', (error) => {

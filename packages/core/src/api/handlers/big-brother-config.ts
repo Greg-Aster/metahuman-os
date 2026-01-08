@@ -13,6 +13,7 @@ import { audit } from '../../audit.js';
 const DEFAULT_CONFIG = {
   enabled: false,
   provider: 'claude-code',
+  model: 'sonnet',
   delegateAll: false,
   escalateOnStuck: true,
   escalateOnRepeatedFailures: true,
@@ -35,6 +36,7 @@ export async function handleGetBigBrotherConfig(req: UnifiedRequest): Promise<Un
         config: {
           enabled: false,
           provider: 'claude-code',
+          model: 'sonnet',
           delegateAll: false,
           escalateOnStuck: false,
           escalateOnRepeatedFailures: false,
@@ -87,6 +89,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
   const {
     enabled,
     provider,
+    model,
     delegateAll,
     escalateOnStuck,
     escalateOnRepeatedFailures,
@@ -98,10 +101,12 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     // Load current config
     const config = loadOperatorConfig(user.username);
 
-    // Update Big Brother mode settings
+    // Update Big Brother mode settings (preserve model if not provided)
+    const existingModel = config.bigBrotherMode?.model;
     config.bigBrotherMode = {
       enabled: enabled ?? false,
       provider: provider || 'claude-code',
+      model: model || existingModel || 'sonnet',
       delegateAll: delegateAll ?? false,
       escalateOnStuck: escalateOnStuck ?? true,
       escalateOnRepeatedFailures: escalateOnRepeatedFailures ?? true,
@@ -122,6 +127,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       details: {
         enabled,
         provider,
+        model: config.bigBrotherMode.model,
         delegateAll,
         escalateOnStuck,
         escalateOnRepeatedFailures,

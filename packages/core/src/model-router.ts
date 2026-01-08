@@ -35,6 +35,12 @@ export interface RouterCallOptions {
     topP?: number;
     repeatPenalty?: number;
     stream?: boolean;
+    /**
+     * Request Big Brother for this specific call (hybrid mode).
+     * When bigBrotherMode.enabled=true and delegateAll=false,
+     * only calls with useBigBrother=true will route to Big Brother.
+     */
+    useBigBrother?: boolean;
     [key: string]: any;
   };
   overrides?: Partial<ResolvedModel>;
@@ -175,6 +181,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         format: mergedOptions.format,
         keepAlive: callOptions.keepAlive as string | undefined,
         endpointTier: resolved.metadata?.endpointTier,
+        useBigBrother: mergedOptions.useBigBrother,
       },
       bridgeProgress
     );

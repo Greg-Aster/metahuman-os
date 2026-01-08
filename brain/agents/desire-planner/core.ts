@@ -38,8 +38,14 @@ import {
   listPendingDesires,
   moveDesire,
   saveDesire,
+  saveDesireManifest,
   isAgencyEnabled,
+  appendAgencyMessageToConversation,
 } from '@metahuman/core';
+import {
+  needsClarifyingQuestions,
+  generateQuestions,
+} from '../../../packages/core/src/nodes/agency/desire-question-generator.node.js';
 
 const LOCK_NAME = 'desire-planner';
 const LOG_PREFIX = '[AGENCY:planner]';
@@ -94,6 +100,7 @@ export interface DesirePlannerResult {
     planned: number;
     approved: number;
     needsApproval: number;
+    needsQuestions: number;
     rejected: number;
     failed: number;
   };
@@ -296,7 +303,7 @@ async function processDesire(
   username: string
 ): Promise<{
   success: boolean;
-  outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed';
+  outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
   error?: string;
   feasibilityResult?: FeasibilityResult;
 }> {
@@ -364,6 +371,85 @@ async function processDesire(
     }
 
     // =========================================================================
+    // PHASE 0.5: Clarifying Questions (if needed)
+    // =========================================================================
+    const questionsCheck = needsClarifyingQuestions(desire);
+
+    if (questionsCheck.needs) {
+      console.log(`${LOG_PREFIX}     Questions needed: ${questionsCheck.reason}`);
+
+      // Generate and store questions
+      console.log(`${LOG_PREFIX}     Generating clarifying questions...`);
+      const questions = await generateQuestions(desire);
+
+      const now = new Date().toISOString();
+      const updatedDesire: Desire = {
+        ...desire,
+        clarifyingQuestions: {
+          phase: 'before_planning',
+          questions,
+          answers: [],
+          askedAt: now,
+        },
+        status: 'questioning',
+        currentStage: 'questioning',
+        updatedAt: now,
+      };
+
+      // Save desire with questions
+      await saveDesireManifest(updatedDesire, username);
+
+      // Post questions to chat for user to answer
+      const questionsList = questions
+        .map((q, i) => `${i + 1}. ${q.text}${q.required ? ' *' : ''}`)
+        .join('\n');
+
+      await appendAgencyMessageToConversation(
+        username,
+        `I'm working on planning "${desire.title}" and would like to ask a few questions to make sure I understand what you're looking for:\n\n${questionsList}\n\n_Please answer these questions to help me create a better plan._`,
+        {
+          type: 'clarifying_questions',
+          desireId: desire.id,
+          desireTitle: desire.title,
+          questions: questions.map((q) => ({ id: q.id, text: q.text, type: q.type, required: q.required })),
+        }
+      );
+
+      audit({
+        category: 'agent',
+        level: 'info',
+        event: 'desire_questions_generated',
+        actor: 'desire-planner',
+        details: {
+          desireId: desire.id,
+          title: desire.title,
+          questionCount: questions.length,
+          reason: questionsCheck.reason,
+          username,
+        },
+      });
+
+      console.log(`${LOG_PREFIX}     ✓ Generated ${questions.length} questions, waiting for answers`);
+
+      return {
+        success: true,
+        outcome: 'needs_questions',
+      };
+    }
+
+    // If questions were already answered, include them in planning context
+    const answeredContext = desire.clarifyingQuestions?.completedAt
+      ? desire.clarifyingQuestions.answers.map((a) => {
+          const question = desire.clarifyingQuestions?.questions.find((q) => q.id === a.questionId);
+          return question ? `Q: ${question.text}\nA: ${a.answer}` : null;
+        }).filter(Boolean).join('\n\n')
+      : null;
+
+    if (answeredContext) {
+      console.log(`${LOG_PREFIX}     Including ${desire.clarifyingQuestions?.answers.length} answered questions in plan context`);
+    }
+
+    // =========================================================================
     // PHASE 1: Generate Plan
     // =========================================================================
     const planContext = {
@@ -374,6 +460,8 @@ async function processDesire(
       allowMemoryWrites: true,
       cognitiveMode: 'agent' as const,
       config: plannerConfig.planning,
+      // Include user's answers to clarifying questions for better plan generation
+      clarifyingQuestionsContext: answeredContext,
     };
 
     console.log(`${LOG_PREFIX}     Executing planner graph...`);
@@ -526,19 +614,20 @@ export async function processPlanningDesires(
   planned: number;
   approved: number;
   needsApproval: number;
+  needsQuestions: number;
   rejected: number;
   failed: number;
 }> {
   if (!await isAgencyEnabled(username)) {
     console.log(`${LOG_PREFIX} Agency disabled for user ${username}`);
-    return { planned: 0, approved: 0, needsApproval: 0, rejected: 0, failed: 0 };
+    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0 };
   }
 
   const planningDesires = await listDesiresByStatus('planning', username);
   console.log(`${LOG_PREFIX} Found ${planningDesires.length} desires in planning status`);
 
   if (planningDesires.length === 0) {
-    return { planned: 0, approved: 0, needsApproval: 0, rejected: 0, failed: 0 };
+    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0 };
   }
 
   // Load graphs
@@ -548,6 +637,7 @@ export async function processPlanningDesires(
   let planned = 0;
   let approved = 0;
   let needsApproval = 0;
+  let needsQuestions = 0;
   let rejected = 0;
   let failed = 0;
 
@@ -573,6 +663,9 @@ export async function processPlanningDesires(
       case 'needs_approval':
         needsApproval++;
         break;
+      case 'needs_questions':
+        needsQuestions++;
+        break;
       case 'rejected':
         rejected++;
         break;
@@ -597,11 +690,12 @@ export async function processPlanningDesires(
   }
 
   // Log summary to inner dialogue if enabled
-  if (plannerConfig.logging.logToInnerDialogue && (planned + approved + needsApproval + rejected > 0)) {
+  if (plannerConfig.logging.logToInnerDialogue && (planned + approved + needsApproval + needsQuestions + rejected > 0)) {
     const parts: string[] = [];
 
     if (approved > 0) parts.push(`${approved} auto-approved`);
     if (needsApproval > 0) parts.push(`${needsApproval} queued for your approval`);
+    if (needsQuestions > 0) parts.push(`${needsQuestions} awaiting your answers to clarifying questions`);
     if (rejected > 0) parts.push(`${rejected} rejected by self-review`);
     if (failed > 0) parts.push(`${failed} failed to plan`);
 
@@ -622,7 +716,7 @@ export async function processPlanningDesires(
     );
   }
 
-  return { planned, approved, needsApproval, rejected, failed };
+  return { planned, approved, needsApproval, needsQuestions, rejected, failed };
 }
 
 // ============================================================================
@@ -637,7 +731,7 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
     success: true,
     usersProcessed: 0,
     errors: [],
-    stats: { planned: 0, approved: 0, needsApproval: 0, rejected: 0, failed: 0 },
+    stats: { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0 },
   };
 
   try {
@@ -680,6 +774,7 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
         result.stats.planned += r.planned;
         result.stats.approved += r.approved;
         result.stats.needsApproval += r.needsApproval;
+        result.stats.needsQuestions += r.needsQuestions;
         result.stats.rejected += r.rejected;
         result.stats.failed += r.failed;
       });
@@ -692,6 +787,7 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
     console.log(`${LOG_PREFIX}   Planned: ${result.stats.planned}`);
     console.log(`${LOG_PREFIX}   Auto-approved: ${result.stats.approved}`);
     console.log(`${LOG_PREFIX}   Needs approval: ${result.stats.needsApproval}`);
+    console.log(`${LOG_PREFIX}   Needs questions: ${result.stats.needsQuestions}`);
     console.log(`${LOG_PREFIX}   Rejected: ${result.stats.rejected}`);
     console.log(`${LOG_PREFIX}   Failed: ${result.stats.failed}`);
 

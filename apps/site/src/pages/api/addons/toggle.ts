@@ -80,7 +80,10 @@ async function toggleAddonConfiguration(addonId: string, enabled: boolean): Prom
     if (!enabled && voiceConfig.tts?.provider === providerMap[addonId]) {
       // Fallback to Piper when disabling
       voiceConfig.tts.provider = 'piper';
-      fs.writeFileSync(voiceConfigPath, JSON.stringify(voiceConfig, null, 2));
+      // Atomic write to prevent empty file on crash
+      const tempVoicePath = `${voiceConfigPath}.tmp`;
+      fs.writeFileSync(tempVoicePath, JSON.stringify(voiceConfig, null, 2));
+      fs.renameSync(tempVoicePath, voiceConfigPath);
 
       // Stop servers if needed
       if (addonId === 'gpt-sovits') {

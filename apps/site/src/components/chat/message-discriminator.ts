@@ -18,8 +18,8 @@ export function getCardComponent(message: ChatMessage): CardComponent {
     return 'ReasoningCard';
   }
 
-  // Dream messages
-  if (role === 'dream') {
+  // Dream messages (including daydreams)
+  if (role === 'dream' || role === 'daydream') {
     return 'DreamCard';
   }
 
@@ -37,6 +37,10 @@ export function getCardComponent(message: ChatMessage): CardComponent {
 
   // Assistant messages with special types
   if (role === 'assistant') {
+    // Agency messages appear in main chat with interactive cards
+    if (meta?.dialogueSource === 'agency-system' || meta?.isAgencyMessage) {
+      return 'AgencyCard';
+    }
     if (meta?.isCuriosityQuestion) {
       return 'CuriosityCard';
     }
@@ -81,14 +85,20 @@ export function isVisibleInMode(
   if (mode === 'combined') return true;
 
   const { role } = message;
-  const isInnerContent = role === 'reflection' || role === 'dream' || role === 'reasoning';
+  const isInnerContent = role === 'reflection' || role === 'dream' || role === 'daydream' || role === 'reasoning';
+  const isSystemContent = role === 'system';
 
-  if (mode === 'inner') {
-    return isInnerContent || (showSystemMessages && role === 'system');
+  // System messages shown in any mode when showSystemMessages is true
+  if (showSystemMessages && isSystemContent) {
+    return true;
   }
 
-  // conversation mode
-  return !isInnerContent;
+  if (mode === 'inner') {
+    return isInnerContent;
+  }
+
+  // conversation mode - show user/assistant, exclude inner content
+  return !isInnerContent && !isSystemContent;
 }
 
 /**

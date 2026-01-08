@@ -54,6 +54,7 @@ export type DesireStatus =
   | 'pending'           // In evaluation queue, waiting for threshold
   | 'evaluating'        // Currently being evaluated by LLM
   | 'planning'          // Plan is being generated
+  | 'questioning'       // Waiting for user to answer clarifying questions
   | 'reviewing'         // Plan is under LLM self-review
   | 'awaiting_approval' // In approval queue (high-risk)
   | 'approved'          // Ready for execution
@@ -72,6 +73,7 @@ export type DesireStage =
   | 'nascent'           // Just created, waiting for reinforcement
   | 'strengthening'     // Building strength through reinforcements
   | 'planning'          // Generating execution plan
+  | 'questioning'       // Waiting for user to answer clarifying questions
   | 'plan_review'       // Plan being reviewed for safety/alignment
   | 'user_approval'     // Waiting for user approval (if required)
   | 'executing'         // Big Brother is executing the plan
@@ -285,6 +287,8 @@ export type DesireScratchpadEntryType =
   | 'plan_generated'      // A plan was created
   | 'plan_revised'        // Plan was revised based on feedback
   | 'user_critique'       // User provided feedback
+  | 'questions_asked'     // Clarifying questions were generated and asked
+  | 'questions_answered'  // User answered clarifying questions
   | 'review_started'      // LLM review began
   | 'review_completed'    // LLM review finished
   | 'approval_requested'  // Sent to approval queue
@@ -396,6 +400,55 @@ export interface DesireOutcomeReview {
 }
 
 // ============================================================================
+// Clarifying Questions Types
+// ============================================================================
+
+/**
+ * A clarifying question asked during the planning phase.
+ */
+export interface ClarifyingQuestion {
+  /** Unique identifier for this question */
+  id: string;
+  /** The question text */
+  text: string;
+  /** Type of input expected */
+  type: 'free_text' | 'yes_no' | 'choice';
+  /** Options for choice type questions */
+  options?: string[];
+  /** Whether an answer is required */
+  required: boolean;
+}
+
+/**
+ * An answer to a clarifying question.
+ */
+export interface ClarifyingAnswer {
+  /** ID of the question being answered */
+  questionId: string;
+  /** The user's answer */
+  answer: string;
+  /** ISO timestamp when answered */
+  answeredAt: string;
+}
+
+/**
+ * Clarifying questions phase data for a desire.
+ * Used to gather context from the user before generating a plan.
+ */
+export interface DesireClarifyingQuestions {
+  /** When in the lifecycle these questions were asked */
+  phase: 'before_planning' | 'during_review';
+  /** The questions asked */
+  questions: ClarifyingQuestion[];
+  /** User's answers */
+  answers: ClarifyingAnswer[];
+  /** ISO timestamp when questions were generated */
+  askedAt?: string;
+  /** ISO timestamp when all questions were answered */
+  completedAt?: string;
+}
+
+// ============================================================================
 // Core Desire Interface
 // ============================================================================
 
@@ -483,6 +536,10 @@ export interface Desire {
   userCritique?: string;
   /** ISO timestamp when critique was submitted */
   critiqueAt?: string;
+
+  // Clarifying questions (for gathering context before planning)
+  /** Questions and answers gathered to improve plan generation */
+  clarifyingQuestions?: DesireClarifyingQuestions;
 
   // Review (populated after review phase)
   /** Review decision for the plan */

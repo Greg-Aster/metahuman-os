@@ -25,6 +25,7 @@ import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
 import { getUserContext } from '../context.js';
 import { resolveCredentials } from '../llm-config.js';
+import { loadOperatorConfig } from '../config.js';
 
 // Feature detection: Check if native fetch is available (Node.js 18+)
 // This determines whether to use @metahuman/server (native fetch) or mobile-providers.ts (https module)
@@ -90,6 +91,100 @@ export async function callProvider(
       : deploymentConfig.server?.runpod,
     huggingface: deploymentConfig.server?.huggingface,
   };
+
+  // =========================================================================
+  // BACKEND AVAILABILITY CHECK: Fail fast if no LLM backend is available
+  // NO FALLBACKS - if the configured backend isn't working, STOP and notify user
+  // =========================================================================
+  const backendStatus = await getBackendStatus();
+  const operatorConfig = username ? loadOperatorConfig(username) : null;
+  const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
+  const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
+
+  // Big Brother routing logic:
+  // - delegateAll: ALL LLM calls go to Big Brother
+  // - enabled but not delegateAll (hybrid mode): only calls with useBigBrother option go to Big Brother
+  // - disabled: all local
+  const shouldUseBigBrother =
+    (bigBrotherEnabled && bigBrotherDelegateAll) ||  // Delegate all mode
+    (bigBrotherEnabled && options?.useBigBrother === true);  // Hybrid mode with explicit request
+
+  if (shouldUseBigBrother) {
+    // Use the provider-agnostic escalation system
+    const { escalate, getActiveBackend } = await import('../escalation-backend.js');
+
+    // Get configured backend from operator.json
+    const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
+    const backend = getActiveBackend(username);
+    const backendName = backend?.name || preferredBackend || 'Big Brother';
+
+    onProgress?.({ phase: 'loading', message: `${backendName}: Starting...` });
+
+    // Format messages for the backend
+    const prompt = messages.map(m => {
+      if (m.role === 'system') return `[System]: ${m.content}`;
+      if (m.role === 'user') return `[User]: ${m.content}`;
+      return `[Assistant]: ${m.content}`;
+    }).join('\n\n');
+
+    onProgress?.({ phase: 'running', message: `${backendName}: Processing...` });
+
+    // Execute through the configured backend (provider-agnostic)
+    const result = await escalate(prompt, {
+      username,
+      preferredBackend,
+      timeout: 300000,
+    });
+
+    // NO FALLBACK - if Big Brother fails, throw and stop
+    if (!result.success) {
+      const errorMsg = `Big Brother (${backendName}) failed: ${result.error || 'Unknown error'}. Check Big Brother terminal status.`;
+      console.error(`[provider-bridge] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    // CRITICAL: Validate response is real, not stale garbage from dead PTY
+    const execTime = result.executionTime || 0;
+    const outputLen = result.output?.length || 0;
+
+    // Real LLM responses take at least 100ms
+    if (execTime < 100) {
+      const errorMsg = `Big Brother connection appears dead (response in ${execTime}ms). Restart Big Brother in Settings.`;
+      console.error(`[provider-bridge] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    // Check for terminal garbage (ANSI codes indicate cleanResponse failed)
+    // "Smooshing"/"Bypassing Permissions" are Claude Code startup messages indicating not ready
+    // Note: "for shortcuts" is normal TUI footer text that can appear in valid responses
+    if (result.output && /\x1b\[|Smooshing|Bypassing Permissions/.test(result.output)) {
+      const errorMsg = 'Big Brother returned terminal UI garbage (ANSI codes or startup messages). Restart Big Brother in Settings.';
+      console.error(`[provider-bridge] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    // Minimum meaningful response length
+    if (outputLen < 50) {
+      const errorMsg = `Big Brother returned empty/minimal response (${outputLen} chars). Check terminal status.`;
+      console.error(`[provider-bridge] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    onProgress?.({ phase: 'completed', message: `${backendName}: Response received` });
+
+    return {
+      content: result.output,
+      model: preferredBackend || 'big-brother',
+      provider: 'big-brother',
+    };
+  }
+
+  // Big Brother not enabled - check local backend availability
+  if (!backendStatus.running || backendStatus.health === 'offline') {
+    const errorMsg = `No LLM backend available. ${backendStatus.resolvedBackend} is ${backendStatus.health}. Start vLLM/Ollama or enable Big Brother mode.`;
+    console.error(`[provider-bridge] ${errorMsg}`);
+    throw new Error(errorMsg);
+  }
 
   // Route to appropriate handler
   if (isRemoteServerProvider(providerName)) {
@@ -607,7 +702,8 @@ async function callVLLMProvider(
       {
         model,
         temperature: options.temperature,
-        maxTokens: options.maxTokens ?? backendConfig.vllm.maxTokens,
+        // Don't fall back to default maxTokens if explicitly undefined (for Big Brother mode)
+        maxTokens: options.maxTokens !== undefined ? options.maxTokens : backendConfig.vllm.maxTokens,
         topP: options.topP,
         enableThinking: backendConfig.vllm.enableThinking,
         frequencyPenalty: backendConfig.vllm.frequencyPenalty,

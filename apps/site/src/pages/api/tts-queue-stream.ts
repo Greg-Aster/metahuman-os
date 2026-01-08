@@ -5,8 +5,8 @@
  * When text is queued for TTS (via the TTS node in cognitive graphs),
  * this stream notifies the client so it can play the audio.
  *
- * The client's TTS toggles (ttsEnabled, boredomTtsEnabled) control
- * whether the queued items are actually spoken.
+ * The client's unified ttsEnabled toggle controls whether queued items
+ * are spoken (applies to conversation, inner dialogue, and system modes).
  */
 import type { APIRoute } from 'astro';
 import fs from 'node:fs';

@@ -495,7 +495,10 @@ function ensureVoiceConfig(
   };
 
   fs.mkdirSync(path.dirname(voiceConfigPath), { recursive: true });
-  fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
+  // Atomic write: write to temp file, then rename (prevents empty file on crash)
+  const tempPath = `${voiceConfigPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tempPath, voiceConfigPath);
 
   return config;
 }
@@ -959,8 +962,10 @@ const postHandler: APIRoute = async ({ request, cookies }) => {
       }
     }
 
-    // Save configuration
-    fs.writeFileSync(voiceConfigPath, JSON.stringify(config, null, 2), 'utf8');
+    // Save configuration (atomic write to prevent empty file on crash)
+    const tempConfigPath = `${voiceConfigPath}.tmp`;
+    fs.writeFileSync(tempConfigPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.renameSync(tempConfigPath, voiceConfigPath);
 
     // Handle provider switching and service orchestration
     try {

@@ -57,6 +57,13 @@ export interface AgentTriggerConfig {
   autoRestart?: boolean;
   maxRetries?: number;
 
+  // Probabilistic triggering
+  probability?: number; // 0.0 to 1.0 - chance the trigger actually fires (default: 1.0)
+  jitterMs?: number; // Random delay variance in milliseconds (default: 0)
+
+  // Pause category - determines if Active Operator should wait for this agent
+  pauseCategory?: 'interactive' | 'background'; // 'interactive' pauses for user, 'background' never pauses
+
   // Conditions
   conditions?: {
     requiresSleepMode?: boolean;
@@ -505,6 +512,51 @@ export class TriggerManager extends EventEmitter {
       return;
     }
 
+    // Probabilistic firing: skip if probability check fails
+    // Default probability is 1.0 (always fire)
+    const probability = state.config.probability ?? 1.0;
+    if (probability < 1.0) {
+      const roll = Math.random();
+      if (roll > probability) {
+        console.log(`[TriggerManager] Agent ${agentId} skipped (probability: ${probability}, rolled: ${roll.toFixed(3)})`);
+
+        audit({
+          level: 'info',
+          category: 'action',
+          event: 'trigger_probability_skip',
+          actor: 'trigger_manager',
+          details: {
+            agentId,
+            probability,
+            roll,
+          },
+        });
+
+        return;
+      }
+    }
+
+    // Apply jitter delay if configured
+    const jitterMs = state.config.jitterMs ?? 0;
+    if (jitterMs > 0) {
+      const jitterDelay = Math.floor(Math.random() * jitterMs);
+      console.log(`[TriggerManager] Agent ${agentId} firing with ${jitterDelay}ms jitter`);
+
+      setTimeout(() => {
+        this.executeFireTrigger(agentId, state);
+      }, jitterDelay);
+
+      return;
+    }
+
+    // No jitter - fire immediately
+    this.executeFireTrigger(agentId, state);
+  }
+
+  /**
+   * Execute the actual trigger firing (after probability check and jitter)
+   */
+  private executeFireTrigger(agentId: string, state: TriggerState): void {
     // Create task input
     const taskType = this.getTaskTypeForAgent(agentId);
     const priority = this.mapPriority(state.config.priority);

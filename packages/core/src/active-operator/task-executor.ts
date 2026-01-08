@@ -51,12 +51,14 @@ const TASK_TO_AGENT: Record<TaskType, string | null> = {
   inner_curiosity: 'inner-curiosity',
   dream: 'dreamer',
   desire_generate: 'desire-generator',
+  desire_explore: 'desire-explorer', // Research & smart questions before planning
   desire_advance: null, // Handled specially - runs desire through planning/review/approval
   desire_execute: 'desire-executor',
   desire_review: null, // Handled specially - runs outcome reviewer graph
   psychoanalyze: 'psychoanalyzer',
   code_analyze: null, // Will be implemented in Phase 5
   help_ticket_review: null, // Handled specially - reviews user feedback tickets
+  idle: null, // No-op task - handled in switch statement
 };
 
 /**
@@ -196,8 +198,8 @@ async function executeDesireAdvance(
 ): Promise<{ success: boolean; error?: string; data?: any }> {
   console.log('[task-executor] Running desire_advance pipeline for user:', username);
 
-  // Import appendReflectionToBuffer at the top of this function scope
-  const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+  // Import buffer functions - inner dialogue for processing, conversation for user interaction
+  const { appendReflectionToBuffer, appendAgencyMessageToConversation } = await import('../conversation-buffer.js');
 
   // Output to Inner Dialogue that we're starting
   appendReflectionToBuffer(username,
@@ -210,7 +212,7 @@ async function executeDesireAdvance(
     const { listDesiresByStatus, loadDesire, moveDesire } = await import('../agency/storage.js');
     const { loadDecisionRules } = await import('../identity.js');
     const { canAutoApprove, loadConfig } = await import('../agency/config.js');
-    const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+    // Note: appendReflectionToBuffer and appendAgencyMessageToConversation already imported above
 
     // Get pending AND nascent desires that need processing
     // (both status types count toward pendingReadyToAdvance in system-state.ts)
@@ -362,12 +364,12 @@ async function executeDesireAdvance(
         await moveDesire(desire, currentStatus, 'approved', username);
         autoApproved++;
 
-        // Post to inner dialogue
-        appendReflectionToBuffer(username,
-          `🚀 Auto-approved desire: "${desire.title}"\n` +
-          `Reason: ${approvalCheck.reason}\n` +
-          `This will be executed automatically.`,
-          { dialogueSource: 'agency-system', displayColor: '#22c55e' }
+        // Post to MAIN CHAT - user should know when actions are being auto-approved
+        appendAgencyMessageToConversation(username,
+          `🚀 **Auto-approved desire:** "${desire.title}"\n\n` +
+          `**Reason:** ${approvalCheck.reason}\n\n` +
+          `_This will be executed automatically._`,
+          { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'auto_approved', desireId: desire.id, desireTitle: desire.title }
         );
       } else {
         // Queue for user approval
@@ -378,13 +380,14 @@ async function executeDesireAdvance(
         await moveDesire(desire, currentStatus, 'awaiting_approval', username);
         awaitingApproval++;
 
-        // Post approval request to inner dialogue with desire ID for inline approve/reject buttons
-        appendReflectionToBuffer(username,
-          `⚠️ Approval Required: "${desire.title}"\n\n` +
-          `Description: ${desire.description}\n` +
-          `Risk Level: ${risk}\n` +
-          `Strength: ${(desire.strength * 100).toFixed(0)}%\n\n` +
-          `Reason for manual approval: ${approvalCheck.reason}`,
+        // Post approval request to MAIN CHAT - user MUST see and act on this
+        appendAgencyMessageToConversation(username,
+          `⚠️ **Approval Required:** "${desire.title}"\n\n` +
+          `**Description:** ${desire.description}\n\n` +
+          `**Risk Level:** ${risk}\n` +
+          `**Strength:** ${(desire.strength * 100).toFixed(0)}%\n\n` +
+          `**Reason for manual approval:** ${approvalCheck.reason}\n\n` +
+          `_Use the buttons below to approve or reject this desire._`,
           {
             dialogueSource: 'agency-system',
             displayColor: '#f59e0b',
@@ -449,7 +452,7 @@ async function executeDesireReview(
   console.log('[task-executor] Running desire outcome review for user:', username);
 
   try {
-    const { appendReflectionToBuffer } = await import('../conversation-buffer.js');
+    const { appendReflectionToBuffer, appendAgencyMessageToConversation } = await import('../conversation-buffer.js');
     const { reviewOutcomeViaGraph } = await import('../agency/executor.js');
     const { listDesiresFromFolders, saveDesireManifest, moveDesire } = await import('../agency/storage.js');
 
@@ -503,9 +506,12 @@ async function executeDesireReview(
               await saveDesireManifest(desire, username);
               await moveDesire(desire, 'awaiting_review', 'completed', username);
               completed++;
-              appendReflectionToBuffer(username,
-                `✅ **"${desire.title}"** completed successfully`,
-                { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_completed' }
+              // Post to MAIN CHAT - user should see completion and any deliverables
+              appendAgencyMessageToConversation(username,
+                `✅ **Desire Completed:** "${desire.title}"\n\n` +
+                `${result.outcomeReview?.lessonsLearned || 'The goal has been achieved.'}\n\n` +
+                `_Review the results above or check your profile for any generated documents._`,
+                { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_completed', desireId: desire.id, desireTitle: desire.title }
               );
               break;
 
@@ -533,9 +539,12 @@ async function executeDesireReview(
               desire.outcomeReview = result.outcomeReview;
               await saveDesireManifest(desire, username);
               escalated++;
-              appendReflectionToBuffer(username,
-                `⚠️ **"${desire.title}"** - needs your help. ${result.outcomeReview?.lessonsLearned || 'Review required.'}`,
-                { dialogueSource: 'agency-system', displayColor: '#ef4444', type: 'desire_escalated' }
+              // Post to MAIN CHAT - needs user help
+              appendAgencyMessageToConversation(username,
+                `⚠️ **Needs Your Help:** "${desire.title}"\n\n` +
+                `${result.outcomeReview?.lessonsLearned || 'The system encountered an issue and needs your guidance.'}\n\n` +
+                `_Please review and provide direction._`,
+                { dialogueSource: 'agency-system', displayColor: '#ef4444', type: 'desire_escalated', desireId: desire.id, desireTitle: desire.title }
               );
               break;
 
@@ -548,9 +557,12 @@ async function executeDesireReview(
               await saveDesireManifest(desire, username);
               await moveDesire(desire, 'awaiting_review', 'abandoned', username);
               abandoned++;
-              appendReflectionToBuffer(username,
-                `🚫 **"${desire.title}"** - abandoned. ${result.outcomeReview?.lessonsLearned || 'Not achievable.'}`,
-                { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_abandoned' }
+              // Post to MAIN CHAT - user should know when something was given up
+              appendAgencyMessageToConversation(username,
+                `🚫 **Desire Abandoned:** "${desire.title}"\n\n` +
+                `${result.outcomeReview?.lessonsLearned || 'This goal was determined to be not achievable at this time.'}\n\n` +
+                `_The desire has been archived. You can revisit this goal later if circumstances change._`,
+                { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_abandoned', desireId: desire.id, desireTitle: desire.title }
               );
               break;
           }
@@ -934,6 +946,13 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
         success = ticketResult.success;
         error = ticketResult.error;
         data = ticketResult.data;
+        break;
+
+      case 'idle':
+        // Idle is a no-op task - do nothing and succeed
+        console.log('[task-executor] Idle task - waiting for conditions to change');
+        success = true;
+        data = { message: 'System is idle, waiting for conditions to change' };
         break;
 
       default:

@@ -688,7 +688,7 @@
   }
 
   async function handleReset(id: string) {
-    if (!confirm('Reset this desire back to planning? This will abort the current execution.')) return;
+    if (!confirm('Reset this desire back to planning?\n\nThis will:\n• Clear any clarifying questions (for fresh start)\n• Abort any current execution\n• Allow you to test the questioning phase again')) return;
 
     processingId = id;
     try {
@@ -1974,16 +1974,16 @@
                     {/if}
                   {/if}
 
-                  <!-- Reset/Unstick for executing or failed desires -->
-                  {#if desire.status === 'executing' || desire.status === 'failed'}
+                  <!-- Reset/Unstick for desires in later stages (to go back to planning) -->
+                  {#if ['executing', 'failed', 'awaiting_approval', 'reviewing', 'approved', 'questioning', 'awaiting_review', 'outcome_review'].includes(desire.status)}
                     <button
                       class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                       style="background: linear-gradient(135deg, #f59e0b, #d97706);"
                       disabled={processingId === desire.id}
                       on:click={() => handleReset(desire.id)}
-                      title="Reset this desire back to planning stage"
+                      title="Reset this desire back to planning stage (clears questions for fresh start)"
                     >
-                      🔄 Reset
+                      🔄 Reset to Planning
                     </button>
                   {/if}
 

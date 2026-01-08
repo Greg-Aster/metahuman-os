@@ -125,16 +125,22 @@ const HARMFUL_CONTENT_PATTERNS = {
 
 /**
  * Patterns for detecting security violations
+ *
+ * NOTE: File path and internal URL patterns have been REMOVED.
+ * These were stripping legitimate information from LLM responses (e.g., when Claude Code
+ * reports file paths it created). The LLM already has safety guardrails built in,
+ * making this redundant. Persona validation (consistency.ts, value-alignment.ts) is
+ * the appropriate layer for response validation.
  */
 const SECURITY_VIOLATION_PATTERNS = {
-  // File path disclosure
-  filePaths: /(?:\/home\/|\/root\/|C:\\Users\\|\/etc\/|\/var\/)/g,
+  // File path disclosure - DISABLED: Paths are important information, not security risks
+  // filePaths: /(?:\/home\/|\/root\/|C:\\Users\\|\/etc\/|\/var\/)/g,
 
-  // Internal URLs
-  internalUrls: /\b(?:localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/g,
+  // Internal URLs - DISABLED: These are often legitimate references
+  // internalUrls: /\b(?:localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/g,
 
-  // Environment variables
-  envVars: /\$\{?[A-Z_]+\}?|\bprocess\.env\./g,
+  // Environment variables - DISABLED: These are often legitimate in code discussions
+  // envVars: /\$\{?[A-Z_]+\}?|\bprocess\.env\./g,
 };
 
 // ============================================================================
@@ -331,38 +337,16 @@ function detectHarmfulContent(response: string): SafetyIssue[] {
 
 /**
  * Detect security violations in response
+ *
+ * NOTE: This function now returns empty - security violation detection has been DISABLED.
+ * File paths, internal URLs, and env vars are legitimate information in LLM responses,
+ * especially from tools like Claude Code. The LLM already has safety guardrails.
+ * Use persona validators (consistency.ts, value-alignment.ts) for response validation.
  */
-function detectSecurityViolations(response: string): SafetyIssue[] {
-  const issues: SafetyIssue[] = [];
-
-  // Check for file path disclosure
-  if (SECURITY_VIOLATION_PATTERNS.filePaths.test(response)) {
-    issues.push({
-      type: 'security_violation',
-      description: 'Response contains internal file paths',
-      severity: 'medium'
-    });
-  }
-
-  // Check for internal URLs
-  if (SECURITY_VIOLATION_PATTERNS.internalUrls.test(response)) {
-    issues.push({
-      type: 'security_violation',
-      description: 'Response contains internal network addresses',
-      severity: 'medium'
-    });
-  }
-
-  // Check for environment variable references
-  if (SECURITY_VIOLATION_PATTERNS.envVars.test(response)) {
-    issues.push({
-      type: 'security_violation',
-      description: 'Response references environment variables',
-      severity: 'low'
-    });
-  }
-
-  return issues;
+function detectSecurityViolations(_response: string): SafetyIssue[] {
+  // All security violation patterns have been disabled - return empty array
+  // File paths, internal URLs, and env vars are legitimate information
+  return [];
 }
 
 /**
@@ -448,24 +432,27 @@ function calculateSafetyScore(issues: SafetyIssue[]): number {
 
 /**
  * Sanitize response by removing sensitive/harmful content
+ *
+ * NOTE: Security violation sanitization (file paths, internal URLs, env vars) has been DISABLED.
+ * Only sensitive data (API keys, passwords) and harmful content patterns are sanitized.
  */
-function sanitizeResponse(response: string, issues: SafetyIssue[]): string {
+function sanitizeResponse(response: string, _issues: SafetyIssue[]): string {
   let sanitized = response;
 
-  // Remove sensitive data patterns
+  // Remove sensitive data patterns (API keys, passwords, etc.)
   for (const [name, pattern] of Object.entries(SENSITIVE_DATA_PATTERNS)) {
     sanitized = sanitized.replace(pattern, `[${name.toUpperCase()}_REDACTED]`);
   }
 
-  // Remove harmful content patterns
+  // Remove harmful content patterns (SQL injection, XSS, etc.)
   for (const [name, pattern] of Object.entries(HARMFUL_CONTENT_PATTERNS)) {
     sanitized = sanitized.replace(pattern, `[${name.toUpperCase()}_REMOVED]`);
   }
 
-  // Remove security violation patterns
-  sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.filePaths, '[PATH_REDACTED]');
-  sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.internalUrls, '[URL_REDACTED]');
-  sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.envVars, '[ENV_REDACTED]');
+  // Security violation patterns DISABLED - file paths, URLs, env vars are legitimate info
+  // sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.filePaths, '[PATH_REDACTED]');
+  // sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.internalUrls, '[URL_REDACTED]');
+  // sanitized = sanitized.replace(SECURITY_VIOLATION_PATTERNS.envVars, '[ENV_REDACTED]');
 
   return sanitized;
 }

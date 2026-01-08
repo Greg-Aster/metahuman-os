@@ -387,12 +387,51 @@
     min-height: 300px;
   }
 
+  /* Terminal resize handle */
+  .terminal-resize-handle {
+    @apply bg-gray-200 dark:bg-gray-700 cursor-row-resize flex-shrink-0;
+    height: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease;
+    position: relative;
+  }
+
+  .terminal-resize-handle:hover,
+  .terminal-resize-handle.resizing {
+    @apply bg-blue-400 dark:bg-blue-500;
+  }
+
+  .terminal-resize-handle:focus {
+    @apply outline-none ring-2 ring-blue-500 ring-offset-1;
+  }
+
+  .resize-handle-grip {
+    @apply bg-gray-400 dark:bg-gray-500 rounded-full;
+    width: 40px;
+    height: 3px;
+    transition: background-color 0.15s ease;
+  }
+
+  .terminal-resize-handle:hover .resize-handle-grip,
+  .terminal-resize-handle.resizing .resize-handle-grip {
+    @apply bg-white dark:bg-gray-200;
+  }
+
+  .terminal-header-controls {
+    @apply flex items-center gap-2;
+  }
+
+  .terminal-size-hint {
+    @apply text-xs text-gray-400 dark:text-gray-500 font-mono;
+  }
+
   /* Terminal split panel */
   .terminal-split-panel {
     @apply border-t border-gray-200 dark:border-gray-700;
-    flex: 0 0 40%;
-    min-height: 200px;
-    max-height: 50%;
+    min-height: 100px;
+    max-height: 70vh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -419,7 +458,8 @@
 
   .terminal-content {
     flex: 1;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .messages-list {

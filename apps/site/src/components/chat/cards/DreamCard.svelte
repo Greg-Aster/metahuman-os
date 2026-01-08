@@ -5,15 +5,21 @@
   export let message: ChatMessage;
   export let index: number;
   export let isSelected: boolean = false;
+
+  // Distinguish between nighttime dreams and daytime daydreams
+  $: isDaydream = message.role === 'daydream' || message.meta?.type === 'daydream';
+  $: roleLabel = isDaydream ? 'Daydream' : 'Dream';
+  $: roleIcon = isDaydream ? '💭' : '🌙';
+  $: accentColor = isDaydream ? '#a78bfa' : '#6366f1'; // Lighter purple for daydreams
 </script>
 
 <BaseMessageCard
   {message}
   {index}
   {isSelected}
-  roleLabel="Dream"
-  roleIcon="🌙"
-  accentColor="#6366f1"
+  {roleLabel}
+  {roleIcon}
+  {accentColor}
   on:messageClick
   on:deleteMessage
   on:validateMessage

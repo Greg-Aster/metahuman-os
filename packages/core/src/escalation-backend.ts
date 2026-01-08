@@ -32,6 +32,8 @@ export interface EscalationOptions {
   sessionId?: string;
   /** Working directory for command execution */
   workingDirectory?: string;
+  /** Username for user-specific context (profile path, CLAUDE.md, etc.) */
+  username?: string;
   /** Called when a reasoning step is detected */
   onReasoningStep?: (step: ReasoningStep) => void;
   /** Called on each raw output chunk (for terminal display) */

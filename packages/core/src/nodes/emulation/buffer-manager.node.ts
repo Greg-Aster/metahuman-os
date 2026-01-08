@@ -52,18 +52,54 @@ const execute: NodeExecutor = async (inputs, context) => {
     const updatedMessages = [...existingMessages];
 
     if (userMessage) {
-      updatedMessages.push({
-        role: 'user',
-        content: userMessage,
-        timestamp: Date.now(),
-      });
+      // Check if user message was already saved early (dedup check)
+      // Early save happens in persona-chat.ts before graph execution
+      const lastMsg = existingMessages[existingMessages.length - 1];
+      const alreadySaved = lastMsg?.role === 'user' && lastMsg?.content === userMessage;
+
+      if (!alreadySaved) {
+        // Build meta object with reply-to context (for desire discussions, curiosity replies, etc.)
+        const meta: Record<string, any> = {};
+        if (context.replyToDesireId) {
+          meta.replyToDesireId = context.replyToDesireId;
+        }
+        if (context.replyToDesireTitle) {
+          meta.replyToDesireTitle = context.replyToDesireTitle;
+        }
+        if (context.replyToQuestionId) {
+          meta.replyToQuestionId = context.replyToQuestionId;
+        }
+        if (context.replyToContent) {
+          meta.replyToContent = context.replyToContent;
+        }
+
+        updatedMessages.push({
+          role: 'user',
+          content: userMessage,
+          timestamp: Date.now(),
+          ...(Object.keys(meta).length > 0 ? { meta } : {}),
+        });
+      } else {
+        console.log('[BufferManager] User message already saved (early save), skipping duplicate');
+      }
     }
 
     if (assistantResponse) {
+      // Include reply-to metadata on assistant response too, so the full conversation
+      // can be traced back to the desire/question being discussed
+      const assistantMeta: Record<string, any> = {};
+      if (context.replyToDesireId) {
+        assistantMeta.replyToDesireId = context.replyToDesireId;
+      }
+      if (context.replyToDesireTitle) {
+        assistantMeta.replyToDesireTitle = context.replyToDesireTitle;
+      }
+
       updatedMessages.push({
         role: 'assistant',
         content: assistantResponse,
         timestamp: Date.now(),
+        ...(Object.keys(assistantMeta).length > 0 ? { meta: assistantMeta } : {}),
       });
     }
 

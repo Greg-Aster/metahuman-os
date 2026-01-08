@@ -311,9 +311,9 @@ export async function escalateToBigBrother(
 
   try {
     // Execute via backend abstraction
-    // Use longer timeout for review tasks (180s) as Claude needs time to analyze
+    // Use longer timeout for review tasks (300s) as Claude needs time to analyze
     const result: EscalationResult = await escalateViaBackend(prompt, {
-      timeout: 180000,
+      timeout: 300000,
       sessionId: request.sessionId,
       preferredBackend: backendId,
       // Forward streaming callbacks for real-time UI display

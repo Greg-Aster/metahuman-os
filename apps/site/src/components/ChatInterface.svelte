@@ -7,7 +7,6 @@
   import ApprovalPrompt from './ApprovalPrompt.svelte';
   // OperatorProposalPrompt removed - proposals now shown inline in LizardBrainCard
   import TerminalManager from './TerminalManager.svelte';
-  import BigBrotherTerminalPanel from './BigBrotherTerminalPanel.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
@@ -48,11 +47,15 @@
   // - Conversation: user/assistant messages from conversation buffer
   // - Inner: reflection/dream/reasoning from inner buffer
   // - System: execution/system messages from system buffer + split panel
-  let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner']);
+  let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner', 'system']);
 
   // Show terminal split panel when system tab is selected
   $: showSystemTerminal = selectedViews.has('system');
   let terminalMinimized = false;
+  let terminalHeight = 300; // Default height in pixels
+  let isResizing = false;
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
 
   // Compute display mode based on selected views
   // 'combined' = show all messages, 'conversation' = only chat, 'inner' = only reflections/dreams
@@ -70,7 +73,6 @@
   let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
   let ttsEnabled = false;
-  let boredomTtsEnabled = false; // For inner dialog voice
   // vLLM Thinking Mode (Qwen3)
   let thinkingModeEnabled = false;
   let thinkingModeLoading = false;
@@ -83,13 +85,6 @@
   let activeOperatorLoading = false;
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
-
-  // Big Brother streaming state (provider-agnostic)
-  let bigBrotherOutput: string[] = [];
-  let bigBrotherActive = false;
-  let bigBrotherWaiting = false;
-  let bigBrotherQuestion = '';
-  let showBigBrotherTerminal = false;
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -219,10 +214,9 @@
       } else if (typeof p.reasoningEnabled === 'boolean') {
         reasoningDepth = p.reasoningEnabled ? 2 : 0;
       }
-      if (typeof p.boredomTtsEnabled === 'boolean') boredomTtsEnabled = p.boredomTtsEnabled;
       if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
       if (typeof p.bigBrotherDelegateAll === 'boolean') bigBrotherDelegateAll = p.bigBrotherDelegateAll;
-      console.log('[chat-prefs] Loaded:', { ttsEnabled, boredomTtsEnabled, reasoningDepth });
+      console.log('[chat-prefs] Loaded:', { ttsEnabled, reasoningDepth });
     } catch (e) {
       console.error('[chat-prefs] Error loading:', e);
     }
@@ -235,22 +229,9 @@
         reasoningEnabled: reasoningDepth > 0,
         bigBrotherEnabled,
         bigBrotherDelegateAll,
-        boredomTtsEnabled,
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
-  }
-
-  /** Get current inner dialogue TTS preference (reads from localStorage to ensure fresh value) */
-  function getInnerTtsEnabled(): boolean {
-    try {
-      const raw = localStorage.getItem('chatPrefs');
-      if (raw) {
-        const p = JSON.parse(raw);
-        return p.boredomTtsEnabled === true;
-      }
-    } catch {}
-    return boredomTtsEnabled;
   }
 
   // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
@@ -325,6 +306,14 @@
     loadThinkingMode(); // Load vLLM thinking mode setting
     loadActiveOperatorStatus(); // Load active operator status
     mic.loadVADSettings(); // Load VAD settings from voice config
+
+    // Load saved terminal height
+    try {
+      const savedHeight = localStorage.getItem('mh-terminal-height');
+      if (savedHeight) {
+        terminalHeight = Math.max(100, parseInt(savedHeight, 10) || 300);
+      }
+    } catch {}
 
     // Connect to proposals SSE stream for real-time updates (no polling)
     connectProposalsStream();
@@ -513,6 +502,10 @@
     }
   }
 
+  // Concurrency guard for buffer fetches - prevents overlapping requests
+  let fetchInProgress = false;
+  let fetchNeededAfterCurrent = false;
+
   /**
    * Fetch and merge messages from all selected buffers
    * Merges messages by timestamp for unified display
@@ -523,39 +516,59 @@
    * - system tab → system buffer (execution/system messages)
    */
   async function fetchAllSelectedBuffers() {
-    // Map selected views directly to buffer modes (1:1 mapping now)
-    // System buffer only fetched when system tab is selected
-    const bufferModes: ('conversation' | 'inner' | 'system')[] = [];
-    if (selectedViews.has('conversation')) bufferModes.push('conversation');
-    if (selectedViews.has('inner')) bufferModes.push('inner');
-    if (selectedViews.has('system')) bufferModes.push('system');
-
-    console.log(`[chat] Fetching buffers for views:`, Array.from(selectedViews), '→ modes:', bufferModes);
-
-    // Fetch all buffers in parallel
-    const bufferPromises = bufferModes.map(mode => fetchSingleBuffer(mode));
-    const bufferResults = await Promise.all(bufferPromises);
-
-    // Flatten and merge all messages
-    const allMessages: ChatMessage[] = [];
-    for (const bufferMessages of bufferResults) {
-      allMessages.push(...bufferMessages);
+    // Concurrency guard: if a fetch is already in progress, mark that we need another one
+    if (fetchInProgress) {
+      console.log('[chat] Fetch already in progress, will re-fetch when complete');
+      fetchNeededAfterCurrent = true;
+      return;
     }
 
-    // Sort by timestamp (oldest first for chat display)
-    allMessages.sort((a, b) => a.timestamp - b.timestamp);
+    fetchInProgress = true;
+    fetchNeededAfterCurrent = false;
 
-    // Remove duplicates (same timestamp + content)
-    const seen = new Set<string>();
-    const uniqueMessages = allMessages.filter(msg => {
-      const key = `${msg.timestamp}-${msg.content.substring(0, 50)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    try {
+      // Map selected views directly to buffer modes (1:1 mapping now)
+      // System buffer only fetched when system tab is selected
+      const bufferModes: ('conversation' | 'inner' | 'system')[] = [];
+      if (selectedViews.has('conversation')) bufferModes.push('conversation');
+      if (selectedViews.has('inner')) bufferModes.push('inner');
+      if (selectedViews.has('system')) bufferModes.push('system');
 
-    console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${bufferModes.length} buffer(s)`);
-    messages.set(uniqueMessages);
+      console.log(`[chat] Fetching buffers for views:`, Array.from(selectedViews), '→ modes:', bufferModes);
+
+      // Fetch all buffers in parallel
+      const bufferPromises = bufferModes.map(mode => fetchSingleBuffer(mode));
+      const bufferResults = await Promise.all(bufferPromises);
+
+      // Flatten and merge all messages
+      const allMessages: ChatMessage[] = [];
+      for (const bufferMessages of bufferResults) {
+        allMessages.push(...bufferMessages);
+      }
+
+      // Sort by timestamp (oldest first for chat display)
+      allMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Remove duplicates (same timestamp + content)
+      const seen = new Set<string>();
+      const uniqueMessages = allMessages.filter(msg => {
+        const key = `${msg.timestamp}-${msg.content.substring(0, 50)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${bufferModes.length} buffer(s)`);
+      messages.set(uniqueMessages);
+    } finally {
+      fetchInProgress = false;
+
+      // If another fetch was requested while we were busy, do it now
+      if (fetchNeededAfterCurrent) {
+        console.log('[chat] Re-fetching due to pending request');
+        fetchAllSelectedBuffers();
+      }
+    }
   }
 
   function disconnectAllBufferStreams() {
@@ -604,21 +617,15 @@
         }
 
         if (data.type === 'tts' && Array.isArray(data.items)) {
-          // Process queued TTS items
+          // Process queued TTS items - unified toggle for all modes (conversation, inner, system)
           for (const item of data.items) {
             console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
-            // Check if we should speak based on mode and toggles
-            // Use getter to ensure we read the latest preference value
-            const innerTtsOn = getInnerTtsEnabled();
-            if (item.mode === 'conversation' && ttsEnabled) {
-              console.log('[chat-tts] SPEAKING conversation TTS from queue');
-              void ttsApi.speak(item.text);
-            } else if (item.mode === 'inner' && innerTtsOn) {
-              console.log('[chat-tts] SPEAKING inner dialogue TTS from queue');
+            if (ttsEnabled) {
+              console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
               void ttsApi.speak(item.text);
             } else {
-              console.log(`[chat-tts] Skipping TTS (mode=${item.mode}, ttsEnabled=${ttsEnabled}, innerTtsEnabled=${innerTtsOn})`);
+              console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
             }
           }
         }
@@ -796,11 +803,24 @@
     loading = true;
     sendInProgress = false; // loading now takes over as the guard
     reasoningStages = [];
-    thinkingTraceApi.start();
+
+    // Timestamp helper for detailed trace
+    const timestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const msgStartTime = Date.now();
+
+    // Show detailed timestamped information IMMEDIATELY
+    thinkingTraceApi.setStatusLabel('📤 Sending message...');
+    thinkingTraceApi.setTrace([
+      `[${timestamp()}] 📤 MESSAGE SENT`,
+      `[${timestamp()}] Content: "${userMessage.substring(0, 60)}${userMessage.length > 60 ? '...' : ''}"`,
+    ]);
+    thinkingTraceApi.setActive(true);
     console.log('[sendMessage] Step 1: Set loading state');
 
     try {
       console.log('[sendMessage] Step 2: Entered try block');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Preparing request...`, 15);
+
       let llm_opts = {};
       try {
         const raw = localStorage.getItem('llmOptions');
@@ -818,6 +838,7 @@
         // forceOperator removed - no longer used
       });
       console.log('[sendMessage] Step 4: Created URLSearchParams');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Request params built`, 15);
       params.set('yolo', String(yoloMode));
       // audience removed - focus selector obsolete with ReAct operator
 
@@ -841,6 +862,7 @@
 
       console.log('[sendMessage] Step 5: Setting up chat request');
       console.log('[sendMessage] URL:', `/api/persona_chat?${params.toString()}`);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] 🌐 Opening connection to /api/persona_chat`, 15);
 
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
@@ -855,9 +877,41 @@
 
       chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
       console.log('[sendMessage] Step 6: EventSource created!');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] 🔌 EventSource created, waiting for server...`, 15);
+      thinkingTraceApi.setStatusLabel('🔌 Connecting...');
+
+      // Track connection time for user visibility
+      const connectStart = Date.now();
+      let connectionTimer: ReturnType<typeof setInterval> | null = null;
+
+      // Start timer to show elapsed time WITH timestamps
+      connectionTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - connectStart) / 1000);
+        const totalElapsed = Math.floor((Date.now() - msgStartTime) / 1000);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ⏱️ Waiting for server response... (${elapsed}s)`, 15);
+      }, 2000);
+
+      chatResponseStream.onopen = () => {
+        console.log('[EventSource] Connection opened!');
+        if (connectionTimer) clearInterval(connectionTimer);
+        const elapsed = Math.floor((Date.now() - connectStart) / 1000);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ CONNECTION OPENED (${elapsed}s)`, 15);
+        thinkingTraceApi.setStatusLabel('⚡ Connected - Executing graph...');
+      };
+
+      chatResponseStream.onerror = (err) => {
+        console.error('[EventSource] Connection error:', err);
+        if (connectionTimer) clearInterval(connectionTimer);
+        const elapsed = Math.floor((Date.now() - connectStart) / 1000);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ CONNECTION ERROR after ${elapsed}s`, 15);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] Check server terminal for errors`, 15);
+        thinkingTraceApi.setStatusLabel('⚠️ Connection Failed');
+      };
 
       chatResponseStream.onmessage = (event) => {
+        if (connectionTimer) clearInterval(connectionTimer);
         console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
+        thinkingTraceApi.appendTrace(`[${timestamp()}] 📥 Received server event`, 15);
         try {
           const { type, data } = JSON.parse(event.data);
           console.log('[EventSource] Parsed type:', type, 'data keys:', Object.keys(data));
@@ -867,54 +921,59 @@
             if (data && data.message) {
               thinkingTraceApi.setActive(true);
 
-              // Update the thinking trace with progress messages
+              // Update the thinking trace with progress messages - ALL WITH TIMESTAMPS
               const progressMsg = data.message;
               console.log('[Progress Event] step:', data.step, 'message:', progressMsg.substring(0, 100));
 
               if (data.step === 'loading_graph') {
                 thinkingTraceApi.setStatusLabel('📋 Loading workflow...');
-                thinkingTraceApi.setTrace([progressMsg]);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] 📋 ${progressMsg}`, 15);
               } else if (data.step === 'graph_loaded') {
-                thinkingTraceApi.setStatusLabel('⚙️ Executing pipeline...');
-                thinkingTraceApi.setTrace([progressMsg]);
+                thinkingTraceApi.setStatusLabel('📊 Graph loaded');
+                thinkingTraceApi.appendTrace(`[${timestamp()}] 📊 ${progressMsg}`, 15);
+              } else if (data.step === 'graph_starting') {
+                thinkingTraceApi.setStatusLabel('⚡ Executing graph...');
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ⚡ ${progressMsg}`, 15);
               } else if (data.step === 'node_executing') {
                 thinkingTraceApi.setStatusLabel('🔄 Processing...');
-                // Add to trace, keep last 10 items
-                thinkingTraceApi.appendTrace(`▸ ${progressMsg}`, 10);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ▸ ${progressMsg}`, 15);
               } else if (data.step === 'thinking') {
                 // Show actual AI thoughts from scratchpad
                 console.log('[Thinking Event] Appending to trace:', progressMsg.substring(0, 150));
-                console.log('[Thinking Event] Current trace length:', thinkingTraceApi.getTrace().length);
-                console.log('[Thinking Event] reasoningStages.length:', reasoningStages.length);
                 thinkingTraceApi.setStatusLabel('🧠 Thinking...');
-                thinkingTraceApi.appendTrace(progressMsg, 10);
-                console.log('[Thinking Event] New trace length:', thinkingTraceApi.getTrace().length);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] 💭 ${progressMsg}`, 15);
               } else if (data.step === 'node_error') {
                 thinkingTraceApi.setStatusLabel('⚠️ Error detected...');
-                thinkingTraceApi.appendTrace(`✗ ${progressMsg}`, 10);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ERROR: ${progressMsg}`, 15);
               } else if (data.step === 'graph_complete') {
                 // Graph execution completed, waiting for final answer
                 thinkingTraceApi.setStatusLabel('✓ Completed, finalizing...');
-                thinkingTraceApi.appendTrace(progressMsg, 10);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ✓ ${progressMsg}`, 15);
               } else if (data.step?.startsWith('big_brother_')) {
-                // Big Brother status updates - show prominent status
+                // Big Brother status updates - show prominent status WITH TIMESTAMPS
                 if (data.step === 'big_brother_init') {
                   thinkingTraceApi.setStatusLabel('🤖 Big Brother initializing...');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] 🤖 Big Brother: Initializing...`, 15);
                 } else if (data.step === 'big_brother_ready') {
                   thinkingTraceApi.setStatusLabel('🤖 Big Brother ready');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] 🤖 Big Brother: Ready`, 15);
                 } else if (data.step === 'big_brother_sending') {
                   thinkingTraceApi.setStatusLabel('📤 Sending to Big Brother...');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] 📤 Big Brother: Sending prompt...`, 15);
                 } else if (data.step === 'big_brother_executing') {
                   thinkingTraceApi.setStatusLabel('⚙️ Big Brother working...');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] ⚙️ Big Brother: Executing...`, 15);
                 } else if (data.step === 'big_brother_complete') {
                   thinkingTraceApi.setStatusLabel('✅ Big Brother complete');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Big Brother: Complete`, 15);
                 } else if (data.step === 'big_brother_error') {
                   thinkingTraceApi.setStatusLabel('❌ Big Brother error');
+                  thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Big Brother: ERROR`, 15);
                 }
-                thinkingTraceApi.appendTrace(progressMsg, 10);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ${progressMsg}`, 15);
               } else {
                 // Generic progress update
-                thinkingTraceApi.appendTrace(progressMsg, 10);
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ${progressMsg}`, 15);
               }
             }
           } else if (type === 'cancelled') {
@@ -991,26 +1050,8 @@
             reasoningStages = [];
             chatResponseStream?.close();
             return; // Don't throw, we handled it
-          } else if (type === 'big_brother_output') {
-            // Real-time Big Brother output - show terminal panel
-            if (!showBigBrotherTerminal) {
-              showBigBrotherTerminal = true;
-              bigBrotherActive = true;
-              bigBrotherOutput = [];
-            }
-            bigBrotherOutput = [...bigBrotherOutput, data.chunk || ''];
-            console.log('[BigBrother] Output chunk received:', (data.chunk || '').substring(0, 50));
-          } else if (type === 'big_brother_waiting') {
-            // Big Brother is waiting for user input
-            bigBrotherWaiting = true;
-            bigBrotherQuestion = data.question || '';
-            console.log('[BigBrother] Waiting for input:', bigBrotherQuestion.substring(0, 100));
-          } else if (type === 'big_brother_complete') {
-            // Big Brother session completed
-            bigBrotherActive = false;
-            bigBrotherWaiting = false;
-            console.log('[BigBrother] Session complete, success:', data.success);
           }
+          // Note: Big Brother output is streamed to System Terminal's Big Brother tab via WebSocket
         } catch (err) {
           console.error('Chat stream error:', err);
           messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process server response.'}`);
@@ -1200,6 +1241,19 @@
   let conversationStream: EventSource | null = null;
   let systemStream: EventSource | null = null;
 
+  // Debounce timer for SSE-triggered fetches to prevent rapid-fire requests
+  let sseRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function debouncedFetchAllBuffers() {
+    if (sseRefreshDebounceTimer) {
+      clearTimeout(sseRefreshDebounceTimer);
+    }
+    sseRefreshDebounceTimer = setTimeout(() => {
+      console.log('[chat] Debounced fetch triggered');
+      fetchAllSelectedBuffers();
+    }, 150); // Wait 150ms after last SSE update before fetching (reduced from 500ms for faster updates)
+  }
+
   /**
    * Connect to buffer streams for all selected views
    * Handles real-time updates from multiple sources
@@ -1271,10 +1325,20 @@
           return;
         }
         if (data.type === 'update' && Array.isArray(data.messages)) {
-          // When we get an update, re-fetch all buffers to ensure proper merge
-          // This is simpler than trying to merge incremental updates
-          console.log(`[chat] ${streamMode} buffer updated, refreshing all selected buffers`);
-          fetchAllSelectedBuffers();
+          // Direct store update for instant UI refresh
+          // Merge new messages directly into the store instead of waiting for debounced fetch
+          if (data.messages.length > 0) {
+            const currentMsgs = get(messages);
+            const newMsgs = data.messages.filter((m: any) =>
+              !currentMsgs.some(c => c.timestamp === m.timestamp && c.content?.substring(0, 50) === m.content?.substring(0, 50))
+            );
+            if (newMsgs.length > 0) {
+              console.log(`[chat] ${streamMode} buffer: ${newMsgs.length} new messages, updating store directly`);
+              messages.update(msgs => [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp));
+            }
+          }
+          // Also trigger debounced fetch as fallback for full sync (ensures consistency)
+          debouncedFetchAllBuffers();
         }
       } catch (err) {
         console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
@@ -1482,6 +1546,62 @@
     void sendMessage();
   }
 
+  // Terminal resize handlers
+  function startResize(e: MouseEvent | TouchEvent) {
+    if (terminalMinimized) return;
+    e.preventDefault(); // Prevent default to avoid scroll/selection issues
+    e.stopPropagation();
+
+    isResizing = true;
+    resizeStartY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    resizeStartHeight = terminalHeight;
+
+    // Prevent text selection during resize
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+    document.body.style.pointerEvents = 'none'; // Prevent other elements from capturing
+
+    // Add global listeners for move/end (with passive: false to allow preventDefault)
+    document.addEventListener('mousemove', handleResize, { passive: false });
+    document.addEventListener('mouseup', stopResize);
+    document.addEventListener('mouseleave', stopResize); // Cleanup if mouse leaves window
+    document.addEventListener('touchmove', handleResize, { passive: false });
+    document.addEventListener('touchend', stopResize);
+    document.addEventListener('touchcancel', stopResize); // Handle touch cancellation
+  }
+
+  function handleResize(e: MouseEvent | TouchEvent) {
+    if (!isResizing) return;
+    e.preventDefault(); // Prevent scrolling during resize
+
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    // Moving up increases height (negative delta = more height)
+    const delta = resizeStartY - clientY;
+    const newHeight = Math.max(100, Math.min(window.innerHeight * 0.7, resizeStartHeight + delta));
+    terminalHeight = newHeight;
+  }
+
+  function stopResize() {
+    if (!isResizing) return; // Prevent double cleanup
+    isResizing = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    document.body.style.pointerEvents = ''; // Restore pointer events
+
+    // Remove global listeners
+    document.removeEventListener('mousemove', handleResize);
+    document.removeEventListener('mouseup', stopResize);
+    document.removeEventListener('mouseleave', stopResize);
+    document.removeEventListener('touchmove', handleResize);
+    document.removeEventListener('touchend', stopResize);
+    document.removeEventListener('touchcancel', stopResize);
+
+    // Save preference to localStorage
+    try {
+      localStorage.setItem('mh-terminal-height', String(terminalHeight));
+    } catch {}
+  }
+
 </script>
 
 <div class="chat-interface">
@@ -1583,11 +1703,11 @@
       {/if}
     </button>
 
-    <!-- Quick voice/tts controls -->
+    <!-- Quick voice/tts controls - single toggle for all modes (conversation, inner, system) -->
     <div class="quick-audio">
       <button
         class="icon-btn {ttsEnabled ? 'tts-active' : ''}"
-        title={ttsEnabled ? 'Disable speech' : 'Enable speech'}
+        title={ttsEnabled ? 'Disable speech (all modes)' : 'Enable speech (conversation, inner dialogue, system)'}
         on:click={() => {
           ttsEnabled = !ttsEnabled;
           if (ttsEnabled) {
@@ -1598,23 +1718,6 @@
         <!-- Speaker icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
       </button>
-
-      <!-- Inner dialog voice toggle (only visible in inner mode) -->
-      {#if mode === 'inner'}
-        <button
-          class="icon-btn {boredomTtsEnabled ? 'active' : ''}"
-          title={boredomTtsEnabled ? 'Disable inner dialogue TTS' : 'Enable inner dialogue TTS (lizard brain, reflections, dreams)'}
-          on:click={() => {
-            boredomTtsEnabled = !boredomTtsEnabled;
-            console.log('[chat-tts] Inner dialogue TTS toggled:', boredomTtsEnabled);
-            saveChatPrefs();
-          }}
-        >
-          <!-- Thought bubble icon for inner dialog -->
-          <span style="font-size: 18px; line-height: 1;">💭</span>
-          {#if boredomTtsEnabled}<span class="badge">Inner On</span>{/if}
-        </button>
-      {/if}
     </div>
 
     {#if $messages.length > 0}
@@ -1792,51 +1895,37 @@
       }}
       on:clearSelection={() => messagesApi.clearSelection()}
     />
-
-    <!-- Big Brother Terminal Panel (shows when Big Brother is streaming) -->
-    {#if showBigBrotherTerminal}
-      <div class="big-brother-terminal-container">
-        <BigBrotherTerminalPanel
-          output={bigBrotherOutput}
-          active={bigBrotherActive}
-          waiting={bigBrotherWaiting}
-          question={bigBrotherQuestion}
-          on:sendInput={(e) => {
-            console.log('[BigBrother] User sent input:', e.detail.text.substring(0, 50));
-            // After sending, reset waiting state
-            bigBrotherWaiting = false;
-          }}
-          on:close={() => {
-            showBigBrotherTerminal = false;
-            bigBrotherOutput = [];
-            bigBrotherActive = false;
-            bigBrotherWaiting = false;
-          }}
-        />
-      </div>
-    {/if}
   </div>
     </div>
     <!-- End messages-panel -->
 
     <!-- Terminal split panel (system terminal, not Claude CLI) -->
     {#if showSystemTerminal}
-      <div class="terminal-split-panel" class:minimized={terminalMinimized}>
-        <div class="terminal-header">
-          <span class="terminal-title">💻 System Terminal</span>
-          <button
-            class="terminal-minimize-btn"
-            on:click={() => terminalMinimized = !terminalMinimized}
-            title={terminalMinimized ? 'Expand terminal' : 'Minimize terminal'}
-          >
-            {terminalMinimized ? '▲' : '▼'}
-          </button>
+      <!-- Resize handle -->
+      <div
+        class="terminal-resize-handle"
+        class:resizing={isResizing}
+        on:mousedown={startResize}
+        on:touchstart={startResize}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize terminal panel"
+        tabindex="0"
+        on:keydown={(e) => {
+          if (e.key === 'ArrowUp') { terminalHeight = Math.min(window.innerHeight * 0.7, terminalHeight + 20); }
+          if (e.key === 'ArrowDown') { terminalHeight = Math.max(100, terminalHeight - 20); }
+        }}
+      >
+        <div class="resize-handle-grip"></div>
+      </div>
+
+      <div
+        class="terminal-split-panel"
+        style={`height: ${terminalHeight}px; flex: none;`}
+      >
+        <div class="terminal-content">
+          <TerminalManager />
         </div>
-        {#if !terminalMinimized}
-          <div class="terminal-content">
-            <TerminalManager />
-          </div>
-        {/if}
       </div>
     {/if}
   </div>

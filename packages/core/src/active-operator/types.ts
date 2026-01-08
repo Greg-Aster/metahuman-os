@@ -23,12 +23,14 @@ export type TaskType =
   | 'inner_curiosity' // Run inner curiosity (self-directed Q&A)
   | 'dream' // Generate dreams via dreamer agent
   | 'desire_generate' // Run desire generator
+  | 'desire_explore' // Research & generate smart questions before planning
   | 'desire_advance' // Process pending desires through planning/review/approval
   | 'desire_execute' // Execute an APPROVED desire (not pending!)
   | 'desire_review' // Review execution outcomes (retry/escalate/complete/abandon)
   | 'psychoanalyze' // Run psychoanalyzer to update persona
   | 'code_analyze' // Self-healing: analyze codebase for errors
-  | 'help_ticket_review'; // Review user feedback tickets and propose fixes
+  | 'help_ticket_review' // Review user feedback tickets and propose fixes
+  | 'idle'; // No-op task - do nothing, wait for conditions to change
 
 /**
  * Priority levels for queued tasks.
@@ -55,6 +57,7 @@ export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   desire_execute: 'high',
   desire_review: 'high', // Review execution outcomes ASAP to enable retry/escalate
   help_ticket_review: 'high', // User feedback is important - address quickly
+  desire_explore: 'normal', // Explore desires before planning
   desire_advance: 'normal', // Process pending desires through approval pipeline
   memory_curate: 'normal',
   training_curate: 'normal', // Curate training data during idle time
@@ -66,6 +69,7 @@ export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   desire_generate: 'low',
   psychoanalyze: 'low',
   code_analyze: 'background',
+  idle: 'background', // No-op task
 };
 
 // ============================================================================
