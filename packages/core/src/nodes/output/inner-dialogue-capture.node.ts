@@ -10,7 +10,7 @@ import { defineNode, type NodeDefinition } from '../types.js';
 import { ROOT } from '../../path-builder.js';
 import { captureEventWithDetails, type CaptureResult } from '../../memory.js';
 import { audit } from '../../audit.js';
-import { appendReflectionToBuffer, appendDreamToBuffer } from '../../conversation-buffer.js';
+import { appendReflectionToBuffer, appendDreamToBuffer, appendDaydreamToBuffer } from '../../conversation-buffer.js';
 
 export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
   id: 'inner_dialogue_capture',
@@ -29,6 +29,7 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
     tags: ['idle-thought', 'self-reflection', 'inner'],
     displayColor: '',
     dialogueSource: '',
+    role: '',
   },
   propertySchemas: {
     tags: {
@@ -48,6 +49,12 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
       default: '',
       label: 'Source',
       description: 'Source identifier (e.g., lizard-brain, dreamer, reflector)',
+    },
+    role: {
+      type: 'text',
+      default: '',
+      label: 'Message Role',
+      description: 'Message role for buffer (e.g., reflection, dream, daydream)',
     },
   },
   description: 'Saves inner dialogue to episodic memory (never shown in main chat)',
@@ -118,8 +125,13 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
           ...(dialogueSource ? { dialogueSource } : {}),
           ...(displayColor ? { displayColor } : {}),
         };
-        const isDream = options.tags?.includes('dream') || options.tags?.includes('lucid');
-        if (isDream) {
+        const role = properties?.role || '';
+        const isDaydream = role === 'daydream' || options.tags?.includes('daydream') || options.tags?.includes('musing');
+        const isDream = role === 'dream' || options.tags?.includes('dream') || options.tags?.includes('lucid');
+
+        if (isDaydream) {
+          appendDaydreamToBuffer(context.userId, reflectionText, extraMeta);
+        } else if (isDream) {
           appendDreamToBuffer(context.userId, reflectionText, extraMeta);
         } else {
           appendReflectionToBuffer(context.userId, reflectionText, extraMeta);

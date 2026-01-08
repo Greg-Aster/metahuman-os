@@ -88,6 +88,7 @@ export const POST: APIRoute = async ({ params, cookies, url }) => {
     const resetDesire: Desire = {
       ...desire,
       status: targetStatus,
+      currentStage: targetStatus,
       updatedAt: now,
       // Clear execution data if resetting from executing
       execution: desire.status === 'executing' ? {
@@ -96,6 +97,8 @@ export const POST: APIRoute = async ({ params, cookies, url }) => {
         error: `Reset by user after ${stuckDuration} minutes`,
         completedAt: now,
       } : desire.execution,
+      // Clear clarifying questions if resetting to planning (to trigger fresh questions)
+      clarifyingQuestions: targetStatus === 'planning' ? undefined : desire.clarifyingQuestions,
     };
 
     // If going back to planning, we might want to clear the plan for a fresh start

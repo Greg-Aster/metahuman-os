@@ -1544,20 +1544,6 @@ async function loadMemoryContent(relPath: string) {
         {/await}
       </div>
     </div>
-  {:else if $activeView === 'system-coder'}
-    <div class="view-container">
-      <div class="view-header">
-        <h2 class="view-title">🔧 System Coder</h2>
-        <p class="view-subtitle">Self-healing code maintenance agent</p>
-      </div>
-      <div class="view-content">
-        {#await loadComponent('SystemCoderDashboard')}
-          <div class="loading-placeholder">Loading system coder dashboard...</div>
-        {:then Component}
-          <svelte:component this={Component} />
-        {/await}
-      </div>
-    </div>
   {/if}
 </div>
 

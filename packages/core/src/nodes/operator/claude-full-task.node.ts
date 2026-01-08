@@ -99,8 +99,28 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
       ? `\n\nRelevant context from user's memories:\n${contextPackage.memories.slice(0, 3).map((m: any) => `- ${m.content || m.text || ''}`).join('\n')}`
       : '';
 
+    // Include desire/goal context if the user is replying to a goal card
+    const desireContext = _context?.desireContext;
+    let desireInfo = '';
+    if (desireContext && desireContext.title) {
+      const answersText = desireContext.clarifyingQuestions?.answers?.length > 0
+        ? desireContext.clarifyingQuestions.answers.map((a: any) =>
+            `- ${a.answer}`
+          ).join('\n')
+        : '';
+      desireInfo = `
+**Goal/Desire Context:**
+The user is discussing their goal: "${desireContext.title}"
+- Description: ${desireContext.description || 'Not provided'}
+- User's reason: ${desireContext.reason || 'Not provided'}
+- Current status: ${desireContext.status || 'unknown'}
+${answersText ? `- Previous answers from user:\n${answersText}` : ''}
+`;
+      console.log(`[ClaudeFullTask] Including desire context: ${desireContext.title} (${desireContext.status})`);
+    }
+
     const prompt = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
-${conversationContext}
+${conversationContext}${desireInfo}
 **Current User Request:**
 ${messageText}
 ${contextInfo}
@@ -136,25 +156,23 @@ Execute now and report results.`;
       actor: 'big-brother',
     });
 
-    const timeoutMs = _properties?.timeout || 300000; // 5 minutes default
-    const timeoutMinutes = Math.round(timeoutMs / 60000);
-    emitProgress('big_brother_sending', `📤 Sending request to ${backend.name} (${timeoutMinutes}min timeout)...`);
+    emitProgress('big_brother_sending', `📤 Sending request to ${backend.name}...`);
 
     // Set up streaming callbacks to emit events to the graph executor
     const escalationOptions: any = {
-      timeout: timeoutMs,
       sessionId: _context?.sessionId,
       preferredBackend,
       username: userContext?.username,
     };
 
     // If we have emitEvent, wire up streaming callbacks
+    // Use big_brother_* event names for consistency with graph-streaming.ts handlers
     if (_context?.emitEvent) {
       escalationOptions.onChunk = (chunk: string) => {
-        _context.emitEvent?.('claude_cli_output', { chunk });
+        _context.emitEvent?.('big_brother_output', { chunk });
       };
       escalationOptions.onWaitingForInput = (question: string) => {
-        _context.emitEvent?.('claude_cli_waiting', { question });
+        _context.emitEvent?.('big_brother_waiting', { question });
       };
       emitProgress('big_brother_streaming', '🔄 Streaming callbacks configured');
     }
@@ -185,7 +203,7 @@ Execute now and report results.`;
 
     // Emit completion event
     if (_context?.emitEvent) {
-      _context.emitEvent('claude_cli_complete', { success: true });
+      _context.emitEvent('big_brother_complete', { success: true });
     }
 
     return {
@@ -225,9 +243,7 @@ Execute now and report results.`;
       actor: 'big-brother',
     });
 
-    const userMessage = isTimeout
-      ? "The task took too long to complete (exceeded 5 minute timeout). This usually happens with complex research questions. Try asking a simpler question or breaking it into smaller parts."
-      : `I encountered an error while delegating to Big Brother: ${errorMsg}`;
+    const userMessage = `I encountered an error while delegating to Big Brother: ${errorMsg}`;
 
     return {
       scratchpad: [{
@@ -254,17 +270,8 @@ export const ClaudeFullTaskNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'result', type: 'object', description: 'Execution result from Claude Code (scratchpad, finalResponse, success)' },
   ],
-  properties: {
-    timeout: 120000,
-  },
-  propertySchemas: {
-    timeout: {
-      type: 'number',
-      default: 120000,
-      label: 'Timeout',
-      description: 'Timeout in milliseconds',
-    },
-  },
+  properties: {},
+  propertySchemas: {},
   description: 'Delegates entire task to the configured Big Brother backend for autonomous completion',
   execute,
 });

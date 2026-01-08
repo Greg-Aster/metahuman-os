@@ -20,6 +20,8 @@ export interface ProviderOptions {
   keepAlive?: string;
   // Cloud-specific
   endpointTier?: string;
+  // Big Brother hybrid mode - request Big Brother for this specific call
+  useBigBrother?: boolean;
 }
 
 export interface ProviderResponse {

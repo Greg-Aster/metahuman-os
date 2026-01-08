@@ -9,6 +9,7 @@ export { DesireDetectorNode } from './desire-detector.node.js';
 export { DesireFolderCreatorNode } from './desire-folder-creator.node.js';
 export { DesireMemoryAnalyzerNode } from './desire-memory-analyzer.node.js';
 export { DesireLoaderNode } from './desire-loader.node.js';
+export { DesireConversationLoaderNode } from './desire-conversation-loader.node.js';
 export { DesireEnricherNode } from './desire-enricher.node.js';
 export { DesirePlanGeneratorNode } from './desire-plan-generator.node.js';
 export { DesireAlignmentReviewerNode } from './desire-alignment-reviewer.node.js';
@@ -25,6 +26,7 @@ import { DesireDetectorNode } from './desire-detector.node.js';
 import { DesireFolderCreatorNode } from './desire-folder-creator.node.js';
 import { DesireMemoryAnalyzerNode } from './desire-memory-analyzer.node.js';
 import { DesireLoaderNode } from './desire-loader.node.js';
+import { DesireConversationLoaderNode } from './desire-conversation-loader.node.js';
 import { DesireEnricherNode } from './desire-enricher.node.js';
 import { DesirePlanGeneratorNode } from './desire-plan-generator.node.js';
 import { DesireAlignmentReviewerNode } from './desire-alignment-reviewer.node.js';
@@ -41,6 +43,7 @@ export const agencyNodes = [
   DesireFolderCreatorNode,
   DesireMemoryAnalyzerNode,
   DesireLoaderNode,
+  DesireConversationLoaderNode,
   DesireEnricherNode,
   DesirePlanGeneratorNode,
   DesireAlignmentReviewerNode,

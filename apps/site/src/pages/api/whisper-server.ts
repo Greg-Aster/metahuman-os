@@ -33,12 +33,29 @@ const getHandler: APIRoute = async ({ cookies }) => {
       : path.join(systemPaths.etc, 'voice.json');
     if (!fs.existsSync(voiceConfigPath)) {
       return new Response(
-        JSON.stringify({ running: false, error: 'Voice config not found' }),
+        JSON.stringify({ running: false, installed: false, healthy: false, error: 'Voice config not found' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    const config = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
+    const voiceContent = fs.readFileSync(voiceConfigPath, 'utf-8').trim();
+    if (!voiceContent) {
+      // Empty file - return gracefully
+      return new Response(
+        JSON.stringify({ running: false, installed: false, healthy: false, error: 'Voice config is empty' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    let config;
+    try {
+      config = JSON.parse(voiceContent);
+    } catch (parseError) {
+      return new Response(
+        JSON.stringify({ running: false, installed: false, healthy: false, error: 'Voice config is invalid JSON' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     const serverUrl = config.stt?.whisper?.server?.url || 'http://127.0.0.1:9883';
 
     // Check if faster-whisper is installed

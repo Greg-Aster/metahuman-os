@@ -18,7 +18,8 @@ const DEFAULT_LLM_TIMEOUT = 900000;   // 15 minutes
 // Node types that are considered LLM nodes (need longer timeouts)
 const LLM_NODE_TYPES = new Set([
   'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
-  'unified_decision_llm', 'big_brother_reviewer', 'llm'
+  'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
+  'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer'
 ]);
 
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -415,6 +416,18 @@ async function executeNodeByType(
       }
 
       const startTime = Date.now();
+
+      // Big Brother nodes have no timeout - cloud LLM takes as long as needed
+      const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor';
+
+      if (neverTimeout) {
+        if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, no timeout (Big Brother)`);
+        const result = await executor(inputs, context, node.data.properties);
+        const duration = Date.now() - startTime;
+        if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
+        return result as Record<string, any>;
+      }
+
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
 
       const timeoutPromise = new Promise((_, reject) => {

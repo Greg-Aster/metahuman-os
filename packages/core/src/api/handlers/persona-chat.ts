@@ -24,7 +24,8 @@ import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../
 import { scheduler } from '../../agent-scheduler.js';
 import { isActiveOperatorEnabled } from '../../active-operator/index.js';
 import { recordSystemActivity } from '../../system-activity.js';
-// Buffer persistence removed - handled by buffer_manager node in graph
+import { appendToUserBuffer } from '../../conversation-buffer.js';
+// Early buffer save added - saves user message BEFORE graph to survive timeouts
 
 // ============================================================================
 // Types
@@ -245,16 +246,29 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
   // Create real-time event queue for streaming
   const eventQueue = new AsyncEventQueue();
 
+  // Track LLM streaming state for pause manager (so Active Operator waits for response to complete)
+  const username = userContext?.username;
+  if (username) {
+    const { setLLMStreaming } = await import('../../active-operator/pause-manager.js');
+    setLLMStreaming(username, true);
+  }
+
   try {
     // Load graph - pass username so Big Brother config can be checked properly
-    yield push('progress', { step: 'loading_graph', message: 'Loading cognitive workflow...' });
+    const loadStartTime = Date.now();
+    yield push('progress', { step: 'loading_graph', message: `Loading cognitive workflow for mode: ${cognitiveMode || mode}` });
 
     const graphKey = cognitiveMode || mode;
+    yield push('progress', { step: 'loading_graph', message: `Resolving graph for key: ${graphKey}` });
+
     const loaded = await loadGraphForMode(graphKey, userContext?.username);
     if (!loaded) {
       yield push('error', { message: 'Failed to load cognitive graph' });
       return;
     }
+
+    const loadDuration = Date.now() - loadStartTime;
+    yield push('progress', { step: 'loading_graph', message: `Graph loaded in ${loadDuration}ms: ${loaded.source}` });
 
     // Show whether Big Brother mode is active for better user feedback
     const isBigBrotherGraph = loaded.graph.name?.toLowerCase().includes('big brother') || loaded.source?.includes('bigbrother');
@@ -262,8 +276,12 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       yield push('progress', { step: 'graph_loaded', message: `🤖 Big Brother Mode: ${loaded.graph.name}` });
       yield push('progress', { step: 'big_brother_init', message: '🔧 Initializing Claude Code terminal...' });
     } else {
-      yield push('progress', { step: 'graph_loaded', message: `Executing ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
+      yield push('progress', { step: 'graph_loaded', message: `Graph: ${loaded.graph.name} (${loaded.graph.nodes.length} nodes)` });
     }
+
+    // List the nodes that will be executed
+    const nodeList = loaded.graph.nodes.map((n: any) => n.data?.nodeType || n.type || n.id).slice(0, 10);
+    yield push('progress', { step: 'graph_loaded', message: `Nodes: ${nodeList.join(' → ')}${loaded.graph.nodes.length > 10 ? '...' : ''}` });
 
     const timeoutMs = 300000; // 5 minutes
     const contextData = {
@@ -397,8 +415,11 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     };
 
     // Start graph execution in background while we stream events in real-time
+    yield push('progress', { step: 'graph_starting', message: '⚡ Starting graph execution...' });
+
     let graphState: any = null;
     let graphExecutionError: Error | null = null;
+    const graphStartTime = Date.now();
 
     const graphPromise = withUserContext(
       {
@@ -438,6 +459,9 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       yield push('error', { message: 'Graph execution returned no state' });
       return;
     }
+
+    const graphDuration = Date.now() - graphStartTime;
+    yield push('progress', { step: 'graph_complete', message: `✅ Graph complete in ${graphDuration}ms` });
 
     const duration = Date.now() - startedAt;
     const output = getGraphOutput(graphState);
@@ -479,6 +503,12 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     }
   } finally {
     clearCancellation(sessionId);
+
+    // Clear LLM streaming state for pause manager
+    if (username) {
+      const { setLLMStreaming } = await import('../../active-operator/pause-manager.js');
+      setLLMStreaming(username, false);
+    }
   }
 }
 
@@ -491,9 +521,13 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
  * POST /api/persona_chat - Same but with body
  */
 export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedResponse> {
+  console.log(`[persona-chat] 🔵 REQUEST RECEIVED at ${new Date().toISOString()}`);
+
   // Wait for executors
   if (!executorsReady) {
+    console.log('[persona-chat] ⏳ Waiting for executors...');
     await executorsReadyPromise;
+    console.log('[persona-chat] ✅ Executors ready');
   }
 
   const { user, query, body } = req;
@@ -534,6 +568,11 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     if (isActiveOperatorEnabled()) {
       recordSystemActivity(Date.now(), user.username);
     }
+
+    // Record user message for pause manager (conversation detection)
+    // This tells the Active Operator to pause when user is actively conversing
+    const { recordUserMessage } = await import('../../active-operator/pause-manager.js');
+    recordUserMessage(user.username);
   }
 
   // Initialize chat if needed
@@ -557,13 +596,120 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   let desireContext = null;
   if (replyToDesireId && user.isAuthenticated) {
     try {
-      const { loadDesire } = await import('../../agency/storage.js');
+      const { loadDesire, saveDesireManifest, addScratchpadEntryToFolder } = await import('../../agency/storage.js');
       desireContext = await loadDesire(replyToDesireId, user.username);
       if (desireContext) {
         console.log(`[persona-chat] Loaded desire context: ${desireContext.title} (${desireContext.status})`);
+
+        // If desire is in questioning status with pending questions, record the user's answer
+        const clarifyingQuestions = desireContext.clarifyingQuestions;
+        if (desireContext.status === 'questioning' &&
+            clarifyingQuestions?.questions &&
+            clarifyingQuestions.questions.length > 0) {
+          const now = new Date().toISOString();
+          const pendingQuestions = clarifyingQuestions.questions;
+          const existingAnswers = clarifyingQuestions.answers || [];
+
+          // Find unanswered questions and add this message as an answer
+          const answeredQuestionIds = new Set(existingAnswers.map((a: { questionId: string }) => a.questionId));
+          const unansweredQuestions = pendingQuestions.filter((q: { id: string }) => !answeredQuestionIds.has(q.id));
+
+          if (unansweredQuestions.length > 0) {
+            // Record answer for the first unanswered question
+            const questionToAnswer = unansweredQuestions[0];
+            const newAnswer = {
+              questionId: questionToAnswer.id,
+              answer: trimmedMessage,
+              answeredAt: now,
+            };
+
+            const updatedAnswers = [...existingAnswers, newAnswer];
+            const allQuestionsAnswered = updatedAnswers.length >= pendingQuestions.length;
+
+            // Update desire with the answer
+            clarifyingQuestions.answers = updatedAnswers;
+            if (allQuestionsAnswered) {
+              clarifyingQuestions.completedAt = now;
+            }
+            desireContext.clarifyingQuestions = clarifyingQuestions;
+            desireContext.updatedAt = now;
+            desireContext.metrics = desireContext.metrics || {};
+            desireContext.metrics.userInputCount = (desireContext.metrics.userInputCount || 0) + 1;
+            desireContext.metrics.lastActivityAt = now;
+
+            // Update scratchpad metadata
+            const nextEntryNumber = (desireContext.scratchpad?.lastEntryNumber || 0) + 1;
+            desireContext.scratchpad = {
+              ...desireContext.scratchpad,
+              entryCount: (desireContext.scratchpad?.entryCount || 0) + 1,
+              lastEntryNumber: nextEntryNumber,
+              lastEntryAt: now,
+              lastEntryType: 'questions_answered',
+            };
+
+            // Save the updated desire
+            await saveDesireManifest(desireContext, user.username);
+            console.log(`[persona-chat] ✅ Recorded answer to clarifying question: ${questionToAnswer.id}`);
+
+            // Add scratchpad entry
+            try {
+              await addScratchpadEntryToFolder(replyToDesireId, {
+                type: 'questions_answered',
+                timestamp: now,
+                description: `User answered clarifying question`,
+                actor: 'user',
+                data: {
+                  questionId: questionToAnswer.id,
+                  question: questionToAnswer.text,
+                  answer: trimmedMessage,
+                  answeredBy: user.username,
+                },
+              }, user.username);
+              console.log(`[persona-chat] ✅ Added scratchpad entry for user answer`);
+            } catch (scratchErr) {
+              console.warn(`[persona-chat] ⚠️ Failed to add scratchpad entry:`, scratchErr);
+            }
+
+            // Emit event to notify the planning system
+            try {
+              const { proposalEvents } = await import('../../index.js');
+              proposalEvents.emit('proposal-resolved', {
+                username: user.username,
+                proposalId: replyToDesireId,
+                response: 'questions_answered',
+                taskType: 'desire_plan',
+              });
+              console.log(`[persona-chat] 📢 Emitted proposal-resolved event`);
+            } catch (eventErr) {
+              console.warn(`[persona-chat] ⚠️ Failed to emit event:`, eventErr);
+            }
+          }
+        }
       }
     } catch (e) {
       console.warn(`[persona-chat] Failed to load desire context:`, e);
+    }
+  }
+
+  // EARLY BUFFER SAVE: Save user message BEFORE graph execution
+  // This ensures the message with replyToDesireId metadata is preserved
+  // even if Big Brother or other LLM nodes timeout
+  if (isAuthenticated && user.username && mode === 'conversation') {
+    const userMessageMeta: Record<string, unknown> = {};
+    if (replyToDesireId) userMessageMeta.replyToDesireId = replyToDesireId;
+    if (replyToDesireTitle) userMessageMeta.replyToDesireTitle = replyToDesireTitle;
+    if (replyToQuestionId) userMessageMeta.replyToQuestionId = replyToQuestionId;
+    if (replyToContent) userMessageMeta.replyToContent = replyToContent;
+
+    try {
+      await appendToUserBuffer(user.username, 'conversation', {
+        role: 'user',
+        content: trimmedMessage,
+        meta: Object.keys(userMessageMeta).length > 0 ? userMessageMeta : undefined,
+      });
+      console.log(`[persona-chat] ✅ Early buffer save - user message preserved with metadata:`, Object.keys(userMessageMeta));
+    } catch (e) {
+      console.warn(`[persona-chat] ⚠️ Early buffer save failed:`, e);
     }
   }
 

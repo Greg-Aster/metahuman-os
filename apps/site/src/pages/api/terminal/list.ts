@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { bigBrotherTerminal } from '@metahuman/core';
 
 const execAsync = promisify(exec);
 
@@ -9,6 +10,7 @@ interface RunningTerminal {
   port: number;
   command?: string;
   cwd?: string;
+  isBigBrother?: boolean;
 }
 
 export const GET: APIRoute = async () => {
@@ -48,6 +50,21 @@ export const GET: APIRoute = async () => {
             cwd: cwdMatch?.[1]
           });
         }
+      }
+    }
+
+    // Check if Big Brother terminal is running and add it to the list
+    const bigBrotherState = bigBrotherTerminal.getState();
+    if (bigBrotherState.isRunning && bigBrotherState.pid) {
+      // Add Big Brother terminal if not already in list (it won't be found by pgrep)
+      const existingBigBrother = terminals.find(t => t.port === bigBrotherState.port);
+      if (!existingBigBrother) {
+        terminals.push({
+          pid: bigBrotherState.pid,
+          port: bigBrotherState.port,
+          command: 'claude --dangerously-skip-permissions',
+          isBigBrother: true
+        });
       }
     }
 

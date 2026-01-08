@@ -28,6 +28,24 @@ const VOICE_MODELS_CACHE_TTL = 60_000; // 1 minute
 const VOICE_PROVIDER_CACHE_TTL = 30_000; // 30 seconds
 
 /**
+ * Report TTS speaking state to the server (for Active Operator pause management)
+ * This is fire-and-forget - errors are logged but don't affect TTS playback
+ */
+async function reportTTSState(speaking: boolean): Promise<void> {
+  try {
+    await apiFetch('/api/pause-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'setTTS', speaking }),
+    });
+    console.log(`[useTTS] Reported TTS state to server: speaking=${speaking}`);
+  } catch (e) {
+    // Non-critical - just log it
+    console.warn('[useTTS] Failed to report TTS state:', e);
+  }
+}
+
+/**
  * Check if native voice mode is enabled via localStorage
  */
 function isNativeVoiceModeEnabled(): boolean {
@@ -129,6 +147,9 @@ export function useTTS() {
    * Stop active audio playback
    */
   function stopActiveAudio() {
+    // Check if we were playing before stopping
+    const wasPlaying = get(isPlaying);
+
     // Stop Audio element (legacy/fallback)
     if (currentAudio) {
       try {
@@ -147,6 +168,11 @@ export function useTTS() {
     }
 
     isPlaying.set(false);
+
+    // Report to server if we were playing
+    if (wasPlaying) {
+      reportTTSState(false);
+    }
 
     // Also stop streaming if active
     stopStreaming();
@@ -362,12 +388,14 @@ export function useTTS() {
       webAudioSource.connect(audioCtx.destination);
 
       isPlaying.set(true);
+      reportTTSState(true); // Tell server we're speaking
       console.log('[useTTS] Playing via Web Audio API (no media session steal)');
 
       webAudioSource.onended = () => {
         if (token !== ttsPlaybackToken) return;
         console.log('[useTTS] Web Audio playback ended');
         isPlaying.set(false);
+        reportTTSState(false); // Tell server we're done speaking
         webAudioSource = null;
       };
 
@@ -532,6 +560,7 @@ export function useTTS() {
                 console.log('[useTTS] Buffer threshold reached, starting playback');
                 isLoading.set(false);
                 isPlaying.set(true);
+                reportTTSState(true); // Tell server we're speaking
               }
 
               // Try to play next chunk if buffer is ready
@@ -601,6 +630,7 @@ export function useTTS() {
       const allPlayed = audioQueue.every(c => c.played);
       if (allPlayed && streamComplete) {
         isPlaying.set(false);
+        reportTTSState(false); // Tell server we're done speaking
       }
     };
 
@@ -708,11 +738,13 @@ export function useTTS() {
         nativeUtterance.onstart = () => {
           console.log('[useTTS] Native TTS started');
           isPlaying.set(true);
+          reportTTSState(true); // Tell server we're speaking
         };
 
         nativeUtterance.onend = () => {
           console.log('[useTTS] Native TTS ended');
           isPlaying.set(false);
+          reportTTSState(false); // Tell server we're done speaking
           nativeUtterance = null;
           resolve();
         };
@@ -720,6 +752,7 @@ export function useTTS() {
         nativeUtterance.onerror = (event) => {
           console.warn('[useTTS] Native TTS error:', event.error);
           isPlaying.set(false);
+          reportTTSState(false); // Tell server we're done (error case)
           nativeUtterance = null;
           reject(new Error(event.error));
         };

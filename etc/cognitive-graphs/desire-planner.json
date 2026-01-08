@@ -4,7 +4,7 @@
   "name": "Desire Plan Generator",
   "description": "Generates execution plans for activated desires using LLM-based planning",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-01-08",
   "nodes": [
     {
       "id": "1",
@@ -144,6 +144,21 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "9",
+      "type": "genericNode",
+      "position": {
+        "x": 350,
+        "y": 350
+      },
+      "data": {
+        "label": "Load Desire Conversation",
+        "nodeType": "desire_conversation_loader",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 80
     }
   ],
   "edges": [
@@ -244,6 +259,28 @@
       "data": {
         "type": "object",
         "comment": "Updated Desire → Audit"
+      }
+    },
+    {
+      "id": "e-1-slot_0-9-slot_0",
+      "source": "1",
+      "target": "9",
+      "sourceHandle": "slot_0",
+      "targetHandle": "slot_0",
+      "data": {
+        "type": "object",
+        "comment": "Desire → Conversation Loader"
+      }
+    },
+    {
+      "id": "e-9-conversation-5-slot_4",
+      "source": "9",
+      "target": "5",
+      "sourceHandle": "conversation",
+      "targetHandle": "slot_4",
+      "data": {
+        "type": "string",
+        "comment": "User Discussion → Plan Generator"
       }
     }
   ]

@@ -63,6 +63,15 @@
     };
   }
 
+  interface BigBrotherInfo {
+    running: boolean;
+    healthy: boolean;
+    port: number;
+    pid: number | null;
+    claudeReady: boolean;
+    endpoint: string;
+  }
+
   export let isVisible = true;
 
   let servers: ServerInfo[] = [];
@@ -70,6 +79,7 @@
   let llmBackend: LLMBackendInfo | null = null;
   let localModels: LocalModelsInfo | null = null;
   let interpreter: InterpreterInfo | null = null;
+  let bigBrother: BigBrotherInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -149,6 +159,24 @@
     } catch (error) {
       console.error('Failed to fetch interpreter status:', error);
       interpreter = null;
+    }
+
+    try {
+      const bigBrotherResponse = await apiFetch('/api/big-brother-status');
+      if (bigBrotherResponse.ok) {
+        const data = await bigBrotherResponse.json();
+        bigBrother = {
+          running: data.running ?? false,
+          healthy: data.healthy ?? false,
+          port: data.port ?? 3099,
+          pid: data.pid ?? null,
+          claudeReady: data.claudeReady ?? false,
+          endpoint: data.endpoint || 'http://localhost:3099',
+        };
+      }
+    } catch (error) {
+      console.error('Failed to fetch Big Brother status:', error);
+      bigBrother = null;
     }
 
     for (const config of serverConfigs) {
@@ -245,6 +273,27 @@
       }
     } catch (error) {
       alert(`Error ${action}ing Open Interpreter: ${(error as Error).message}`);
+    } finally {
+      actionInProgress = null;
+    }
+  }
+
+  async function controlBigBrother(action: 'start' | 'stop' | 'restart') {
+    actionInProgress = `bigbrother-${action}`;
+    try {
+      const response = await apiFetch('/api/big-brother-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        alert(`Failed to ${action} Big Brother: ${data.error || 'Unknown error'}`);
+      } else {
+        setTimeout(fetchServerStatus, 2000);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing Big Brother: ${(error as Error).message}`);
     } finally {
       actionInProgress = null;
     }
@@ -592,6 +641,62 @@
               {#if interpreter.config.maxIterations}
                 <span class="inline-block px-2 py-1 bg-violet-500/10 dark:bg-violet-400/15 text-violet-600 dark:text-violet-400 rounded text-[0.7rem] font-medium">Max Iterations: {interpreter.config.maxIterations}</span>
               {/if}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Big Brother (Claude Code) -->
+        <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {bigBrother?.running ? 'border-2 border-purple-500/40 dark:border-purple-400/40 bg-purple-500/[0.02] dark:bg-purple-400/[0.03]' : 'border-purple-500/20 dark:border-purple-400/20'}">
+          <div class="mb-3">
+            <div class="flex items-start gap-3">
+              <span class="text-xl leading-none">
+                {#if bigBrother?.running && bigBrother?.healthy}🟢
+                {:else if bigBrother?.running}🟡
+                {:else}🔴{/if}
+              </span>
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-sm text-gray-900 dark:text-gray-100 mb-1">
+                  Big Brother
+                  <span class="inline-block px-1.5 py-0.5 ml-2 bg-purple-500/15 dark:bg-purple-400/20 text-purple-600 dark:text-purple-400 rounded text-[0.6rem] font-bold tracking-tight">Claude Code</span>
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  {bigBrother?.endpoint || 'http://localhost:3099'}
+                  {#if bigBrother?.running && bigBrother?.pid}
+                    • PID: {bigBrother.pid}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            {#if bigBrother?.running}
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlBigBrother('stop')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'bigbrother-stop' ? '...' : 'Stop'}
+              </button>
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlBigBrother('restart')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'bigbrother-restart' ? '...' : 'Restart'}
+              </button>
+            {:else}
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlBigBrother('start')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'bigbrother-start' ? '...' : 'Start'}
+              </button>
+            {/if}
+          </div>
+          {#if bigBrother?.running}
+            <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/10 dark:border-white/10">
+              {#if bigBrother.claudeReady}
+                <span class="inline-block px-2 py-1 bg-emerald-500/10 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 rounded text-[0.7rem] font-medium">🤖 Claude Ready</span>
+              {:else}
+                <span class="inline-block px-2 py-1 bg-amber-500/10 dark:bg-amber-400/15 text-amber-600 dark:text-amber-400 rounded text-[0.7rem] font-medium">Initializing...</span>
+              {/if}
+              <a
+                href="http://localhost:3099"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-block px-2 py-1 bg-purple-500/10 dark:bg-purple-400/15 text-purple-600 dark:text-purple-400 rounded text-[0.7rem] font-medium hover:bg-purple-500/20 dark:hover:bg-purple-400/25 transition-colors"
+              >
+                🔗 Open Terminal
+              </a>
             </div>
           {/if}
         </div>

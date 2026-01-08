@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { createEventDispatcher, afterUpdate, onMount } from 'svelte';
+  import { createEventDispatcher, afterUpdate, onMount, onDestroy } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
 
-  /** Big Brother output chunks */
+  /** Big Brother output chunks (can be passed in OR populated via WebSocket) */
   export let output: string[] = [];
   /** Whether Big Brother is actively running */
   export let active: boolean = false;
@@ -12,12 +12,123 @@
   export let question: string = '';
   /** Whether panel can be minimized */
   export let minimizable: boolean = true;
+  /** Whether to connect to WebSocket for live updates */
+  export let liveMode: boolean = true;
 
   let inputText = '';
   let outputContainer: HTMLDivElement;
   let inputField: HTMLTextAreaElement;
   let minimized = false;
   let sending = false;
+  let ws: WebSocket | null = null;
+  let wsConnected = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Internal output buffer for WebSocket mode
+  let internalOutput: string[] = [];
+
+  // Use internal output if in live mode, otherwise use prop
+  $: displayOutput = liveMode ? internalOutput : output;
+  $: displayActive = liveMode ? wsConnected : active;
+
+  function connectWebSocket() {
+    if (!liveMode || ws) return;
+
+    try {
+      // Connect to Big Brother WebSocket server (port 3099)
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.hostname}:3099`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[BigBrother WS] Connected to stream');
+        wsConnected = true;
+        internalOutput = ['🔗 Connected to Big Brother stream...'];
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'output') {
+            // Stream output chunk - uses 'data' field from server
+            if (data.data) {
+              internalOutput = [...internalOutput, data.data];
+            }
+          } else if (data.type === 'stderr') {
+            // Stderr output
+            if (data.data) {
+              internalOutput = [...internalOutput, `⚠️ ${data.data}`];
+            }
+          } else if (data.type === 'thinking') {
+            // Claude is thinking
+            internalOutput = [...internalOutput, `💭 ${data.data || ''}`];
+          } else if (data.type === 'tool_use') {
+            // Tool being used
+            internalOutput = [...internalOutput, `🔧 Tool: ${data.name || data.data}`];
+          } else if (data.type === 'complete') {
+            internalOutput = [...internalOutput, `\n✅ Complete`];
+          } else if (data.type === 'error') {
+            internalOutput = [...internalOutput, `\n❌ Error: ${data.data || 'Unknown error'}`];
+          } else if (data.type === 'prompt') {
+            // Show what prompt was sent
+            const preview = (data.data || '').substring(0, 100);
+            internalOutput = [...internalOutput, `\n📤 Prompt: ${preview}...`];
+          }
+        } catch {
+          // Plain text message
+          if (event.data.trim()) {
+            internalOutput = [...internalOutput, event.data];
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('[BigBrother WS] Disconnected');
+        wsConnected = false;
+        ws = null;
+
+        // Reconnect after delay if still in live mode
+        if (liveMode) {
+          reconnectTimer = setTimeout(connectWebSocket, 3000);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[BigBrother WS] Error:', err);
+        wsConnected = false;
+      };
+    } catch (err) {
+      console.error('[BigBrother WS] Failed to connect:', err);
+    }
+  }
+
+  function disconnectWebSocket() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    wsConnected = false;
+  }
+
+  function clearOutput() {
+    internalOutput = [];
+  }
+
+  onMount(() => {
+    if (liveMode) {
+      connectWebSocket();
+    }
+  });
+
+  onDestroy(() => {
+    disconnectWebSocket();
+  });
 
   function escapeHtml(value: string): string {
     return value
@@ -141,22 +252,35 @@
   }
 </script>
 
-<div class="big-brother-terminal" class:minimized class:active class:waiting>
+<div class="big-brother-terminal" class:minimized class:active={displayActive} class:waiting>
   <!-- Header -->
   <div class="flex justify-between items-center py-2 px-3 bg-[#181825] border-b border-[#313244] cursor-pointer">
     <div class="flex items-center gap-2">
-      <span class="status-dot" class:active class:waiting></span>
+      <span class="status-dot" class:active={displayActive} class:waiting class:connected={wsConnected}></span>
       <span class="text-[#cdd6f4] text-xs font-medium">
-        {#if active}
+        {#if displayActive}
           Big Brother Running...
         {:else if waiting}
           Waiting for response...
+        {:else if liveMode && wsConnected}
+          Big Brother (Live)
+        {:else if liveMode}
+          Big Brother (Connecting...)
         {:else}
           Big Brother
         {/if}
       </span>
     </div>
     <div class="flex gap-1">
+      {#if liveMode && displayOutput.length > 1}
+        <button
+          class="header-btn"
+          on:click={clearOutput}
+          title="Clear output"
+        >
+          🗑
+        </button>
+      {/if}
       {#if minimizable}
         <button
           class="header-btn"
@@ -179,12 +303,16 @@
   {#if !minimized}
     <!-- Output area -->
     <div class="terminal-output" bind:this={outputContainer}>
-      {#if output.length === 0}
+      {#if displayOutput.length === 0}
         <div class="text-[#6c7086] italic text-center py-5">
-          Waiting for Big Brother output...
+          {#if liveMode && !wsConnected}
+            Connecting to Big Brother stream...
+          {:else}
+            Waiting for Big Brother output...
+          {/if}
         </div>
       {:else}
-        {#each output as line, i}
+        {#each displayOutput as line, i}
           <pre class="m-0 py-0.5 text-[#cdd6f4] whitespace-pre-wrap break-words"><span>{@html ansiToHtml(line)}</span></pre>
         {/each}
       {/if}
@@ -198,19 +326,19 @@
     </div>
 
     <!-- Input area -->
-    <div class="terminal-input" class:waiting class:disabled={!active && !waiting}>
+    <div class="terminal-input" class:waiting class:disabled={!displayActive && !waiting}>
       <textarea
         bind:this={inputField}
         bind:value={inputText}
         on:keydown={handleKeydown}
         placeholder={waiting ? "Respond to Big Brother's question..." : "Send input to Big Brother..."}
         rows="2"
-        disabled={(!active && !waiting) || sending}
+        disabled={(!displayActive && !waiting) || sending}
       ></textarea>
       <button
         class="send-btn"
         on:click={handleSend}
-        disabled={!inputText.trim() || (!active && !waiting) || sending}
+        disabled={!inputText.trim() || (!displayActive && !waiting) || sending}
       >
         {#if sending}
           ...
@@ -222,13 +350,15 @@
   {:else}
     <!-- Minimized state -->
     <div class="flex items-center gap-2 px-3 py-1 text-[#6c7086] text-[11px]">
-      {#if active}
+      {#if displayActive}
         <span class="text-[#a6e3a1] font-medium">Running</span>
-        <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{output[output.length - 1]?.substring(0, 50) || ''}...</span>
+        <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{displayOutput[displayOutput.length - 1]?.substring(0, 50) || ''}...</span>
       {:else if waiting}
         <span class="text-[#f9e2af] font-medium">Waiting for input</span>
+      {:else if liveMode && wsConnected}
+        <span class="text-[#89b4fa] font-medium">Connected</span>
       {:else}
-        <span class="text-[#a6e3a1] font-medium">Idle</span>
+        <span class="text-[#6c7086] font-medium">Idle</span>
       {/if}
     </div>
   {/if}
@@ -248,6 +378,9 @@
   /* Status dot with animations */
   .status-dot {
     @apply w-2 h-2 rounded-full bg-[#6c7086];
+  }
+  .status-dot.connected {
+    @apply bg-[#89b4fa];
   }
   .status-dot.active {
     @apply bg-[#a6e3a1];

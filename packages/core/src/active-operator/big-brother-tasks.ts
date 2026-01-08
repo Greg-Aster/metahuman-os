@@ -188,21 +188,23 @@ ${context.desireId ? `Specific Desire ID: ${context.desireId}` : ''}
 
 You need to advance pending desires through the MetaHuman OS agency pipeline. Here's what to do:
 
-### Step 1: Find Pending Desires Ready for Advancement
-Read the desires from: \`${desiresPath}/pending/\` and \`${desiresPath}/nascent/\`
-Each desire is in a folder with a \`manifest.json\` file.
+### Step 1: Find Desires Ready for Advancement
+${context.desireId ? `Read the manifest at: \`${desiresPath}/folders/${context.desireId}/manifest.json\`` : `Search in: \`${desiresPath}/folders/\`
+Find desires where manifest.json has:
+- \`"status": "pending"\` or \`"status": "nascent"\`
+- \`strength >= 0.70\` (activation threshold)`}
 
-Look for desires with \`strength >= 0.70\` (activation threshold).
+Each desire is in a folder with a \`manifest.json\` file.
 
 ### Step 2: For Each Ready Desire, Generate a Plan
 For each desire ready for advancement:
 1. Read the desire's \`manifest.json\`
-2. Create an execution plan with:
+2. Create an execution plan in the \`plan\` field with:
    - \`operatorGoal\`: Clear goal statement
    - \`steps\`: Array of action steps with skill mappings
    - \`estimatedRisk\`: 'low', 'medium', 'high', or 'critical'
 3. Update the manifest with the plan
-4. Move the desire folder from \`pending/\` or \`nascent/\` to \`planning/\`
+4. Change \`status\` from "pending"/"nascent" to "planning"
 
 ### Step 3: Report Results
 Report what you did:
@@ -211,10 +213,8 @@ Report what you did:
 - What plans were created
 
 ## Expected File Operations
-- READ: \`${desiresPath}/pending/*/manifest.json\`
-- READ: \`${desiresPath}/nascent/*/manifest.json\`
-- WRITE: Updated manifest.json files with plans
-- MOVE: Desire folders from pending/nascent to planning
+- READ: \`${desiresPath}/folders/*/manifest.json\`
+- WRITE: Updated manifest.json files with plans and new status
 
 ## Success Criteria
 - At least one desire was processed (or report if none were ready)
@@ -226,9 +226,7 @@ Report what you did:
 - Return without checking the files
 - Say you're "preparing" without executing`,
     relevantPaths: [
-      `${desiresPath}/pending`,
-      `${desiresPath}/nascent`,
-      `${desiresPath}/planning`,
+      `${desiresPath}/folders`,
       paths.personaCore,
     ],
     successCriteria: {
@@ -266,8 +264,8 @@ Reasoning: ${context.reasoning || 'Execute the approved desire'}
 Execute an APPROVED desire from the agency system.
 
 ### Step 1: Find Approved Desire
-Read from: \`${desiresPath}/approved/\`
-${context.desireId ? `Look for desire with ID: ${context.desireId}` : 'Process the first available approved desire.'}
+${context.desireId ? `Read the manifest at: \`${desiresPath}/folders/${context.desireId}/manifest.json\`` : `Search in: \`${desiresPath}/folders/\`
+Find a desire folder where manifest.json has \`"status": "approved"\``}
 
 ### Step 2: Read the Execution Plan
 The desire's \`manifest.json\` contains:
@@ -283,23 +281,22 @@ Follow the plan steps. Each step may reference:
 
 ### Step 4: Record Results
 Update the desire manifest with:
-- \`executionResult\`: What was done
+- \`execution.completedAt\`: Current timestamp
+- \`execution.status\`: 'completed' or 'failed'
+- \`execution.stepResults\`: Array of results for each step
 - \`status\`: Change to 'awaiting_review' after execution
-- Move the folder to \`awaiting_review/\`
 
 ## Expected File Operations
-- READ: \`${desiresPath}/approved/*/manifest.json\`
+- READ: \`${desiresPath}/folders/*/manifest.json\`
 - WRITE: Updated manifest with execution results
-- MOVE: Desire folder to awaiting_review/
 
 ## Success Criteria
 - Desire plan was read and understood
 - Plan steps were executed
-- Results were recorded
-- Desire was moved to awaiting_review`,
+- Results were recorded in the manifest
+- Desire status was changed to awaiting_review`,
     relevantPaths: [
-      `${desiresPath}/approved`,
-      `${desiresPath}/awaiting_review`,
+      `${desiresPath}/folders`,
       paths.episodic,
     ],
     successCriteria: {
@@ -342,14 +339,15 @@ Look for:
 - Curiosities and interests
 
 ### Step 3: Create New Desires
-For each new desire, create a folder in \`${paths.persona}/desires/nascent/\` with:
+For each new desire, create a folder in \`${paths.persona}/desires/folders/\` with naming format \`desire-{timestamp}-{random}\`:
 - \`manifest.json\` containing:
-  - \`id\`: UUID
+  - \`id\`: Same as folder name (e.g., "desire-1234567890-abc123")
   - \`title\`: Clear, actionable title
   - \`description\`: What this desire aims to achieve
   - \`source\`: Where this desire came from (persona_goal, task, memory_pattern, etc.)
   - \`strength\`: Initial strength (0.15-0.30)
   - \`status\`: 'nascent'
+  - \`folderPath\`: "folders/{folder-name}"
   - \`createdAt\`: ISO timestamp
   - \`updatedAt\`: ISO timestamp
 
@@ -359,7 +357,7 @@ List the desires created with their titles and sources.
 ## Expected File Operations
 - READ: \`${paths.personaCore}\`
 - READ: \`${paths.episodic}/**/*.json\` (recent memories)
-- WRITE: New desire folders in \`${paths.persona}/desires/nascent/\`
+- WRITE: New desire folders in \`${paths.persona}/desires/folders/\`
 
 ## Success Criteria
 - At least 1-3 new desires created
@@ -368,7 +366,7 @@ List the desires created with their titles and sources.
     relevantPaths: [
       paths.personaCore,
       paths.episodic,
-      `${paths.persona}/desires/nascent`,
+      `${paths.persona}/desires/folders`,
     ],
     successCriteria: {
       requiredKeywords: ['desire', 'created', 'title', 'source', 'strength'],
@@ -832,6 +830,22 @@ const SANDBOX_ERROR_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * Patterns that indicate terminal garbage/UI artifacts were captured instead of real output.
+ * This happens when Big Brother's terminal session is captured incorrectly.
+ */
+const TERMINAL_GARBAGE_PATTERNS: RegExp[] = [
+  /\u001b\[/,                          // ANSI escape sequences (common)
+  /\x1b\[/,                            // ANSI escape sequences (hex form)
+  /[\u2500-\u257F]/,                   // Box-drawing characters (╭╯╰╮│─ etc.)
+  /Bypassing\s+Permissions/i,          // Claude Code UI artifact
+  /Reticulating/i,                     // Claude Code spinner text
+  /\?\s+for\s+shortcuts/i,             // Claude Code help text
+  /esc\s+to\s+interrupt/i,             // Claude Code interrupt hint
+  /↑\s+\d+\s+tokens/i,                 // Claude Code token counter
+  /Pasted\s+text\s+#\d+/i,             // Claude Code paste indicator
+];
+
+/**
  * Validate Big Brother output to detect placeholder/no-op responses.
  * This is CRITICAL - we must not accept "success" when nothing happened.
  *
@@ -863,6 +877,17 @@ export function validateBigBrotherOutput(
     console.log('[big-brother-tasks] ⚠️ Sandbox/permission error detected in output');
     result.isValid = true;  // Let the error pass through
     result.failureReason = 'Sandbox or permission limitation detected';
+    return result;
+  }
+
+  // Check for terminal garbage/UI artifacts - this is a critical failure
+  // This happens when the pty captures Claude Code's UI instead of actual output
+  const hasTerminalGarbage = TERMINAL_GARBAGE_PATTERNS.some(pattern => pattern.test(output));
+  if (hasTerminalGarbage) {
+    console.error('[big-brother-tasks] ❌ Terminal garbage detected in output - pty captured UI instead of work');
+    result.failureReason = 'Output contains terminal UI artifacts (ANSI escapes, box characters, or Claude Code UI elements)';
+    result.isPlaceholder = true; // Mark as placeholder since no real work was done
+    result.details.matchedPlaceholderPattern = 'terminal_garbage';
     return result;
   }
 
@@ -929,6 +954,20 @@ export function validateOutputWithWorkIndicators(
   taskType: string,
   successCriteria: SuccessCriteria
 ): ValidationResult {
+  // Special case: 'idle' is a no-op task that doesn't require file operations
+  if (taskType === 'idle') {
+    return {
+      isValid: true,
+      isPlaceholder: false,
+      details: {
+        outputLength: output.length,
+        hasRequiredKeywords: true,
+        stateChecksPassed: 1,
+        stateChecksFailed: 0,
+      },
+    };
+  }
+
   // First do basic validation
   const basicResult = validateBigBrotherOutput(output, taskType, successCriteria);
   if (!basicResult.isValid) {

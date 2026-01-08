@@ -16,3 +16,4 @@ export { ScratchpadContextNode } from './scratchpad-context.node.js';
 export { UnifiedDecisionLLMNode } from './unified-decision-llm.node.js';
 export { TaskExecutionNode } from './task-execution.node.js';
 export { BigBrotherReviewerNode } from './big-brother-reviewer.node.js';
+export { BigBrotherDecisionNode } from './big-brother-decision.node.js';

@@ -159,9 +159,15 @@
 <div class="input-wrapper">
   <!-- Reply-to indicator -->
   {#if selectedMessage}
-    <div class="reply-indicator flex items-center gap-2 px-3 py-2 bg-blue-500/10 dark:bg-blue-500/20 rounded-t-lg text-sm">
-      <span class="text-blue-500 dark:text-blue-400 font-medium">↩ Replying to:</span>
-      <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.content.substring(0, 60)}{selectedMessage.content.length > 60 ? '...' : ''}</span>
+    <div class="reply-indicator flex items-center gap-2 px-3 py-2 rounded-t-lg text-sm
+                {selectedMessage.meta?.type === 'clarifying_questions' ? 'bg-cyan-500/10 dark:bg-cyan-500/20' : 'bg-blue-500/10 dark:bg-blue-500/20'}">
+      {#if selectedMessage.meta?.type === 'clarifying_questions'}
+        <span class="text-cyan-500 dark:text-cyan-400 font-medium">💭 Discussing:</span>
+        <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.meta?.desireTitle || 'Goal'}</span>
+      {:else}
+        <span class="text-blue-500 dark:text-blue-400 font-medium">↩ Replying to:</span>
+        <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.content.substring(0, 60)}{selectedMessage.content.length > 60 ? '...' : ''}</span>
+      {/if}
       <button
         class="w-6 h-6 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
         on:click={handleClearSelection}

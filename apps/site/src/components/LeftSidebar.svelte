@@ -22,7 +22,6 @@
     { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
-    { id: 'system-coder', label: 'System Coder', icon: '🔧', description: 'Self-healing agent' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
   ];
 

@@ -19,6 +19,12 @@
   $: rightSidebarOpen = $rightSidebarStore;
   let isMobile = true;
 
+  // Right sidebar resize state
+  let rightSidebarWidth = 280; // Default width in pixels
+  let isResizingRightSidebar = false;
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+
   // Create a store for leftSidebarOpen and expose it via context
   const leftSidebarStore = writable(false);
   setContext('leftSidebarOpen', leftSidebarStore);
@@ -267,6 +273,14 @@
       rightSidebarStore.set(true);
     }
 
+    // Load saved right sidebar width
+    try {
+      const savedWidth = localStorage.getItem('mh-right-sidebar-width');
+      if (savedWidth) {
+        rightSidebarWidth = Math.max(200, Math.min(600, parseInt(savedWidth, 10) || 280));
+      }
+    } catch {}
+
     // Listen for window resize
     window.addEventListener('resize', updateScreenSize);
 
@@ -354,6 +368,51 @@
   function toggleRightSidebar() {
     rightSidebarStore.update(v => !v);
     // localStorage persistence handled by store subscription in navigation.ts
+  }
+
+  // Right sidebar resize handlers
+  function startRightSidebarResize(e: MouseEvent | TouchEvent) {
+    if (isMobile) return; // Disable resize on mobile
+    isResizingRightSidebar = true;
+    resizeStartX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    resizeStartWidth = rightSidebarWidth;
+
+    // Prevent text selection during resize
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    // Add global listeners
+    document.addEventListener('mousemove', handleRightSidebarResize);
+    document.addEventListener('mouseup', stopRightSidebarResize);
+    document.addEventListener('touchmove', handleRightSidebarResize);
+    document.addEventListener('touchend', stopRightSidebarResize);
+  }
+
+  function handleRightSidebarResize(e: MouseEvent | TouchEvent) {
+    if (!isResizingRightSidebar) return;
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    // Moving left increases width (negative delta = more width)
+    const delta = resizeStartX - clientX;
+    const newWidth = Math.max(200, Math.min(600, resizeStartWidth + delta));
+    rightSidebarWidth = newWidth;
+  }
+
+  function stopRightSidebarResize() {
+    isResizingRightSidebar = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+
+    // Remove global listeners
+    document.removeEventListener('mousemove', handleRightSidebarResize);
+    document.removeEventListener('mouseup', stopRightSidebarResize);
+    document.removeEventListener('touchmove', handleRightSidebarResize);
+    document.removeEventListener('touchend', stopRightSidebarResize);
+
+    // Save preference to localStorage
+    try {
+      localStorage.setItem('mh-right-sidebar-width', String(rightSidebarWidth));
+    } catch {}
   }
 </script>
 
@@ -603,10 +662,28 @@
     </main>
 
     <!-- Right Sidebar (Developer Tools) -->
+    {#if rightSidebarOpen && !isMobile}
+      <!-- Resize handle -->
+      <div
+        class="sidebar-resize-handle"
+        class:resizing={isResizingRightSidebar}
+        on:mousedown={startRightSidebarResize}
+        on:touchstart={startRightSidebarResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        tabindex="0"
+        on:keydown={(e) => {
+          if (e.key === 'ArrowLeft') { rightSidebarWidth = Math.min(600, rightSidebarWidth + 20); }
+          if (e.key === 'ArrowRight') { rightSidebarWidth = Math.max(200, rightSidebarWidth - 20); }
+        }}
+      ></div>
+    {/if}
     <aside
-      class="flex flex-col border-l border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-hidden transition-all duration-300 ease-in-out {rightSidebarOpen ? 'w-[280px]' : 'w-0 border-0'} max-md:fixed max-md:right-0 max-md:top-[57px] max-md:bottom-0 max-md:z-30 max-md:shadow-lg"
+      class="flex flex-col border-l border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-hidden transition-all duration-300 ease-in-out max-md:fixed max-md:right-0 max-md:top-[57px] max-md:bottom-0 max-md:z-30 max-md:shadow-lg {rightSidebarOpen ? '' : 'w-0 border-0'}"
+      style={rightSidebarOpen && !isMobile ? `width: ${rightSidebarWidth}px` : rightSidebarOpen ? 'width: 280px' : ''}
     >
-      <div class="flex flex-col w-[280px] h-full overflow-y-auto overflow-x-hidden">
+      <div class="flex flex-col h-full overflow-y-auto overflow-x-hidden" style={!isMobile ? `width: ${rightSidebarWidth}px` : 'width: 280px'}>
         <slot name="right-sidebar" />
       </div>
     </aside>
@@ -664,5 +741,60 @@
   }
   :global(.dark) aside > div::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Right sidebar resize handle */
+  .sidebar-resize-handle {
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background-color 0.15s ease;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+  }
+
+  .sidebar-resize-handle:hover,
+  .sidebar-resize-handle.resizing {
+    background: rgb(96 165 250); /* blue-400 */
+  }
+
+  :global(.dark) .sidebar-resize-handle:hover,
+  :global(.dark) .sidebar-resize-handle.resizing {
+    background: rgb(59 130 246); /* blue-500 */
+  }
+
+  .sidebar-resize-handle:focus {
+    outline: none;
+    background: rgb(96 165 250);
+  }
+
+  .sidebar-resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  :global(.dark) .sidebar-resize-handle::after {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .sidebar-resize-handle:hover::after,
+  .sidebar-resize-handle.resizing::after {
+    opacity: 1;
+    background: white;
+  }
+
+  :global(.dark) .sidebar-resize-handle:hover::after,
+  :global(.dark) .sidebar-resize-handle.resizing::after {
+    background: rgba(255, 255, 255, 0.8);
   }
 </style>

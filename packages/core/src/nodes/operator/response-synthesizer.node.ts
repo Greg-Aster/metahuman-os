@@ -212,13 +212,56 @@ const execute: NodeExecutor = async (inputs, context) => {
     const desireContext = context.desireContext;
     if (desireContext && desireContext.title) {
       console.log(`[ResponseSynthesizer] Including desire context: ${desireContext.title} (${desireContext.status})`);
-      const stepsText = desireContext.plan?.steps?.length > 0
-        ? desireContext.plan.steps.map((s: any, i: number) =>
-            `${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}${s.expectedOutcome ? ` - ${s.expectedOutcome}` : ''}`
-          ).join('\n')
-        : 'No plan steps yet';
       const strengthPct = ((desireContext.strength || 0) * 100).toFixed(0);
-      desireSection = `\n\n## Goal Context\nThe user is discussing this goal: "${desireContext.title}"\nDescription: ${desireContext.description || 'No description'}\nStatus: ${desireContext.status || 'unknown'}\nStrength: ${strengthPct}%\n\nPlan Steps:\n${stepsText}\n\nThe user can approve, reject, or provide feedback to revise this goal.\n---\n`;
+
+      // Check if desire is in questioning phase - provide conversational instructions
+      if (desireContext.status === 'questioning') {
+        // Questioning phase: be conversational, gather information
+        const questionsText = desireContext.clarifyingQuestions?.questions?.length > 0
+          ? desireContext.clarifyingQuestions.questions.map((q: any, i: number) =>
+              `${i + 1}. ${q.text}${q.required ? ' (required)' : ''}`
+            ).join('\n')
+          : 'Gather more details about what the user wants to achieve.';
+
+        const answersText = desireContext.clarifyingQuestions?.answers?.length > 0
+          ? desireContext.clarifyingQuestions.answers.map((a: any) =>
+              `- ${a.answer}`
+            ).join('\n')
+          : 'No answers yet.';
+
+        desireSection = `\n\n## QUESTIONING PHASE - Be Conversational
+**IMPORTANT**: You are in the QUESTIONING phase for this goal. Your task is to have a helpful CONVERSATION to gather more information.
+
+**Goal**: "${desireContext.title}"
+**Description**: ${desireContext.description || 'No description'}
+**User's Reason**: ${desireContext.reason || 'Not specified'}
+
+**Questions to explore**:
+${questionsText}
+
+**Answers gathered so far**:
+${answersText}
+
+**Instructions**:
+- Be conversational and helpful - this is a discussion, not task execution
+- Ask follow-up questions if the user's answer needs clarification
+- Help the user think through their goal
+- DO NOT execute any plans or take actions yet
+- DO NOT create detailed implementation plans yet
+- The user will click "Ready to Plan" when they've shared enough information
+
+Respond conversationally to help refine this goal.
+---\n`;
+      } else {
+        // Other statuses: provide standard goal context
+        const stepsText = desireContext.plan?.steps?.length > 0
+          ? desireContext.plan.steps.map((s: any, i: number) =>
+              `${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}${s.expectedOutcome ? ` - ${s.expectedOutcome}` : ''}`
+            ).join('\n')
+          : 'No plan steps yet';
+
+        desireSection = `\n\n## Goal Context\nThe user is discussing this goal: "${desireContext.title}"\nDescription: ${desireContext.description || 'No description'}\nStatus: ${desireContext.status || 'unknown'}\nStrength: ${strengthPct}%\n\nPlan Steps:\n${stepsText}\n\nThe user can approve, reject, or provide feedback to revise this goal.\n---\n`;
+      }
     }
 
     // IMPORTANT: User's current message is the PRIMARY focus
