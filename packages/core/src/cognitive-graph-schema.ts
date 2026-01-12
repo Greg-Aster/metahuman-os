@@ -9,6 +9,8 @@
  * - Svelte Flow: string IDs, position objects, edges array with handles
  */
 
+const LOG_PREFIX = '[cognitive-graph-schema]';
+
 // ============================================================================
 // LEGACY FORMAT (LiteGraph) - Used by graph-executor
 // ============================================================================
@@ -136,10 +138,12 @@ export interface SvelteFlowGraph {
 /**
  * Detect if a graph is in Svelte Flow format
  */
-export function isSvelteFlowFormat(graph: any): graph is SvelteFlowGraph {
-  return graph.format === 'svelte-flow' || (
-    Array.isArray(graph.edges) &&
-    graph.nodes?.[0]?.position !== undefined
+export function isSvelteFlowFormat(graph: unknown): graph is SvelteFlowGraph {
+  if (typeof graph !== 'object' || graph === null) return false;
+  const g = graph as any;
+  return g.format === 'svelte-flow' || (
+    Array.isArray(g.edges) &&
+    g.nodes?.[0]?.position !== undefined
   );
 }
 
@@ -186,6 +190,8 @@ function extractSlotIndex(handleName: string, isOutput: boolean): number {
  * Convert Svelte Flow graph to legacy format for execution
  */
 export function convertToLegacyFormat(sfGraph: SvelteFlowGraph): CognitiveGraph {
+  console.log(`${LOG_PREFIX} Converting Svelte Flow graph to legacy format: ${sfGraph.name} (${sfGraph.nodes.length} nodes, ${sfGraph.edges.length} edges)`);
+  
   // Convert nodes
   const nodes: CognitiveGraphNode[] = sfGraph.nodes.map((node) => {
     const numericId = parseInt(node.id, 10);
@@ -228,11 +234,15 @@ export function convertToLegacyFormat(sfGraph: SvelteFlowGraph): CognitiveGraph 
 /**
  * Normalize any graph format to legacy format for execution
  */
-export function normalizeForExecution(graph: any): CognitiveGraph {
+export function normalizeForExecution(graph: unknown): CognitiveGraph {
+  const g = graph as any;
+  console.log(`${LOG_PREFIX} Normalizing graph for execution: ${g?.name || 'unnamed'}`);
   if (isSvelteFlowFormat(graph)) {
+    console.log(`${LOG_PREFIX} Detected Svelte Flow format, converting to legacy`);
     return convertToLegacyFormat(graph as SvelteFlowGraph);
   }
-  return graph as CognitiveGraph;
+  console.log(`${LOG_PREFIX} Already in legacy format`);
+  return g as CognitiveGraph;
 }
 
 /**
@@ -249,6 +259,7 @@ export class GraphValidationError extends Error {
  * Validate a Svelte Flow graph structure
  */
 export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
+  console.log(`${LOG_PREFIX} Validating Svelte Flow graph: ${graph?.name || 'unnamed'}`);
   const errors: string[] = [];
 
   // Required metadata
@@ -261,7 +272,7 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
 
   // Validate cognitive mode if provided
   if (graph.cognitiveMode && !['dual', 'agent', 'emulation'].includes(graph.cognitiveMode)) {
-    errors.push('Invalid cognitiveMode (must be dual, agent, or emulation)');
+    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, or omit the field entirely for cross-mode graphs.`);
   }
 
   // Required structure - nodes
@@ -353,7 +364,7 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
     const visited = new Set<string>();
     const recursionStack = new Set<string>();
 
-    function hasCycle(node: string): boolean {
+    const hasCycle = (node: string): boolean => {
       if (recursionStack.has(node)) return true;
       if (visited.has(node)) return false;
 
@@ -367,9 +378,9 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
 
       recursionStack.delete(node);
       return false;
-    }
+    };
 
-    for (const nodeId of edgeMap.keys()) {
+    for (const nodeId of Array.from(edgeMap.keys())) {
       if (hasCycle(nodeId)) {
         errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges)');
         break;
@@ -378,6 +389,7 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
   }
 
   if (errors.length > 0) {
+    console.error(`${LOG_PREFIX} Svelte Flow graph validation failed with ${errors.length} errors:`, errors);
     throw new GraphValidationError(errors);
   }
 
@@ -388,6 +400,7 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
  * Validate a cognitive graph structure
  */
 export function validateCognitiveGraph(graph: any): CognitiveGraph {
+  console.log(`${LOG_PREFIX} Validating cognitive graph: ${graph?.name || 'unnamed'}`);
   const errors: string[] = [];
 
   // Required metadata
@@ -403,7 +416,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
 
   // Validate cognitive mode if provided
   if (graph.cognitiveMode && !['dual', 'agent', 'emulation'].includes(graph.cognitiveMode)) {
-    errors.push('Invalid cognitiveMode (must be dual, agent, or emulation)');
+    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, or omit the field entirely for cross-mode graphs.`);
   }
 
   // Required structure
@@ -484,7 +497,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
     const visited = new Set<number>();
     const recursionStack = new Set<number>();
 
-    function hasCycle(node: number): boolean {
+    const hasCycle = (node: number): boolean => {
       if (recursionStack.has(node)) return true;
       if (visited.has(node)) return false;
 
@@ -498,9 +511,9 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
 
       recursionStack.delete(node);
       return false;
-    }
+    };
 
-    for (const nodeId of linkMap.keys()) {
+    for (const nodeId of Array.from(linkMap.keys())) {
       if (hasCycle(nodeId)) {
         errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges from conditional_router and feedback_router)');
         break;
@@ -509,6 +522,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
   }
 
   if (errors.length > 0) {
+    console.error(`${LOG_PREFIX} Cognitive graph validation failed with ${errors.length} errors:`, errors);
     throw new GraphValidationError(errors);
   }
 
