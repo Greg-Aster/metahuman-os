@@ -10,6 +10,8 @@ import path from 'path';
 import { systemPaths } from './path-builder.js';
 import { generateUUID } from './uuid.js';
 import { audit } from './audit.js';
+import { getUser } from './users.js';
+import type { SafeUser } from './users.js';
 
 /**
  * Session object
@@ -443,7 +445,6 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
       // Use userId as key to deduplicate (same user can have multiple sessions)
       if (!activeUsers.has(session.userId)) {
         // Get username from user database
-        const { getUser } = require('./users.js');
         const user = getUser(session.userId);
 
         if (user) {
@@ -472,7 +473,7 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
 export function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
   const store = loadSessions();
   const now = new Date();
-  let mostRecent: { session: Session; user: any } | null = null;
+  let mostRecent: { session: Session; user: SafeUser } | null = null;
 
   for (const session of store.sessions) {
     const expiresAt = new Date(session.expiresAt);
@@ -482,7 +483,6 @@ export function getMostRecentlyActiveUser(): { userId: string; username: string;
       const lastActivity = new Date(session.lastActivity);
 
       if (!mostRecent || lastActivity > new Date(mostRecent.session.lastActivity)) {
-        const { getUser } = require('./users.js');
         const user = getUser(session.userId);
 
         if (user) {
