@@ -13,19 +13,46 @@ import type { SvelteFlowGraph } from './cognitive-graph-schema.js';
 import { executeGraph, type GraphExecutionState, type ExecutionEventHandler } from './graph-executor.js';
 import { audit } from './audit.js';
 
+const LOG_PREFIX = '[agent-graph-executor]';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Template directory (relative to this file, which is in packages/core/src)
 const TEMPLATES_DIR = path.resolve(__dirname, '../../../apps/site/src/lib/cognitive-nodes/templates');
 
+export interface TemplateNode {
+  id: string | number;
+  type: string;
+  title?: string;
+  position?: number[] | { x: number; y: number };
+  properties?: Record<string, unknown>;
+  data?: {
+    label?: string;
+    nodeType?: string;
+    properties?: Record<string, unknown>;
+  };
+}
+
+export interface TemplateEdge {
+  id: string | number;
+  source?: string | number;
+  target?: string | number;
+  origin_id?: string | number;
+  target_id?: string | number;
+  origin_slot?: number;
+  target_slot?: number;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
 export interface AgentTemplate {
   name: string;
   description: string;
   version: string;
   category: string;
-  nodes: any[];
-  edges: any[];
+  nodes: TemplateNode[];
+  edges: TemplateEdge[];
   metadata?: {
     author?: string;
     created?: string;
@@ -39,11 +66,14 @@ export interface AgentTemplate {
  * Load an agent template from disk
  */
 export function loadAgentTemplate(templateName: string): AgentTemplate | null {
+  console.log(`${LOG_PREFIX} ========== loadAgentTemplate HIT ==========`);
+  console.log(`${LOG_PREFIX} Input: templateName=${templateName}`);
+  
   try {
     const templatePath = path.join(TEMPLATES_DIR, `${templateName}.json`);
 
     if (!fs.existsSync(templatePath)) {
-      console.error(`[AgentGraphExecutor] Template not found: ${templatePath}`);
+      console.error(`${LOG_PREFIX} Template not found: ${templatePath}`);
       return null;
     }
 
@@ -52,7 +82,7 @@ export function loadAgentTemplate(templateName: string): AgentTemplate | null {
 
     return template;
   } catch (error) {
-    console.error(`[AgentGraphExecutor] Error loading template ${templateName}:`, error);
+    console.error(`${LOG_PREFIX} Error loading template ${templateName}:`, error);
     return null;
   }
 }
@@ -61,6 +91,8 @@ export function loadAgentTemplate(templateName: string): AgentTemplate | null {
  * List all available agent templates
  */
 export function listAgentTemplates(): Array<{ name: string; description: string; category: string }> {
+  console.log(`${LOG_PREFIX} ========== listAgentTemplates HIT ==========`);
+  
   try {
     if (!fs.existsSync(TEMPLATES_DIR)) {
       return [];
@@ -86,7 +118,7 @@ export function listAgentTemplates(): Array<{ name: string; description: string;
 
     return templates;
   } catch (error) {
-    console.error('[AgentGraphExecutor] Error listing templates:', error);
+    console.error(`${LOG_PREFIX} Error listing templates:`, error);
     return [];
   }
 }
@@ -128,9 +160,12 @@ function templateToGraph(template: AgentTemplate): SvelteFlowGraph {
  */
 export async function executeAgentTemplate(
   templateName: string,
-  context: Record<string, any> = {},
+  context: Record<string, unknown> = {},
   eventHandler?: ExecutionEventHandler
 ): Promise<GraphExecutionState> {
+  console.log(`${LOG_PREFIX} ========== executeAgentTemplate HIT ==========`);
+  console.log(`${LOG_PREFIX} Input: templateName=${templateName}, contextKeys=${Object.keys(context).join(',')}`);
+  
   const startTime = Date.now();
 
   audit({
@@ -151,8 +186,8 @@ export async function executeAgentTemplate(
       throw new Error(`Agent template '${templateName}' not found`);
     }
 
-    console.log(`[AgentGraphExecutor] Executing template: ${template.name}`);
-    console.log(`[AgentGraphExecutor] Nodes: ${template.nodes.length}, Edges: ${template.edges.length}`);
+    console.log(`${LOG_PREFIX} Executing template: ${template.name}`);
+    console.log(`${LOG_PREFIX} Nodes: ${template.nodes.length}, Edges: ${template.edges.length}`);
 
     // Convert to cognitive graph format
     const graph = templateToGraph(template);
@@ -223,14 +258,14 @@ export function validateAgentTemplate(templateName: string): { valid: boolean; e
     if (!template.edges || !Array.isArray(template.edges)) errors.push('Template missing valid edges array');
 
     // Check nodes have IDs and types
-    template.nodes.forEach((node: any, index: number) => {
+    template.nodes.forEach((node: TemplateNode, index: number) => {
       if (node.id === undefined) errors.push(`Node ${index} missing id`);
       if (!node.type && !node.data?.nodeType) errors.push(`Node ${index} missing type`);
     });
 
     // Check edges reference valid nodes
-    const nodeIds = new Set(template.nodes.map((n: any) => String(n.id)));
-    template.edges.forEach((edge: any, index: number) => {
+    const nodeIds = new Set(template.nodes.map((n: TemplateNode) => String(n.id)));
+    template.edges.forEach((edge: TemplateEdge, index: number) => {
       const sourceId = String(edge.source || edge.origin_id);
       const targetId = String(edge.target || edge.target_id);
       if (!nodeIds.has(sourceId)) {
