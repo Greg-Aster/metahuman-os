@@ -13,7 +13,7 @@ Open your MetaHuman server in a browser:
 - **Remote server:** Use the URL provided by your server admin
 - **Mobile app:** The app connects automatically or prompts for server URL
 
-You'll see the welcome screen with options to log in, create an account, or continue as a guest (read-only).
+You'll see the welcome screen with options to log in or create an account. All users must authenticate to access the system.
 
 ---
 
@@ -94,17 +94,24 @@ This downloads your persona, config, conversation buffer, and recent memories to
 
 ## Guest Access
 
-To browse a profile without logging in:
+**⚠️ Important: All users must authenticate** — there are no anonymous sessions.
 
-1. Click **Continue as Guest** on the welcome screen
-2. Select a profile to view from the profile selector
-3. Browse memories, chat history, and settings in **read-only mode**
+Guest accounts provide read-only access to public profiles:
+
+1. **Authentication Required**: Guest accounts must be created by the owner or use existing credentials
+2. Log in with guest credentials
+3. Select a public profile to view from the profile selector
+4. Browse memories, chat history, and settings in **read-only mode**
 
 Guest sessions:
+- Require authentication (owner-created account or existing credentials)
 - Last 1 hour
 - Cannot create memories or modify data
 - Cannot access owner-only settings
+- Always forced into emulation mode (read-only)
 - Useful for demonstrations or showing your digital twin to others
+
+**Creating Guest Accounts**: Owners can create guest accounts through the admin interface (future UI) or via API. See [Authentication](../configuration-admin/authentication.md) for details.
 
 ---
 

@@ -90,6 +90,17 @@ export interface SvelteFlowNode {
     properties: Record<string, any>;
     muted?: boolean;
     comment?: string;
+    /** Node schema from graph definition (for output detection, validation) */
+    schema?: {
+      id?: string;
+      name?: string;
+      type?: string;
+      category?: string;
+      isOutputNode?: boolean;
+      inputs?: Array<{ name: string; type: string; optional?: boolean }>;
+      outputs?: Array<{ name: string; type: string; description?: string }>;
+      [key: string]: any;
+    };
   };
   width?: number;
   height?: number;

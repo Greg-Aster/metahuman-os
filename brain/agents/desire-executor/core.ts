@@ -33,7 +33,7 @@ import {
   updateTaskStatus,
   canAutoApprove,
   loadDecisionRules,
-  loadOperatorConfig,
+  loadFreshOperatorConfig,
   escalate,
   executeWithInterpreter,
   isInterpreterServerRunning,
@@ -221,8 +221,8 @@ export async function executeStep(
     return { success: false, error: 'No authenticated user for executing desire steps' };
   }
 
-  // Check Big Brother configuration
-  const operatorConfig = loadOperatorConfig(username);
+  // Check Big Brother configuration (fresh, no cache)
+  const operatorConfig = loadFreshOperatorConfig(username);
   const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
 
   // Try Big Brother first if enabled

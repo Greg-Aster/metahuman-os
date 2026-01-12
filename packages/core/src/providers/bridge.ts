@@ -25,7 +25,7 @@ import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
 import { getUserContext } from '../context.js';
 import { resolveCredentials } from '../llm-config.js';
-import { loadOperatorConfig } from '../config.js';
+import { loadFreshOperatorConfig } from '../config.js';
 
 // Feature detection: Check if native fetch is available (Node.js 18+)
 // This determines whether to use @metahuman/server (native fetch) or mobile-providers.ts (https module)
@@ -97,7 +97,7 @@ export async function callProvider(
   // NO FALLBACKS - if the configured backend isn't working, STOP and notify user
   // =========================================================================
   const backendStatus = await getBackendStatus();
-  const operatorConfig = username ? loadOperatorConfig(username) : null;
+  const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
   const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
   const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
 

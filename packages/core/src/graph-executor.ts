@@ -32,6 +32,12 @@ export interface NodeExecutionState {
   inputs?: Record<string, any>;
   outputs?: Record<string, any>;
   error?: Error;
+  /** Node definition from graph (schema) - used for output node detection */
+  definition?: {
+    type?: string;
+    isOutputNode?: boolean;
+    [key: string]: any;
+  };
 }
 
 export interface GraphExecutionState {
@@ -242,6 +248,13 @@ async function executeNode(
 
   const nodeType = node.data.nodeType;
 
+  // Extract node definition/schema for output detection
+  const nodeDefinition = {
+    type: node.data.schema?.type || node.data.nodeType,
+    isOutputNode: node.data.schema?.isOutputNode || false,
+    ...node.data.schema,
+  };
+
   // Skip muted nodes - pass through inputs directly
   if (node.data.muted) {
     log.debug(`   Node ${nodeId} (${nodeType}) MUTED - skipping execution`);
@@ -255,6 +268,7 @@ async function executeNode(
       endTime: Date.now(),
       inputs,
       outputs: inputs, // Pass through inputs unchanged
+      definition: nodeDefinition,
     };
 
     executionState.set(nodeId, state);
@@ -275,6 +289,7 @@ async function executeNode(
     nodeId,
     status: 'running',
     startTime: Date.now(),
+    definition: nodeDefinition,
   };
 
   executionState.set(nodeId, state);
@@ -612,7 +627,7 @@ export async function executeGraph(
         ...contextData,
         _graphExecutorIteration: iterCount,
         emitEvent: eventHandler
-          ? (type: string, data: any) => eventHandler({ type, data, nodeId, timestamp: Date.now() })
+          ? (type: ExecutionEvent['type'], data: any) => eventHandler({ type, data, nodeId, timestamp: Date.now() })
           : undefined,
       };
 
@@ -728,37 +743,70 @@ export async function executeGraph(
   }
 }
 
+/** Node output info for getGraphOutput priority selection */
+type NodeOutputInfo = { id: string; outputs: Record<string, any> };
+
 /**
  * Get the final output from a graph execution
- * Looks for stream_writer node output or falls back to last completed node
+ *
+ * Priority order:
+ * 1. Node explicitly marked as output (isOutputNode: true in definition)
+ * 2. Node of type 'stream_writer' or 'dual_writer'
+ * 3. Last completed node with output/response properties
+ * 4. Last completed node (fallback)
  */
-export function getGraphOutput(state: GraphExecutionState): any {
-  let streamWriterOutput: any = null;
-  let lastOutput: any = null;
-  let streamWriterNodeId: string | null = null;
+export function getGraphOutput(state: GraphExecutionState): Record<string, any> | null {
+  let explicitOutputNode: NodeOutputInfo | null = null;
+  let writerNode: NodeOutputInfo | null = null;
+  let responseNode: NodeOutputInfo | null = null;
+  let lastCompletedNode: NodeOutputInfo | null = null;
 
-  state.nodes.forEach((nodeState, nodeId) => {
-    if (nodeState.status === 'completed' && nodeState.outputs) {
-      // Check if this has output/response properties (stream_writer signature)
-      if (nodeState.outputs.output !== undefined || nodeState.outputs.response !== undefined) {
-        streamWriterOutput = nodeState.outputs;
-        streamWriterNodeId = nodeId;
-      }
-      lastOutput = nodeState.outputs;
+  // Use for...of for better type narrowing (forEach callbacks don't narrow well)
+  for (const [nodeId, nodeState] of state.nodes) {
+    if (nodeState.status !== 'completed' || !nodeState.outputs) continue;
+
+    // Priority 1: Explicit output node marker
+    if (nodeState.definition?.isOutputNode) {
+      explicitOutputNode = { id: nodeId, outputs: nodeState.outputs };
     }
-  });
+
+    // Priority 2: Writer nodes by type
+    const nodeType = nodeState.definition?.type;
+    if (nodeType === 'stream_writer' || nodeType === 'dual_writer') {
+      writerNode = { id: nodeId, outputs: nodeState.outputs };
+    }
+
+    // Priority 3: Node with response property (but only track last one)
+    if (nodeState.outputs.output !== undefined || nodeState.outputs.response !== undefined) {
+      responseNode = { id: nodeId, outputs: nodeState.outputs };
+    }
+
+    // Track last completed node for fallback
+    lastCompletedNode = { id: nodeId, outputs: nodeState.outputs };
+  }
+
+  // Select output based on priority
+  const selected: NodeOutputInfo | null = explicitOutputNode || writerNode || responseNode || lastCompletedNode;
 
   // Debug logging
-  console.log('[getGraphOutput] streamWriterNodeId:', streamWriterNodeId);
-  console.log('[getGraphOutput] streamWriterOutput:', streamWriterOutput ? {
-    hasOutput: streamWriterOutput.output !== undefined,
-    hasResponse: streamWriterOutput.response !== undefined,
-    outputPreview: typeof streamWriterOutput.output === 'string' ? streamWriterOutput.output.substring(0, 100) : typeof streamWriterOutput.output,
-    responsePreview: typeof streamWriterOutput.response === 'string' ? streamWriterOutput.response.substring(0, 100) : typeof streamWriterOutput.response,
-  } : null);
+  console.log('[getGraphOutput] Priority check:', {
+    explicitOutputNode: explicitOutputNode?.id ?? null,
+    writerNode: writerNode?.id ?? null,
+    responseNode: responseNode?.id ?? null,
+    lastCompletedNode: lastCompletedNode?.id ?? null,
+    selectedNode: selected?.id ?? null,
+  });
 
-  // Return stream_writer output if found, otherwise fall back to last output
-  return streamWriterOutput || lastOutput;
+  if (selected) {
+    console.log('[getGraphOutput] Selected output from:', selected.id, {
+      hasOutput: selected.outputs.output !== undefined,
+      hasResponse: selected.outputs.response !== undefined,
+      hasResponseBufferId: selected.outputs.responseBufferId !== undefined,
+      hasActionTaken: selected.outputs.actionTaken !== undefined,
+    });
+  }
+
+  return selected?.outputs ?? null;
 }
 
 /**

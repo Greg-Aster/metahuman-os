@@ -235,8 +235,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // Build review context
   const reviewContext = buildReviewContext(scratchpad, config, triggerReason);
 
-  // Load operator config for Big Brother
-  const operatorConfig = loadOperatorConfig(username);
+  // Load operator config for Big Brother - skip cache to respect current settings
+  const operatorConfig = loadOperatorConfig(username, true);
 
   // Check if Big Brother is enabled
   if (!operatorConfig.bigBrotherMode?.enabled) {

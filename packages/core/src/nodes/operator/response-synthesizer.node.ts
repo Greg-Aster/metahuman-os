@@ -7,7 +7,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
-import { loadOperatorConfig } from '../../config.js';
+import { loadFreshOperatorConfig } from '../../config.js';
 // NOTE: getIdentitySummary import REMOVED (2025-12-18)
 // Persona injection should ONLY come from graph nodes (persona_loader → persona_formatter)
 // Hidden fallbacks bypass the graph editor workflow and cause unexpected behavior
@@ -80,7 +80,7 @@ const execute: NodeExecutor = async (inputs, context) => {
   const username = context.userId || context.username;
 
   // Check Big Brother hybrid mode - use Big Brother for central thinking when enabled but not delegateAll
-  const operatorConfig = username ? loadOperatorConfig(username) : null;
+  const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
   const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
   const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
   // Hybrid mode: Big Brother enabled but not delegate all - this node requests Big Brother for central thinking

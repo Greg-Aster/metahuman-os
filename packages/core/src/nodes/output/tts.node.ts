@@ -62,6 +62,70 @@ function touchTTSNotification(username: string): void {
 }
 
 /**
+ * Safely load TTS queue from disk with auto-recovery
+ * Handles empty files, corrupted JSON, and missing structure fields
+ */
+function safeLoadQueue(queuePath: string): TTSQueue {
+  const defaultQueue: TTSQueue = {
+    items: [],
+    lastUpdated: new Date().toISOString(),
+  };
+
+  if (!fs.existsSync(queuePath)) {
+    return defaultQueue;
+  }
+
+  try {
+    const raw = fs.readFileSync(queuePath, 'utf-8').trim();
+
+    // Check for empty file BEFORE parsing
+    if (!raw || raw.length === 0) {
+      console.warn(`[TTS Queue] Queue file is empty: ${queuePath}, initializing with default`);
+      // Auto-recover: Write valid empty queue
+      fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+      return defaultQueue;
+    }
+
+    const parsed = JSON.parse(raw);
+
+    // Validate structure
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Parsed queue is not an object');
+    }
+
+    // Ensure required fields exist
+    if (!Array.isArray(parsed.items)) {
+      console.warn(`[TTS Queue] Missing items array, auto-fixing`);
+      parsed.items = [];
+    }
+
+    if (!parsed.lastUpdated) {
+      parsed.lastUpdated = new Date().toISOString();
+    }
+
+    return parsed as TTSQueue;
+
+  } catch (error) {
+    console.error(`[TTS Queue] Failed to parse queue file: ${queuePath}`, error);
+    console.warn(`[TTS Queue] Auto-recovering with default queue`);
+
+    // Auto-recover: Backup corrupted file and reset
+    const backupPath = queuePath.replace('.json', `-corrupted-${Date.now()}.json`);
+    try {
+      fs.copyFileSync(queuePath, backupPath);
+      console.log(`[TTS Queue] Backed up corrupted file to: ${backupPath}`);
+    } catch (backupError) {
+      console.error(`[TTS Queue] Failed to backup corrupted file:`, backupError);
+    }
+
+    // Write fresh queue
+    fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+
+    return defaultQueue;
+  }
+}
+
+/**
  * Add item to TTS queue
  */
 export function queueTTS(
@@ -80,17 +144,8 @@ export function queueTTS(
   try {
     fs.mkdirSync(queueDir, { recursive: true });
 
-    // Load existing queue
-    let queue: TTSQueue;
-    if (fs.existsSync(queuePath)) {
-      const raw = fs.readFileSync(queuePath, 'utf-8');
-      queue = JSON.parse(raw);
-      if (!Array.isArray(queue.items)) {
-        queue.items = [];
-      }
-    } else {
-      queue = { items: [], lastUpdated: new Date().toISOString() };
-    }
+    // Load existing queue using safe loader
+    const queue = safeLoadQueue(queuePath);
 
     // Create new item
     const item: TTSQueueItem = {
@@ -128,13 +183,14 @@ export function popTTSQueue(username: string): TTSQueueItem[] {
   const queuePath = getTTSQueuePath(username);
 
   try {
-    if (!fs.existsSync(queuePath)) {
+    // Load queue using safe loader
+    const queue = safeLoadQueue(queuePath);
+    const items = queue.items || [];
+
+    // Return empty array if no items
+    if (items.length === 0) {
       return [];
     }
-
-    const raw = fs.readFileSync(queuePath, 'utf-8');
-    const queue: TTSQueue = JSON.parse(raw);
-    const items = queue.items || [];
 
     // Clear the queue
     queue.items = [];
@@ -142,7 +198,8 @@ export function popTTSQueue(username: string): TTSQueueItem[] {
     fs.writeFileSync(queuePath, JSON.stringify(queue, null, 2));
 
     return items;
-  } catch {
+  } catch (error) {
+    console.error('[TTS Queue] Error in popTTSQueue:', error);
     return [];
   }
 }
@@ -154,14 +211,11 @@ export function peekTTSQueue(username: string): TTSQueueItem[] {
   const queuePath = getTTSQueuePath(username);
 
   try {
-    if (!fs.existsSync(queuePath)) {
-      return [];
-    }
-
-    const raw = fs.readFileSync(queuePath, 'utf-8');
-    const queue: TTSQueue = JSON.parse(raw);
+    // Load queue using safe loader
+    const queue = safeLoadQueue(queuePath);
     return queue.items || [];
-  } catch {
+  } catch (error) {
+    console.error('[TTS Queue] Error in peekTTSQueue:', error);
     return [];
   }
 }

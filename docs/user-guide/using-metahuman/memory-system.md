@@ -4,18 +4,80 @@ The memory system is the core of MetaHuman OS. It stores conversations, observat
 
 ## Where Memories Live
 
-Memories are stored per user under:
+**⚠️ CRITICAL: Profile paths vary by user configuration**
+
+Memories are stored per user, but the actual location depends on custom profile storage settings.
+
+### Default Location
 
 ```
 profiles/<username>/memory/
 ```
 
-If you use external or encrypted storage, the profile root may be relocated. You can inspect or change the storage path with:
+### Custom Profile Storage
+
+**Many users have custom profile locations** for encrypted drives, external storage, or network mounts:
+
+```
+/media/user/STACK/metahuman-profiles/<username>/memory/        # Encrypted drive
+/mnt/external/profiles/<username>/memory/                       # External storage
+/media/nas/metahuman/<username>/memory/                         # Network storage
+```
+
+### Finding Your Actual Profile Location
+
+**Never assume the default location.** Always use the profile resolution API:
 
 ```bash
+# Check your actual profile path
 ./bin/mh profile path
-./bin/mh profile path set /path/to/storage
+
+# Or via API
+import { getProfilePaths } from '@metahuman/core';
+const paths = getProfilePaths('username');
+console.log(paths.root);  // Shows actual location
 ```
+
+**For developers:**
+```typescript
+import { getProfilePaths } from '@metahuman/core';
+
+// CORRECT: Use getProfilePaths()
+const profilePaths = getProfilePaths(username);
+const memoryPath = profilePaths.episodic;
+
+// WRONG: Never hardcode paths
+const memoryPath = `profiles/${username}/memory/episodic/`;  // ❌ Will fail for custom storage
+```
+
+### Why This Matters
+
+Users configure custom profile storage via `persona/users.json`:
+```json
+{
+  "username": "user",
+  "metadata": {
+    "profileStorage": {
+      "path": "/media/user/STACK/metahuman-profiles/user",
+      "type": "encrypted",
+      "fallbackBehavior": "error"
+    }
+  }
+}
+```
+
+If you hardcode `profiles/<username>/`, you'll:
+- ❌ Read wrong/missing data
+- ❌ Write to wrong location
+- ❌ Bypass encrypted storage
+- ❌ Miss user's actual memories
+
+**Storage Types:**
+- `internal` - Default location in repo
+- `external` - USB drive, network mount, or external location
+- `encrypted` - LUKS, VeraCrypt, or AES-256 encrypted storage
+
+See [Accounts & Security](../configuration-admin/accounts-security.md#custom-profile-storage) for full details.
 
 ## Memory Categories
 

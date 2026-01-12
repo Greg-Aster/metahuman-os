@@ -19,12 +19,16 @@ MetaHuman OS operates in three distinct cognitive modes that control memory reco
 
 | Feature | Dual Consciousness | Agent | Emulation |
 |---------|-------------------|-------|-----------|
-| **Memory Writes** | Full (all interactions) | Command-only (explicit saves) | Read-only (no writes) |
+| **Memory Writes** | Full (all interactions)* | Full (all interactions)* | Full (all interactions)* |
 | **Operator Usage** | Always | Heuristic (smart detection) | Never |
 | **Proactive Agents** | Enabled | Disabled | Disabled |
 | **Training Pipeline** | Dual-trigger (monthly + manual) | Disabled | Disabled |
-| **Recording** | All conversations | Only explicit captures | None |
+| **Recording** | All conversations | All conversations | All conversations |
 | **Use Case** | Primary operational mode | Lightweight assistant | Demo/testing |
+
+**\* Memory Writes by User Type:**
+- **Authenticated users**: Save memories in ALL modes (with `cognitiveMode` metadata for LoRA differentiation)
+- **Guest users**: Read-only access in ALL modes (no memory writes)
 
 ## Dual Consciousness Mode
 
@@ -81,9 +85,10 @@ MetaHuman OS operates in three distinct cognitive modes that control memory reco
 ### Key Behaviors
 
 **Memory Recording:**
-- Only explicit captures saved (e.g., `mh capture`)
-- Chat messages NOT automatically saved
-- Memories tagged with `metadata.cognitiveMode: "agent"`
+- **Authenticated users**: All chat messages saved to episodic memory
+- **Guest users**: Read-only, no memory writes
+- All memories tagged with `metadata.cognitiveMode: "agent"`
+- Used for LoRA training differentiation (separate from dual mode data)
 
 **Operator Routing:**
 - **Heuristic-based detection**
@@ -112,20 +117,22 @@ Context clues: mentions of tasks, memories, files, agents
 
 - **Reduced cognitive load**: When you don't want full operator overhead
 - **Faster responses**: Simple queries bypass operator pipeline
-- **Privacy mode**: When you don't want conversations saved
-- **Testing**: Experimenting without affecting training data
-- **Demonstration**: Showing features without memory writes
+- **Selective operator use**: Operator only for action-oriented requests
+- **Testing**: Experimenting with different training datasets (agent vs dual mode)
+- **Demonstration**: Show features with lighter cognitive processing
+
+**Note**: Authenticated users still save memories in agent mode. Use guest accounts for truly read-only demonstrations.
 
 ### Example Workflow
 
 1. User: "What's 2+2?" → **Chat only** (simple query)
    - Fast response, no operator
-   - Not saved to memory
+   - Saved to memory with `cognitiveMode: "agent"` (if authenticated)
 
 2. User: "Create a task to buy groceries" → **Operator used**
    - Detected: "create" + "task"
    - Routes to operator → task_create skill
-   - Task created, but conversation not saved
+   - Task created, conversation saved with `cognitiveMode: "agent"` (if authenticated)
 
 ## Emulation Mode
 
@@ -134,9 +141,10 @@ Context clues: mentions of tasks, memories, files, agents
 ### Key Behaviors
 
 **Memory Recording:**
-- No writes (read-only)
-- Can read existing memories
-- Ideal for sharing/demo without modification
+- **Authenticated users**: Can save memories with `metadata.cognitiveMode: "emulation"`
+- **Guest users**: Read-only access, no memory writes
+- All users can read existing memories
+- Common use: Demonstration/testing with stable personality snapshot
 
 **Operator Routing:**
 - Never uses operator
@@ -152,19 +160,21 @@ Context clues: mentions of tasks, memories, files, agents
 
 ### When to Use
 
-- **Demonstration**: Showing MetaHuman to others
-- **Testing**: Experimenting without side effects
-- **Snapshot mode**: Using a stable personality version
-- **Public sharing**: Safe read-only access
-- **Development**: Testing features without affecting data
+- **Demonstration**: Showing MetaHuman to others (use guest accounts for read-only)
+- **Testing**: Experimenting with stable personality snapshot
+- **Snapshot mode**: Using frozen personality without operator overhead
+- **Public sharing**: Guest accounts get read-only access
+- **Development**: Testing features with simplified processing
+
+**Note**: Authenticated users can still save memories in emulation mode. Guest users have read-only access.
 
 ### Example Workflow
 
 1. User: "What tasks do I have?"
-2. Chat reads existing tasks (read-only)
-3. Returns list without saving conversation
-4. No operator overhead
-5. No memory writes
+2. Chat reads existing tasks
+3. Returns list via direct chat (no operator)
+4. Conversation saved with `cognitiveMode: "emulation"` (if authenticated)
+5. Guest users: read-only, no memory writes
 
 ## Switching Modes
 
@@ -218,7 +228,7 @@ cat persona/cognitive-mode.json
 }
 ```
 
-**Note:** Mode changes require write access (not available to anonymous users).
+**Note:** Mode changes require owner authentication (not available to guest users).
 
 ## Mode Locking
 
@@ -332,29 +342,31 @@ Dual mode provides highest-quality training data:
 2. Good for:
    - Quick information lookups
    - Simple calculations or definitions
-   - Testing features without memory impact
-3. Remember: Only explicit captures are saved
+   - Selective operator use (action-oriented only)
+3. Remember: All conversations saved with `agent` mode metadata
 4. Operator used only for action-oriented requests
 
 ### For Demonstrations (Emulation Mode)
 
 1. Use when showing MetaHuman to others
-2. Safe read-only access (no accidental writes)
-3. Stable personality (uses last trained model)
-4. No background agents (predictable behavior)
-5. Fast responses (no operator overhead)
+2. **Guest accounts**: Pure read-only access (no accidental writes)
+3. **Authenticated users**: Can still save memories (use guest accounts for demos)
+4. Stable personality (uses last trained model)
+5. No background agents (predictable behavior)
+6. Fast responses (no operator overhead)
 
 ### For Privacy
 
-**Agent Mode:**
-- Conversations not saved
-- Only explicit captures recorded
-- Good for sensitive topics you don't want in training data
-
-**Emulation Mode:**
-- No writes at all
+**Guest Accounts (Any Mode):**
 - Pure read-only access
+- No memory writes
 - Use for public demos or untrusted environments
+
+**Cognitive Mode Metadata for Training:**
+- All modes save memories when authenticated
+- Each memory tagged with `cognitiveMode` field
+- Training datasets can filter by mode
+- Use `agent` or `emulation` mode to differentiate training data from primary `dual` mode interactions
 
 ## Technical Details
 

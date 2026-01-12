@@ -1,0 +1,129 @@
+{
+  "enabled": true,
+  "monitoring": {
+    "sources": [
+      {
+        "type": "file",
+        "name": "server",
+        "path": "logs/server.log",
+        "parser": "plain-text"
+      },
+      {
+        "type": "websocket",
+        "name": "big-brother",
+        "url": "ws://localhost:3099",
+        "parser": "stream-json"
+      },
+      {
+        "type": "directory",
+        "name": "agents",
+        "path": "logs/run/agents/",
+        "parser": "ndjson"
+      }
+    ],
+    "pollInterval": 5000,
+    "bufferSize": 100
+  },
+  "errorDetection": {
+    "patterns": [
+      {
+        "name": "typescript-error",
+        "regex": "TS\\d+:",
+        "severity": "error"
+      },
+      {
+        "name": "unhandled-rejection",
+        "regex": "UnhandledPromiseRejection",
+        "severity": "critical"
+      },
+      {
+        "name": "react-warning",
+        "regex": "Warning: ",
+        "severity": "warning"
+      },
+      {
+        "name": "vite-error",
+        "regex": "\\[vite\\] .*error",
+        "severity": "error"
+      },
+      {
+        "name": "node-error",
+        "regex": "Error:",
+        "severity": "error"
+      },
+      {
+        "name": "uncaught-exception",
+        "regex": "Uncaught",
+        "severity": "critical"
+      },
+      {
+        "name": "failed-fetch",
+        "regex": "Failed to fetch",
+        "severity": "error"
+      },
+      {
+        "name": "econnrefused",
+        "regex": "ECONNREFUSED",
+        "severity": "error"
+      },
+      {
+        "name": "eaddrinuse",
+        "regex": "EADDRINUSE",
+        "severity": "error"
+      }
+    ],
+    "minSeverity": "warning"
+  },
+  "autoHealing": {
+    "enabled": true,
+    "maxRisk": "medium",
+    "testFirst": true,
+    "maxRetries": 3,
+    "cooldownPeriod": 3600000,
+    "blacklist": [
+      "database-schema-change",
+      "production-deployment",
+      "git-push",
+      "npm-publish"
+    ]
+  },
+  "patternDetection": {
+    "enabled": true,
+    "minOccurrences": 3,
+    "timeWindow": 3600000,
+    "storePath": "logs/run/babysitter-patterns.json"
+  },
+  "reporting": {
+    "hourly": {
+      "enabled": true
+    },
+    "daily": {
+      "enabled": true,
+      "time": "09:00"
+    },
+    "weekly": {
+      "enabled": true,
+      "day": "monday",
+      "time": "09:00"
+    },
+    "outputPath": "logs/run/babysitter-reports/"
+  },
+  "integrations": {
+    "systemCoder": {
+      "enabled": true,
+      "autoCaptureErrors": true
+    },
+    "lizardBrain": {
+      "enabled": true,
+      "reportFailedAgents": true
+    },
+    "activeOperator": {
+      "enabled": true,
+      "updateScratchpad": true
+    },
+    "bigBrother": {
+      "enabled": true,
+      "monitorTerminal": true
+    }
+  }
+}

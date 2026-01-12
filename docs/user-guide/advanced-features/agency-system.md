@@ -386,6 +386,57 @@ The system uses your trust level to determine automation:
 
 ---
 
+## Execution Methods
+
+**CRITICAL**: Plans are executed via external tool executors only.
+
+### Deprecated: local-skills Executor
+
+The `local-skills` executor is **DEPRECATED and non-functional**. Do not use it for desire execution.
+
+### Recommended: Big Brother Claude CLI Integration
+
+The recommended execution method uses Big Brother to provide:
+- Real-time terminal visibility (WebSocket streaming on port 3099)
+- Full tool execution capabilities (file search, commands, system queries)
+- Multi-backend support (Claude Code, Open Interpreter, Aider, Gemini CLI)
+- Proper error handling and audit logging
+
+**Enable Big Brother mode:**
+
+Edit `etc/operator.json`:
+```json
+{
+  "bigBrotherMode": {
+    "enabled": true,
+    "delegateAll": true
+  }
+}
+```
+
+When enabled, all desire executions route through Big Brother with full terminal visibility.
+
+### Alternative: Open Interpreter
+
+Requires server setup at `external/open-interpreter/`:
+
+1. Install Open Interpreter in the external directory
+2. Configure server endpoint in operator config
+3. Desire plans execute via Open Interpreter API
+
+**Note**: This requires manual setup and server management.
+
+### Terminal Visibility Requirement
+
+**Any desire execution MUST show activity in the terminal.** Silent operations are bugs, not features:
+- Users must see what the system is doing
+- Real-time progress updates required
+- No "black box" executions allowed
+
+If execution isn't visible in Big Brother terminal, the integration is incorrect.
+
+---
+
 ## Best Practices
 
 ### Nurturing Healthy Desires

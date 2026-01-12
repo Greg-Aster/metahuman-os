@@ -7,7 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { loadOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '../../config.js';
+import { loadFreshOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '../../config.js';
 import { audit } from '../../audit.js';
 
 const DEFAULT_CONFIG = {
@@ -49,7 +49,7 @@ export async function handleGetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       });
     }
 
-    const config = loadOperatorConfig(user.isAuthenticated ? user.username : 'anonymous');
+    const config = loadFreshOperatorConfig(user.isAuthenticated ? user.username : 'anonymous');
 
     return successResponse({
       success: true,
@@ -98,8 +98,8 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     autoApplySuggestions,
     } = body || {};
 
-    // Load current config
-    const config = loadOperatorConfig(user.username);
+    // Load current config (fresh, no cache - critical for merge operations)
+    const config = loadFreshOperatorConfig(user.username);
 
     // Update Big Brother mode settings (preserve model if not provided)
     const existingModel = config.bigBrotherMode?.model;

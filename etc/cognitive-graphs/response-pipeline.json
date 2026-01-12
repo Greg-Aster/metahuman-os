@@ -163,6 +163,8 @@
           "id": "dual_writer",
           "name": "Dual Writer",
           "category": "output",
+          "type": "dual_writer",
+          "isOutputNode": true,
           "inputs": [
             { "name": "response", "type": "string" },
             { "name": "responseBuffer", "type": "object" },

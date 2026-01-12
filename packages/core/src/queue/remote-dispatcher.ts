@@ -59,8 +59,8 @@ export class RemoteDispatcher {
     this.providers.set('big-brother', {
       dispatch: async (task) => {
         const { escalateToBigBrother } = await import('../big-brother.js');
-        const { loadOperatorConfig } = await import('../config.js');
-        const operatorConfig = loadOperatorConfig(task.username);
+        const { loadFreshOperatorConfig } = await import('../config.js');
+        const operatorConfig = loadFreshOperatorConfig(task.username);
         // Build proper EscalationRequest from task payload
         const request: EscalationRequest = {
           goal: task.payload.goal || '',
