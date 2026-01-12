@@ -214,9 +214,9 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 
 ### Summary for 2026-01-12
 
-**Files Reviewed**: 7  
-**Issues Found**: 28
-**Issues Fixed**: 28
+**Files Reviewed**: 8  
+**Issues Found**: 33
+**Issues Fixed**: 33
 **Blockers Raised**: 0
 **Proposals Made**: 0
 
@@ -624,6 +624,52 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 ---
 
 *Keep this scratchpad updated. It's the shared brain of the audit team.*
+
+### packages/core/src/cognitive-mode.ts - Agent-3 - 2026-01-12T19:25:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 5
+- Missing `.js` extension in audit import (line 4)
+- Missing error logging in ensureConfig catch block
+- Missing error handling for file system operations (4 instances: mkdirSync, writeFileSync calls)
+- Missing LOG_PREFIX constant for consistent logging
+- Missing entry logging for key public functions (loadCognitiveMode, saveCognitiveMode)
+
+**Changes Made**: 5
+- Fixed import path to include `.js` extension for ES modules compatibility
+- Added comprehensive error logging to catch block in ensureConfig() with context
+- Added try/catch blocks with proper error logging to all file system operations
+- Added LOG_PREFIX constant and updated all console statements to use it consistently
+- Added entry logging to loadCognitiveMode() and saveCognitiveMode() with parameters
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- packages/core/src/storage-client.ts - Status: Pending (storageClient)
+- packages/core/src/audit.ts - Status: Completed (audit function)
+- node:fs, node:path - Status: Built-in modules
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 80 minutes
+
+**Notes**: 
+- This is a critical system configuration module managing cognitive modes (dual, agent, emulation)
+- Controls key system behaviors: memory recording, agent proactivity, training pipelines
+- Implements proper fallback handling when config file is missing or corrupted
+- Uses storageClient for proper path resolution (supports custom profile storage)
+- Comprehensive audit logging for all mode changes with actor tracking
+- Mode locking support for security (e.g., guest profiles)
+- Helper functions for memory write permissions and operator routing based on cognitive mode
+- No circular dependencies detected
+- No hardcoded paths found - uses storage client abstraction
+- No TODOs, FIXMEs, or commented-out code found
+- Security: Proper anonymous user handling, mode locking enforcement
+- Architecture: Correctly placed in core package, single responsibility (cognitive mode management)
+- TypeScript: All functions properly typed, no `any` types used
+- Error handling: Now comprehensive for all file operations with proper logging and context
 
 ### packages/core/src/paths.ts - Agent-1 - 2026-01-12T11:00:00Z
 
