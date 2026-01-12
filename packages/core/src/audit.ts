@@ -4,6 +4,8 @@ import { timestamp } from './paths.js';
 import { systemPaths } from './path-builder.js';
 import { getUserContext } from './context.js';
 
+const LOG_PREFIX = '[audit]';
+
 /**
  * Audit Module - Activity Logging
  *
@@ -42,29 +44,34 @@ export function setAuditRetention(days: number): void {
  * Purge audit logs older than retention period
  */
 export function purgeOldAuditLogs(): void {
-  const auditDir = path.join(systemPaths.logs, 'audit');
-  if (!fs.existsSync(auditDir)) return;
+  try {
+    const auditDir = path.join(systemPaths.logs, 'audit');
+    if (!fs.existsSync(auditDir)) return;
 
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - auditRetentionDays);
-  const cutoffStr = cutoffDate.toISOString().slice(0, 10);
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - auditRetentionDays);
+    const cutoffStr = cutoffDate.toISOString().slice(0, 10);
 
-  const files = fs.readdirSync(auditDir);
-  let purgedCount = 0;
+    const files = fs.readdirSync(auditDir);
+    let purgedCount = 0;
 
-  for (const file of files) {
-    if (file.endsWith('.ndjson')) {
-      const fileDate = file.replace('.ndjson', '');
-      if (fileDate < cutoffStr) {
-        const filePath = path.join(auditDir, file);
-        fs.unlinkSync(filePath);
-        purgedCount++;
+    for (const file of files) {
+      if (file.endsWith('.ndjson')) {
+        const fileDate = file.replace('.ndjson', '');
+        if (fileDate < cutoffStr) {
+          const filePath = path.join(auditDir, file);
+          fs.unlinkSync(filePath);
+          purgedCount++;
+        }
       }
     }
-  }
 
-  if (purgedCount > 0) {
-    console.log(`[audit] Purged ${purgedCount} old log file(s)`);
+    if (purgedCount > 0) {
+      console.log(`${LOG_PREFIX} Purged ${purgedCount} old log file(s)`);
+    }
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error purging old audit logs:`, error);
+    // Don't throw - purging is optional maintenance, shouldn't break system
   }
 }
 
@@ -101,39 +108,49 @@ export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
   // Skip if audit logging is disabled (prevents 100% CPU from massive log files)
   if (!auditEnabled) return;
 
-  // Get current user context (if any)
-  const ctx = getUserContext();
+  try {
+    // Get current user context (if any)
+    const ctx = getUserContext();
 
-  const fullEntry: AuditEntry = {
-    timestamp: timestamp(),
-    ...entry,
-    // Auto-include userId if not explicitly provided and context exists
-    userId: entry.userId ?? ctx?.userId,
-  };
+    const fullEntry: AuditEntry = {
+      timestamp: timestamp(),
+      ...entry,
+      // Auto-include userId if not explicitly provided and context exists
+      userId: entry.userId ?? ctx?.userId,
+    };
 
-  const date = new Date().toISOString().slice(0, 10);
-  // Use system-level audit logs for comprehensive tracking
-  const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
+    const date = new Date().toISOString().slice(0, 10);
+    // Use system-level audit logs for comprehensive tracking
+    const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
 
-  fs.mkdirSync(path.dirname(logFile), { recursive: true });
-  fs.appendFileSync(logFile, JSON.stringify(fullEntry) + '\n');
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.appendFileSync(logFile, JSON.stringify(fullEntry) + '\n');
+  } catch (error) {
+    // Log to console but don't throw - audit failures shouldn't break operations
+    console.error(`${LOG_PREFIX} Failed to write audit entry:`, error);
+  }
 }
 
 /**
  * Read audit log for a specific date
  */
 export function readAuditLog(date: string): AuditEntry[] {
-  const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
+  try {
+    const logFile = path.join(systemPaths.logs, 'audit', `${date}.ndjson`);
 
-  if (!fs.existsSync(logFile)) {
-    return [];
+    if (!fs.existsSync(logFile)) {
+      return [];
+    }
+
+    const content = fs.readFileSync(logFile, 'utf8');
+    return content
+      .split('\n')
+      .filter(line => line.trim())
+      .map(line => JSON.parse(line) as AuditEntry);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error reading audit log for ${date}:`, error);
+    return []; // Return empty array rather than throwing
   }
-
-  const content = fs.readFileSync(logFile, 'utf8');
-  return content
-    .split('\n')
-    .filter(line => line.trim())
-    .map(line => JSON.parse(line) as AuditEntry);
 }
 
 /**
@@ -161,6 +178,8 @@ export function getAuditSummary(startDate: string, endDate?: string): AuditLog {
  * Check for security issues in audit log
  */
 export function securityCheck(): { issues: AuditEntry[]; warnings: string[] } {
+  console.log(`${LOG_PREFIX} ========== securityCheck HIT ==========`);
+  
   const today = new Date().toISOString().slice(0, 10);
   const entries = readAuditLog(today);
 
