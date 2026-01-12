@@ -1260,4 +1260,99 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 - Excellent observability with consistent LOG_PREFIX usage and entry/options logging
 - Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
 
+### packages/core/src/model-resolver.ts - Agent-5 - 2026-01-13T01:15:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 10
+- Multiple `any` types without proper justification (lines 28, 37, 47, 52, 67, 68)
+- Empty catch block without error logging in getActiveBackend() (line 84)
+- Missing error logging in loadModelRegistry() try/catch (line 185) 
+- Missing error logging in resolveRegistryPath() catch block (line 207)
+- Missing LOG_PREFIX constant for consistent logging
+- Missing entry/decision point logging for key functions
+- Missing input validation for role, cognitiveMode, modelId, and username parameters
+- Missing username validation for path security (potential injection)
+- Backend override logic missing detailed logging for debugging
+
+**Changes Made**: 10
+- Improved TypeScript typing: replaced `any` with `unknown` for flexible fields and proper union types for cognitiveModeMappings
+- Added proper error parameter and logging to empty catch block in getActiveBackend()
+- Added comprehensive error logging to all try/catch blocks with context
+- Added LOG_PREFIX constant and extensive logging throughout (entry, decision points, cache hits/misses)
+- Added input validation for all public function parameters with type checking
+- Added username validation regex to prevent path traversal attacks (alphanumeric + underscore/hyphen, max 50 chars)
+- Added detailed backend override logging showing decisions and model switching
+- Added cache behavior logging for better observability
+- Documented remaining intentional `any` types with eslint-disable and comments
+- Enhanced security with comprehensive parameter validation
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- packages/core/src/path-builder.ts - Status: Pending (getProfilePaths used correctly)
+- packages/core/src/llm-backend.ts - Status: Pending (loadBackendConfig, BackendType used correctly)
+- node:fs, node:path - Status: Built-in modules (proper usage throughout)
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 85 minutes
+
+**Notes**:
+- This is THE critical model resolution module for configuration-driven model selection and hot-swapping
+- Sophisticated backend override system automatically switches between Ollama/vLLM based on active backend
+- Comprehensive caching system (60s TTL) with proper cache invalidation and hit/miss logging
+- User-specific model registries with proper profile path resolution (no hardcoded paths)
+- Extensive validation framework for checking registry consistency and references
+- Supports cognitive mode mappings for different AI personalities (dual, agent, emulation)
+- Proper deprecation handling (clearRegistryCache() with @deprecated annotation)
+- Security-first design with username validation and path traversal prevention
+- No circular dependencies detected - imports only from path-builder and llm-backend
+- No TODOs, FIXMEs, or commented-out code found
+- No code duplication - this is the single source of truth for model resolution
+- Architecture: Correctly placed in core package, excellent single responsibility (model resolution only)
+- TypeScript: Now properly typed with minimal justified `any` usage
+- Error handling: Comprehensive throughout with proper logging and context
+- Excellent observability with detailed logging of all resolution decisions and backend overrides
+
+### brain/agents/curator/index.ts - Agent-6 - 2026-01-12T23:45:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 0
+- No issues found - file already follows modern agent architecture pattern perfectly
+
+**Changes Made**: 0
+- No changes needed - file already implements all best practices
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- @metahuman/agent-runtime - Status: Pending (exists as packages/agent-runtime/, exports AgentModule and AgentMeta types correctly)
+- ./core.js - Status: Pending (exists as core.ts, exports run, runCycle, runCuratorForUser, loadCuratorGraph, plus all required types)
+
+**Follow-up Needed**:
+- [ ] None - file is already perfect
+
+**Time Spent**: 70 minutes
+
+**Notes**: 
+- This is an excellent example of the modern agent architecture pattern correctly implemented (43 lines)
+- Properly exports AgentModule/AgentMeta structure with all required metadata fields
+- Correct scheduling configuration: usesLLM: true, priority: 'medium', defaultInterval: 3600 (1 hour)
+- Appropriate tags: ['curator', 'llm', 'training', 'background']
+- Clean re-exports from core module for backward compatibility and direct usage
+- Proper TypeScript typing throughout with no `any` types
+- All imports are used and resolve correctly to existing files
+- No async operations or error handling needed (pure module definition)
+- No logging needed (appropriate for simple export file)
+- No security concerns (no user input, file operations, or credentials)
+- No TODOs, FIXMEs, or commented-out code
+- Follows consistent architectural pattern - no duplication issues
+- Architecture: Correctly placed in brain/agents/curator/ as agent entry point
+- Single responsibility: Module definition with proper metadata plus core function re-exports
+- Unlike auto-indexer/index.ts (which was using legacy pattern), this file was already using modern architecture
+- Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
+
 ---
