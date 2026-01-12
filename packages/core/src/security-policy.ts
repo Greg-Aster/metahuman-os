@@ -1,12 +1,23 @@
 import {
   loadCognitiveMode,
-  canWriteMemory,
   canUseOperator,
   type CognitiveModeId,
 } from './cognitive-mode.js';
 import { validateSession } from './sessions.js';
 import { getUser } from './users.js';
 import { getUserContext } from './context.js';
+
+const LOG_PREFIX = '[security-policy]';
+
+/**
+ * Request context interface for HTTP requests
+ * Used primarily for Astro request contexts
+ */
+export interface RequestContext {
+  cookies?: {
+    get(name: string): { value: string } | undefined;
+  };
+}
 
 /**
  * User role types for access control
@@ -53,7 +64,8 @@ export interface SecurityErrorDetails {
   currentMode?: CognitiveModeId;
   role?: UserRole;
   required?: string;
-  [key: string]: any;
+  // Additional context fields - intentionally flexible for error reporting
+  [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 /**
@@ -253,7 +265,28 @@ function computeSecurityPolicy(
     },
 
     requireFileAccess(filePath: string) {
-      const normalizedPath = filePath.replace(/\\/g, '/');
+      if (!filePath || typeof filePath !== 'string') {
+        throw new SecurityError('Invalid file path', {
+          reason: 'invalid_input',
+          filePath: String(filePath),
+        });
+      }
+
+      // Normalize and sanitize path
+      const normalizedPath = filePath
+        .replace(/\\/g, '/') // Convert backslashes to forward slashes
+        .replace(/\/+/g, '/') // Remove duplicate slashes  
+        .replace(/\/\./g, '/') // Remove single dot segments
+        .replace(/\/\.\.\//g, '/'); // Remove double dot segments (basic traversal prevention)
+
+      // Additional security check for path traversal attempts
+      if (normalizedPath.includes('../') || normalizedPath.includes('..\\') || normalizedPath.includes('..')) {
+        throw new SecurityError('Path traversal attempt detected', {
+          reason: 'path_traversal',
+          filePath: normalizedPath,
+          originalPath: filePath,
+        });
+      }
 
       // System directories (brain/, packages/, apps/, bin/)
       const systemDirs = ['brain/', 'packages/', 'apps/', 'bin/', 'scripts/'];
@@ -334,6 +367,13 @@ function computeSecurityPolicy(
     },
 
     requireProfileRead(targetUsername: string) {
+      if (!targetUsername || typeof targetUsername !== 'string') {
+        throw new SecurityError('Invalid username', {
+          reason: 'invalid_input',
+          targetUsername: String(targetUsername),
+        });
+      }
+      
       if (!this.canReadProfile(targetUsername)) {
         throw new SecurityError('Cannot read profile', {
           reason: 'insufficient_permissions',
@@ -346,6 +386,13 @@ function computeSecurityPolicy(
     },
 
     requireProfileWrite(targetUsername: string) {
+      if (!targetUsername || typeof targetUsername !== 'string') {
+        throw new SecurityError('Invalid username', {
+          reason: 'invalid_input',
+          targetUsername: String(targetUsername),
+        });
+      }
+      
       if (!this.canWriteProfile(targetUsername)) {
         throw new SecurityError('Cannot write to profile', {
           reason: 'insufficient_permissions',
@@ -368,25 +415,41 @@ function computeSecurityPolicy(
  * Returns SessionInfo with role and user ID, or null if no valid session.
  * NO ANONYMOUS ACCESS - null means authentication required.
  */
-function extractSession(context?: any): SessionInfo | null {
+function extractSession(context?: RequestContext): SessionInfo | null {
+  console.log(`${LOG_PREFIX} extractSession called`);
+  
   // Try to get session cookie from Astro context
   const sessionCookie = context?.cookies?.get('mh_session');
 
   if (!sessionCookie) {
+    console.log(`${LOG_PREFIX} No session cookie found`);
     // No cookie = authentication required
     return null;
   }
 
   // Validate session
-  const session = validateSession(sessionCookie.value);
+  let session;
+  try {
+    session = validateSession(sessionCookie.value);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Session validation failed:`, error);
+    return null;
+  }
 
   if (!session) {
+    console.log(`${LOG_PREFIX} Session validation returned null - invalid/expired`);
     // Invalid/expired session = authentication required
     return null;
   }
 
   // Get user details
-  const user = getUser(session.userId);
+  let user;
+  try {
+    user = getUser(session.userId);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} User lookup failed for session:`, session.userId, error);
+    return null;
+  }
 
   // Check if user is administrator
   // Owner role automatically grants admin privileges
@@ -394,17 +457,20 @@ function extractSession(context?: any): SessionInfo | null {
   const isAdmin = isAdministrator(username, session.role);
 
   // Return session info
-  return {
+  const sessionInfo = {
     role: session.role,
     id: session.userId,
     email: user?.metadata?.email,
     username,
     isAdmin,
   };
+  
+  console.log(`${LOG_PREFIX} Session extracted successfully for user: ${username}, role: ${session.role}, isAdmin: ${isAdmin}`);
+  return sessionInfo;
 }
 
 // Request-scoped cache to avoid recomputing policy multiple times per request
-const REQUEST_POLICY_CACHE = new WeakMap<any, SecurityPolicy>();
+const REQUEST_POLICY_CACHE = new WeakMap<RequestContext, SecurityPolicy>();
 
 /**
  * Get security policy for current request
@@ -422,28 +488,40 @@ const REQUEST_POLICY_CACHE = new WeakMap<any, SecurityPolicy>();
  * // In operator agent
  * const policy = getSecurityPolicy(); // No context = use current global mode
  */
-export function getSecurityPolicy(context?: any): SecurityPolicy {
+export function getSecurityPolicy(context?: RequestContext): SecurityPolicy {
+  console.log(`${LOG_PREFIX} ========== getSecurityPolicy CALLED ==========`);
+  console.log(`${LOG_PREFIX} Input: hasContext=${!!context}`);
+
   // If context provided, check cache
   if (context && REQUEST_POLICY_CACHE.has(context)) {
+    console.log(`${LOG_PREFIX} Returning cached policy`);
     return REQUEST_POLICY_CACHE.get(context)!;
   }
 
   // PRIORITY 1: Try to get user context from AsyncLocalStorage (set by graph pipeline)
   // This allows skills executed from graph nodes to access authenticated user info
   let session: SessionInfo | null = null;
-  const userContext = getUserContext();
-  if (userContext) {
-    session = {
-      role: userContext.role,
-      id: userContext.userId,
-      username: userContext.username,
-      isAdmin: isAdministrator(userContext.username, userContext.role),
-    };
+  try {
+    const userContext = getUserContext();
+    if (userContext) {
+      session = {
+        role: userContext.role,
+        id: userContext.userId,
+        username: userContext.username,
+        isAdmin: isAdministrator(userContext.username, userContext.role),
+      };
+    }
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to get user context:`, error);
+    // Continue without user context - will fall back to HTTP session extraction
   }
 
   // PRIORITY 2: Extract session from HTTP request (if no AsyncLocalStorage context)
   if (!session) {
+    console.log(`${LOG_PREFIX} No user context found, extracting from HTTP session`);
     session = extractSession(context);
+  } else {
+    console.log(`${LOG_PREFIX} Using AsyncLocalStorage session for user: ${session.username}`);
   }
 
   // Load current cognitive mode from file system
@@ -462,11 +540,15 @@ export function getSecurityPolicy(context?: any): SecurityPolicy {
 
   // SECURITY: Guests get emulation mode only (read-only access)
   if (session?.role === 'guest') {
+    console.log(`${LOG_PREFIX} Guest user detected, forcing emulation mode`);
     mode = 'emulation';
   }
 
   // Compute policy
   const policy = computeSecurityPolicy(mode, session);
+
+  console.log(`${LOG_PREFIX} Policy computed for user: ${policy.username}, role: ${policy.role}, mode: ${policy.mode}`);
+  console.log(`${LOG_PREFIX} Key permissions: read=${policy.canReadMemory}, write=${policy.canWriteMemory}, operator=${policy.canUseOperator}, admin=${policy.isAdmin}`);
 
   // Cache if we have context
   if (context) {
@@ -492,7 +574,7 @@ export function checkPermission(
     | 'canAccessTraining'
     | 'canFactoryReset'
   >,
-  context?: any
+  context?: RequestContext
 ): boolean {
   const policy = getSecurityPolicy(context);
   return policy[permission];
@@ -501,7 +583,7 @@ export function checkPermission(
 /**
  * Get permission summary for debugging/display
  */
-export function getPermissionSummary(context?: any): Record<string, boolean> {
+export function getPermissionSummary(context?: RequestContext): Record<string, boolean> {
   const policy = getSecurityPolicy(context);
   return {
     canReadMemory: policy.canReadMemory,
