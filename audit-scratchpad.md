@@ -891,6 +891,53 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 - Single responsibility: Module definition and export only
 - Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
 
+### packages/core/src/cognitive-graph-schema.ts - Agent-9 - 2026-01-12T23:05:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 8
+- Missing LOG_PREFIX constant for consistent logging
+- TypeScript strict mode errors: function declarations inside blocks (2 instances)
+- MapIterator compatibility issues for ES5 target (2 instances)
+- Missing entry/decision point logging for validation and conversion functions
+- Missing error logging when validation fails
+- Some `any` types could be improved to `unknown` for input validation functions
+
+**Changes Made**: 8
+- Added LOG_PREFIX constant at top of file
+- Converted function declarations to function expressions in validation cycles (hasCycle in both validation functions)
+- Fixed MapIterator issues by wrapping with Array.from() for compatibility
+- Added entry logging to validateSvelteFlowGraph(), validateCognitiveGraph(), convertToLegacyFormat(), and normalizeForExecution()
+- Added detailed error logging to both validation functions showing error count and details
+- Improved type safety by changing `any` to `unknown` in format detection functions (isSvelteFlowFormat, normalizeForExecution)
+- Added null checks for property access on `unknown` types
+- Verified file now compiles successfully with pnpm tsc
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- No imports - this is a pure schema/type definition module with utility functions
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 75 minutes
+
+**Notes**: 
+- This is a critical schema validation module for cognitive graphs - supports dual formats (Legacy LiteGraph + Svelte Flow)
+- Comprehensive validation with cycle detection that allows router back-edges for iterative loops
+- Excellent architecture for format conversion between visual editor and execution engine
+- Well-documented interfaces and proper separation of legacy vs new formats
+- Sophisticated cycle detection logic that understands semantic handle names and router types
+- No circular dependencies detected (no imports)
+- No hardcoded values, secrets, or security issues found
+- No TODOs, FIXMEs, or commented-out code found
+- Complex logic appropriately documented with clear examples in handle name mapping
+- TypeScript: Now fully typed with proper error handling for different target environments
+- All validation functions throw proper GraphValidationError with detailed error lists
+- Single responsibility: Schema definition, validation, and format conversion only
+- Record<string, any> types are appropriate for generic property bags in graph nodes
+
 ---
 
 *Keep this scratchpad updated. It's the shared brain of the audit team.*
