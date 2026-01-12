@@ -938,6 +938,59 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 - Single responsibility: Schema definition, validation, and format conversion only
 - Record<string, any> types are appropriate for generic property bags in graph nodes
 
+### brain/agents/audio-organizer/core.ts - Agent-8 - 2026-01-13T00:45:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 11
+- Missing LOG_PREFIX constant for consistent logging
+- Multiple console statements using bare prefixes instead of LOG_PREFIX variable (5 instances)
+- Missing try/catch error handling in run() function (line 232) - CRITICAL for main entry point
+- Missing entry and decision point logging for key functions (runCycle, organizeTranscript, run)
+- Missing console logging in catch block at line 211 (now line 220)
+- Missing error handling for JSON.parse in loadAudioConfig() function
+- Missing decision point logging for early returns and flow control
+
+**Changes Made**: 11
+- Added LOG_PREFIX constant '[audio-organizer-core]' at top of file
+- Updated all console.log/warn/error statements to use LOG_PREFIX consistently (5 instances)
+- Added comprehensive try/catch error handling to run() function with proper logging and audit integration
+- Added entry logging with "HIT" format to runCycle(), organizeTranscript(), and run() functions
+- Added console error logging to catch block in processing loop
+- Added error handling with fallback defaults to loadAudioConfig() JSON.parse operation
+- Added decision point logging for auto-organization disabled, directory not found, and no metadata files scenarios
+- Added parameter and option logging for better observability throughout
+- Added comprehensive audit logging for fatal errors in run() function
+
+**Critical Issues**: 0 (fixed)
+
+**Dependencies Checked**:
+- @metahuman/agent-runtime - Status: Pending (AgentContext, AgentInput, AgentResult types)
+- @metahuman/core - Status: Verified usage (storageClient, systemPaths, ROOT, audit, callLLM, captureEvent all used correctly)
+- node:fs, node:path - Status: Built-in modules (proper usage throughout)
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 90 minutes
+
+**Notes**: 
+- This is a critical audio processing agent core module for converting transcripts to episodic memories
+- Sophisticated LLM integration for metadata extraction (summaries, tags, entities) with fallback handling
+- Proper agent system integration with AgentContext/AgentInput/AgentResult pattern
+- Uses storageClient for proper path resolution instead of hardcoded paths  
+- Comprehensive audit logging for all operations (start, completion, failure events)
+- Integrates with memory system via captureEvent() for structured data storage
+- Configuration-driven processing (auto-organize, extract entities, generate summaries)
+- No circular dependencies detected (imports from core and agent-runtime only)
+- No hardcoded paths, secrets, or credentials found
+- No TODOs, FIXMEs, or commented-out code found
+- Security: Proper error handling prevents crashes, no path traversal issues
+- Architecture: Correctly placed in brain/agents/audio-organizer/ as agent core implementation
+- TypeScript: All functions properly typed with explicit return types, no `any` types used
+- Error handling: Now comprehensive throughout with proper logging, audit integration, and graceful fallbacks
+- Excellent observability with consistent LOG_PREFIX usage and detailed entry/decision point logging
+
 ---
 
 *Keep this scratchpad updated. It's the shared brain of the audit team.*
