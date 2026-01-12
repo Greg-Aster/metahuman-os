@@ -62,7 +62,40 @@
 **Files Affected**: [list]
 -->
 
-*Patterns will be documented as discovered.*
+### PATTERN-001: Missing LOG_PREFIX constants
+**Discovered by**: All agents
+**Frequency**: Found in 15+ files so far  
+**Impact**: Low (observability)
+**Action**: Add LOG_PREFIX constant at top of each file as encountered
+**Files Affected**: memory.ts, agent-graph-executor.ts, vllm.ts, agent-scheduler.ts, security-policy.ts, cognitive-mode.ts, agent-monitor.ts, users.ts, audit.ts, babysitter.ts, audio-organizer/cli.ts, cognitive-graph-schema.ts
+
+### PATTERN-002: Empty catch blocks without error logging  
+**Discovered by**: Agent-4, Agent-3, Agent-2
+**Frequency**: Found in 8+ files (particularly in LLM/server management code)
+**Impact**: Medium (debugging/observability)
+**Action**: Add proper error logging with context to all catch blocks
+**Files Affected**: memory.ts (2 instances), vllm.ts (8+ instances), agent-monitor.ts (4 instances), security-policy.ts (3 instances), cognitive-mode.ts (1 instance), babysitter.ts (1 instance)
+
+### PATTERN-003: TypeScript `any` types without justification
+**Discovered by**: All agents  
+**Frequency**: Found in 12+ files
+**Impact**: High (type safety, maintainability)
+**Action**: Replace with proper interfaces or justified usage
+**Files Affected**: memory.ts (4 types), agent-graph-executor.ts (6 types), identity.ts (8+ types), security-policy.ts (5 types), llm.ts (1 type), users.ts (1 type), babysitter.ts (2 casts), cognitive-graph-schema.ts (6 types)
+
+### PATTERN-004: Missing entry logging for key functions
+**Discovered by**: Agent-4, Agent-2, Agent-3
+**Frequency**: Found in 10+ files  
+**Impact**: Low (observability)
+**Action**: Add standardized "HIT" entry logging to public functions
+**Files Affected**: memory.ts, agent-graph-executor.ts, vllm.ts, agent-scheduler.ts, security-policy.ts, cognitive-mode.ts, audit.ts, audio-organizer/cli.ts, cognitive-graph-schema.ts
+
+### PATTERN-005: Duplicate isProcessRunning() functions
+**Discovered by**: Agent-3
+**Frequency**: Found in 3 files
+**Impact**: Low (code duplication)
+**Action**: Consolidate to shared utility
+**Files Affected**: agent-monitor.ts, training-running.ts, tts/server-manager.ts
 
 ---
 
@@ -990,6 +1023,52 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 - TypeScript: All functions properly typed with explicit return types, no `any` types used
 - Error handling: Now comprehensive throughout with proper logging, audit integration, and graceful fallbacks
 - Excellent observability with consistent LOG_PREFIX usage and detailed entry/decision point logging
+
+### brain/agents/auto-indexer/cli.ts - Agent-3 - 2026-01-12T23:45:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 4
+- Missing return type on main() function (line 17)  
+- Missing explicit types for maxAgeArg and maxAgeHours variables (lines 24-25)
+- Missing LOG_PREFIX constant for consistent logging
+- Console statements using hardcoded `[auto-indexer]` prefixes instead of LOG_PREFIX variable (5 instances)
+
+**Changes Made**: 4
+- Added `Promise<void>` return type to async main() function
+- Added explicit TypeScript types: `string | undefined` for maxAgeArg, `number` for maxAgeHours  
+- Added LOG_PREFIX constant at top of file
+- Updated all console.log/error statements to use LOG_PREFIX consistently (5 instances)
+- Added entry logging with "HIT" format and options logging for better observability
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- @metahuman/core - Status: Built into monorepo (initGlobalLogger function verified)
+- ./core.js - Status: Completed by Agent-7 (exists as core.ts, exports runCycle and AutoIndexerOptions verified)
+- node:process - Status: Built-in module (process.argv, process.exit usage verified)
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 75 minutes
+
+**Notes**: 
+- This is a simple CLI entry point for the Auto-Indexer Agent (56 lines)
+- Rebuilds vector indexes for semantic search with proper command-line argument parsing
+- Simple and focused architecture - parses args (--force, --single-user, --max-age=N) and delegates to core logic
+- Uses proper global logger initialization pattern from @metahuman/core
+- Comprehensive error handling with try/catch in main and .catch() with appropriate exit codes
+- No circular dependencies detected (imports from core.js and @metahuman/core only)
+- No hardcoded paths, secrets, or credentials found
+- No TODOs, FIXMEs, or commented-out code found
+- No duplicated logic - follows standard CLI entry point pattern across agent system
+- Security: Safe argument parsing with integer validation for max-age parameter
+- Architecture: Correctly placed in brain/agents/auto-indexer/ as CLI entry point
+- TypeScript: Now fully typed with explicit return types, no `any` types used
+- Error handling: Comprehensive with proper logging and exit codes for success/failure
+- Excellent observability with consistent LOG_PREFIX usage and entry/options logging
+- Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
 
 ---
 
