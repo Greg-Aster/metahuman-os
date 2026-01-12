@@ -261,15 +261,30 @@ async function exploreDesire(desire: Desire, username: string): Promise<Explorat
 async function processUserDesires(username: string): Promise<ExplorerStats> {
   const stats: ExplorerStats = { explored: 0, questionsSent: 0, errors: 0 };
 
-  // Find desires that just crossed threshold (pending status, high enough strength)
-  // Or desires explicitly marked for exploration
+  // Find desires that need exploration:
+  // 1. Pending desires above exploration threshold (0.5) that haven't been explored yet
+  // 2. Evaluating desires that haven't been explored yet
   const pendingDesires = await listDesiresByStatus('pending', username);
-  const exploringDesires = await listDesiresByStatus('exploring', username);
+  const evaluatingDesires = await listDesiresByStatus('evaluating', username);
+
+  const EXPLORATION_THRESHOLD = 0.5; // Lower than activation (0.7) - explore early
 
   const desiresNeedingExploration = [
-    ...pendingDesires.filter(d => (d.strength || 0) >= 0.5), // Crossed 50% threshold
-    ...exploringDesires,
-  ];
+    ...pendingDesires.filter(d => (d.strength || 0) >= EXPLORATION_THRESHOLD),
+    ...evaluatingDesires,
+  ].filter(d => {
+    // Skip if already explored (has research in metadata)
+    if (d.metadata?.explorationResearch) {
+      console.log(`${LOG_PREFIX}   Skipping ${d.id} - already explored`);
+      return false;
+    }
+    // Skip if already has clarifying questions
+    if (d.clarifyingQuestions?.questions?.length > 0) {
+      console.log(`${LOG_PREFIX}   Skipping ${d.id} - already has questions`);
+      return false;
+    }
+    return true;
+  });
 
   if (desiresNeedingExploration.length === 0) {
     console.log(`${LOG_PREFIX}   No desires need exploration`);

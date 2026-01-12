@@ -2,6 +2,10 @@
  * User Profile Management
  *
  * Functions for initializing and managing user profile directories
+ *
+ * Profile Creation Strategy:
+ * 1. Try to copy from profiles/_template/ (preferred - file-based templates)
+ * 2. Fall back to hardcoded defaults if template directory doesn't exist
  */
 
 import fs from 'fs-extra';
@@ -9,10 +13,14 @@ import path from 'path';
 import { systemPaths, ROOT, getProfilePaths } from './path-builder.js';
 import { audit } from './audit.js';
 
+/** Path to the master profile template directory */
+const TEMPLATE_DIR = path.join(systemPaths.profiles, '_template');
+
 /**
  * Initialize profile directory structure for a new user
  *
- * Creates all necessary directories and default config files
+ * Creates all necessary directories and default config files.
+ * Prefers copying from profiles/_template/ if available.
  *
  * @param username - Username (used for profile directory name)
  */
@@ -28,19 +36,21 @@ export async function initializeProfile(username: string): Promise<void> {
   });
 
   try {
-    await ensureProfileDirectories(profileRoot);
-
-    // Create default persona files
-    await createDefaultPersona(profileRoot, username);
-
-    // Create default config files
-    await createDefaultConfigs(profileRoot, username);
+    // Try template-based creation first (cleaner, file-based templates)
+    if (await fs.pathExists(TEMPLATE_DIR)) {
+      await initializeFromTemplate(profileRoot, username);
+    } else {
+      // Fall back to hardcoded defaults
+      await ensureProfileDirectories(profileRoot);
+      await createDefaultPersona(profileRoot, username);
+      await createDefaultConfigs(profileRoot, username);
+    }
 
     audit({
       level: 'info',
       category: 'system',
       event: 'profile_initialized',
-      details: { username, profileRoot },
+      details: { username, profileRoot, method: await fs.pathExists(TEMPLATE_DIR) ? 'template' : 'hardcoded' },
       actor: 'system',
     });
   } catch (error) {
@@ -56,12 +66,87 @@ export async function initializeProfile(username: string): Promise<void> {
 }
 
 /**
+ * Initialize profile by copying from the _template directory
+ *
+ * Copies all files and directories from profiles/_template/ to the new profile,
+ * then replaces placeholder tokens in JSON files.
+ *
+ * @param profileRoot - Destination profile directory
+ * @param username - Username for placeholder replacement
+ */
+async function initializeFromTemplate(profileRoot: string, username: string): Promise<void> {
+  const now = new Date();
+  const timestamp = now.toISOString();
+  const dateStr = timestamp.split('T')[0];
+
+  // Copy entire template directory
+  await fs.copy(TEMPLATE_DIR, profileRoot, {
+    overwrite: false, // Don't overwrite existing files
+    filter: (src) => {
+      // Skip the TEMPLATE.md documentation file
+      return !src.endsWith('TEMPLATE.md');
+    },
+  });
+
+  // Replace placeholders in all JSON files
+  await replacePlaceholdersRecursive(profileRoot, {
+    '{{USERNAME}}': username,
+    '{{TIMESTAMP}}': timestamp,
+    '{{DATE}}': dateStr,
+  });
+
+  audit({
+    level: 'info',
+    category: 'system',
+    event: 'profile_created_from_template',
+    details: { username, templateDir: TEMPLATE_DIR, profileRoot },
+    actor: 'system',
+  });
+}
+
+/**
+ * Recursively replace placeholder tokens in all JSON files
+ */
+async function replacePlaceholdersRecursive(
+  dir: string,
+  replacements: Record<string, string>
+): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      await replacePlaceholdersRecursive(fullPath, replacements);
+    } else if (entry.isFile() && entry.name.endsWith('.json')) {
+      try {
+        let content = await fs.readFile(fullPath, 'utf-8');
+        let modified = false;
+
+        for (const [placeholder, value] of Object.entries(replacements)) {
+          if (content.includes(placeholder)) {
+            content = content.split(placeholder).join(value);
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          await fs.writeFile(fullPath, content, 'utf-8');
+        }
+      } catch {
+        // Skip files that can't be read/written
+      }
+    }
+  }
+}
+
+/**
  * Create default persona files for new user
  */
 async function createDefaultPersona(profileRoot: string, username: string): Promise<void> {
   const personaDir = path.join(profileRoot, 'persona');
 
-  // core.json - Main personality definition
+  // core.json - Main personality definition (comprehensive template)
   const corePersona = {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     version: '1.0.0',
@@ -72,17 +157,40 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
       role: 'Digital personality extension',
       purpose: 'Mirror and extend the capabilities of the user',
       aliases: [],
+      email: '',
+      icon: '',
     },
-    background: {
-      keyExperiences: [],
-      formativeEvents: [],
-      narrative: `A new user exploring the MetaHuman OS system`,
-    },
+    background: `A new user exploring the MetaHuman OS system. This narrative will evolve as the system learns more about you through conversations and memories.`,
     personality: {
       communicationStyle: {
         tone: ['helpful', 'authentic', 'thoughtful'],
         verbosity: 'balanced',
         emphasis: 'clarity and usefulness',
+        formality: 'adaptive based on context',
+        vocabularyLevel: 'balanced mix of technical and everyday language',
+        preferredPronouns: '',
+        humor: '',
+        // Drift tracking fields (populated by psychoanalyzer)
+        driftAccuracy: null as number | null,
+        lastDriftAnalysis: null as string | null,
+        toneGuidelines: [] as string[],
+        avoidPatterns: [] as string[],
+        adoptPatterns: [] as string[],
+        driftAdjustments: [] as Array<{
+          dimension: string;
+          current: string;
+          target: string;
+          action: string;
+        }>,
+      },
+      cadence: {
+        modes: [
+          'assistant: helpful and informative responses',
+          'collaborator: working alongside the user on tasks',
+          'learner: asking questions to understand better',
+        ],
+        energyPeaks: [] as string[],
+        loopSignals: [] as string[],
       },
       traits: {
         openness: 0.75,
@@ -90,21 +198,25 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
         extraversion: 0.5,
         agreeableness: 0.7,
         neuroticism: 0.3,
+        notes: 'Default trait values - will be refined through interaction',
       },
       archetypes: ['Assistant', 'Collaborator', 'Learner'],
-      aesthetic: [],
-      interests: [],
+      aesthetic: [] as string[],
+      interests: [] as string[],
+      narrativeStyle: '',
     },
     values: {
       core: [
         { value: 'autonomy', description: 'Act with agency while respecting user intent', priority: 1 },
         { value: 'transparency', description: 'Make decisions visible and auditable', priority: 2 },
         { value: 'growth', description: 'Continuously learn and improve', priority: 3 },
+        { value: 'authenticity', description: 'Be genuine and honest in all interactions', priority: 4 },
       ],
       boundaries: [
         'No deceptive communication',
         'Respect privacy of others',
         'No irreversible decisions without approval',
+        'Transparent audit trails',
       ],
     },
     goals: {
@@ -122,14 +234,18 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
       ],
     },
     context: {
-      domains: [],
-      projects: [],
-      currentFocus: [],
+      domains: [] as string[],
+      projects: [] as Array<{ name: string; status: string; summary: string }>,
+      currentFocus: [] as string[],
     },
-    decisionHeuristics: [],
+    decisionHeuristics: [] as Array<{
+      signal: string;
+      response: string;
+      evidence?: string;
+    }>,
     writingStyle: {
-      structure: '',
-      motifs: [],
+      structure: 'Start with the key point, provide supporting details, end with actionable next steps if applicable',
+      motifs: [] as string[],
       defaultMantra: '',
     },
     notes: `New user profile created on ${new Date().toISOString().split('T')[0]}`,
@@ -137,103 +253,341 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
 
   await writeJsonIfMissing(path.join(personaDir, 'core.json'), corePersona);
 
-  // facets.json - Personality facets configuration
+  // facets.json - Personality facets configuration (comprehensive template)
   const facets = {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    version: '0.1.0',
+    version: '0.2.0',
     lastUpdated: new Date().toISOString(),
     activeFacet: 'default',
-    description: 'Persona facets allow different aspects of personality to be emphasized',
+    description: 'Persona facets allow different aspects of personality to be emphasized. Each facet can have its own persona file and usage hints.',
     facets: {
       default: {
         name: 'Default',
         description: 'Balanced, authentic self - the primary persona',
         personaFile: 'core.json',
         enabled: true,
-        color: 'purple',
+        color: 'violet',
+        usageHints: [
+          'Use for everyday conversations and general interactions',
+          'Balances helpfulness with personality',
+        ],
+      },
+      focused: {
+        name: 'Focused',
+        description: 'Task-oriented mode emphasizing clarity and efficiency',
+        personaFile: 'core.json',
+        enabled: true,
+        color: 'blue',
+        usageHints: [
+          'Ideal for technical discussions and problem-solving',
+          'Prioritizes actionable guidance over conversation',
+        ],
+      },
+      creative: {
+        name: 'Creative',
+        description: 'Exploratory mode for brainstorming and creative work',
+        personaFile: 'core.json',
+        enabled: true,
+        color: 'emerald',
+        usageHints: [
+          'Use when exploring ideas or generating creative content',
+          'More open to tangents and unconventional thinking',
+        ],
+      },
+      inactive: {
+        name: 'Persona Off',
+        description: 'Bypass persona context and use raw model behavior for diagnostics only',
+        personaFile: null,
+        enabled: true,
+        color: 'gray',
+        usageHints: [
+          'Use sparingly when debugging adapters or verifying baseline model output',
+        ],
       },
     },
-    notes: 'Additional facets can be created to emphasize different personality aspects',
+    notes: 'Facets can be customized or new ones added as personality patterns emerge. Create custom facet files in persona/facets/ directory.',
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'facets.json'), facets);
 
-  // relationships.json - Empty relationships file
+  // relationships.json - Comprehensive relationship tracking template
   const relationships = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
     version: '1.0.0',
-    relationships: [],
+    lastUpdated: new Date().toISOString(),
+    relationships: [] as Array<{
+      id: string;
+      name: string;
+      type: string;
+      importance: string;
+      context: string;
+      interactionPreferences: {
+        communicationStyle: string;
+        frequency: string;
+        preferredChannels: string[];
+      };
+      notes: string;
+      metadata: {
+        created: string;
+        lastInteraction: string | null;
+      };
+    }>,
+    groups: [] as Array<{
+      id: string;
+      name: string;
+      members: string[];
+      context: string;
+      interactionPatterns: string;
+    }>,
+    interactionPatterns: {
+      responseTime: {
+        urgent: 'within 1 hour',
+        important: 'same day',
+        normal: 'within 24 hours',
+        low_priority: 'when convenient',
+      },
+      communicationRules: [
+        'Acknowledge messages within reasonable time',
+        'Be concise in written communication',
+        'Use async by default, sync when needed',
+        'Respect others\' focus time',
+      ],
+    },
+    notes: 'This file tracks important people and how to interact with them. The digital personality extension uses this to mirror your communication patterns.',
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'relationships.json'), relationships);
 
-  // routines.json - Empty routines file
+  // routines.json - Comprehensive routines and habits template
   const routines = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
     version: '1.0.0',
-    routines: [],
+    lastUpdated: new Date().toISOString(),
+    dailyRoutines: [] as Array<{
+      id: string;
+      name: string;
+      time: string;
+      frequency: string;
+      actions: Array<{
+        action: string;
+        duration: string;
+        automated: boolean;
+      }>;
+      energyLevel: string;
+      importance: string;
+      notes?: string;
+    }>,
+    weeklyRoutines: [] as Array<{
+      id: string;
+      name: string;
+      dayOfWeek: string;
+      time: string;
+      frequency: string;
+      actions: Array<{
+        action: string;
+        duration: string;
+      }>;
+      importance: string;
+    }>,
+    habits: [] as Array<{
+      habit: string;
+      trigger: string;
+      frequency: string;
+      consistency: string;
+    }>,
+    energyPatterns: {
+      peakFocus: [] as string[],
+      lowEnergy: [] as string[],
+      creativeTime: [] as string[],
+      adminTime: [] as string[],
+      notes: 'Schedule cognitively demanding work during peak times',
+    },
+    sleep: {
+      schedule: {
+        start: '23:00',
+        end: '07:00',
+      },
+      notes: 'The digital personality extension will generate dreams and perform deep memory consolidation during this period.',
+    },
+    notes: 'This file captures your daily patterns, habits, and routines. The digital personality extension uses this to schedule proactive actions at optimal times.',
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'routines.json'), routines);
 
-  // decision-rules.json - Default decision rules
+  // decision-rules.json - Comprehensive decision rules template
   const decisionRules = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
     version: '1.0.0',
     lastUpdated: new Date().toISOString(),
     trustLevel: 'suggest',
     availableModes: ['observe', 'suggest', 'supervised_auto', 'bounded_auto', 'adaptive_auto'],
     modeDescription: {
-      observe: 'Monitor and learn patterns without taking action',
-      suggest: 'Propose actions for user approval',
-      supervised_auto: 'Execute within approved categories',
-      bounded_auto: 'Full autonomy within defined boundaries',
-      adaptive_auto: 'Self-expand boundaries based on learning',
+      observe: 'Monitor only, no actions, learn patterns',
+      suggest: 'Propose actions, require explicit approval for each',
+      supervised_auto: 'Execute within approved categories, log all actions',
+      bounded_auto: 'Full autonomy within defined trust boundaries',
+      adaptive_auto: 'Self-expand boundaries based on successful outcomes',
     },
     hardRules: [
       {
-        id: 'privacy-first',
-        description: 'Never share personal data without explicit consent',
-        scope: 'all',
-        enforcement: 'block',
+        rule: 'Never send messages as me without explicit approval',
+        category: 'communication',
+        exception: 'none',
       },
       {
-        id: 'reversible-actions',
-        description: 'Prefer reversible actions over permanent ones',
-        scope: 'all',
-        enforcement: 'warn',
+        rule: 'Never make financial transactions',
+        category: 'finance',
+        exception: 'Pre-approved recurring transactions under $10',
+      },
+      {
+        rule: 'Never delete data without explicit approval',
+        category: 'data',
+        exception: 'Temporary files and caches',
+      },
+      {
+        rule: 'Always maintain complete audit logs',
+        category: 'security',
+        exception: 'none',
+      },
+      {
+        rule: 'Never share private data externally',
+        category: 'privacy',
+        exception: 'Explicitly approved integrations',
       },
     ],
     softPreferences: [
       {
-        id: 'proactive-help',
-        description: 'Offer suggestions when patterns indicate user need',
-        weight: 0.7,
+        preference: 'Prefer written communication over calls',
+        weight: 0.8,
+        context: 'unless urgent or complex topic',
       },
       {
-        id: 'minimal-interruption',
-        description: 'Avoid unnecessary notifications or prompts',
-        weight: 0.8,
+        preference: 'Batch similar tasks together',
+        weight: 0.7,
+        context: 'for efficiency',
+      },
+      {
+        preference: 'Defer low-priority items',
+        weight: 0.6,
+        context: 'when high-priority work is pending',
+      },
+      {
+        preference: 'Document decisions and rationale',
+        weight: 0.9,
+        context: 'for future reference and learning',
       },
     ],
     decisionHeuristics: [
       {
-        situation: 'uncertain_outcome',
-        action: 'ask_user',
-        rationale: 'When outcome is uncertain, seek clarification',
+        heuristic: 'Eisenhower Matrix',
+        description: 'Prioritize by urgency and importance',
+        rules: {
+          urgent_important: 'Do immediately',
+          not_urgent_important: 'Schedule for deep work time',
+          urgent_not_important: 'Delegate or defer',
+          not_urgent_not_important: 'Eliminate or defer indefinitely',
+        },
       },
       {
-        situation: 'routine_task',
-        action: 'auto_execute',
-        rationale: 'Routine tasks with low risk can be automated',
+        heuristic: 'Two-minute rule',
+        description: 'If it takes less than 2 minutes, do it now',
+        applicableWhen: 'During task review or inbox processing',
+      },
+      {
+        heuristic: 'Cost-benefit threshold',
+        description: 'Only act if expected value exceeds cost',
+        threshold: {
+          time: '10 minutes saved',
+          money: '$20',
+          cognitive_load: 'significant reduction',
+        },
       },
     ],
     riskLevels: {
-      low: 'Routine tasks with minimal consequences',
-      medium: 'Tasks with moderate impact requiring validation',
-      high: 'Critical actions requiring explicit approval',
+      none: {
+        description: 'Read-only operations, no side effects',
+        autonomy: 'always_allowed',
+        examples: ['Reading files', 'Searching memory', 'Generating drafts'],
+      },
+      low: {
+        description: 'Reversible, low-impact changes',
+        autonomy: 'allowed_in_supervised_mode',
+        examples: ['Creating notifications', 'Updating task status', 'Adding calendar events'],
+      },
+      medium: {
+        description: 'Moderate impact, mostly reversible',
+        autonomy: 'requires_approval',
+        examples: ['Sending emails', 'Scheduling meetings', 'Small purchases'],
+      },
+      high: {
+        description: 'Significant impact, difficult to reverse',
+        autonomy: 'always_requires_approval',
+        examples: ['Financial transactions', 'Deleting important data', 'Legal commitments'],
+      },
+      critical: {
+        description: 'Irreversible or severe consequences',
+        autonomy: 'never_autonomous',
+        examples: ['Account deletion', 'Major purchases', 'Contractual agreements'],
+      },
     },
-    rules: [],
+    escalationRules: [
+      {
+        condition: 'Confidence < 70%',
+        action: 'Request human approval with explanation',
+      },
+      {
+        condition: 'Risk level >= medium',
+        action: 'Present dry-run preview before execution',
+      },
+      {
+        condition: 'Conflicting rules or preferences',
+        action: 'Explain conflict and ask for clarification',
+      },
+      {
+        condition: 'Novel situation (no precedent)',
+        action: 'Suggest options and learn from choice',
+      },
+    ],
+    learningRules: [
+      {
+        rule: 'Track all decisions and outcomes',
+        purpose: 'Build pattern recognition',
+      },
+      {
+        rule: 'Infer preferences from repeated choices',
+        threshold: '3+ consistent choices in similar context',
+      },
+      {
+        rule: 'Update confidence scores based on approval rate',
+        formula: 'confidence = (approvals / (approvals + rejections)) * 0.9 + base_confidence * 0.1',
+      },
+      {
+        rule: 'Propose trust boundary expansion after consistent success',
+        threshold: '20+ successful autonomous actions in category with 95%+ approval rate',
+      },
+    ],
+    notes: 'This file defines the decision-making policies and heuristics that guide autonomous behavior. Start with suggest mode and progressively increase autonomy as trust builds.',
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'decision-rules.json'), decisionRules);
+
+  // insights.json - Persona insights/learnings (empty by default)
+  const insights = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    version: '1.0.0',
+    lastUpdated: new Date().toISOString(),
+    insights: [] as Array<{
+      id: string;
+      type: string;
+      content: string;
+      source: string;
+      confidence: number;
+      createdAt: string;
+    }>,
+    notes: 'Automatically populated insights from memory analysis and psychoanalyzer runs.',
+  };
+
+  await writeJsonIfMissing(path.join(personaDir, 'insights.json'), insights);
 }
 
 /**
@@ -831,6 +1185,68 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
   };
 
   await writeJsonIfMissing(path.join(etcDir, 'addons.json'), addons);
+
+  // agency.json - Agency system configuration
+  const agency = {
+    $schema: 'https://metahuman.dev/schemas/agency.json',
+    version: '1.0.0',
+    description: 'Agency system configuration for autonomous goal-directed behavior',
+    enabled: true,
+    desireGeneration: {
+      enabled: true,
+      sources: {
+        persona_goal: { enabled: true, weight: 1.0 },
+        urgent_task: { enabled: true, weight: 0.85 },
+        task: { enabled: true, weight: 0.7 },
+        memory_pattern: { enabled: true, weight: 0.5 },
+        curiosity: { enabled: true, weight: 0.4 },
+        reflection: { enabled: true, weight: 0.35 },
+        dream: { enabled: true, weight: 0.3 },
+      },
+      scheduling: {
+        intervalMinutes: 60,
+        maxDesiresPerRun: 5,
+      },
+    },
+    strengthThresholds: {
+      initial: 0.15,
+      activation: 0.7,
+      reinforcementBoost: 0.08,
+      decayRate: 0.03,
+    },
+    riskPolicy: {
+      autoApprove: ['none', 'low'],
+      requireApproval: ['medium', 'high'],
+      blocked: ['critical'],
+    },
+    execution: {
+      maxConcurrentDesires: 1,
+      timeoutMinutes: 30,
+      retryOnFailure: true,
+      maxRetries: 2,
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'agency.json'), agency);
+
+  // training-data.json - Training data configuration
+  const trainingData = {
+    $schema: 'https://metahuman.dev/schemas/training-data.json',
+    version: '1.0.0',
+    description: 'Training data generation configuration',
+    outputDirectory: 'training-data',
+    memoryWindow: {
+      daysBack: 14,
+      maxMemories: 1000,
+    },
+    formatting: {
+      includeSystemPrompt: true,
+      includePersonaSummary: true,
+      maxTurnsPerConversation: 20,
+    },
+  };
+
+  await writeJsonIfMissing(path.join(etcDir, 'training-data.json'), trainingData);
 
   // Copy additional system config files if they exist
   const systemConfigsToCopy = [

@@ -25,6 +25,7 @@ import type {
   DesireAdvancePayload,
   DesireExecutePayload,
   DesireReviewPayload,
+  DesireCheckinPayload,
 } from './types.js';
 import {
   saveCurrentTask,
@@ -55,6 +56,7 @@ const TASK_TO_AGENT: Record<TaskType, string | null> = {
   desire_advance: null, // Handled specially - runs desire through planning/review/approval
   desire_execute: 'desire-executor',
   desire_review: null, // Handled specially - runs outcome reviewer graph
+  desire_checkin: null, // Handled specially - intelligent LLM-driven evaluation of long-running goals
   psychoanalyze: 'psychoanalyzer',
   code_analyze: null, // Will be implemented in Phase 5
   help_ticket_review: null, // Handled specially - reviews user feedback tickets
@@ -209,23 +211,70 @@ async function executeDesireAdvance(
 
   try {
     // Dynamic imports to avoid circular dependencies
-    const { listDesiresByStatus, loadDesire, moveDesire } = await import('../agency/storage.js');
+    const { listDesiresByStatus, loadDesire, moveDesire, saveDesireManifest } = await import('../agency/storage.js');
     const { loadDecisionRules } = await import('../identity.js');
     const { canAutoApprove, loadConfig } = await import('../agency/config.js');
     // Note: appendReflectionToBuffer and appendAgencyMessageToConversation already imported above
 
+    // FIRST: Check for questioning desires that need questions re-presented to the user
+    // This is CRITICAL - the Lizard Brain should run desire_advance to handle these
+    const questioningDesires = await listDesiresByStatus('questioning', username);
+    if (questioningDesires.length > 0) {
+      console.log(`[task-executor] Found ${questioningDesires.length} questioning desire(s) - re-presenting questions to user`);
+
+      for (const desire of questioningDesires) {
+        const questions = desire.clarifyingQuestions?.questions || [];
+        const answers = desire.clarifyingQuestions?.answers || [];
+        const unansweredCount = questions.length - answers.length;
+
+        if (unansweredCount > 0) {
+          // Format the questions for the user
+          const questionList = questions
+            .slice(answers.length) // Only show unanswered questions
+            .map((q: any, i: number) => `${i + 1}. ${q.text}`)
+            .join('\n');
+
+          // Post to conversation buffer so user sees the questions
+          appendAgencyMessageToConversation(
+            username,
+            `❓ **Questions about "${desire.title}"**\n\nI need your input before I can proceed with planning:\n\n${questionList}\n\n_Please respond with your answers, or check the Agency tab for more details._`,
+            {
+              dialogueSource: 'agency-system',
+              displayColor: '#f59e0b',
+              type: 'clarifying_questions',
+              desireId: desire.id,
+              desireTitle: desire.title,
+              questions: questions.slice(answers.length),
+            }
+          );
+
+          console.log(`[task-executor] Re-presented ${unansweredCount} question(s) for desire: ${desire.title}`);
+        }
+      }
+
+      // Also output to inner dialogue
+      appendReflectionToBuffer(username,
+        `❓ **Awaiting User Input**: ${questioningDesires.length} desire(s) have unanswered questions.\n\n${questioningDesires.map(d => `• "${d.title}"`).join('\n')}\n\n_Questions have been posted to the chat for user response._`,
+        { dialogueSource: 'agency-system', displayColor: '#f59e0b', type: 'desires_questioning' }
+      );
+
+      // Continue with other processing - don't return early
+      // This allows the Lizard Brain to also process pending/planning desires in the same cycle
+    }
+
     // Get pending AND nascent desires that need processing
     // (both status types count toward pendingReadyToAdvance in system-state.ts)
-    const [pendingDesires, nascentDesires] = await Promise.all([
+    const [pendingDesires, nascentDesires, planningDesires] = await Promise.all([
       listDesiresByStatus('pending', username),
       listDesiresByStatus('nascent', username),
+      listDesiresByStatus('planning', username), // Also check for desires stuck in planning
     ]);
     const allPendingDesires = [...pendingDesires, ...nascentDesires];
     const config = await loadConfig(username);
     const activationThreshold = config.thresholds.activation;
 
     // DIAGNOSTIC: Log what we found
-    console.log(`[task-executor] Found ${pendingDesires.length} pending + ${nascentDesires.length} nascent = ${allPendingDesires.length} total`);
+    console.log(`[task-executor] Found ${pendingDesires.length} pending + ${nascentDesires.length} nascent + ${planningDesires.length} planning`);
     console.log(`[task-executor] Activation threshold: ${activationThreshold}`);
     for (const d of allPendingDesires) {
       const status = d.strength >= activationThreshold ? '✓ READY' : '○ building';
@@ -235,8 +284,19 @@ async function executeDesireAdvance(
     // Filter to desires that have crossed activation threshold
     const readyDesires = allPendingDesires.filter(d => d.strength >= activationThreshold);
 
-    if (readyDesires.length === 0) {
-      console.log('[task-executor] No pending desires ready for advancement');
+    // Also include desires in 'planning' status that need re-planning
+    // (these came from retry verdict or user feedback and need their plan regenerated)
+    const desiresNeedingReplan = planningDesires.filter(d => {
+      // Include if: has no plan, OR came from a retry verdict, OR has userCritique (feedback)
+      const needsReplan = !d.plan || d.outcomeReview?.verdict === 'retry' || d.userCritique;
+      if (needsReplan) {
+        console.log(`[task-executor]   🔄 Re-planning: "${d.title}" (reason: ${!d.plan ? 'no plan' : d.userCritique ? 'user feedback' : 'retry verdict'})`);
+      }
+      return needsReplan;
+    });
+
+    if (readyDesires.length === 0 && desiresNeedingReplan.length === 0) {
+      console.log('[task-executor] No pending desires ready for advancement and no planning desires need re-plan');
 
       // Output detailed status to inner dialogue
       const totalDesires = allPendingDesires.length;
@@ -258,14 +318,15 @@ async function executeDesireAdvance(
         );
       }
 
-      return { success: true, data: { processed: 0, reason: 'No pending desires above activation threshold' } };
+      return { success: true, data: { processed: 0, reason: 'No pending desires above activation threshold and no planning desires need re-plan' } };
     }
 
-    console.log(`[task-executor] Found ${readyDesires.length} desire(s) ready for advancement:`, readyDesires.map(d => d.title));
+    console.log(`[task-executor] Found ${readyDesires.length} desire(s) ready for advancement, ${desiresNeedingReplan.length} desire(s) needing re-plan`);
 
     let processed = 0;
     let autoApproved = 0;
     let awaitingApproval = 0;
+    let replanned = 0;
 
     // Get current trust level
     let currentTrustLevel = 'supervised_auto';
@@ -276,6 +337,107 @@ async function executeDesireAdvance(
       console.warn('[task-executor] Could not load decision rules, using default trust level');
     }
 
+    // FIRST: Process desires in 'planning' status that need re-planning
+    for (const desire of desiresNeedingReplan.slice(0, 2)) { // Process max 2 re-plans at a time
+      console.log(`[task-executor] Re-planning desire: ${desire.title}`);
+
+      // Output to Inner Dialogue
+      const replanReason = !desire.plan ? 'missing plan' :
+        desire.userCritique ? 'user feedback received' :
+        desire.outcomeReview?.verdict === 'retry' ? 'retry after review' : 'needs update';
+
+      appendReflectionToBuffer(username,
+        `🔄 **Re-planning desire:** "${desire.title}"\n\nReason: ${replanReason}`,
+        { dialogueSource: 'agency-system', displayColor: '#3b82f6', type: 'desire_replanning_start' }
+      );
+
+      // Clear the old plan so desire-planner will generate a new one
+      const now = new Date().toISOString();
+      desire.plan = undefined;
+      desire.updatedAt = now;
+      await saveDesireManifest(desire, username);
+
+      // Run desire-planner (it will find desires in 'planning' status without a plan)
+      const planResult = await runAgentProcess('desire-planner', [], username);
+      if (!planResult.success) {
+        console.error(`[task-executor] Re-plan failed for ${desire.id}: ${planResult.error}`);
+        appendReflectionToBuffer(username,
+          `❌ **Re-planning failed:** "${desire.title}"\n\nError: ${planResult.error || 'Unknown error'}`,
+          { dialogueSource: 'agency-system', displayColor: '#ef4444', type: 'desire_replanning_failed' }
+        );
+        continue;
+      }
+
+      // Reload desire to get the new plan
+      const updatedDesire = await loadDesire(desire.id, username);
+      if (!updatedDesire?.plan) {
+        console.error(`[task-executor] No plan generated for re-plan of ${desire.id}`);
+        appendReflectionToBuffer(username,
+          `⚠️ **No plan generated:** "${desire.title}"\n\nThe desire-planner did not produce a plan.`,
+          { dialogueSource: 'agency-system', displayColor: '#f59e0b', type: 'desire_no_plan' }
+        );
+        continue;
+      }
+
+      Object.assign(desire, updatedDesire);
+      replanned++;
+
+      // Output success with new plan
+      const planSteps = updatedDesire.plan?.steps || [];
+      const stepsText = planSteps.length > 0
+        ? planSteps.map((s: any, i: number) => `${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}`).join('\n')
+        : 'No steps defined';
+
+      appendReflectionToBuffer(username,
+        `✅ **New plan generated:** "${desire.title}"\n\n**Steps:**\n${stepsText}\n\n**Risk:** ${updatedDesire.plan?.estimatedRisk || 'unknown'}`,
+        { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'plan_regenerated', desireId: desire.id, desireTitle: desire.title }
+      );
+
+      // Now proceed to approval check (same as normal flow)
+      const risk = updatedDesire.plan?.estimatedRisk || 'medium';
+      const approvalCheck = await canAutoApprove(risk, desire.strength, currentTrustLevel, username, desire);
+
+      if (approvalCheck.autoApprove) {
+        console.log(`[task-executor] ✅ Auto-approving re-planned desire: ${desire.title}`);
+        desire.status = 'approved';
+        desire.updatedAt = new Date().toISOString();
+        await moveDesire(desire, 'planning', 'approved', username);
+        autoApproved++;
+
+        appendAgencyMessageToConversation(username,
+          `🚀 **Auto-approved (re-planned):** "${desire.title}"\n\n` +
+          `**Reason:** ${approvalCheck.reason}\n\n` +
+          `_This will be executed automatically._`,
+          { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'auto_approved', desireId: desire.id, desireTitle: desire.title }
+        );
+      } else {
+        console.log(`[task-executor] 📋 Queuing re-planned desire for approval: ${desire.title}`);
+        desire.status = 'awaiting_approval';
+        desire.updatedAt = new Date().toISOString();
+        await moveDesire(desire, 'planning', 'awaiting_approval', username);
+        awaitingApproval++;
+
+        appendAgencyMessageToConversation(username,
+          `⚠️ **Approval Required (Re-planned):** "${desire.title}"\n\n` +
+          `**Description:** ${desire.description}\n\n` +
+          `**Risk Level:** ${risk}\n\n` +
+          `**Reason for manual approval:** ${approvalCheck.reason}\n\n` +
+          `_Use the Agency tab to approve or reject this desire._`,
+          {
+            dialogueSource: 'agency-system',
+            displayColor: '#f59e0b',
+            type: 'approval_request',
+            desireId: desire.id,
+            desireTitle: desire.title,
+            desireRisk: risk,
+          }
+        );
+      }
+
+      processed++;
+    }
+
+    // SECOND: Process pending/nascent desires ready for advancement
     for (const desire of readyDesires.slice(0, 3)) { // Process max 3 at a time
       console.log(`[task-executor] Processing desire: ${desire.title} (strength: ${desire.strength.toFixed(2)})`);
 
@@ -402,12 +564,13 @@ async function executeDesireAdvance(
       processed++;
     }
 
-    console.log(`[task-executor] Desire advance complete: ${processed} processed, ${autoApproved} auto-approved, ${awaitingApproval} awaiting approval`);
+    console.log(`[task-executor] Desire advance complete: ${processed} processed, ${replanned} replanned, ${autoApproved} auto-approved, ${awaitingApproval} awaiting approval`);
 
     return {
       success: true,
       data: {
         processed,
+        replanned,
         autoApproved,
         awaitingApproval,
         trustLevel: currentTrustLevel,
@@ -593,6 +756,248 @@ async function executeDesireReview(
     };
   } catch (err) {
     console.error('[task-executor] Error in desire review:', err);
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Handle desire_checkin task.
+ * Intelligent LLM-driven evaluation of long-running desires.
+ * - Checks progress against milestones
+ * - Generates clarifying questions if needed
+ * - Suggests new tasks or plan adjustments
+ * - Can advance milestones when completed
+ */
+async function executeDesireCheckin(
+  payload: DesireCheckinPayload | undefined,
+  username: string
+): Promise<{ success: boolean; error?: string; data?: any }> {
+  console.log('[task-executor] Running desire check-in for user:', username);
+
+  try {
+    const { appendReflectionToBuffer, appendAgencyMessageToConversation } = await import('../conversation-buffer.js');
+    const { listLongRunningDesiresNeedingCheckin, loadDesire, recordDesireCheckin, advanceDesireMilestone } = await import('../agency/storage.js');
+    const { callLLMText } = await import('../model-router.js');
+    const { searchMemory } = await import('../memory.js');
+
+    // Get long-running desires that need check-in
+    const maxAgeHours = 24; // Check-in if last check was more than 24 hours ago
+    let desiresNeedingCheckin = await listLongRunningDesiresNeedingCheckin(username, maxAgeHours);
+
+    // If specific desireId provided, filter to just that one
+    if (payload?.desireId) {
+      const specificDesire = await loadDesire(payload.desireId, username);
+      if (specificDesire && specificDesire.goalType === 'long_running') {
+        desiresNeedingCheckin = [specificDesire];
+      } else {
+        desiresNeedingCheckin = [];
+      }
+    }
+
+    // If force flag is set and no desires found, check all executing long-running desires
+    if (payload?.force && desiresNeedingCheckin.length === 0) {
+      const { listDesiresFromFolders } = await import('../agency/storage.js');
+      const allDesires = await listDesiresFromFolders(username);
+      desiresNeedingCheckin = allDesires.filter(d =>
+        d.goalType === 'long_running' &&
+        (d.status === 'executing' || d.status === 'approved')
+      );
+    }
+
+    if (desiresNeedingCheckin.length === 0) {
+      console.log('[task-executor] No long-running desires need check-in');
+      return { success: true, data: { processed: 0, reason: 'No long-running desires need check-in' } };
+    }
+
+    console.log(`[task-executor] Found ${desiresNeedingCheckin.length} long-running desire(s) needing check-in`);
+
+    // Output to Inner Dialogue
+    appendReflectionToBuffer(username,
+      `🔄 **Checking in on long-running goals:** ${desiresNeedingCheckin.length} desire(s) to evaluate`,
+      { dialogueSource: 'agency-system', displayColor: '#8b5cf6', type: 'desire_checkin_start' }
+    );
+
+    let processed = 0;
+    let questionsGenerated = 0;
+    let milestonesAdvanced = 0;
+
+    for (const desire of desiresNeedingCheckin.slice(0, 2)) { // Process max 2 at a time
+      console.log(`[task-executor] Checking in on desire: ${desire.title}`);
+
+      try {
+        // Get current milestone info
+        const currentMilestoneIdx = desire.goalProgress?.currentMilestone || 0;
+        const currentMilestone = desire.milestones?.[currentMilestoneIdx];
+        const progress = desire.goalProgress;
+
+        // Search for recent memories related to this desire
+        const relatedMemories = searchMemory(desire.title);
+
+        // Build evaluation prompt
+        const evaluationPrompt = `You are evaluating progress on a long-running desire for the user.
+
+## Desire Information
+- **Title:** "${desire.title}"
+- **Description:** ${desire.description}
+- **Completion Criteria:** ${desire.completionCriteria || 'Not specified'}
+- **Goal Type:** ${desire.goalType}
+- **Current Status:** ${desire.status}
+
+## Progress
+- **Current Milestone:** ${currentMilestone?.title || 'None'} (${currentMilestoneIdx + 1}/${progress?.totalMilestones || 0})
+- **Progress:** ${progress?.progressPercent || 0}%
+- **Last Check-in:** ${progress?.lastCheckinAt || 'Never'}
+
+## All Milestones
+${desire.milestones?.map((m, i) => `${i + 1}. [${m.status}] ${m.title}${m.description ? `: ${m.description}` : ''}`).join('\n') || 'No milestones defined'}
+
+## Recent Related Activity
+${relatedMemories.length > 0
+  ? relatedMemories.slice(0, 5).map(m => `- ${m.slice(0, 200)}...`).join('\n')
+  : 'No recent activity found'}
+
+## Evaluation Task
+Evaluate the user's progress and respond with JSON:
+{
+  "statusAssessment": "Brief assessment of current progress",
+  "questionsForUser": ["Questions to ask about progress (0-2 max)"],
+  "currentMilestoneComplete": boolean,
+  "suggestedNextActions": ["Suggested actions for the user (0-3 max)"],
+  "recommendation": "continue | advance_milestone | adjust_plan | pause | escalate",
+  "recommendationReason": "Why this recommendation"
+}
+
+IMPORTANT:
+- Only set currentMilestoneComplete=true if there's clear evidence the milestone is done
+- Keep questions focused and actionable
+- Be concise in your assessment`;
+
+        // Call LLM for evaluation
+        const evalResponse = await callLLMText({
+          role: 'orchestrator',
+          messages: [{ role: 'user', content: evaluationPrompt }],
+          options: { temperature: 0.3, maxTokens: 800 },
+        });
+
+        // Parse evaluation response
+        let evaluation: {
+          statusAssessment?: string;
+          questionsForUser?: string[];
+          currentMilestoneComplete?: boolean;
+          suggestedNextActions?: string[];
+          recommendation?: string;
+          recommendationReason?: string;
+        } = {};
+
+        try {
+          // Extract JSON from response
+          const jsonMatch = evalResponse.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            evaluation = JSON.parse(jsonMatch[0]);
+          }
+        } catch (parseErr) {
+          console.warn('[task-executor] Failed to parse check-in evaluation:', parseErr);
+          evaluation = { statusAssessment: evalResponse, recommendation: 'continue' };
+        }
+
+        // Record the check-in
+        await recordDesireCheckin(desire.id, username, evaluation.statusAssessment || 'Check-in completed');
+
+        // Handle questions for user
+        if (evaluation.questionsForUser && evaluation.questionsForUser.length > 0) {
+          questionsGenerated += evaluation.questionsForUser.length;
+
+          // Post questions to main chat
+          const questionsText = evaluation.questionsForUser.map((q, i) => `${i + 1}. ${q}`).join('\n');
+          appendAgencyMessageToConversation(username,
+            `💭 **Check-in on "${desire.title}":**\n\n` +
+            `${evaluation.statusAssessment || 'Progress check'}\n\n` +
+            `**Questions:**\n${questionsText}`,
+            {
+              dialogueSource: 'agency-system',
+              displayColor: '#8b5cf6',
+              type: 'desire_checkin_questions',
+              desireId: desire.id,
+              desireTitle: desire.title,
+            }
+          );
+        }
+
+        // Handle milestone advancement
+        if (evaluation.currentMilestoneComplete && evaluation.recommendation === 'advance_milestone') {
+          console.log(`[task-executor] Advancing milestone for desire: ${desire.title}`);
+
+          try {
+            const advanceResult = await advanceDesireMilestone(desire.id, username);
+            if (advanceResult) {
+              milestonesAdvanced++;
+
+              const { desire: updatedDesire, nextMilestone } = advanceResult;
+
+              appendAgencyMessageToConversation(username,
+                `🎯 **Milestone Complete:** "${desire.title}"\n\n` +
+                `✅ Completed: ${currentMilestone?.title}\n` +
+                `➡️ Next: ${nextMilestone?.title || 'Final milestone!'}\n\n` +
+                `Progress: ${updatedDesire.goalProgress?.progressPercent || 0}%`,
+                {
+                  dialogueSource: 'agency-system',
+                  displayColor: '#22c55e',
+                  type: 'milestone_advanced',
+                  desireId: desire.id,
+                  desireTitle: desire.title,
+                }
+              );
+            } else {
+              console.warn('[task-executor] advanceDesireMilestone returned null');
+            }
+          } catch (advanceErr) {
+            console.error('[task-executor] Failed to advance milestone:', advanceErr);
+          }
+        } else if (evaluation.recommendation === 'escalate') {
+          // Escalate to user attention
+          appendAgencyMessageToConversation(username,
+            `⚠️ **Attention Needed:** "${desire.title}"\n\n` +
+            `${evaluation.statusAssessment || 'This goal needs your attention.'}\n\n` +
+            `**Reason:** ${evaluation.recommendationReason || 'Progress evaluation suggests intervention needed.'}`,
+            {
+              dialogueSource: 'agency-system',
+              displayColor: '#ef4444',
+              type: 'desire_checkin_escalate',
+              desireId: desire.id,
+              desireTitle: desire.title,
+            }
+          );
+        } else {
+          // Just log to inner dialogue
+          appendReflectionToBuffer(username,
+            `📊 **Check-in:** "${desire.title}"\n\n` +
+            `${evaluation.statusAssessment || 'No issues detected.'}\n` +
+            `Progress: ${progress?.progressPercent || 0}% | Recommendation: ${evaluation.recommendation || 'continue'}`,
+            { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_checkin_status' }
+          );
+        }
+
+        processed++;
+      } catch (checkinErr) {
+        console.error(`[task-executor] Error checking in on desire ${desire.id}:`, checkinErr);
+      }
+    }
+
+    // Summary
+    appendReflectionToBuffer(username,
+      `✅ **Check-in complete:**\n` +
+      `• ${processed} desire(s) evaluated\n` +
+      `• ${questionsGenerated} questions generated\n` +
+      `• ${milestonesAdvanced} milestones advanced`,
+      { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_checkin_complete' }
+    );
+
+    return {
+      success: true,
+      data: { processed, questionsGenerated, milestonesAdvanced },
+    };
+  } catch (err) {
+    console.error('[task-executor] Error in desire check-in:', err);
     return { success: false, error: (err as Error).message };
   }
 }
@@ -918,6 +1323,14 @@ export async function executeTask(task: QueuedTask): Promise<TaskResult> {
         data = reviewResult.data;
         break;
 
+      case 'desire_checkin':
+        // Intelligent check-in on long-running goals
+        const checkinResult = await executeDesireCheckin(task.payload as DesireCheckinPayload, username);
+        success = checkinResult.success;
+        error = checkinResult.error;
+        data = checkinResult.data;
+        break;
+
       case 'code_analyze':
         // Self-healing code analysis
         console.log('[task-executor] Running self-healing code analysis');
@@ -1018,6 +1431,7 @@ export function isTaskExecutable(taskType: TaskType): boolean {
   if (taskType === 'index_build') return true;
   if (taskType === 'code_analyze') return true;
   if (taskType === 'help_ticket_review') return true;
+  if (taskType === 'desire_checkin') return true;
 
   const agentName = TASK_TO_AGENT[taskType];
   if (!agentName) return false;

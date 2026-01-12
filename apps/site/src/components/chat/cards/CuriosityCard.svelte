@@ -1,4 +1,18 @@
 <script lang="ts">
+  /**
+   * CuriosityCard Component
+   *
+   * Displays curiosity questions asked by the system.
+   *
+   * Interaction Pattern:
+   * 1. User clicks/selects this card
+   * 2. User types response in the main chat input
+   * 3. Response is routed through the response pipeline (cardType: 'curiosity_response')
+   * 4. Multi-turn conversation continues while card is selected
+   * 5. Deselecting ends the thread, outputs are saved as curiosity memory
+   *
+   * The "Skip" action dismisses the question without requiring a response.
+   */
   import { createEventDispatcher } from 'svelte';
   import BaseMessageCard from './BaseMessageCard.svelte';
   import type { ChatMessage } from '../../../lib/client/composables/useMessages';
@@ -10,82 +24,46 @@
 
   const dispatch = createEventDispatcher();
 
-  let responseText = '';
+  // Response state
   let hasResponded = false;
-  let isSubmitting = false;
-  let responseStatus: 'idle' | 'success' | 'error' = 'idle';
+  let wasSkipped = false;
+  let isSkipping = false;
 
-  // Check if this question has already been answered (from meta)
-  $: if (message.meta?.answered || message.meta?.skipped) {
+  // Check if this question was already answered or skipped (from meta)
+  $: if (message.meta?.answered) {
     hasResponded = true;
+    wasSkipped = false;
+  }
+  $: if (message.meta?.skipped) {
+    hasResponded = true;
+    wasSkipped = true;
   }
 
-  async function submitResponse() {
-    if (!responseText.trim() || isSubmitting) return;
+  // Question ID for tracking
+  $: questionId = message.meta?.questionId || message.id;
 
-    isSubmitting = true;
-    responseStatus = 'idle';
+  /**
+   * Skip this curiosity question without responding
+   * Clears the pause manager state and marks the question as skipped
+   */
+  async function handleSkip() {
+    if (isSkipping || hasResponded) return;
+
+    isSkipping = true;
 
     try {
-      // Get the question ID from message meta or generate from message ID
-      const questionId = message.meta?.questionId || message.id;
-
-      // Send the response via persona-chat API with replyToQuestionId
-      const response = await apiFetch('/api/persona_chat', {
+      // Clear the pause manager's curiosity awaiting state
+      await apiFetch('/api/pause-state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: responseText,
-          replyToQuestionId: questionId,
-          replyToContent: message.content,
+          action: 'clearCuriosity',
+          reason: 'skipped',
         }),
       });
 
-      if (response.ok) {
-        hasResponded = true;
-        responseStatus = 'success';
-
-        // Notify parent that a response was sent
-        dispatch('curiosityResponded', {
-          questionId,
-          response: responseText,
-          action: 'responded',
-        });
-
-        // Clear the pause manager's curiosity awaiting state
-        try {
-          await apiFetch('/api/pause-state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'clearCuriosity',
-              reason: 'responded',
-            }),
-          });
-        } catch (e) {
-          // Non-critical, continue
-        }
-      } else {
-        responseStatus = 'error';
-      }
-    } catch (error) {
-      console.error('[CuriosityCard] Error submitting response:', error);
-      responseStatus = 'error';
-    } finally {
-      isSubmitting = false;
-    }
-  }
-
-  async function dismissQuestion() {
-    if (isSubmitting) return;
-
-    isSubmitting = true;
-
-    try {
-      const questionId = message.meta?.questionId || message.id;
-
       hasResponded = true;
-      responseStatus = 'success';
+      wasSkipped = true;
 
       // Notify parent that question was skipped
       dispatch('curiosityResponded', {
@@ -93,30 +71,20 @@
         response: null,
         action: 'skipped',
       });
-
-      // Clear the pause manager's curiosity awaiting state
-      try {
-        await apiFetch('/api/pause-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'clearCuriosity',
-            reason: 'skipped',
-          }),
-        });
-      } catch (e) {
-        // Non-critical, continue
-      }
+    } catch (error) {
+      console.error('[CuriosityCard] Error skipping question:', error);
     } finally {
-      isSubmitting = false;
+      isSkipping = false;
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submitResponse();
-    }
+  /**
+   * Called by parent when a response was sent via main input
+   * Updates local state to show confirmation
+   */
+  export function markAsResponded() {
+    hasResponded = true;
+    wasSkipped = false;
   }
 </script>
 
@@ -133,59 +101,57 @@
   on:speakMessage
 >
   <svelte:fragment slot="content">
+    <!-- Question text -->
     <p class="curiosity-text">{message.content}</p>
 
-    {#if !hasResponded}
-      <!-- Inline response area -->
-      <div class="curiosity-response-area">
-        <textarea
-          bind:value={responseText}
-          on:keydown={handleKeydown}
-          placeholder="Share your thoughts..."
-          rows="2"
-          disabled={isSubmitting}
-          class="response-textarea"
-        />
-        <div class="response-actions">
-          <button
-            class="btn-reply"
-            on:click={submitResponse}
-            disabled={!responseText.trim() || isSubmitting}
-          >
-            {#if isSubmitting}
-              Sending...
-            {:else}
-              Reply
-            {/if}
-          </button>
-          <button
-            class="btn-skip"
-            on:click={dismissQuestion}
-            disabled={isSubmitting}
-          >
-            Skip
-          </button>
-        </div>
-        {#if responseStatus === 'error'}
-          <p class="response-error">Failed to send. Please try again.</p>
+    <!-- Response status or interaction hint -->
+    {#if hasResponded}
+      <div class="status-container">
+        {#if wasSkipped}
+          <span class="status-badge status-skipped">
+            <span class="status-icon">⏭</span>
+            Skipped
+          </span>
+        {:else}
+          <span class="status-badge status-responded">
+            <span class="status-icon">✓</span>
+            Responded
+          </span>
         {/if}
       </div>
     {:else}
-      <!-- Response sent confirmation -->
-      <div class="response-sent">
-        {#if message.meta?.skipped}
-          <span class="skip-indicator">⏭ Skipped</span>
+      <!-- Interaction hint and skip button -->
+      <div class="interaction-area">
+        {#if isSelected}
+          <div class="selection-active">
+            <span class="pulse-dot"></span>
+            <span class="hint-text">Selected — type your response below</span>
+          </div>
         {:else}
-          <span class="success-indicator">✓ Response sent</span>
+          <div class="selection-hint">
+            <span class="hint-text">Click to reply</span>
+          </div>
         {/if}
+
+        <button
+          class="skip-btn"
+          on:click|stopPropagation={handleSkip}
+          disabled={isSkipping}
+          title="Skip this question"
+        >
+          {#if isSkipping}
+            <span class="spinner"></span>
+          {:else}
+            Skip
+          {/if}
+        </button>
       </div>
     {/if}
-
-    <p class="reply-hint">Or click anywhere to reply in the main input</p>
   </svelte:fragment>
 </BaseMessageCard>
 
 <style>
+  /* Question text */
   .curiosity-text {
     margin: 0;
     white-space: pre-wrap;
@@ -193,118 +159,162 @@
     line-height: 1.6;
   }
 
-  /* Inline response area */
-  .curiosity-response-area {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: rgba(139, 92, 246, 0.08);
-    border-radius: 0.5rem;
-    border: 1px solid rgba(139, 92, 246, 0.2);
-  }
-
-  .response-textarea {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-secondary, #1e1e2e);
-    border: 1px solid rgba(139, 92, 246, 0.3);
-    border-radius: 0.375rem;
-    color: var(--text-primary, #cdd6f4);
-    font-size: 0.875rem;
-    font-family: inherit;
-    resize: none;
-    transition: border-color 0.15s;
-  }
-
-  .response-textarea:focus {
-    outline: none;
-    border-color: #8b5cf6;
-  }
-
-  .response-textarea:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .response-actions {
+  /* Status container for responded/skipped states */
+  .status-container {
+    margin-top: 0.75rem;
     display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
+    align-items: center;
   }
 
-  .btn-reply,
-  .btn-skip {
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
     padding: 0.375rem 0.75rem;
-    border-radius: 0.375rem;
-    font-size: 0.8rem;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
     font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
   }
 
-  .btn-reply {
+  .status-icon {
+    font-size: 0.75rem;
+  }
+
+  .status-responded {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+
+  .status-skipped {
+    background: rgba(107, 114, 128, 0.15);
+    color: #9ca3af;
+    border: 1px solid rgba(107, 114, 128, 0.3);
+  }
+
+  /* Interaction area with hint and skip */
+  .interaction-area {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  /* Selection hint (not selected) */
+  .selection-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .selection-hint .hint-text {
+    font-size: 0.8125rem;
+    color: var(--text-muted, #9ca3af);
+    opacity: 0.8;
+  }
+
+  /* Selection active indicator */
+  .selection-active {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 9999px;
+  }
+
+  .selection-active .hint-text {
+    font-size: 0.8125rem;
+    color: #a78bfa;
+    font-weight: 500;
+  }
+
+  /* Pulsing dot for active selection */
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
     background: #8b5cf6;
-    color: white;
-    border: none;
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
   }
 
-  .btn-reply:hover:not(:disabled) {
-    background: #7c3aed;
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(0.8);
+    }
   }
 
-  .btn-reply:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-skip {
+  /* Skip button */
+  .skip-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 60px;
+    padding: 0.375rem 0.75rem;
     background: transparent;
     color: var(--text-muted, #9ca3af);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
-  .btn-skip:hover:not(:disabled) {
+  .skip-btn:hover:not(:disabled) {
     background: rgba(139, 92, 246, 0.1);
-    color: var(--text-primary, #cdd6f4);
+    border-color: rgba(139, 92, 246, 0.4);
+    color: var(--text-primary, #f3f4f6);
   }
 
-  .btn-skip:disabled {
+  .skip-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .response-error {
-    margin: 0.5rem 0 0 0;
-    font-size: 0.75rem;
-    color: #ef4444;
+  /* Spinner for skip button */
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(139, 92, 246, 0.3);
+    border-top-color: #8b5cf6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
 
-  /* Response sent confirmation */
-  .response-sent {
-    margin-top: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(139, 92, 246, 0.08);
-    border-radius: 0.375rem;
-    font-size: 0.8rem;
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
-  .success-indicator {
-    color: #a6e3a1;
+  /* Light mode adjustments */
+  :global(.light) .status-responded {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
   }
 
-  .skip-indicator {
-    color: var(--text-muted, #9ca3af);
+  :global(.light) .status-skipped {
+    background: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
   }
 
-  .reply-hint {
-    margin: 0.5rem 0 0 0;
-    font-size: 0.7rem;
-    color: var(--text-muted, #9ca3af);
-    font-style: italic;
-    opacity: 0;
-    transition: opacity 0.15s;
+  :global(.light) .selection-active {
+    background: rgba(139, 92, 246, 0.1);
   }
 
-  :global(.card-base):hover .reply-hint {
-    opacity: 0.7;
+  :global(.light) .selection-active .hint-text {
+    color: #7c3aed;
+  }
+
+  :global(.light) .selection-hint .hint-text {
+    color: #6b7280;
   }
 </style>

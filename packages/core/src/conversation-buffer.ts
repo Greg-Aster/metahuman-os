@@ -104,8 +104,61 @@ export function dedupeConversationMessages(
 }
 
 /**
+ * Create an empty valid buffer structure
+ */
+function createEmptyBuffer(): ConversationBuffer {
+  return {
+    summaryMarkers: [],
+    messages: [],
+    lastSummarizedIndex: null,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+/**
+ * Attempt to recover a corrupted buffer file by backing it up and resetting
+ * @returns true if recovery was performed, false if no recovery needed
+ */
+function recoverCorruptedBuffer(bufferPath: string, mode: ConversationBufferMode, error: Error): boolean {
+  try {
+    // Create backup of corrupted file with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${bufferPath}.corrupted-${timestamp}`;
+
+    // Only backup if file exists and has content (or is 0 bytes which is also corruption)
+    if (fs.existsSync(bufferPath)) {
+      const stats = fs.statSync(bufferPath);
+      if (stats.size > 0) {
+        fs.copyFileSync(bufferPath, backupPath);
+        console.warn(`[conversation-buffer] ⚠️ Backed up corrupted ${mode} buffer to: ${backupPath}`);
+      } else {
+        console.warn(`[conversation-buffer] ⚠️ ${mode} buffer was empty (0 bytes) - likely disk write failure`);
+      }
+    }
+
+    // Write valid empty buffer
+    const emptyBuffer = createEmptyBuffer();
+    fs.writeFileSync(bufferPath, JSON.stringify(emptyBuffer, null, 2));
+    console.warn(`[conversation-buffer] ✅ Auto-recovered ${mode} buffer - reset to empty state`);
+    console.warn(`[conversation-buffer] Original error was: ${error.message}`);
+
+    // Touch notification
+    const ctx = getUserContext();
+    if (ctx?.username) {
+      touchBufferNotification(ctx.username, mode);
+    }
+
+    return true;
+  } catch (recoveryError) {
+    console.error(`[conversation-buffer] ❌ Failed to recover corrupted ${mode} buffer:`, recoveryError);
+    return false;
+  }
+}
+
+/**
  * Load persisted conversation buffer from disk
  * Handles deduplication and summary marker preservation
+ * Auto-recovers from corrupted files by backing up and resetting
  */
 export function loadPersistedBuffer(mode: ConversationBufferMode): {
   messages: ConversationMessage[];
@@ -119,6 +172,14 @@ export function loadPersistedBuffer(mode: ConversationBufferMode): {
 
   try {
     const raw = fs.readFileSync(bufferPath, 'utf-8');
+
+    // Check for empty file (common disk write failure symptom)
+    if (!raw || raw.trim().length === 0) {
+      console.warn(`[conversation-buffer] ⚠️ ${mode} buffer file is empty - auto-recovering`);
+      recoverCorruptedBuffer(bufferPath, mode, new Error('Empty file'));
+      return { messages: [], summaryMarkers: [], lastSummarizedIndex: null };
+    }
+
     const parsed: Partial<ConversationBuffer> = JSON.parse(raw);
 
     const persistedMessages: ConversationMessage[] = Array.isArray(parsed.messages)
@@ -188,7 +249,14 @@ export function loadPersistedBuffer(mode: ConversationBufferMode): {
       lastSummarizedIndex: derivedLastSummarized ?? null,
     };
   } catch (error) {
-    console.warn('[conversation-buffer] Failed to load conversation buffer:', error);
+    // JSON parse error or other corruption - attempt auto-recovery
+    console.warn(`[conversation-buffer] ⚠️ Failed to load ${mode} buffer:`, error);
+
+    if (bufferPath && error instanceof SyntaxError) {
+      // JSON parse error - corrupted file, attempt recovery
+      recoverCorruptedBuffer(bufferPath, mode, error);
+    }
+
     return { messages: [], summaryMarkers: [], lastSummarizedIndex: null };
   }
 }
@@ -261,6 +329,43 @@ export function getBufferPathForUser(username: string, mode: ConversationBufferM
 }
 
 /**
+ * Attempt to recover a corrupted buffer file for agent context (no user context required)
+ * @returns true if recovery was performed, false if no recovery needed
+ */
+function recoverCorruptedBufferForUser(bufferPath: string, username: string, mode: ConversationBufferMode, error: Error): boolean {
+  try {
+    // Create backup of corrupted file with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${bufferPath}.corrupted-${timestamp}`;
+
+    // Only backup if file exists and has content
+    if (fs.existsSync(bufferPath)) {
+      const stats = fs.statSync(bufferPath);
+      if (stats.size > 0) {
+        fs.copyFileSync(bufferPath, backupPath);
+        console.warn(`[conversation-buffer] ⚠️ Backed up corrupted ${mode} buffer for ${username} to: ${backupPath}`);
+      } else {
+        console.warn(`[conversation-buffer] ⚠️ ${mode} buffer for ${username} was empty (0 bytes) - likely disk write failure`);
+      }
+    }
+
+    // Write valid empty buffer
+    const emptyBuffer = createEmptyBuffer();
+    fs.writeFileSync(bufferPath, JSON.stringify(emptyBuffer, null, 2));
+    console.warn(`[conversation-buffer] ✅ Auto-recovered ${mode} buffer for ${username} - reset to empty state`);
+    console.warn(`[conversation-buffer] Original error was: ${error.message}`);
+
+    // Touch notification
+    touchBufferNotification(username, mode);
+
+    return true;
+  } catch (recoveryError) {
+    console.error(`[conversation-buffer] ❌ Failed to recover corrupted ${mode} buffer for ${username}:`, recoveryError);
+    return false;
+  }
+}
+
+/**
  * Append a message to a user's conversation buffer with locking
  * Can be called from agents without web request context
  *
@@ -294,21 +399,31 @@ export async function appendToUserBuffer(
     const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
 
     try {
-      // Load existing buffer
+      // Load existing buffer with auto-recovery for corruption
       let buffer: ConversationBuffer;
       if (fs.existsSync(bufferPath)) {
         const raw = fs.readFileSync(bufferPath, 'utf-8');
-        buffer = JSON.parse(raw);
-        if (!Array.isArray(buffer.messages)) {
-          buffer.messages = [];
+
+        // Check for empty file (common disk write failure symptom)
+        if (!raw || raw.trim().length === 0) {
+          console.warn(`[conversation-buffer] ⚠️ ${mode} buffer for ${usernameForBuffer} is empty - auto-recovering`);
+          recoverCorruptedBufferForUser(bufferPath, usernameForBuffer, mode, new Error('Empty file'));
+          buffer = createEmptyBuffer();
+        } else {
+          try {
+            buffer = JSON.parse(raw);
+            if (!Array.isArray(buffer.messages)) {
+              buffer.messages = [];
+            }
+          } catch (parseError) {
+            // JSON parse error - corrupted file, auto-recover
+            console.warn(`[conversation-buffer] ⚠️ ${mode} buffer for ${usernameForBuffer} is corrupted - auto-recovering`);
+            recoverCorruptedBufferForUser(bufferPath, usernameForBuffer, mode, parseError as Error);
+            buffer = createEmptyBuffer();
+          }
         }
       } else {
-        buffer = {
-          summaryMarkers: [],
-          messages: [],
-          lastSummarizedIndex: null,
-          lastUpdated: new Date().toISOString(),
-        };
+        buffer = createEmptyBuffer();
       }
 
       // Add message with timestamp

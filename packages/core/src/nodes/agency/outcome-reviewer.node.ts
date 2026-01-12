@@ -32,6 +32,9 @@ interface OutcomeReviewOutput {
   adjustedStrength?: number;
   notifyUser: boolean;
   userMessage?: string;
+  // Long-running goal support
+  milestoneAdvance?: boolean;  // True if current milestone completed, advance to next
+  completionCriteriaMet?: boolean;  // True only if ultimate goal is achieved
 }
 
 const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal, and critically analyze any failures.
@@ -43,9 +46,26 @@ You are an intelligent reviewer, not a simple pass/fail checker. Analyze the exe
 3. Is the failure fixable by the system itself, or does it need human help?
 4. What should happen next?
 
+## CRITICAL: Goal Types and Completion Criteria
+
+**Goal Types**:
+- **one_time**: Single achievement, then done (e.g., "buy a car"). Mark completed when done.
+- **recurring**: Ongoing without end. Mark continue after each cycle.
+- **long_running**: Takes weeks/months with milestones (e.g., "hike the PCT"). SPECIAL HANDLING REQUIRED.
+
+**For LONG_RUNNING Goals**:
+- DO NOT mark "completed" just because plan steps finished
+- ONLY mark "completed" if the COMPLETION CRITERIA is ACTUALLY MET
+- Example: For "Hike the PCT", completion = "Reach Monument 78 at Canadian border"
+  - If just research was done → verdict: "continue" (advance to next milestone)
+  - If user is still hiking → verdict: "continue"
+  - Only when user reaches the border → verdict: "completed"
+- Use "continue" verdict with milestoneAdvance: true to progress through phases
+- Each plan execution covers ONE milestone, not the entire goal
+
 ## Verdict Options
-- **completed**: The desire is fully satisfied. Archive it.
-- **continue**: Keep pursuing (for recurring/aspirational desires). Reset for next cycle.
+- **completed**: The desire is FULLY satisfied. For long_running: ONLY if completionCriteria is met!
+- **continue**: Keep pursuing. For long_running: Current milestone done, advance to next.
 - **retry**: Failed or incomplete. Try again with improved approach. You MUST provide specific lessons and suggestions.
 - **escalate**: Needs human intervention - external resources, permissions, or decisions required.
 - **abandon**: Cannot be achieved or no longer relevant. Give up gracefully.
@@ -96,6 +116,13 @@ async function runOutcomeReview(desire: Desire, execution?: DesireExecution, use
   const previousAttempts = desire.metrics?.executionFailCount || 0;
   const previousLessons = desire.userCritique || '';
 
+  // Build goal type and milestone context for long-running goals
+  const goalType = desire.goalType || 'one_time';
+  const completionCriteria = desire.completionCriteria;
+  const currentMilestone = desire.milestones?.[desire.goalProgress?.currentMilestone || 0];
+  const totalMilestones = desire.milestones?.length || 0;
+  const completedMilestones = desire.goalProgress?.completedMilestones || 0;
+
   const userPrompt = `## Desire to Review
 
 **Title**: ${desire.title}
@@ -104,6 +131,15 @@ async function runOutcomeReview(desire: Desire, execution?: DesireExecution, use
 **Original Goal**: ${plan?.operatorGoal || 'Not specified'}
 ${previousAttempts > 0 ? `\n**Previous Failed Attempts**: ${previousAttempts}` : ''}
 ${previousLessons ? `\n**Previous Lessons/Critique**:\n${previousLessons}` : ''}
+
+## Goal Type & Completion Criteria
+**Goal Type**: ${goalType}
+${completionCriteria ? `**Completion Criteria**: ${completionCriteria}
+⚠️ IMPORTANT: Only mark "completed" if THIS criteria is ACTUALLY MET, not just because steps finished!` : ''}
+${goalType === 'long_running' && totalMilestones > 0 ? `
+**Milestones**: ${completedMilestones}/${totalMilestones} completed
+**Current Milestone**: ${currentMilestone?.title || 'None'} (${currentMilestone?.description || 'No description'})
+**Note**: This plan execution covers the CURRENT MILESTONE only. If milestone succeeded but more milestones remain, use verdict="continue" with milestoneAdvance=true.` : ''}
 
 ## Execution Results
 
@@ -140,7 +176,9 @@ ${exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknow
   "nextAttemptSuggestions": ["actionable suggestion 1", "actionable suggestion 2"],
   "adjustedStrength": 0.0-1.0 (optional, for continue/retry),
   "notifyUser": true/false,
-  "userMessage": "Message for user if notifyUser is true"
+  "userMessage": "Message for user if notifyUser is true",
+  "milestoneAdvance": true/false - for long_running: set true if current milestone completed and should advance to next,
+  "completionCriteriaMet": true/false - for long_running: set true ONLY if the ultimate completion criteria is actually met
 }`;
 
   const messages: RouterMessage[] = [
@@ -198,6 +236,9 @@ ${exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknow
       adjustedStrength: parsed.adjustedStrength,
       notifyUser: parsed.notifyUser ?? false,
       userMessage: parsed.userMessage,
+      // Long-running goal support
+      milestoneAdvance: parsed.milestoneAdvance ?? false,
+      completionCriteriaMet: parsed.completionCriteriaMet ?? false,
     };
   } catch (error) {
     return {
@@ -282,6 +323,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       console.log(`[outcome-reviewer]    🔧 Fixable Bug Detected: ${reviewResult.errorType || 'unknown'}`);
       console.log(`[outcome-reviewer]    Suggested Fix: ${reviewResult.suggestedFix}`);
     }
+    if (reviewResult.milestoneAdvance) {
+      console.log(`[outcome-reviewer]    📍 Milestone completed - ready to advance`);
+    }
+    if (reviewResult.completionCriteriaMet) {
+      console.log(`[outcome-reviewer]    ✅ Completion criteria MET - goal fully achieved`);
+    }
 
     // Audit the review
     audit({
@@ -298,6 +345,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         errorType: reviewResult.errorType,
         isFixableBug: reviewResult.isFixableBug,
         notifyUser: reviewResult.notifyUser,
+        goalType: desire.goalType,
+        milestoneAdvance: reviewResult.milestoneAdvance,
+        completionCriteriaMet: reviewResult.completionCriteriaMet,
       },
     });
 
@@ -306,6 +356,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     if (reviewResult.lessonsLearned?.length) {
       summary += ` Lessons: ${reviewResult.lessonsLearned.slice(0, 2).join('; ')}`;
     }
+    if (reviewResult.milestoneAdvance) {
+      summary += ` Milestone completed, advancing to next phase.`;
+    }
 
     return {
       outcomeReview,
@@ -313,6 +366,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       success: true,
       desire, // Pass through for downstream nodes
       summary, // Human-readable summary for inner dialogue and TTS
+      // Long-running goal outputs
+      milestoneAdvance: reviewResult.milestoneAdvance,
+      completionCriteriaMet: reviewResult.completionCriteriaMet,
     };
   } catch (error) {
     console.error(`[outcome-reviewer] ❌ Error:`, error);
@@ -341,6 +397,8 @@ export const OutcomeReviewerNode: NodeDefinition = defineNode({
     { name: 'desire', type: 'object', description: 'Pass-through desire' },
     { name: 'error', type: 'string', optional: true, description: 'Error message if failed' },
     { name: 'summary', type: 'string', description: 'Human-readable summary for inner dialogue and TTS' },
+    { name: 'milestoneAdvance', type: 'boolean', optional: true, description: 'True if milestone completed and should advance' },
+    { name: 'completionCriteriaMet', type: 'boolean', optional: true, description: 'True if ultimate completion criteria is met' },
   ],
   properties: {
     temperature: 0.3,

@@ -100,6 +100,90 @@ export interface StageIterations {
 export type DesireRisk = 'none' | 'low' | 'medium' | 'high' | 'critical';
 
 // ============================================================================
+// Goal Type and Milestones - Long-Running Goal Support
+// ============================================================================
+
+/**
+ * Goal type determines how completion is evaluated.
+ * - one_time: Single achievement, archived when done (e.g., "buy a car")
+ * - recurring: Ongoing without end, cycles forever (e.g., "stay healthy")
+ * - long_running: Takes weeks/months with clear end (e.g., "hike PCT")
+ */
+export type DesireGoalType = 'one_time' | 'recurring' | 'long_running';
+
+/**
+ * A milestone within a long-running desire.
+ * Milestones break large goals into achievable phases.
+ */
+export interface DesireMilestone {
+  /** Unique identifier */
+  id: string;
+  /** Order in the milestone sequence (1-based) */
+  order: number;
+  /** Brief title of the milestone */
+  title: string;
+  /** Detailed description */
+  description?: string;
+  /** Current status */
+  status: 'pending' | 'in_progress' | 'completed' | 'skipped';
+  /** ISO timestamp when milestone was completed */
+  completedAt?: string;
+  /** Task IDs created for this milestone */
+  tasks?: string[];
+  /** Calendar event IDs for this milestone */
+  calendarEvents?: string[];
+  /** Estimated date to reach this milestone */
+  estimatedDate?: string;
+}
+
+/**
+ * Progress tracking for long-running desires.
+ */
+export interface DesireGoalProgress {
+  /** Current milestone index (0-based) */
+  currentMilestone: number;
+  /** Total number of milestones */
+  totalMilestones: number;
+  /** Number of completed milestones */
+  completedMilestones: number;
+  /** Overall progress percentage (0-100) */
+  progressPercent: number;
+  /** Estimated completion date (ISO string) */
+  estimatedCompletionDate?: string;
+  /** ISO timestamp of last check-in */
+  lastCheckinAt?: string;
+  /** ISO timestamp when next check-in is due */
+  nextCheckinAt?: string;
+}
+
+/**
+ * Initialize empty goal progress for a new long-running desire.
+ */
+export function initializeGoalProgress(totalMilestones: number): DesireGoalProgress {
+  return {
+    currentMilestone: 0,
+    totalMilestones,
+    completedMilestones: 0,
+    progressPercent: 0,
+  };
+}
+
+/**
+ * Update goal progress after milestone completion.
+ */
+export function advanceGoalProgress(progress: DesireGoalProgress): DesireGoalProgress {
+  const newCompleted = progress.completedMilestones + 1;
+  const newCurrent = Math.min(progress.currentMilestone + 1, progress.totalMilestones - 1);
+  return {
+    ...progress,
+    currentMilestone: newCurrent,
+    completedMilestones: newCompleted,
+    progressPercent: Math.round((newCompleted / progress.totalMilestones) * 100),
+    lastCheckinAt: new Date().toISOString(),
+  };
+}
+
+// ============================================================================
 // Desire Metrics - Nature Emerges From Behavior
 // ============================================================================
 
@@ -566,6 +650,16 @@ export interface Desire {
   tags?: string[];
   /** Owner username */
   userId?: string;
+
+  // Long-Running Goal Support
+  /** Goal type: one_time (default), recurring, or long_running */
+  goalType?: DesireGoalType;
+  /** Specific verifiable condition for true satisfaction (LLM-generated) */
+  completionCriteria?: string;
+  /** Milestones for long_running desires (user-editable) */
+  milestones?: DesireMilestone[];
+  /** Progress tracking for long_running desires */
+  goalProgress?: DesireGoalProgress;
 }
 
 // ============================================================================

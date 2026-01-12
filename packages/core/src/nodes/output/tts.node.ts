@@ -209,10 +209,13 @@ export const TTSNode: NodeDefinition = defineNode({
   description: 'Queues text for Text-to-Speech playback. Client toggles control playback.',
 
   execute: async (inputs, context, properties) => {
-    const username = context.userId;
+    // Use username (human-readable) for profile path resolution, not userId (UUID)
+    const username = context.username || context.userId;
 
     console.log('[TTS Node] Execute called:', {
       username,
+      contextUsername: context.username,
+      contextUserId: context.userId,
       inputKeys: Object.keys(inputs || {}),
       hasInnerDialogue: !!inputs?.innerDialogue,
       hasConversation: !!inputs?.conversation,

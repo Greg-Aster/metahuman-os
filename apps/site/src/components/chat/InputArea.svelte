@@ -5,6 +5,7 @@
 
   export let input: string = '';
   export let loading: boolean = false;
+  export let messageQueue: string[] = []; // FIFO queue of messages waiting to be sent
 
   // Auto-expanding textarea
   let textareaElement: HTMLTextAreaElement;
@@ -159,9 +160,15 @@
 <div class="input-wrapper">
   <!-- Reply-to indicator -->
   {#if selectedMessage}
+    {@const isCuriosity = selectedMessage.meta?.isCuriosityQuestion || selectedMessage.meta?.type === 'curiosity'}
+    {@const isClarifying = selectedMessage.meta?.type === 'clarifying_questions'}
     <div class="reply-indicator flex items-center gap-2 px-3 py-2 rounded-t-lg text-sm
-                {selectedMessage.meta?.type === 'clarifying_questions' ? 'bg-cyan-500/10 dark:bg-cyan-500/20' : 'bg-blue-500/10 dark:bg-blue-500/20'}">
-      {#if selectedMessage.meta?.type === 'clarifying_questions'}
+                {isCuriosity ? 'bg-purple-500/10 dark:bg-purple-500/20 curiosity-reply' : isClarifying ? 'bg-cyan-500/10 dark:bg-cyan-500/20' : 'bg-blue-500/10 dark:bg-blue-500/20'}">
+      {#if isCuriosity}
+        <span class="pulse-dot-curiosity"></span>
+        <span class="text-purple-500 dark:text-purple-400 font-medium">💭 Responding to:</span>
+        <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.content.substring(0, 50)}{selectedMessage.content.length > 50 ? '...' : ''}</span>
+      {:else if isClarifying}
         <span class="text-cyan-500 dark:text-cyan-400 font-medium">💭 Discussing:</span>
         <span class="text-gray-600 dark:text-gray-400 flex-1 truncate">{selectedMessage.meta?.desireTitle || 'Goal'}</span>
       {:else}
@@ -173,6 +180,20 @@
         on:click={handleClearSelection}
         title="Cancel reply"
       >✕</button>
+    </div>
+  {/if}
+
+  <!-- Queued messages indicator (shows FIFO queue of messages waiting to be sent) -->
+  {#if messageQueue.length > 0}
+    <div class="queued-indicator flex items-center gap-2 px-3 py-2 bg-amber-500/10 dark:bg-amber-500/20 rounded-lg mb-2">
+      <span class="queued-icon text-base">⏳</span>
+      <span class="text-sm text-amber-600 dark:text-amber-400">
+        {#if messageQueue.length === 1}
+          Queued: "{messageQueue[0].substring(0, 40)}{messageQueue[0].length > 40 ? '...' : ''}"
+        {:else}
+          {messageQueue.length} messages queued (next: "{messageQueue[0].substring(0, 25)}...")
+        {/if}
+      </span>
     </div>
   {/if}
 
@@ -195,10 +216,9 @@
       bind:value={input}
       on:keypress={handleKeyPress}
       on:input={adjustTextareaHeight}
-      placeholder="Message your MetaHuman..."
+      placeholder={loading ? "Type next message (will queue)..." : "Message your MetaHuman..."}
       rows="1"
-      class="chat-input"
-      disabled={loading}
+      class="chat-input {loading ? 'queuing' : ''}"
     />
     <div class="input-actions">
       <!-- Stop thinking button - only visible when thinking -->
@@ -228,14 +248,13 @@
       {/if}
       <button
         bind:this={micButton}
-        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {isWakeWordListening ? 'wake-word' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''}"
-        title={ttsIsPlaying ? 'Tap to interrupt and speak' : isWakeWordListening ? 'Listening for "hey greg"…' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
+        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {isWakeWordListening ? 'wake-word' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''} {loading ? 'queuing' : ''}"
+        title={loading ? 'Voice input will be queued' : ttsIsPlaying ? 'Tap to interrupt and speak' : isWakeWordListening ? 'Listening for "hey greg"…' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
         on:click={handleMicClick}
         on:contextmenu={handleMicContextMenu}
         on:touchstart={handleMicTouchStart}
         on:touchend={handleMicTouchEnd}
         on:touchmove={handleMicTouchMove}
-        disabled={loading}
       >
         {#if isWakeWordListening}
           <!-- Wake word mode: Ear icon (listening for trigger phrase) -->
@@ -278,9 +297,10 @@
         {/if}
       </button>
       <button
-        class="send-btn"
+        class="send-btn {loading && input.trim() ? 'queuing' : ''}"
         on:click={handleSend}
-        disabled={!input.trim() || loading}
+        disabled={!input.trim()}
+        title={loading && input.trim() ? 'Queue message' : 'Send message'}
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
@@ -291,6 +311,64 @@
 </div>
 
 <style>
+  /* Curiosity reply indicator with pulsing dot */
+  .curiosity-reply {
+    border-left: 3px solid #8b5cf6;
+    animation: curiosity-glow 2s ease-in-out infinite;
+  }
+
+  .pulse-dot-curiosity {
+    width: 10px;
+    height: 10px;
+    background: #8b5cf6;
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: pulse-curiosity 1.5s ease-in-out infinite;
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4);
+  }
+
+  @keyframes pulse-curiosity {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4);
+    }
+    50% {
+      opacity: 0.8;
+      transform: scale(0.85);
+      box-shadow: 0 0 0 8px rgba(139, 92, 246, 0);
+    }
+  }
+
+  @keyframes curiosity-glow {
+    0%, 100% {
+      background-color: rgba(139, 92, 246, 0.1);
+    }
+    50% {
+      background-color: rgba(139, 92, 246, 0.18);
+    }
+  }
+
+  :global(.dark) .curiosity-reply {
+    border-left-color: #a78bfa;
+  }
+
+  /* Queued message indicator */
+  .queued-indicator {
+    animation: queued-pulse 2s ease-in-out infinite;
+  }
+  .queued-icon {
+    animation: hourglass 1.5s ease-in-out infinite;
+  }
+  @keyframes queued-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+  }
+  @keyframes hourglass {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(180deg); }
+  }
+
   /* Interim transcript animations */
   .interim-transcript {
     animation: pulse 1.5s ease-in-out infinite;

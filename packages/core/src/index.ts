@@ -199,6 +199,16 @@ export * from './trust-coupling';
 export * from './path-resolver';
 export * from './context-window';
 export * from './conversation-buffer';
+export * from './response-buffer';
+
+// Response pipeline handlers
+export {
+  handleResponsePipeline,
+  streamResponsePipeline,
+  type ResponsePipelineRequest,
+  type ResponsePipelineResult,
+} from './api/handlers/response-pipeline.js';
+
 export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';

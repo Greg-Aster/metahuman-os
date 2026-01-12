@@ -93,9 +93,16 @@ export {
   loadPlanFromFolder,
   saveOutcomeReviewToFolder,
   saveExecutionToFolder,
+  loadExecutionAttempts,
+  loadExecutionAttempt,
   getDesireFolderSize,
   listDesireFolders,
   listDesiresFromFolders,
+  // Long-running goal functions
+  updateDesireMilestones,
+  advanceDesireMilestone,
+  listLongRunningDesiresNeedingCheckin,
+  recordDesireCheckin,
 } from './storage.js';
 
 // Convenience namespace

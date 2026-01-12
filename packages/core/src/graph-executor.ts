@@ -417,8 +417,8 @@ async function executeNodeByType(
 
       const startTime = Date.now();
 
-      // Big Brother nodes have no timeout - cloud LLM takes as long as needed
-      const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor';
+      // Big Brother nodes and desire executor have no timeout - cloud LLM/research takes as long as needed
+      const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor' || nodeType === 'desire_executor';
 
       if (neverTimeout) {
         if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, no timeout (Big Brother)`);

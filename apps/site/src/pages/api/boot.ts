@@ -176,9 +176,20 @@ export const GET: APIRoute = async ({ cookies }) => {
   }
 
   // Auto-start Big Brother terminal if enabled in operator config
+  // Get user for config loading - we already authenticated above
+  let effectiveUsername = 'system';
+  try {
+    const { getAuthenticatedUser } = await import('@metahuman/core');
+    const bootUser = getAuthenticatedUser(cookies);
+    effectiveUsername = bootUser.username;
+  } catch {
+    // Use system default if user context unavailable
+  }
+
   let bigBrotherStatus = null
   try {
-    const operatorConfig = loadOperatorConfig()
+    const operatorConfig = loadOperatorConfig(effectiveUsername, true) // Skip cache to get fresh config
+    console.log(`[boot] Big Brother config check: enabled=${operatorConfig.bigBrotherMode?.enabled}, headless=${headlessMode}`);
     if (operatorConfig.bigBrotherMode?.enabled && !headlessMode) {
       const currentState = bigBrotherTerminal.getState()
 

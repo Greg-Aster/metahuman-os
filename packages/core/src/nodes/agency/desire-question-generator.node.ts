@@ -33,9 +33,17 @@ function needsClarifyingQuestions(desire: Desire): { needs: boolean; reason: str
     return { needs: false, reason: 'Questions already answered' };
   }
 
-  // Already has pending questions
+  // Already has pending questions (waiting for answers)
   if (desire.clarifyingQuestions?.questions?.length && !desire.clarifyingQuestions.completedAt) {
     return { needs: false, reason: 'Questions already asked, waiting for answers' };
+  }
+
+  // IMPORTANT: If desire has PREVIOUS answers (even if not completedAt), don't regenerate questions
+  // This preserves context from prior questioning rounds (e.g., after revision requests)
+  // The answers array contains historical context that should be retained
+  if (desire.clarifyingQuestions?.answers?.length) {
+    console.log('[desire-question-generator] Preserving existing answers, not regenerating questions');
+    return { needs: false, reason: 'Previous answers exist, preserving context' };
   }
 
   // Check risk level

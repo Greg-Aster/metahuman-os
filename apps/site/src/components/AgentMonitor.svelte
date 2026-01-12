@@ -232,11 +232,13 @@
 
         if (data.type === 'connected') {
           connected = true;
+          console.log('[AgentMonitor] Connected to SSE stream');
         } else if (data.type === 'metrics') {
+          console.log('[AgentMonitor] Received metrics update:', data.agents?.length || 0, 'agents');
           agents = sortAgentsByActivity(data.agents || []);
         }
       } catch (err) {
-        console.error('Failed to parse SSE event:', err);
+        console.error('[AgentMonitor] Failed to parse SSE event:', err, 'Event data:', event.data);
       }
     });
 
@@ -312,7 +314,9 @@
   <!-- Agent List -->
   {#if agents.length === 0}
     <div class="py-8 px-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-      No agents available
+      {connected 
+        ? 'No agents found. Check server logs for errors.' 
+        : 'Connecting to agent monitor...'}
     </div>
   {:else}
     <div class="flex flex-col gap-3 overflow-y-auto">
