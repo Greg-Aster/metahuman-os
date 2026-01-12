@@ -15,7 +15,10 @@
 import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type CuratorOptions } from './core.js';
 
-async function main() {
+const LOG_PREFIX = '[curator]';
+
+async function main(): Promise<void> {
+  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
   initGlobalLogger('curator');
 
   // Parse arguments
@@ -37,30 +40,35 @@ async function main() {
   }
 
   if (username) {
+    // Validate username for security (alphanumeric + underscore/hyphen only)
+    if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+      console.error(`${LOG_PREFIX} ERROR: Invalid username format. Must be alphanumeric with underscore/hyphen, 1-50 characters.`);
+      process.exit(1);
+    }
     options.username = username;
   }
 
   if (!options.username && !options.singleUser) {
-    console.error('[curator] ERROR: --username <name> is required');
-    console.error('\nUsage: npx tsx brain/agents/curator/cli.ts --username <username>');
-    console.error('Or set MH_TRIGGER_USERNAME environment variable');
+    console.error(`${LOG_PREFIX} ERROR: --username <name> is required`);
+    console.error(`\nUsage: npx tsx brain/agents/curator/cli.ts --username <username>`);
+    console.error(`Or set MH_TRIGGER_USERNAME environment variable`);
     process.exit(1);
   }
 
-  console.log('[curator] Starting with options:', options);
+  console.log(`${LOG_PREFIX} Starting with options:`, options);
 
   try {
     const result = await runCycle(options);
 
-    console.log(`[curator] Completed: ${result.usersProcessed} users processed`);
+    console.log(`${LOG_PREFIX} Completed: ${result.usersProcessed} users processed`);
 
     if (result.errors.length > 0) {
-      console.error('[curator] Errors:', result.errors);
+      console.error(`${LOG_PREFIX} Errors:`, result.errors);
     }
 
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error('[curator] Fatal error:', error);
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
 
     audit({
       category: 'system',
