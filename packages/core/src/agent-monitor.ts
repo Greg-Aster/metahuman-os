@@ -3,10 +3,11 @@
  * Provides real-time status and log streaming
  */
 
-import fs from 'node:fs';
+import fs, { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
-import { existsSync, readFileSync } from 'node:fs';
+
+const LOG_PREFIX = '[agent-monitor]';
 
 export interface AgentStatus {
   name: string;
@@ -56,6 +57,7 @@ export interface AgentLog {
  * Supports both legacy single-file agents (*.ts) and modular agents (directories with index.ts)
  */
 export function listAvailableAgents(): string[] {
+  console.log(`${LOG_PREFIX} listAvailableAgents() called`);
   const agentsDir = systemPaths.agents;
 
   if (!fs.existsSync(agentsDir)) {
@@ -127,8 +129,9 @@ export function getAgentLogs(agentName?: string, limit = 50): AgentLog[] {
         message: normalizedMessage,
         agent: normalizedAgent || 'unknown',
       });
-    } catch {
-      // Skip invalid JSON
+    } catch (error) {
+      // Skip invalid JSON entry in audit log
+      console.warn(`${LOG_PREFIX} Skipping invalid JSON in audit log:`, (error as Error).message);
     }
   }
 
@@ -211,7 +214,8 @@ function readRegistry(): AgentRegistry {
   }
   try {
     return JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-  } catch {
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to read agent registry:`, (error as Error).message);
     return {};
   }
 }
@@ -256,7 +260,8 @@ function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0); // Signal 0 checks if process exists
     return true;
-  } catch {
+  } catch (error) {
+    // Process doesn't exist or access denied - both mean not running
     return false;
   }
 }
@@ -265,6 +270,7 @@ function isProcessRunning(pid: number): boolean {
  * Get current agent statuses
  */
 export function getAgentStatuses(): AgentStatus[] {
+  console.log(`${LOG_PREFIX} getAgentStatuses() called`);
   const registry = readRegistry();
   const availableAgents = listAvailableAgents();
   const statuses: AgentStatus[] = [];
@@ -294,7 +300,9 @@ export function getAgentStatuses(): AgentStatus[] {
       if (data?.pid && isProcessRunning(data.pid)) {
         return { pid: data.pid, startTime: data.startedAt || new Date().toISOString() };
       }
-    } catch {}
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Failed to read service lock file:`, (error as Error).message);
+    }
     return null;
   };
 
@@ -305,7 +313,7 @@ export function getAgentStatuses(): AgentStatus[] {
     if (!registryInfo) {
       const lockInfo = readServiceLock(name);
       if (lockInfo) {
-        registryInfo = { pid: lockInfo.pid, startTime: lockInfo.startTime } as any;
+        registryInfo = { pid: lockInfo.pid, startTime: lockInfo.startTime };
       }
     }
     const logs = getAgentLogs(name, 100);
