@@ -29,8 +29,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { watch, FSWatcher } from 'chokidar';
 import WebSocket from 'ws';
-import { audit } from '../../packages/core/src/audit.js';
-import { systemPaths, getProfilePaths } from '../../packages/core/src/paths.js';
+import { audit } from '@metahuman/core';
+import { systemPaths } from '@metahuman/core';
+import type { ErrorSource } from '@metahuman/core';
 
 const LOG_PREFIX = '[babysitter]';
 
@@ -571,9 +572,7 @@ class AutoHealer {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { generateFixForError, updateFixStatus, applyFix } = await import(
-        '../../packages/core/src/system-coder/index.js'
-      );
+      const { generateFixForError, updateFixStatus, applyFix } = await import('@metahuman/core');
 
       // 1. Generate fix via System Coder + Big Brother
       console.log(`${LOG_PREFIX} Generating fix for error ${errorId}...`);
@@ -928,7 +927,8 @@ class HealthReporter {
       // Convert string dates back to Date objects
       report.timestamp = new Date(report.timestamp);
       return report;
-    } catch {
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Failed to load latest report:`, error);
       return null;
     }
   }
@@ -1089,16 +1089,32 @@ class BabysitterAgent {
   }
 
   /**
+   * Map babysitter error source to System Coder error source
+   */
+  private mapErrorSourceToSystemCoder(source: string): ErrorSource {
+    // Map babysitter source names to System Coder source types
+    switch (source) {
+      case 'server':
+      case 'agents':
+        return 'runtime';
+      case 'big-brother':
+        return 'terminal';
+      default:
+        return 'runtime'; // Default fallback
+    }
+  }
+
+  /**
    * Capture error to System Coder
    * Returns the error ID for use in fix generation
    */
   private async captureToSystemCoder(error: ParsedError): Promise<string | undefined> {
     try {
-      const { captureError } = await import('../../packages/core/src/system-coder/index.js');
+      const { captureError } = await import('@metahuman/core');
 
       const capturedError = await captureError(this.username, {
-        source: error.source as any, // System Coder has specific source types
-        severity: error.severity as any,
+        source: this.mapErrorSourceToSystemCoder(error.source),
+        severity: error.severity,
         message: error.message,
         stack: error.stack,
         context: {
@@ -1306,19 +1322,31 @@ class BabysitterAgent {
 // Main Entry Point
 // ============================================================================
 
-async function main() {
+async function main(): Promise<void> {
   // Get username from args or default to 'greggles'
-  const username = process.argv[2] || 'greggles';
-
+  const rawUsername = process.argv[2] || 'greggles';
+  
+  // Validate username (alphanumeric, underscore, hyphen only)
+  if (!/^[a-zA-Z0-9_-]+$/.test(rawUsername)) {
+    console.error(`${LOG_PREFIX} Invalid username: ${rawUsername}`);
+    process.exit(1);
+  }
+  
+  const username = rawUsername;
   console.log(`${LOG_PREFIX} Starting for user: ${username}`);
 
   const agent = new BabysitterAgent(username);
 
   // Handle graceful shutdown
   const cleanup = async () => {
-    console.log(`${LOG_PREFIX} Received shutdown signal`);
-    await agent.stop();
-    process.exit(0);
+    try {
+      console.log(`${LOG_PREFIX} Received shutdown signal`);
+      await agent.stop();
+      process.exit(0);
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error during cleanup:`, error);
+      process.exit(1);
+    }
   };
 
   process.on('SIGINT', cleanup);
