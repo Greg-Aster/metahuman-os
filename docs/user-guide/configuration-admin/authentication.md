@@ -9,8 +9,9 @@ MetaHuman OS now ships with a fully integrated authentication layer. Every reque
 | Role        | How it is created                         | Session Length | Capabilities                                                               |
 |-------------|-------------------------------------------|----------------|-----------------------------------------------------------------------------|
 | **Owner**   | First account created via UI (or script)  | 24 hours       | Full read/write access to their profile; can adjust settings, trust levels, and profile visibility. |
-| **Guest**   | Owner-created account (future UI) or existing credentials | 1 hour | Always forced into emulation mode. Read-only access to the selected public profile. |
-| **Anonymous** | **Continue as Guest** (no credentials) | 30 minutes     | Must choose from public profiles; cannot write or access private data. API calls touching user data return `401/403`. |
+| **Guest**   | Owner-created account (future UI) or existing credentials | 1 hour | Must authenticate via auth gate. Always forced into emulation mode with read-only access to the selected public profile. |
+
+> **Important:** ALL users must be authenticated. There are no anonymous users in the system. Even guests require authentication through the auth gate with owner-created credentials or existing login credentials.
 
 Session cookies (`mh_session`) are HTTPOnly. Closing the browser does not log out; use the profile menu → **Logout** to end a session immediately.
 
@@ -42,17 +43,18 @@ This moves `memory/`, `persona/`, `logs/`, `etc/`, and voice-training data into 
 1. Open the header menu (persona name) and click **Login**.
 2. Enter your username and password.
 3. Owners see their visibility badge and trust controls in the left sidebar once authenticated.
-4. To switch users, log out first. Re-authenticate with different credentials or pick **Continue as Guest**.
+4. To switch users, log out first and re-authenticate with different credentials.
 
 ---
 
 ### 4. Guest Sessions & Public Profiles
 
-Choosing **Continue as Guest** starts a short-lived anonymous session:
+Guest accounts provide read-only access to public profiles. To use guest access:
 
-1. The guest is prompted to pick from **public** personas. Private profiles are hidden.
-2. Once a profile is selected, the guest enters the dashboard in read-only emulation mode. Memory writes, task updates, and configuration changes are blocked by the security policy.
-3. Guests can explore chat, memories, and voice outputs for that persona, but audio recordings and training samples remain private to the owner.
+1. **Authentication Required**: Guests must log in with credentials (owner-created account or existing credentials). There is no "Continue as Guest" option without authentication.
+2. After authentication, guests are prompted to pick from **public** personas. Private profiles are hidden.
+3. Once a profile is selected, the guest enters the dashboard in read-only emulation mode. Memory writes, task updates, and configuration changes are blocked by the security policy.
+4. Guests can explore chat, memories, and voice outputs for that persona, but audio recordings and training samples remain private to the owner.
 
 To make a persona available to guests, owners must mark it as **Public** (see below). Switching back to **Private** invalidates existing guest selections automatically—guests are asked to choose another profile.
 
@@ -124,8 +126,8 @@ This eliminates authentication friction during development. The session persists
 
 | Issue | Fix |
 |-------|-----|
-| **"Authentication required" when hitting APIs** | Ensure you are logged in. Anonymous sessions cannot access profile endpoints. Use the dev-session helper for local development. |
-| **"Access denied: Anonymous users cannot access user data paths"** | This is the old error message. The new streamlined system returns clean 401 responses instead. Update your API endpoints to use `tryResolveProfilePath()` helper. See [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md). |
+| **"Authentication required" when hitting APIs** | Ensure you are logged in. All users must be authenticated to access profile endpoints. Use the dev-session helper for local development. |
+| **"Access denied" errors** | The system returns clean 401 responses for unauthenticated requests. Update your API endpoints to use `getAuthenticatedUser()` from `@metahuman/core`. |
 | **Guest can't see a persona** | Confirm the owner marked the profile as `Public`. Visibility changes take effect immediately. |
 | **Session expires unexpectedly** | Check system clock, review `logs/run/sessions.json`, and confirm `pnpm dev` output for validation errors. |
 | **Forgot owner password** | Stop the server, run a short script using `deleteUser(userId)` then re-run `createUser()` with new credentials, or temporarily remove the entry from `persona/users.json` and restart. |
@@ -135,51 +137,101 @@ This eliminates authentication friction during development. The session persists
 
 ### 10. API Endpoint Authentication Patterns
 
-For developers building API endpoints, MetaHuman OS provides streamlined path resolution helpers that eliminate "anonymous user" errors:
+For developers building API endpoints, MetaHuman OS provides explicit cookie-based authentication. All users must be authenticated - there are no anonymous users.
 
-#### Path Resolution Helpers
+#### Authentication Functions
 
-Instead of directly accessing `paths.*` (which throws for anonymous users), use:
+**Source**: `packages/core/src/auth.ts`
 
 ```typescript
-import { tryResolveProfilePath, requireProfilePath, systemPaths } from '@metahuman/core';
+import {
+  getAuthenticatedUser,
+  AuthRequiredError,
+  getUserPaths,
+  hasPermission,
+  requirePermission,
+  getProfilePaths,
+  systemPaths
+} from '@metahuman/core';
+```
 
-// For public reads (return defaults for anonymous users)
-const result = tryResolveProfilePath('personaCore');
-if (!result.ok) {
-  return new Response(JSON.stringify({ default: 'data' }), { status: 200 });
-}
-const data = fs.readFileSync(result.path, 'utf-8');
+**Core Auth Functions**:
 
-// For protected operations (return 401 for anonymous users)
-const result = tryResolveProfilePath('episodic');
-if (!result.ok) {
-  return new Response(
-    JSON.stringify({ error: 'Authentication required' }),
-    { status: 401 }
-  );
-}
-fs.writeFileSync(path.join(result.path, 'event.json'), data);
+- **`getAuthenticatedUser(auth)`** - Get user from cookies (web) or session token (mobile). Throws `AuthRequiredError` if not authenticated.
+- **`getUserPaths(user)`** - Get profile paths for authenticated user (resolves custom storage).
+- **`hasPermission(user, permission)`** - Check if user has 'read', 'write', or 'admin' permission.
+- **`requirePermission(user, permission)`** - Throw error if user lacks permission.
 
-// For system operations (not user-specific)
-const agentPath = path.join(systemPaths.brain, 'agents', `${name}.ts`);
+**Permission Model**:
+- **guest**: read only
+- **standard**: read + write
+- **owner**: read + write + admin
+
+**For protected endpoints** (most endpoints):
+```typescript
+const handler: APIRoute = async ({ cookies, request }) => {
+  const user = getAuthenticatedUser(cookies); // Throws AuthRequiredError if not authenticated
+  const profilePaths = getProfilePaths(user.username);
+
+  // Use profilePaths for user-specific data
+  const data = fs.readFileSync(profilePaths.personaCore, 'utf-8');
+
+  // Audit with actual username
+  audit({ actor: user.username, event: 'action', ... });
+
+  return new Response(JSON.stringify({ success: true }), { status: 200 });
+};
+
+export const POST = requireWriteMode(handler); // Security guard applied
+```
+
+**For endpoints with graceful auth fallback** (return empty/defaults when not logged in):
+```typescript
+const handler: APIRoute = async ({ cookies }) => {
+  try {
+    const user = getAuthenticatedUser(cookies);
+    const data = loadUserData(user.username);
+    return new Response(JSON.stringify({ data }), { status: 200 });
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      // Return empty/default response for unauthenticated users
+      return new Response(
+        JSON.stringify({ data: [], message: 'Login required' }),
+        { status: 200 }
+      );
+    }
+    throw error;
+  }
+};
+```
+
+**For system-level operations** (no user context needed):
+```typescript
+const handler: APIRoute = async () => {
+  // Use systemPaths for system-wide data
+  const config = loadActiveOperatorConfig();  // System-level, not per-user
+  return new Response(JSON.stringify(config), { status: 200 });
+};
 ```
 
 #### API Endpoint Categories
 
-1. **Public Reads**: Degrade gracefully for anonymous users
-   - Examples: `/api/boot`, `/api/persona-core` (GET)
-   - Return sensible defaults instead of errors
+1. **System-level reads**: No auth needed, use `systemPaths` (e.g., active-operator status/config)
+2. **User-specific reads with fallback**: Catch `AuthRequiredError`, return empty/defaults
+3. **Protected operations**: Use `getAuthenticatedUser()`, let error propagate as 401
 
-2. **Protected Operations**: Require authentication
-   - Examples: `/api/capture`, `/api/memories`, `/api/tasks`
-   - Return 401 with clear error message
+#### Security Guards
 
-3. **System Operations**: Use `systemPaths` directly
-   - Examples: `/api/agent`, `/api/models`, `/api/auth/*`
-   - Never touch user-specific paths
+Apply security guards without wrapper functions:
+- `requireOwner(handler)` - Owner-only operations
+- `requireWriteMode(handler)` - Blocks in emulation mode
+- `requireOperatorMode(handler)` - Blocks in emulation mode and for non-owners
 
-See [AUTHENTICATION_STREAMLINED.md](../AUTHENTICATION_STREAMLINED.md) for complete implementation guide.
+```typescript
+import { requireWriteMode } from '../../middleware/cognitiveModeGuard';
+
+export const POST = requireWriteMode(handler); // Applied directly
+```
 
 ---
 
