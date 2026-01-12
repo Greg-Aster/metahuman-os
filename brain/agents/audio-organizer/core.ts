@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import { storageClient, systemPaths, ROOT, audit, callLLM, captureEvent } from '@metahuman/core';
 
+const LOG_PREFIX = '[audio-organizer-core]';
 const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 
 interface AudioConfig {
@@ -51,10 +52,25 @@ function loadAudioConfig(): AudioConfig {
       },
     };
   }
-  return JSON.parse(fs.readFileSync(AUDIO_CONFIG_PATH, 'utf8'));
+  
+  try {
+    return JSON.parse(fs.readFileSync(AUDIO_CONFIG_PATH, 'utf8'));
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to parse audio config, using defaults:`, error);
+    return {
+      processing: {
+        autoOrganize: true,
+        extractEntities: true,
+        generateSummary: true,
+      },
+    };
+  }
 }
 
 async function organizeTranscript(transcriptPath: string, metadataPath: string, config: AudioConfig): Promise<boolean> {
+  console.log(`${LOG_PREFIX} ========== organizeTranscript HIT ==========`);
+  console.log(`${LOG_PREFIX} Processing: ${transcriptPath}`);
+  
   const metadata: TranscriptMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
   const transcriptText = fs.readFileSync(transcriptPath, 'utf8');
 
@@ -108,7 +124,7 @@ Respond with JSON only:
         tags = response.tags || [];
         entities = response.entities || [];
       } catch (error) {
-        console.warn('LLM extraction failed, using fallback:', error);
+        console.warn(`${LOG_PREFIX} LLM extraction failed, using fallback:`, error);
         summary = transcriptText.substring(0, 200) + '...';
         tags = ['audio', 'transcript'];
         entities = [];
@@ -138,7 +154,7 @@ Respond with JSON only:
       actor: 'audio-organizer',
     });
 
-    console.log(`✓ Organized: ${metadata.audioId}`);
+    console.log(`${LOG_PREFIX} ✓ Organized: ${metadata.audioId}`);
     return true;
   } catch (error) {
     audit({
@@ -149,12 +165,15 @@ Respond with JSON only:
       actor: 'audio-organizer',
     });
 
-    console.error(`✗ Failed to organize ${metadata.audioId}:`, (error as Error).message);
+    console.error(`${LOG_PREFIX} ✗ Failed to organize ${metadata.audioId}:`, (error as Error).message);
     return false;
   }
 }
 
 export async function runCycle(options: AudioOrganizerOptions = {}): Promise<AudioOrganizerResult> {
+  console.log(`${LOG_PREFIX} ========== runCycle HIT ==========`);
+  console.log(`${LOG_PREFIX} Input options:`, options);
+  
   const result: AudioOrganizerResult = {
     success: true,
     transcriptsProcessed: 0,
@@ -166,6 +185,7 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
   const config = loadAudioConfig();
 
   if (!config.processing.autoOrganize) {
+    console.log(`${LOG_PREFIX} Auto-organization disabled, exiting early`);
     return result; // Auto-organization disabled
   }
 
@@ -173,6 +193,7 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
   const transcriptsDir = transcriptsResult.success && transcriptsResult.path ? transcriptsResult.path : null;
 
   if (!transcriptsDir || !fs.existsSync(transcriptsDir)) {
+    console.log(`${LOG_PREFIX} Transcripts directory not found: ${transcriptsDir || 'undefined'}`);
     return result; // Transcripts directory doesn't exist
   }
 
@@ -180,8 +201,11 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
   const metadataFiles = files.filter((f) => f.endsWith('.meta.json'));
 
   if (metadataFiles.length === 0) {
+    console.log(`${LOG_PREFIX} No metadata files found in ${transcriptsDir}`);
     return result; // No transcripts to process
   }
+  
+  console.log(`${LOG_PREFIX} Found ${metadataFiles.length} metadata files to process`);
 
   for (const metaFile of metadataFiles) {
     const metadataPath = path.join(transcriptsDir, metaFile);
@@ -194,12 +218,12 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
     const transcriptPath = path.join(transcriptsDir, `${metadata.audioId}.txt`);
 
     if (!fs.existsSync(transcriptPath)) {
-      console.warn(`Transcript not found: ${transcriptPath}`);
+      console.warn(`${LOG_PREFIX} Transcript not found: ${transcriptPath}`);
       continue;
     }
 
     result.transcriptsProcessed++;
-    console.log(`Processing transcript: ${metadata.audioId}`);
+    console.log(`${LOG_PREFIX} Processing transcript: ${metadata.audioId}`);
 
     try {
       const success = await organizeTranscript(transcriptPath, metadataPath, config);
@@ -209,6 +233,7 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
         result.transcriptsFailed++;
       }
     } catch (error) {
+      console.error(`${LOG_PREFIX} Error processing ${metadata.audioId}:`, error);
       result.transcriptsFailed++;
       result.errors.push(`Error organizing ${metadata.audioId}: ${(error as Error).message}`);
     }
@@ -231,23 +256,48 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
 
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
+  console.log(`${LOG_PREFIX} ========== run HIT ==========`);
+  
+  try {
+    const args = input.args || [];
+    const opts = input.options || {};
 
-  const options: AudioOrganizerOptions = {
-    oneShot: args.includes('--oneshot') || opts.oneShot === true,
-  };
+    const options: AudioOrganizerOptions = {
+      oneShot: args.includes('--oneshot') || opts.oneShot === true,
+    };
+    console.log(`${LOG_PREFIX} Options: oneShot=${options.oneShot}`);
 
-  const result = await runCycle(options);
+    const result = await runCycle(options);
 
-  return {
-    success: result.success,
-    data: {
-      transcriptsProcessed: result.transcriptsProcessed,
-      transcriptsOrganized: result.transcriptsOrganized,
-      transcriptsFailed: result.transcriptsFailed,
-    },
-    errors: result.errors.length > 0 ? result.errors : undefined,
-    durationMs: Date.now() - startTime,
-  };
+    return {
+      success: result.success,
+      data: {
+        transcriptsProcessed: result.transcriptsProcessed,
+        transcriptsOrganized: result.transcriptsOrganized,
+        transcriptsFailed: result.transcriptsFailed,
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined,
+      durationMs: Date.now() - startTime,
+    };
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Fatal error in run():`, error);
+    audit({
+      level: 'error',
+      category: 'agent',
+      event: 'audio_organizer_run_failed',
+      details: { error: (error as Error).message },
+      actor: 'audio-organizer',
+    });
+
+    return {
+      success: false,
+      data: {
+        transcriptsProcessed: 0,
+        transcriptsOrganized: 0,
+        transcriptsFailed: 0,
+      },
+      errors: [(error as Error).message],
+      durationMs: Date.now() - startTime,
+    };
+  }
 }
