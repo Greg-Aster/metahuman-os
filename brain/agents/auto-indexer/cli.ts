@@ -14,15 +14,17 @@
 import { initGlobalLogger } from '@metahuman/core';
 import { runCycle, type AutoIndexerOptions } from './core.js';
 
-async function main() {
+const LOG_PREFIX = '[auto-indexer]';
+
+async function main(): Promise<void> {
   initGlobalLogger('auto-indexer');
 
   // Parse command line args
   const args = process.argv.slice(2);
   const force = args.includes('--force');
   const singleUser = args.includes('--single-user');
-  const maxAgeArg = args.find(a => a.startsWith('--max-age='));
-  const maxAgeHours = maxAgeArg ? parseInt(maxAgeArg.split('=')[1], 10) : 24;
+  const maxAgeArg: string | undefined = args.find(a => a.startsWith('--max-age='));
+  const maxAgeHours: number = maxAgeArg ? parseInt(maxAgeArg.split('=')[1], 10) : 24;
 
   const options: AutoIndexerOptions = {
     force,
@@ -30,22 +32,24 @@ async function main() {
     maxAgeHours,
   };
 
-  console.log('[auto-indexer] Running index rebuild cycle...');
-  if (force) console.log('[auto-indexer]   Mode: forced rebuild');
-  if (singleUser) console.log('[auto-indexer]   Mode: single-user');
-  console.log(`[auto-indexer]   Max age: ${maxAgeHours} hours`);
+  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
+  console.log(`${LOG_PREFIX} Options: force=${force}, singleUser=${singleUser}, maxAgeHours=${maxAgeHours}`);
+  console.log(`${LOG_PREFIX} Running index rebuild cycle...`);
+  if (force) console.log(`${LOG_PREFIX}   Mode: forced rebuild`);
+  if (singleUser) console.log(`${LOG_PREFIX}   Mode: single-user`);
+  console.log(`${LOG_PREFIX}   Max age: ${maxAgeHours} hours`);
 
   const result = await runCycle(options);
 
   if (!result.success) {
-    console.error('[auto-indexer] Cycle completed with errors:', result.errors.join(', '));
+    console.error(`${LOG_PREFIX} Cycle completed with errors:`, result.errors.join(', '));
     process.exit(1);
   }
 
-  console.log(`[auto-indexer] Done. Indexed ${result.totalIndexed} items across ${result.userCount} users (${result.skipped} skipped).`);
+  console.log(`${LOG_PREFIX} Done. Indexed ${result.totalIndexed} items across ${result.userCount} users (${result.skipped} skipped).`);
 }
 
-main().catch(err => {
-  console.error('[auto-indexer] Fatal error:', err);
+main().catch((err: Error) => {
+  console.error(`${LOG_PREFIX} Fatal error:`, err);
   process.exit(1);
 });
