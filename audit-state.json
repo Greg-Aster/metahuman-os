@@ -202,7 +202,9 @@
       "started": "2026-01-13T01:00:00Z"
     },
     "brain/agents/coder/index.ts": {
-      "status": "pending"
+      "status": "in-progress",
+      "reviewer": "Agent-3", 
+      "started": "2026-01-13T01:05:00Z"
     },
     "brain/agents/curator/cli.ts": {
       "status": "completed",
@@ -216,7 +218,9 @@
       "notes": "CLI entry point for Curator Agent - fixed TypeScript types, added LOG_PREFIX, username validation, entry logging"
     },
     "brain/agents/curator/core.ts": {
-      "status": "pending"
+      "status": "in-progress",
+      "reviewer": "Agent-4",
+      "started": "2026-01-13T00:45:00Z"
     },
     "brain/agents/curator/index.ts": {
       "status": "in-progress",
