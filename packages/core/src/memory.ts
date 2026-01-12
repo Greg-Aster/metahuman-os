@@ -77,16 +77,22 @@ import {
   getCachedKey,
   isProfileUnlocked,
   ENCRYPTED_EXTENSION,
-  type EncryptedData,
 } from './encryption.js';
 import { getProfileStorageConfig } from './users.js';
+
+const LOG_PREFIX = '[memory]';
 
 // Dynamic import for agency module to avoid circular dependencies
 // Used for task-desire reinforcement when tasks complete
 let agencyModule: typeof import('./agency/storage.js') | null = null;
 async function getAgencyModule() {
   if (!agencyModule) {
-    agencyModule = await import('./agency/storage.js');
+    try {
+      agencyModule = await import('./agency/storage.js');
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Failed to load agency module:`, error);
+      throw new Error('Failed to load agency module for desire reinforcement');
+    }
   }
   return agencyModule;
 }
@@ -138,7 +144,7 @@ function isDuplicateContent(content: string): boolean {
 
   const hash = contentHash(content);
   if (recentContentHashes.has(hash)) {
-    console.log(`[memory] Duplicate content detected, skipping save (hash: ${hash.slice(0, 8)}...)`);
+    console.log(`${LOG_PREFIX} Duplicate content detected, skipping save (hash: ${hash.slice(0, 8)}...)`);
     return true;
   }
 
@@ -146,6 +152,12 @@ function isDuplicateContent(content: string): boolean {
   recentContentHashes.set(hash, Date.now());
   return false;
 }
+
+/**
+ * Tool parameters and results - flexible structure for various tools
+ */
+export type ToolParameter = string | number | boolean | null | ToolParameter[] | { [key: string]: ToolParameter };
+export type ToolParameters = Record<string, ToolParameter>;
 
 /**
  * Enhanced metadata schema for episodic events
@@ -159,8 +171,8 @@ export interface EpisodicEventMetadata {
 
   // Tool invocation fields
   toolName?: string;             // Name of skill/tool executed
-  toolInputs?: Record<string, any>;    // Tool input parameters
-  toolOutputs?: Record<string, any>;   // Tool output results
+  toolInputs?: ToolParameters;   // Tool input parameters
+  toolOutputs?: ToolParameters;  // Tool output results
   success?: boolean;             // Tool execution success status
   error?: string;                // Error message if failed
   executionTimeMs?: number;      // Performance tracking
@@ -174,7 +186,7 @@ export interface EpisodicEventMetadata {
   // Code approval fields
   approvalId?: string;           // Unique approval ID
   skillId?: string;              // Skill being approved/rejected
-  skillInputs?: Record<string, any>;   // Skill parameters
+  skillInputs?: ToolParameters;  // Skill parameters
   decision?: 'approved' | 'rejected';  // Approval decision
 
   // Cognitive context
@@ -195,8 +207,9 @@ export interface EpisodicEventMetadata {
   // General timestamp
   timestamp?: string;            // ISO 8601 timestamp
 
-  // Allow additional custom fields
-  [key: string]: any;
+  // Allow additional custom fields for flexibility
+  // This is needed for future extensibility without breaking changes
+  [key: string]: string | number | boolean | undefined | ToolParameters;
 }
 
 export interface EpisodicEvent {
@@ -380,13 +393,13 @@ function getEncryptionContext(username?: string): EncryptionContext {
     const profilePath = config.path;
     if (!isProfileUnlocked(profilePath)) {
       const warning = 'Profile is encrypted but not unlocked - writing plain file. Unlock profile with password to enable encryption.';
-      console.warn(`[memory] ${warning}`);
+      console.warn(`${LOG_PREFIX} ${warning}`);
       return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
     }
     const key = getCachedKey(profilePath);
     if (!key) {
       const warning = 'Encryption key not found in cache - writing plain file';
-      console.warn(`[memory] ${warning}`);
+      console.warn(`${LOG_PREFIX} ${warning}`);
       return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
     }
     return { enabled: true, key, type: 'aes256', fallback: false };
@@ -436,12 +449,12 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
   const validation = validateEvent(rawEvent);
 
   if (validation.warnings.length > 0) {
-    console.warn('[memory] Event validation warnings:', validation.warnings);
+    console.warn(`${LOG_PREFIX} Event validation warnings:`, validation.warnings);
   }
 
   if (!validation.valid) {
-    console.error('[memory] Event validation failed:', validation.errors);
-    console.warn('[memory] Attempting to save sanitized version');
+    console.error(`${LOG_PREFIX} Event validation failed:`, validation.errors);
+    console.warn(`${LOG_PREFIX} Attempting to save sanitized version`);
   }
 
   const event = validation.sanitized!;
@@ -539,7 +552,7 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
   } else {
     try {
       const status = getIndexStatus();
-      if ((status as any).exists) {
+      if (status && 'exists' in status && status.exists) {
         void appendEventToIndex({
           id: event.id,
           timestamp: event.timestamp,
@@ -547,9 +560,13 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
           tags: event.tags,
           entities: event.entities,
           path: filepath,
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn(`${LOG_PREFIX} Failed to append event to index:`, err);
+        });
       }
-    } catch {}
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Failed to check index status:`, error);
+    }
   }
 
   return {
@@ -586,7 +603,7 @@ function readTasksFromDirectory(dir: string): Task[] {
       const content = fs.readFileSync(fullPath, 'utf8');
       tasks.push(JSON.parse(content));
     } catch (error) {
-      console.warn('[memory] Failed to read task file:', fullPath, error);
+      console.warn(`${LOG_PREFIX} Failed to read task file:`, fullPath, error);
     }
   }
   return tasks;
@@ -679,7 +696,7 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
         const desireId = desireTag.replace('desire:', '');
         // Fire-and-forget async reinforcement (don't block task completion)
         reinforceLinkedDesire(desireId, task.title).catch(err => {
-          console.warn('[memory] Failed to reinforce linked desire:', err);
+          console.warn(`${LOG_PREFIX} Failed to reinforce linked desire:`, err);
         });
       }
     }
@@ -707,13 +724,13 @@ async function reinforceLinkedDesire(desireId: string, taskTitle: string): Promi
     // Load the desire
     const desire = await agency.loadDesire(desireId, username);
     if (!desire) {
-      console.log(`[memory] Desire ${desireId} not found for reinforcement`);
+      console.log(`${LOG_PREFIX} Desire ${desireId} not found for reinforcement`);
       return;
     }
 
     // Only reinforce nascent/pending desires (not already executing/completed)
     if (desire.status !== 'nascent' && desire.status !== 'pending') {
-      console.log(`[memory] Desire ${desireId} is ${desire.status}, skipping reinforcement`);
+      console.log(`${LOG_PREFIX} Desire ${desireId} is ${desire.status}, skipping reinforcement`);
       return;
     }
 
@@ -746,9 +763,9 @@ async function reinforceLinkedDesire(desireId: string, taskTitle: string): Promi
       },
     });
 
-    console.log(`[memory] ✓ Reinforced desire "${desire.title}" from task completion (${desire.strength.toFixed(2)} → ${newStrength.toFixed(2)})`);
+    console.log(`${LOG_PREFIX} ✓ Reinforced desire "${desire.title}" from task completion (${desire.strength.toFixed(2)} → ${newStrength.toFixed(2)})`);
   } catch (error) {
-    console.error('[memory] Error reinforcing desire:', error);
+    console.error(`${LOG_PREFIX} Error reinforcing desire:`, error);
     throw error;
   }
 }
@@ -911,7 +928,7 @@ function readProjectsFromDirectory(dir: string): Project[] {
       const content = fs.readFileSync(fullPath, 'utf8');
       projects.push(JSON.parse(content));
     } catch (error) {
-      console.warn('[memory] Failed to read project file:', fullPath, error);
+      console.warn(`${LOG_PREFIX} Failed to read project file:`, fullPath, error);
     }
   }
   return projects;
@@ -1120,7 +1137,7 @@ export function addTaskDependency(taskId: string, dependsOnId: string): boolean 
 
     // Prevent circular dependencies
     if (wouldCreateCycle(taskId, dependsOnId)) {
-      console.warn('[memory] Cannot add dependency: would create circular reference');
+      console.warn(`${LOG_PREFIX} Cannot add dependency: would create circular reference`);
       return false;
     }
 
@@ -1278,7 +1295,9 @@ export function searchMemory(query: string): string[] {
           if (content.toLowerCase().includes(query.toLowerCase())) {
             results.push(profileRoot ? path.relative(profileRoot, fullPath) : fullPath);
           }
-        } catch {}
+        } catch (error) {
+          console.warn(`${LOG_PREFIX} Failed to read file for search: ${fullPath}:`, error);
+        }
       }
     }
   };
