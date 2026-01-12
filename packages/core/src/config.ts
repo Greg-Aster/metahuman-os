@@ -287,6 +287,25 @@ export function loadOperatorConfig(username: string, skipCache = false): Operato
 }
 
 /**
+ * Load operator config with guaranteed fresh state (always skips cache).
+ *
+ * Use this for any code that makes routing/behavior decisions where stale
+ * config could cause incorrect behavior (e.g., Big Brother enabled/disabled).
+ *
+ * Examples of when to use this:
+ * - LLM routing decisions (bridge.ts)
+ * - Big Brother mode checks
+ * - Feature flag checks that affect behavior
+ * - Any config read that occurs during user-initiated actions
+ *
+ * @param username - Username to load config for
+ * @returns Fresh OperatorConfig (never from cache)
+ */
+export function loadFreshOperatorConfig(username: string): OperatorConfig {
+  return loadOperatorConfig(username, true);
+}
+
+/**
  * Invalidate operator config cache for a user (or all users)
  * Call this after config file changes to ensure fresh config is loaded
  */

@@ -53,7 +53,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     await ensureBackendsInitialized();
 
     const userContext = getUserContext();
-    const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username) : null;
+    // Skip cache to respect user's current Big Brother settings
+    const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username, true) : null;
     const rawProvider = operatorConfig?.bigBrotherMode?.provider;
     const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
       ? 'open-interpreter'

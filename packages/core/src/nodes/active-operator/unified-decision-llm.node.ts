@@ -248,9 +248,11 @@ What should I do next?`,
 
   try {
     // Load operator config to check if Big Brother mode is enabled
-    const operatorConfig = loadOperatorConfig(username);
+    // IMPORTANT: Skip cache to respect user's current settings (they may have toggled BB mode)
+    const operatorConfig = loadOperatorConfig(username, true);
     const isBigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled || false;
     const isBigBrotherDelegateAll = operatorConfig.bigBrotherMode?.delegateAll || false;
+    console.log(`[UnifiedDecisionLLM] Config check: bigBrotherMode.enabled=${isBigBrotherEnabled}, delegateAll=${isBigBrotherDelegateAll}`);
 
     // Hybrid mode: Big Brother enabled but not delegateAll - use Big Brother for decision-making
     // This sends autonomous decisions to external LLM (Claude) for better reasoning

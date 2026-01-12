@@ -25,31 +25,33 @@ const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
 const BIG_BROTHER_PORT = 3099;
 
 // Get Claude model from operator config
-function getClaudeModel(): string {
-  const configPath = '/media/greggles/STACK/metahuman-profiles/greggles/etc/operator.json';
-
-  if (!fs.existsSync(configPath)) {
-    console.error(`[big-brother-terminal] ERROR: Config not found at ${configPath}`);
-    throw new Error(`Operator config not found: ${configPath}`);
-  }
+// Uses loadOperatorConfig to properly resolve user-specific profile paths
+async function getClaudeModel(username?: string): Promise<string> {
+  const DEFAULT_MODEL = 'sonnet';  // Sensible default: Claude 3.5 Sonnet
 
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // Dynamic import to avoid circular dependencies
+    const { loadOperatorConfig } = await import('./config.js');
+
+    if (!username) {
+      console.log(`[big-brother-terminal] No username provided, using default model: ${DEFAULT_MODEL}`);
+      return DEFAULT_MODEL;
+    }
+
+    // Load config with skipCache=true for fresh state
+    const config = loadOperatorConfig(username, true);
     const model = config?.bigBrotherMode?.model;
 
     if (!model) {
-      console.error(`[big-brother-terminal] ERROR: bigBrotherMode.model not set in ${configPath}`);
-      throw new Error(`bigBrotherMode.model not configured in ${configPath}`);
+      console.log(`[big-brother-terminal] bigBrotherMode.model not configured for ${username}, using default: ${DEFAULT_MODEL}`);
+      return DEFAULT_MODEL;
     }
 
-    console.log(`[big-brother-terminal] Using model: ${model}`);
+    console.log(`[big-brother-terminal] Using model for ${username}: ${model}`);
     return model;
   } catch (e) {
-    if ((e as Error).message.includes('not configured') || (e as Error).message.includes('not found')) {
-      throw e;
-    }
-    console.error(`[big-brother-terminal] ERROR: Failed to parse config: ${e}`);
-    throw new Error(`Failed to parse operator config: ${e}`);
+    console.error(`[big-brother-terminal] Error loading config for ${username}, using default model:`, e);
+    return DEFAULT_MODEL;
   }
 }
 
@@ -274,7 +276,7 @@ class BigBrotherTerminalManager extends EventEmitter {
       // Open log file for output
       this.outputLogStream = fs.createWriteStream(this.outputLogPath, { flags: 'w' });
 
-      const model = getClaudeModel();
+      const model = await getClaudeModel(username);
       console.log(`[big-brother-terminal] Starting Claude with stream-json mode (model: ${model})...`);
 
       // Spawn Claude in stream-json mode (like VS Code extension does)

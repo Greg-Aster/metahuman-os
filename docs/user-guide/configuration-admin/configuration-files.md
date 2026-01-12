@@ -26,6 +26,10 @@ Each user has their own isolated configuration files that affect personality, be
 **Global Configs** (`etc/`):
 System-wide infrastructure settings shared across all users:
 
+- `llm-backend.json` - Active LLM backend (Ollama/vLLM) configuration
+- `operator.json` - Operator system configuration (including Big Brother integration)
+- `cognitive-layers.json` - Layer configs per cognitive mode (3-layer pipeline)
+- `agency.json` - Agency system configuration (desires, thresholds, sources)
 - `cloudflare.json` - Tunnel configuration
 - `network.json` - Network settings
 - `lifeline.json` - System service configuration
@@ -192,6 +196,160 @@ All cognitive layer operations are fully logged to `logs/audit/YYYY-MM-DD.ndjson
   }
 }
 ```
+
+---
+
+### `etc/llm-backend.json` - LLM Backend Configuration
+
+Controls which local LLM backend is active (Ollama or vLLM).
+
+**Structure:**
+```json
+{
+  "active": "ollama",
+  "backends": {
+    "ollama": {
+      "baseURL": "http://localhost:11434",
+      "enabled": true
+    },
+    "vllm": {
+      "baseURL": "http://localhost:8000",
+      "enabled": false,
+      "config": {
+        "gpuMemoryUtilization": 0.9,
+        "tensorParallelSize": 1,
+        "enableThinking": false
+      }
+    }
+  }
+}
+```
+
+**Key Differences:**
+- **Ollama**: Default backend, easy model switching, uses GGUF files
+- **vLLM**: Higher throughput via PagedAttention, loads ONE model at a time, requires server restart to switch models
+
+See [LLM Backend](llm-backend.md) for detailed comparison and switching instructions.
+
+---
+
+### `etc/operator.json` - Operator System Configuration
+
+Controls ReAct operator behavior and Big Brother integration.
+
+**Structure:**
+```json
+{
+  "bigBrotherMode": {
+    "enabled": true,
+    "delegateAll": true,
+    "terminalPort": 3099
+  },
+  "fallbackBehavior": "local",
+  "timeout": 300000
+}
+```
+
+**Big Brother Integration:**
+- `enabled`: Routes operations through Big Brother for terminal visibility
+- `delegateAll`: All skill executions use Big Brother
+- `terminalPort`: WebSocket port for real-time terminal streaming
+
+**Why Big Brother?**
+- Real-time terminal visibility (no silent LLM operations)
+- Full tool execution (file search, commands, system queries)
+- Multi-backend support (Claude Code, Open Interpreter, Aider, Gemini CLI)
+- Proper error handling and audit logging
+
+See [Agency System](../advanced-features/agency-system.md#execution-methods) for execution method details.
+
+---
+
+### `etc/cognitive-layers.json` - Cognitive Layers Configuration
+
+Configures the 3-layer cognitive pipeline per mode.
+
+**Structure:**
+```json
+{
+  "dual": {
+    "layer1_subconscious": {
+      "searchDepth": "normal",
+      "similarityThreshold": 0.62,
+      "filterInnerDialogue": false,
+      "filterReflections": false
+    },
+    "layer2_personality": {
+      "loraMode": "latest",
+      "trackVoiceConsistency": true,
+      "fallbackToBase": true
+    },
+    "layer3_metacognition": {
+      "validationLevel": "selective",
+      "refinementThreshold": 0.7
+    }
+  }
+}
+```
+
+**Layer Descriptions:**
+- **Layer 1: Subconscious** - Memory retrieval, pattern detection, context building
+- **Layer 2: Personality Core** - Response generation with LoRA adapters
+- **Layer 3: Meta-Cognition** - Validation and refinement (safety, consistency)
+
+Controlled by `USE_COGNITIVE_PIPELINE=true` in `.env`.
+
+---
+
+### `etc/agency.json` - Agency System Configuration
+
+Controls autonomous desire generation and goal pursuit.
+
+**Structure:**
+```json
+{
+  "enabled": true,
+  "mode": "supervised",
+  "thresholds": {
+    "activation": 0.7,
+    "autoApprove": 0.9,
+    "decay": {
+      "enabled": true,
+      "ratePerRun": 0.03,
+      "minStrength": 0.05,
+      "reinforcementBoost": 0.08,
+      "initialStrength": 0.15
+    }
+  },
+  "sources": {
+    "persona_goal": { "enabled": true, "weight": 1.0 },
+    "urgent_task": { "enabled": true, "weight": 0.85 },
+    "task": { "enabled": true, "weight": 0.7 },
+    "memory_pattern": { "enabled": true, "weight": 0.5 },
+    "curiosity": { "enabled": true, "weight": 0.4 },
+    "reflection": { "enabled": true, "weight": 0.35 },
+    "dream": { "enabled": true, "weight": 0.3 }
+  },
+  "limits": {
+    "maxActiveDesires": 10,
+    "maxPendingDesires": 50,
+    "maxDailyExecutions": 5
+  },
+  "riskPolicy": {
+    "reviewBypass": "trust_based",
+    "autoApproveRisk": ["none", "low"],
+    "requireApprovalRisk": ["medium", "high"],
+    "blockRisk": ["critical"]
+  }
+}
+```
+
+**Key Settings:**
+- **Strength System**: Desires grow through reinforcement, decay without it
+- **Source Weights**: Priority for different desire origins
+- **Risk Policy**: Auto-approval vs. requiring user approval
+
+See [Agency System](../advanced-features/agency-system.md) for complete details.
 
 ---
 

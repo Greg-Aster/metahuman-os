@@ -46,7 +46,7 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
 
     const { audit } = await import('../../audit.js');
     const { getUserContext } = await import('../../context.js');
-    const { loadOperatorConfig } = await import('../../config.js');
+    const { loadFreshOperatorConfig } = await import('../../config.js');
     const { escalate, getActiveBackend, getBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 
     // Ensure backends are loaded before checking
@@ -54,7 +54,7 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
     emitProgress('big_brother_backends_loaded', '✓ Backends initialized');
 
     const userContext = getUserContext();
-    const operatorConfig = userContext?.username ? loadOperatorConfig(userContext.username) : null;
+    const operatorConfig = userContext?.username ? loadFreshOperatorConfig(userContext.username) : null;
     const rawProvider = operatorConfig?.bigBrotherMode?.provider;
     const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
       ? 'open-interpreter'

@@ -219,8 +219,8 @@ async function processError(username: string, errorId: string, config: SystemCod
     actor: AGENT_NAME
   });
 
-  const { loadOperatorConfig } = await import('@metahuman/core/config');
-  const operatorConfig = loadOperatorConfig(username);
+  const { loadFreshOperatorConfig } = await import('@metahuman/core/config');
+  const operatorConfig = loadFreshOperatorConfig(username);
 
   if (!config.bigBrother.useForFixes || !operatorConfig.bigBrotherMode?.enabled) {
     console.log('[coder] Big Brother not enabled, cannot generate fix');

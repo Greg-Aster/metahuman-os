@@ -128,11 +128,26 @@ export class WhisperService {
     });
     formData.append('file', file);
 
-    // Make HTTP request to server
-    const response = await fetch(`${serverUrl}/transcribe?language=${this.config.language}`, {
-      method: 'POST',
-      body: formData,
-    });
+    // Make HTTP request to server with timeout
+    const TRANSCRIBE_TIMEOUT_MS = 25000; // 25 seconds server-side timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${serverUrl}/transcribe?language=${this.config.language}`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e instanceof Error && e.name === 'AbortError') {
+        throw new Error(`Whisper server timeout after ${TRANSCRIBE_TIMEOUT_MS}ms - server may be overloaded`);
+      }
+      throw e;
+    }
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();

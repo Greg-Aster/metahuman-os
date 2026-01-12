@@ -11,14 +11,14 @@ import { audit } from '../../audit.js';
 
 // Dynamic import for optional big-brother module
 let escalateToBigBrother: ((request: any, config: any) => Promise<any>) | null = null;
-let loadOperatorConfig: (() => any) | null = null;
+let loadFreshOperatorConfig: ((username: string) => any) | null = null;
 
 async function ensureBigBrotherFunctions(): Promise<boolean> {
   try {
     const bbModule = await import('../../big-brother.js');
     const configModule = await import('../../config.js');
     escalateToBigBrother = bbModule.escalateToBigBrother;
-    loadOperatorConfig = configModule.loadOperatorConfig;
+    loadFreshOperatorConfig = configModule.loadFreshOperatorConfig;
     return true;
   } catch {
     return false;
@@ -54,7 +54,7 @@ export async function handleBigBrotherEscalate(req: UnifiedRequest): Promise<Uni
 
   try {
     const available = await ensureBigBrotherFunctions();
-    if (!available || !escalateToBigBrother || !loadOperatorConfig) {
+    if (!available || !escalateToBigBrother || !loadFreshOperatorConfig) {
       return {
         status: 501,
         error: 'Big Brother escalation not available',
@@ -71,8 +71,8 @@ export async function handleBigBrotherEscalate(req: UnifiedRequest): Promise<Uni
       };
     }
 
-    // Load operator config
-    const config = loadOperatorConfig(user.username);
+    // Load operator config (fresh, no cache)
+    const config = loadFreshOperatorConfig(user.username);
 
     // Build escalation request
     const escalationRequest: EscalationRequest = {

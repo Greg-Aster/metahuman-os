@@ -25,6 +25,7 @@
   // Component state
   let input = '';
   let loading = false;
+  let responsePipelineAbortController: AbortController | null = null; // For cancel button
   let reasoningStages: ReasoningStage[] = [];
   let reasoningDepth: number = 0;
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
@@ -769,15 +770,113 @@
 
     loading = true;
     thinkingTraceApi.start();
-    thinkingTraceApi.setStatusLabel(`📝 Processing ${cardType} response...`);
+    thinkingTraceApi.setStatusLabel(`🔍 Validating...`);
     thinkingTraceApi.setTrace([
       `[${timestamp()}] 📤 RESPONSE PIPELINE INITIATED`,
       `[${timestamp()}] Card type: ${cardType}`,
       `[${timestamp()}] Desire: ${cardData.desireTitle || cardData.desireId || 'N/A'}`,
       `[${timestamp()}] Multi-turn buffer: ${responseBufferId || 'creating new'}`,
+      `[${timestamp()}] `,
+      `[${timestamp()}] 🔍 PRE-FLIGHT CHECKS`,
     ]);
 
+    // Heartbeat interval for long-running requests
+    let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+    let connectionEstablished = false;
+
+    // AbortController for cancellation
+    let abortController = new AbortController();
+    responsePipelineAbortController = abortController; // Store for cancel button
+
     try {
+      // Step 0: Pre-flight validation
+      console.log('[response-pipeline] Step 0: Pre-flight checks');
+
+      // Check 1: Session validity
+      try {
+        thinkingTraceApi.appendTrace(`[${timestamp()}] Checking session...`, 5);
+        const authController = new AbortController();
+        const authTimeout = setTimeout(() => authController.abort(), 5000);
+
+        const authCheck = await apiFetch('/api/auth/me', { signal: authController.signal });
+        clearTimeout(authTimeout);
+
+        if (!authCheck.ok) {
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ SESSION EXPIRED`, 5);
+          messagesApi.pushMessage('system', '⚠️ **Session Expired**\n\nYour session has expired. Please refresh the page and log in again.');
+          thinkingTraceApi.stop();
+          loading = false;
+          return;
+        }
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Session valid`, 5);
+      } catch (authError: any) {
+        console.error('[response-pipeline] Auth check error:', authError);
+
+        let errorTitle = '⚠️ Connection Error';
+        let errorMessage = 'Unable to connect to the server.';
+        let suggestion = 'Please check your network connection and try again.';
+
+        // Differentiate error types
+        if (authError?.name === 'AbortError') {
+          errorTitle = '⏱️ Auth Check Timeout';
+          errorMessage = 'Session verification timed out (5s limit exceeded).';
+          suggestion = 'This usually means the server is under heavy load. Try again in a moment.';
+        } else if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
+          errorTitle = '🔌 Server Unreachable';
+          errorMessage = 'Cannot connect to the MetaHuman server.';
+          suggestion = 'Check that the dev server is running with `pnpm dev` in apps/site/.';
+        } else if (authError?.status === 404) {
+          errorTitle = '🔍 Endpoint Not Found';
+          errorMessage = `API endpoint returned 404: ${authError?.url || '/api/auth/me'}`;
+          suggestion = 'This may be a build issue. Try rebuilding with `pnpm build` in apps/site/.';
+        } else if (authError?.status >= 500) {
+          errorTitle = '💥 Server Error';
+          errorMessage = `Server returned error ${authError?.status || 'unknown'}`;
+          suggestion = 'Check the server logs for details.';
+        } else if (authError?.status === 401 || authError?.status === 403) {
+          errorTitle = '🔐 Auth Check Failed';
+          errorMessage = 'Unable to verify your session.';
+          suggestion = 'Your session may have expired. Please refresh and log in again.';
+        } else {
+          // Unknown error - show actual message
+          errorMessage = authError?.message || 'An unexpected error occurred during authentication.';
+        }
+
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ${errorTitle}: ${errorMessage}`, 5);
+        messagesApi.pushMessage('system', `${errorTitle}\n\n${errorMessage}\n\n💡 ${suggestion}`);
+        thinkingTraceApi.stop();
+        loading = false;
+        return;
+      }
+
+      // Check 2: Backend readiness
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Checking backend...`, 5);
+      if (!backendApi.isReady()) {
+        const backend = get(activeBackend);
+        const msg = backend === 'vllm'
+          ? 'Cannot send response: vLLM server is not running. Please start vLLM from Settings → Backend.'
+          : 'Cannot send response: Ollama is not running or no models are loaded. Please check Settings → Backend.';
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Backend not ready`, 5);
+        messagesApi.pushMessage('system', `⚠️ **Backend Not Ready**\n\n${msg}`);
+        thinkingTraceApi.stop();
+        loading = false;
+        return;
+      }
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Backend ready`, 5);
+
+      // Check 3: Connection health
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Checking server connection...`, 5);
+      const healthResult = await forceHealthCheck();
+      if (!healthResult.connected) {
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Server offline`, 5);
+        messagesApi.pushMessage('system', '⚠️ **Server Offline**\n\nThe server is not responding. Please check if the server is running.');
+        thinkingTraceApi.stop();
+        loading = false;
+        return;
+      }
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Server connected`, 5);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Pre-flight checks passed`, 5);
+
       // Step 1: Prepare request
       console.log('[response-pipeline] Step 1: Preparing request', {
         cardType,
@@ -785,6 +884,8 @@
         hasBuffer: !!responseBufferId,
         messageLength: message.length,
       });
+      thinkingTraceApi.setStatusLabel(`📝 Processing ${cardType} response...`);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] `, 5);
       thinkingTraceApi.appendTrace(`[${timestamp()}] Step 1: Preparing request...`, 10);
 
       const requestBody = {
@@ -794,10 +895,18 @@
         responseBufferId: responseBufferId || undefined,
       };
 
-      // Step 2: Send request (NO timeout - LLM calls can take minutes)
+      // Step 2: Send request (no automatic timeout - user has cancel button)
       console.log('[response-pipeline] Step 2: Sending POST to /api/response-pipeline');
       thinkingTraceApi.appendTrace(`[${timestamp()}] Step 2: Sending to server...`, 10);
-      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Waiting for LLM response (no timeout - this may take a while)...`, 10);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Waiting for response...`, 10);
+
+      // Start heartbeat to show the system is alive
+      heartbeatInterval = setInterval(() => {
+        if (!connectionEstablished) return; // Don't show heartbeat until connection is established
+
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ⏱️  Still processing... (${elapsed}s elapsed)`, 5);
+      }, 10000); // Every 10 seconds
 
       let response: Response;
       try {
@@ -805,8 +914,20 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
+          signal: abortController.signal, // Enable cancellation
         });
+
+        // Mark connection as established once we get a response
+        connectionEstablished = true;
       } catch (fetchError) {
+        // Check if this was a user-initiated cancellation
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏸️  Request cancelled by user`, 10);
+          messagesApi.pushMessage('system', '⏸️ **Request Cancelled**\n\nYou cancelled the response pipeline request.');
+          thinkingTraceApi.stop();
+          return; // Exit gracefully
+        }
+
         throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Unknown fetch error'}`);
       }
 
@@ -855,6 +976,37 @@
 
       if (!result.success) {
         console.error('[response-pipeline] Pipeline returned error:', result.error);
+        console.error('[response-pipeline] Error details:', {
+          error: result.error,
+          errorDetails: result.errorDetails,
+          failedNode: result.failedNode,
+          suggestion: result.suggestion,
+        });
+
+        // Build detailed error message
+        let errorMessage = `⚠️ **Pipeline Error**\n\n${result.error}`;
+
+        if (result.errorDetails) {
+          errorMessage += `\n\n**Details**: ${result.errorDetails}`;
+        }
+
+        if (result.failedNode) {
+          errorMessage += `\n\n**Failed at node**: ${result.failedNode}`;
+        }
+
+        if (result.suggestion) {
+          errorMessage += `\n\n💡 **Suggestion**:\n${result.suggestion}`;
+        }
+
+        // Show in thinking trace
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ${result.error}`, 10);
+        if (result.failedNode) {
+          thinkingTraceApi.appendTrace(`[${timestamp()}] 🔍 Failed at: ${result.failedNode}`, 10);
+        }
+
+        // Show to user
+        messagesApi.pushMessage('system', errorMessage);
+
         throw new Error(result.error || 'Pipeline execution failed');
       }
 
@@ -917,7 +1069,24 @@
       messagesApi.pushMessage('system', `⚠️ Response Pipeline Error: ${errorMsg}`);
       thinkingTraceApi.stop();
     } finally {
+      // Clear heartbeat interval
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+
+      // Clear abort controller
+      responsePipelineAbortController = null;
+
       loading = false;
+    }
+  }
+
+  // Cancel function for response pipeline
+  function cancelResponsePipeline() {
+    if (responsePipelineAbortController) {
+      console.log('[response-pipeline] User cancelled request');
+      responsePipelineAbortController.abort();
     }
   }
 
@@ -1122,14 +1291,44 @@
         console.log('[sendMessage] Auth check passed');
         thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Session verified`, 15);
       } catch (authError: any) {
+        // Differentiate error types for better logging and debugging
+        let errorType = 'Unknown Error';
+        let shouldContinue = false;
+
         if (authError?.name === 'AbortError') {
+          errorType = 'Timeout (5s limit)';
+          shouldContinue = true; // Server might still work, just slow
           console.warn('[sendMessage] Auth check timed out after 5s, proceeding anyway');
-          thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ Auth check timed out, proceeding...`, 15);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏱️ Auth check timed out, proceeding...`, 15);
+        } else if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
+          errorType = 'Server Unreachable';
+          shouldContinue = false;
+          console.error('[sendMessage] Server unreachable:', authError);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] 🔌 Server unreachable (will likely fail)`, 15);
+        } else if (authError?.status === 404) {
+          errorType = 'Endpoint Not Found (404)';
+          shouldContinue = false;
+          console.error('[sendMessage] Auth endpoint not found:', authError);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] 🔍 Auth endpoint not found (build issue?)`, 15);
+        } else if (authError?.status >= 500) {
+          errorType = `Server Error (${authError?.status})`;
+          shouldContinue = false;
+          console.error('[sendMessage] Server error during auth check:', authError);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] 💥 Server error ${authError?.status}`, 15);
+        } else if (authError?.status === 401 || authError?.status === 403) {
+          errorType = 'Session Invalid';
+          shouldContinue = false;
+          console.error('[sendMessage] Session invalid:', authError);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] 🔐 Session invalid (please refresh)`, 15);
         } else {
+          errorType = authError?.message || 'Unexpected error';
+          shouldContinue = true; // Try anyway for unknown errors
           console.error('[sendMessage] Auth check error:', authError);
-          thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ Could not verify session`, 15);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ Could not verify session (${errorType})`, 15);
         }
+
         // Continue anyway - might work, might not
+        // (EventSource will fail with better error if server is truly down)
       }
 
       // Use EventSource for SSE streaming (works for both web and React Native WebView)
@@ -2117,6 +2316,19 @@
 
   <!-- Input Area -->
   <div class="input-container">
+    <!-- Cancel button for response pipeline -->
+    {#if loading && responsePipelineAbortController}
+      <div class="cancel-button-container">
+        <button
+          class="btn-cancel"
+          on:click={cancelResponsePipeline}
+          title="Cancel this request"
+        >
+          ⏸️ Cancel Request
+        </button>
+      </div>
+    {/if}
+
     <InputArea
       bind:input
       {loading}
@@ -2236,5 +2448,45 @@
   @keyframes glow-delegation {
     0% { box-shadow: 0 0 5px #ff3838; }
     100% { box-shadow: 0 0 15px #ff3838, 0 0 25px #ff3838; }
+  }
+
+  /* Cancel button for response pipeline */
+  .cancel-button-container {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0;
+    margin-bottom: 8px;
+  }
+
+  .btn-cancel {
+    padding: 8px 16px;
+    background: #ff4444;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(255, 68, 68, 0.2);
+  }
+
+  .btn-cancel:hover {
+    background: #ff2222;
+    box-shadow: 0 4px 8px rgba(255, 68, 68, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .btn-cancel:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(255, 68, 68, 0.2);
+  }
+
+  :global(.dark) .btn-cancel {
+    background: #cc3333;
+  }
+
+  :global(.dark) .btn-cancel:hover {
+    background: #dd4444;
   }
 </style>

@@ -330,81 +330,50 @@ tsx brain/agents/memory-pruner/cli.ts --username greggles --min-length 15 --simi
 
 ---
 
-### 13. Sleep Service
+### 13. Night Pipeline Agent
 
-**File**: `brain/agents/sleep-service.ts`
+**File**: `brain/agents/night-pipeline/`
 
-**Purpose**: Orchestrates the nightly processing pipeline.
-
-**Behavior**:
-- Checks if current time is within sleep window (e.g., 23:00–06:30)
-- Verifies system idle threshold (e.g., 15 minutes)
-- Runs nightly pipeline:
-  1. Dreamer agent (with `maxDreamsPerNight` limit)
-  2. Audio processing (transcriber + audio-organizer)
-  3. LoRA training pipeline (adapter-builder, auto-approver, trainer, eval, activation)
-- **MULTI-USER**: System-level orchestrator, triggers multi-user agents internally
-
-**Trigger**: Night pipeline (via `night-pipeline.ts`)
-
-**Configuration**: `etc/sleep.json`
-
-**Functions**:
-- `loadSleepConfig()` — Read configuration
-- `isSleepTime()` — Check if within sleep window
-- `isIdle()` — Check system idle duration
-- `runNightlyPipeline()` — Execute full pipeline
-
----
-
-### 14. Night Pipeline Agent
-
-**File**: `brain/agents/night-pipeline.ts`
-
-**Purpose**: Wrapper agent triggered by scheduler to run nightly processing.
+**Purpose**: Orchestrates nightly processing pipeline during sleep hours.
 
 **Behavior**:
-- Calls `sleep-service.ts` functions
-- Actual pipeline orchestration handled by `sleep-service.ts`
+- Checks if current time is within sleep window (configured in `etc/sleep.json`)
+- Verifies system idle threshold (e.g., 15 minutes of inactivity)
+- Runs complete nightly pipeline:
+  1. **Dreamer agent** - Generate dreams with `maxDreamsPerNight` limit
+  2. **Audio processing** - Run transcriber and audio-organizer
+  3. **LoRA training** - Execute adapter-builder, auto-approver, trainer, evaluator, activation
+- **MULTI-USER**: System-level orchestrator, processes all user profiles
 
-**Trigger**: Time-of-day (02:00) via `etc/agents.json`
+**Trigger**: Time-of-day via `etc/agents.json` (typically runs at 02:00)
 
-**Configuration**: `etc/agents.json` → `night-pipeline` section
+**Configuration**:
+- `etc/sleep.json` - Sleep window, idle threshold, max dreams
+- `etc/agents.json` - Scheduling configuration
 
----
+**Module Exports** (sleep-service utilities):
+```typescript
+// Sleep management functions
+loadSleepConfig()       // Read sleep configuration
+isSleepTime()           // Check if within sleep window
+isIdle()                // Check system idle duration
+runNightlyPipeline()    // Execute full nightly pipeline
+updateActivity()        // Track system activity for idle detection
+resetDayCounter()       // Reset daily counters
+```
 
-### 15. Night Processor Agent
+**CLI Usage**:
+```bash
+# Run manually
+./bin/mh agent run night-pipeline
 
-**File**: `brain/agents/night-processor.ts`
+# Check status
+./bin/mh agent status night-pipeline
+```
 
-**Purpose**: Runs transcriber and audio-organizer in one-shot mode.
+**Dependencies**: Calls dreamer, transcriber, audio-organizer, training pipeline agents
 
-**Behavior**:
-- Spawns `transcriber.ts` with `ONESHOT=1` env var
-- Spawns `audio-organizer.ts` with `ONESHOT=1` env var
-- Waits for both to complete
-- Audits exit codes (success/failure)
-
-**Trigger**: Night pipeline (via `sleep-service.ts`)
-
----
-
-### 16. Morning Loader Agent
-
-**File**: `brain/agents/morning-loader.ts`
-
-**Purpose**: Loads overnight learnings and activates daily operator profile.
-
-**Behavior**:
-- Loads base persona from `persona/core.json`
-- Finds most recent overnight learnings file (`memory/procedural/overnight/overnight-learnings-*.md`)
-- Composes daily operator profile (base persona + overnight learnings)
-- Activates new profile as prompt adapter (Tier 1 model adaptation)
-- Audits activation
-
-**Trigger**: End of sleep cycle (after dreamer completes)
-
-**Implementation**: Tier 1 model adaptation (prompt adapter only, no training)
+**Note**: Previously documented as separate agents (`sleep-service`, `night-processor`, `morning-loader`), but these are now unified in the modular `night-pipeline` agent. The sleep-service utilities are exported from night-pipeline for use by other parts of the system.
 
 ---
 

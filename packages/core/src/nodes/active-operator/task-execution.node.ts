@@ -120,10 +120,11 @@ const execute: NodeExecutor = async (inputs, context) => {
   const cycleNumber = scratchpad.cycleNumber;
 
   // Check if Human-in-the-Loop is enabled and load operator config
+  // Skip cache to respect user's current settings
   let hitlEnabled = false;
   let operatorConfig: any;
   try {
-    operatorConfig = loadOperatorConfig(username);
+    operatorConfig = loadOperatorConfig(username, true);
     hitlEnabled = operatorConfig.humanInTheLoop?.enabled ?? false;
   } catch {
     // Config not found, HITL disabled

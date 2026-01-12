@@ -1453,13 +1453,29 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       }
 
       const buf = await blob.arrayBuffer();
-      const res = await apiFetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'audio/webm'
-        },
-        body: buf
-      });
+
+      // Add timeout to prevent hanging when system is under load
+      const STT_TIMEOUT_MS = 30000; // 30 seconds max for transcription
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.warn('[useMicrophone] STT request timeout after', STT_TIMEOUT_MS, 'ms');
+        controller.abort();
+      }, STT_TIMEOUT_MS);
+
+      let res: Response;
+      try {
+        console.log('[useMicrophone] Sending STT request...');
+        res = await apiFetch(`/api/stt?format=webm&collect=1&dur=${dur}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'audio/webm'
+          },
+          body: buf,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -1489,7 +1505,14 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         }
       }
     } catch (e) {
-      console.error('[useMicrophone] STT failed:', e);
+      // Handle timeout/abort errors with user-friendly message
+      if (e instanceof Error && e.name === 'AbortError') {
+        console.error('[useMicrophone] STT request timed out - system may be under heavy load');
+        onSystemMessage('⏱️ Voice recognition timed out. The system may be busy - please try again.');
+      } else {
+        console.error('[useMicrophone] STT failed:', e);
+        onSystemMessage('❌ Voice recognition failed. Please try again.');
+      }
     } finally {
       // Clean up recording state
       micChunks = [];

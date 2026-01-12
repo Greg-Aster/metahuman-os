@@ -10,14 +10,14 @@ import { getAuthenticatedUser, audit } from '@metahuman/core';
 import { requireOwner } from '../../../middleware/cognitiveModeGuard';
 import { loadScratchpad, addScratchpadEntry } from '@metahuman/core';
 import { recordBigBrotherReview } from '@metahuman/core';
-import { escalateToBigBrother, loadOperatorConfig } from '@metahuman/core';
+import { escalateToBigBrother, loadFreshOperatorConfig } from '@metahuman/core';
 
 const handler: APIRoute = async ({ cookies }) => {
   try {
     const user = getAuthenticatedUser(cookies);
 
-    // Load operator config to check if Big Brother is enabled
-    const operatorConfig = loadOperatorConfig(user.username);
+    // Load operator config to check if Big Brother is enabled (fresh, no cache)
+    const operatorConfig = loadFreshOperatorConfig(user.username);
 
     if (!operatorConfig.bigBrotherMode?.enabled) {
       return new Response(

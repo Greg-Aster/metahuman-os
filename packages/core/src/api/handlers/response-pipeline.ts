@@ -104,6 +104,68 @@ async function loadResponsePipelineGraph(): Promise<SvelteFlowGraph | null> {
 }
 
 // ============================================================================
+// Error Suggestion Helper
+// ============================================================================
+
+/**
+ * Generate actionable error suggestions based on error type and failed node
+ */
+function getErrorSuggestion(error: string, failedNode: string | null): string {
+  // Big Brother / Claude Code errors
+  if (error.includes('Big Brother') || error.includes('Claude') || error.includes('claude_cli')) {
+    return 'Claude Code may have crashed or is unresponsive. Try:\n• Check if Claude Code is running\n• Restart Claude Code\n• Check Big Brother terminal for errors\n• View logs in the terminal output';
+  }
+
+  // Node-specific failures
+  if (failedNode === 'card_input') {
+    return 'Failed to parse card input. Try:\n• Refresh the page\n• Check if the card data is valid\n• Report this issue if it persists';
+  }
+
+  if (failedNode === 'card_context_loader') {
+    return 'Failed to load card context. Try:\n• Refresh the page\n• Check if the card still exists\n• Verify your profile storage is accessible\n• Check file permissions on your profile directory';
+  }
+
+  if (failedNode === 'response_llm') {
+    return 'LLM generation failed. Try:\n• Check if Ollama/vLLM is running\n• Verify models are loaded (check Settings → Backend)\n• Check Big Brother status in the terminal\n• Try using a different model\n• Check system resources (CPU/Memory)';
+  }
+
+  if (failedNode === 'response_action_router') {
+    return 'Failed to update desire status. Try:\n• Check profile storage permissions\n• Verify desire file exists and is not corrupted\n• Check disk space\n• Try refreshing the desire in the UI';
+  }
+
+  if (failedNode === 'dual_writer') {
+    return 'Failed to save response. Try:\n• Check disk space\n• Verify profile storage is writable\n• Check file permissions\n• Look for file system errors in logs';
+  }
+
+  // LLM/Model errors
+  if (error.includes('model') || error.includes('ollama') || error.includes('vllm')) {
+    return 'Model or LLM backend issue. Try:\n• Check if your LLM backend is running (Settings → Backend)\n• Verify the model is loaded\n• Try switching to a different model\n• Restart your LLM backend';
+  }
+
+  // Memory/Resource errors
+  if (error.includes('memory') || error.includes('out of memory') || error.includes('OOM')) {
+    return 'System resource issue. Try:\n• Close other applications to free memory\n• Use a smaller model\n• Restart the LLM backend\n• Check system resource usage';
+  }
+
+  // File system errors
+  if (error.includes('ENOENT') || error.includes('file not found') || error.includes('cannot find')) {
+    return 'File not found. Try:\n• Refresh the page\n• Check if your profile storage is mounted/accessible\n• Verify file permissions\n• Check if the desire or card was deleted';
+  }
+
+  if (error.includes('EACCES') || error.includes('permission denied')) {
+    return 'Permission denied. Try:\n• Check file permissions on your profile directory\n• Ensure the server has write access\n• Check if files are locked by another process';
+  }
+
+  // Network/Connection errors
+  if (error.includes('connect') || error.includes('ECONNREFUSED') || error.includes('timeout')) {
+    return 'Connection issue. Try:\n• Check if the backend server is running\n• Verify network connectivity\n• Restart the backend service\n• Check firewall settings';
+  }
+
+  // Generic fallback
+  return 'An unexpected error occurred. Try:\n• Check the terminal/console for detailed error logs\n• Refresh the page\n• Restart the server\n• Report this issue with logs if it persists';
+}
+
+// ============================================================================
 // Main Handler
 // ============================================================================
 
@@ -197,6 +259,43 @@ export async function handleResponsePipeline(
     const executionTimeMs = Date.now() - startTime;
     logStep(5, 'Graph execution complete', { nodeExecutionCount, executionTimeMs });
 
+    // Step 5.5: Validate graph execution status
+    logStep(5.5, 'Validating graph execution status', { status: graphState.status });
+
+    if (graphState.status === 'failed') {
+      console.error(`${LOG} FAILED: Graph execution failed`);
+
+      // Find which node(s) failed and collect error details
+      let failedNode: string | null = null;
+      let failedNodeError: string | null = null;
+      const failedNodes: Array<{ nodeId: string; error: string }> = [];
+
+      graphState.nodes.forEach((nodeState, nodeId) => {
+        if (nodeState.status === 'failed') {
+          const errorMsg = nodeState.error?.message || 'Unknown error';
+          failedNodes.push({ nodeId, error: errorMsg });
+
+          // Use first failed node for primary error
+          if (!failedNode) {
+            failedNode = nodeId;
+            failedNodeError = errorMsg;
+          }
+        }
+      });
+
+      logStep(5.5, 'Graph failed - nodes with errors', { failedNodes });
+
+      return {
+        success: false,
+        error: `Pipeline failed at node: ${failedNode || 'unknown'}`,
+        errorDetails: failedNodeError || 'No error details available',
+        suggestion: getErrorSuggestion(failedNodeError || '', failedNode),
+        failedNode,
+        failedNodes: failedNodes.length > 1 ? failedNodes : undefined,
+        executionTimeMs,
+      };
+    }
+
     // Step 6: Extract output
     logStep(6, 'Extracting output from graph state');
     const output = getGraphOutput(graphState);
@@ -204,9 +303,20 @@ export async function handleResponsePipeline(
     if (!output) {
       console.error(`${LOG} FAILED: Graph produced no output`);
       console.error(`${LOG} Graph state keys:`, Object.keys(graphState || {}));
+      console.error(`${LOG} Graph status:`, graphState.status);
+
+      // Log all node statuses for debugging
+      const nodeStatuses: any = {};
+      graphState.nodes.forEach((nodeState, nodeId) => {
+        nodeStatuses[nodeId] = nodeState.status;
+      });
+      console.error(`${LOG} Node statuses:`, nodeStatuses);
+
       return {
         success: false,
         error: 'Pipeline produced no output',
+        errorDetails: `Graph completed with status '${graphState.status}' but no output was generated`,
+        suggestion: getErrorSuggestion('No output generated', null),
         executionTimeMs,
       };
     }

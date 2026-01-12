@@ -28,7 +28,7 @@ import {
   getActiveBackend,
   ensureBackendsInitialized,
 } from '../../escalation-backend.js';
-import { loadOperatorConfig, loadUserConfig } from '../../config.js';
+import { loadFreshOperatorConfig, loadUserConfig } from '../../config.js';
 import type { AgencyExecutionConfig } from '../../agency/types.js';
 
 // Default timeout: 10 minutes
@@ -173,7 +173,7 @@ async function executeStep(
     let timeout = DEFAULT_EXECUTION_TIMEOUT;
     if (username) {
       try {
-        const config = loadOperatorConfig(username);
+        const config = loadFreshOperatorConfig(username);
         timeout = config.bigBrotherMode?.executionTimeout || DEFAULT_EXECUTION_TIMEOUT;
       } catch {
         // Use default if config load fails

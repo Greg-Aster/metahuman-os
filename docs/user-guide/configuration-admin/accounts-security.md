@@ -32,10 +32,16 @@ MetaHuman OS has three account roles:
 
 ### Guest Account
 
-- Created via "Continue as Guest" on the login screen
+**⚠️ Important:** All users must authenticate - there are no anonymous sessions.
+
+- Created by owner or via existing credentials
+- Must log in with credentials (no "Continue as Guest" without authentication)
 - Sessions last 1 hour
-- Read-only access to view a profile
+- Always forced into emulation mode (read-only)
+- Read-only access to view public profiles
 - Useful for demonstrations or sharing your digital twin with others
+
+See [Authentication](authentication.md) for details on creating guest accounts.
 
 ---
 
@@ -118,17 +124,121 @@ profiles/{username}/
 
 ### Custom Storage Location (Stacks)
 
+**⚠️ CRITICAL: Many users configure custom profile storage** for encrypted drives, external storage, or network mounts.
+
 You can store your profile data on a different location:
 - USB drive
 - External hard drive
-- Encrypted partition
+- Encrypted partition (LUKS, VeraCrypt)
+- Network storage (NAS)
 
 This is called a **"stack"** — a portable, self-contained profile storage.
 
-**To configure:**
-1. Go to **Settings → Storage**
-2. Set a custom profile storage path
-3. The system will use this location for all user data
+#### Configuration via `persona/users.json`
+
+Custom storage is configured per-user in `persona/users.json`:
+
+```json
+{
+  "users": [
+    {
+      "id": "user-123",
+      "username": "greggles",
+      "metadata": {
+        "profileStorage": {
+          "path": "/media/greggles/STACK/metahuman-profiles/greggles",
+          "type": "encrypted",
+          "fallbackBehavior": "error",
+          "encryption": {
+            "type": "luks",
+            "mountPoint": "/media/greggles/STACK/metahuman-profiles/greggles"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+**Configuration Fields:**
+- `path` - Absolute path to custom profile storage location
+- `type` - Storage type: `internal` (default), `external`, or `encrypted`
+- `fallbackBehavior` - What to do if custom path unavailable:
+  - `error` (recommended for encrypted storage) - Throw error, prevent writes to default location
+  - `fallback` - Silently fall back to default `profiles/<username>/` location
+- `encryption` - Optional encryption metadata
+
+#### Storage Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `internal` | Default location in repo | `profiles/<username>/` |
+| `external` | USB drive, network mount | `/mnt/external/profiles/<username>/` |
+| `encrypted` | LUKS, VeraCrypt, AES-256 | `/media/user/STACK/metahuman-profiles/<username>/` |
+
+#### Path Resolution Flow
+
+**For developers:** Always use `getProfilePaths(username)` - never hardcode paths.
+
+```typescript
+import { getProfilePaths } from '@metahuman/core';
+
+// CORRECT: Resolves actual path (including custom storage)
+const profilePaths = getProfilePaths('greggles');
+console.log(profilePaths.root);  // /media/greggles/STACK/metahuman-profiles/greggles
+
+// WRONG: Hardcoded path fails for custom storage
+const path = `profiles/greggles/`;  // ❌ Will miss encrypted storage!
+```
+
+**Resolution Process:**
+1. Check `persona/users.json` → `users[].metadata.profileStorage.path`
+2. If custom path exists and is accessible → use it
+3. If unavailable:
+   - `fallbackBehavior: 'error'` → Throw error (prevent unencrypted writes)
+   - `fallbackBehavior: 'fallback'` → Use default `profiles/<username>/`
+
+#### Finding Your Actual Profile Path
+
+**Never assume** your profile is at `profiles/<username>/`. Check the actual location:
+
+```bash
+# Via CLI (shows actual path)
+./bin/mh profile path
+
+# Via API
+import { resolveProfileRoot } from '@metahuman/core/path-builder';
+const resolution = resolveProfileRoot('username');
+console.log(resolution.root);  // Shows actual location
+console.log(resolution.storageType);  // 'encrypted', 'external', or 'internal'
+```
+
+#### Security with Custom Storage
+
+**Recommended: `fallbackBehavior: 'error'` for encrypted storage**
+
+When using encrypted storage, set `fallbackBehavior: 'error'` to prevent the system from silently writing to unencrypted default storage if the encrypted drive is unmounted.
+
+```json
+{
+  "profileStorage": {
+    "path": "/media/user/encrypted-drive/metahuman/user",
+    "type": "encrypted",
+    "fallbackBehavior": "error"  // Fail loudly if drive unavailable
+  }
+}
+```
+
+This ensures sensitive data never accidentally writes to unencrypted storage.
+
+#### Manual Configuration
+
+**To configure custom storage:**
+1. Edit `persona/users.json` and add `metadata.profileStorage` configuration
+2. Create the custom directory: `mkdir -p /path/to/custom/storage`
+3. Move existing profile data: `mv profiles/username/* /path/to/custom/storage/`
+4. Restart MetaHuman OS
+5. Verify: `./bin/mh profile path` should show custom location
 
 ### Mobile Storage
 

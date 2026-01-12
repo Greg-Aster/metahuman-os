@@ -273,6 +273,19 @@
       "autoRestart": false,
       "maxRetries": 1,
       "comment": "15% chance to generate a brief daydream after 5 min idle. Inner dialogue only - never surfaces to main chat. Lighter than full dreams."
+    },
+    "babysitter": {
+      "id": "babysitter",
+      "enabled": true,
+      "type": "interval",
+      "priority": "high",
+      "agentPath": "babysitter.ts",
+      "usesLLM": false,
+      "interval": 300,
+      "runOnBoot": true,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "comment": "Proactive system monitoring: watches logs in real-time (Node.js, servers, Big Brother, agents), detects errors, patterns, and auto-heals low/medium risk issues. Runs continuously with 5-minute health checks. See: docs/BABYSITTER-CONSOLIDATION.md"
     }
   }
 }
