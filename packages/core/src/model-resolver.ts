@@ -10,6 +10,8 @@ import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
+const LOG_PREFIX = '[model-resolver]';
+
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 
@@ -25,7 +27,8 @@ export interface ModelDefinition {
     temperature?: number;
     topP?: number;
     repeatPenalty?: number;
-    [key: string]: any;
+    // Additional model-specific options - intentionally flexible
+    [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   };
   metadata?: {
     priority?: 'high' | 'medium' | 'low';
@@ -34,7 +37,8 @@ export interface ModelDefinition {
     adapterLoadTime?: number;
     trainedOn?: string;
     evalScore?: number;
-    [key: string]: any;
+    // Additional metadata fields - intentionally flexible for different model types
+    [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   };
 }
 
@@ -44,12 +48,12 @@ export interface ModelRegistry {
   globalSettings?: {
     includePersonaSummary?: boolean;
     useAdapter?: boolean;
-    activeAdapter?: any;
+    activeAdapter?: unknown; // Can be various adapter configuration formats
   };
   defaults: Record<ModelRole, string>;
   models: Record<string, ModelDefinition>;
   roleHierarchy?: Record<ModelRole, string[]>;
-  cognitiveModeMappings?: Record<string, any>;
+  cognitiveModeMappings?: Record<string, Record<string, string | null | undefined>>;
   providers?: Record<ModelProvider, {
     baseUrl: string;
     timeout: number;
@@ -64,8 +68,8 @@ export interface ResolvedModel {
   adapters: string[];
   baseModel?: string;
   roles: string[];
-  options: Record<string, any>;
-  metadata: Record<string, any>;
+  options: Record<string, unknown>; // Model options - intentionally flexible
+  metadata: Record<string, unknown>; // Model metadata - intentionally flexible
 }
 
 const CACHE_TTL = 60000; // 1 minute
@@ -79,7 +83,8 @@ function getActiveBackend(): BackendType {
   try {
     const config = loadBackendConfig();
     return config.activeBackend;
-  } catch {
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to load backend config, using fallback:`, error);
     return 'ollama'; // Default fallback
   }
 }
@@ -91,9 +96,11 @@ function getActiveBackend(): BackendType {
  */
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
   const activeBackend = getActiveBackend();
+  console.log(`${LOG_PREFIX} Applying backend override: activeBackend=${activeBackend}, resolvedProvider=${resolved.provider}`);
 
   // Cloud providers and remote-server are NEVER overridden - user's choice is respected
   if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface' || resolved.provider === 'remote-server') {
+    console.log(`${LOG_PREFIX} Skipping override for cloud/remote provider: ${resolved.provider}`);
     return resolved;
   }
 
@@ -105,8 +112,10 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
 
   // If resolved model uses ollama but vLLM is active, check for vllm.active model
   if (activeBackend === 'vllm' && resolved.provider === 'ollama') {
+    console.log(`${LOG_PREFIX} Backend override needed: vLLM active but resolved model uses Ollama`);
     const vllmModel = registry.models['vllm.active'];
     if (vllmModel) {
+      console.log(`${LOG_PREFIX} Overriding to vllm.active model: ${vllmModel.model}`);
       return {
         id: 'vllm.active',
         provider: 'vllm' as ModelProvider,
@@ -118,6 +127,7 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
         metadata: { ...resolved.metadata, ...vllmModel.metadata, backendOverride: 'vllm' },
       };
     }
+    console.log(`${LOG_PREFIX} No vllm.active model found in registry, keeping original`);
   }
 
   // If resolved model uses vllm but Ollama is active, use default model
@@ -150,6 +160,9 @@ export function invalidateModelCache(): void {
  * @param username - Optional username to explicitly resolve user's profile path
  */
 export function loadModelRegistry(forceFresh = false, username?: string): ModelRegistry {
+  console.log(`${LOG_PREFIX} ========== loadModelRegistry CALLED ==========`);
+  console.log(`${LOG_PREFIX} Input: forceFresh=${forceFresh}, username=${username}`);
+
   const now = Date.now();
 
   const registryPath = resolveRegistryPath(username);
@@ -157,8 +170,12 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
   if (!forceFresh) {
     const cached = registryCache.get(registryPath);
     if (cached && (now - cached.timestamp) < CACHE_TTL) {
+      console.log(`${LOG_PREFIX} Cache hit for registry: ${registryPath}`);
       return cached.registry;
     }
+    console.log(`${LOG_PREFIX} Cache miss or expired for registry: ${registryPath}`);
+  } else {
+    console.log(`${LOG_PREFIX} Force refresh requested, bypassing cache`);
   }
 
   if (!fs.existsSync(registryPath)) {
@@ -178,6 +195,7 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 
     return registry;
   } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to load model registry from ${registryPath}:`, error);
     throw new Error(`Failed to load model registry: ${(error as Error).message}`);
   }
 }
@@ -186,6 +204,11 @@ function resolveRegistryPath(username?: string): string {
   // Username is REQUIRED - no fallback to system config
   if (!username) {
     throw new Error(`Username is required to load model registry. System fallback is disabled.`);
+  }
+
+  // Validate username to prevent path traversal attacks
+  if (typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username) || username.length > 50) {
+    throw new Error(`Invalid username: must be alphanumeric with underscores/hyphens, max 50 chars`);
   }
 
   // Use getProfilePaths which correctly handles mobile vs desktop paths
@@ -200,8 +223,10 @@ function resolveRegistryPath(username?: string): string {
     }
   } catch (err) {
     if (err instanceof Error && err.message.includes('models.json not found')) {
+      console.error(`${LOG_PREFIX} User models.json not found for ${username}:`, err);
       throw err;
     }
+    console.error(`${LOG_PREFIX} Failed to resolve user models.json path for '${username}':`, err);
     throw new Error(`Failed to resolve user models.json path for '${username}': ${err}`);
   }
 }
@@ -214,6 +239,17 @@ export function resolveModel(
   overrides?: Partial<ResolvedModel>,
   username?: string
 ): ResolvedModel {
+  console.log(`${LOG_PREFIX} ========== resolveModel CALLED ==========`);
+  console.log(`${LOG_PREFIX} Input: role=${role}, username=${username}, hasOverrides=${!!overrides}`);
+
+  // Input validation
+  if (!role || typeof role !== 'string') {
+    throw new Error(`Invalid role parameter: ${role}`);
+  }
+  if (username !== undefined && typeof username !== 'string') {
+    throw new Error(`Invalid username parameter: ${username}`);
+  }
+
   const registry = loadModelRegistry(false, username);
 
   // Get the default model ID for this role
@@ -259,6 +295,14 @@ export function resolveModel(
  * Resolve a model by ID instead of role
  */
 export function resolveModelById(modelId: string, username?: string): ResolvedModel {
+  // Input validation
+  if (!modelId || typeof modelId !== 'string') {
+    throw new Error(`Invalid modelId parameter: ${modelId}`);
+  }
+  if (username !== undefined && typeof username !== 'string') {
+    throw new Error(`Invalid username parameter: ${username}`);
+  }
+
   const registry = loadModelRegistry(false, username);
 
   const modelDef = registry.models[modelId];
@@ -293,6 +337,20 @@ export function resolveModelForCognitiveMode(
   role: ModelRole,
   username?: string
 ): ResolvedModel {
+  console.log(`${LOG_PREFIX} ========== resolveModelForCognitiveMode CALLED ==========`);
+  console.log(`${LOG_PREFIX} Input: cognitiveMode=${cognitiveMode}, role=${role}, username=${username}`);
+
+  // Input validation
+  if (!cognitiveMode || typeof cognitiveMode !== 'string') {
+    throw new Error(`Invalid cognitiveMode parameter: ${cognitiveMode}`);
+  }
+  if (!role || typeof role !== 'string') {
+    throw new Error(`Invalid role parameter: ${role}`);
+  }
+  if (username !== undefined && typeof username !== 'string') {
+    throw new Error(`Invalid username parameter: ${username}`);
+  }
+
   const registry = loadModelRegistry(false, username);
 
   // Check if there's a cognitive mode mapping
