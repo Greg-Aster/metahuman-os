@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { storageClient } from './storage-client.js';
-import { audit } from './audit';
+import { audit } from './audit.js';
+
+const LOG_PREFIX = '[cognitive-mode]';
 
 export type CognitiveModeId = 'dual' | 'agent' | 'emulation';
 
@@ -115,10 +117,20 @@ function ensureConfig(): CognitiveModeConfig {
     // Ensure parent directory exists
     const dir = path.dirname(configPath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch (error) {
+        console.error(`${LOG_PREFIX} Failed to create config directory:`, (error as Error).message);
+        throw error;
+      }
     }
 
-    fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Failed to write fallback cognitive mode config:`, (error as Error).message);
+      throw error;
+    }
     return fallback;
   }
 
@@ -130,6 +142,7 @@ function ensureConfig(): CognitiveModeConfig {
     }
     return parsed;
   } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to parse cognitive mode config, using fallback:`, (error as Error).message);
     const fallback: CognitiveModeConfig = {
       currentMode: 'dual',
       lastChanged: new Date().toISOString(),
@@ -137,7 +150,12 @@ function ensureConfig(): CognitiveModeConfig {
     };
     // Only write if we have a valid path
     if (configPath) {
-      fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+      try {
+        fs.writeFileSync(configPath, JSON.stringify(fallback, null, 2), 'utf-8');
+      } catch (writeError) {
+        console.error(`${LOG_PREFIX} Failed to write fallback config after parse error:`, (writeError as Error).message);
+        // Don't throw here - we can still return the fallback config
+      }
     }
     return fallback;
   }
@@ -152,10 +170,12 @@ export function getModeDefinition(mode: CognitiveModeId): CognitiveModeDefinitio
 }
 
 export function loadCognitiveMode(): CognitiveModeConfig {
+  console.log(`${LOG_PREFIX} loadCognitiveMode() called`);
   return ensureConfig();
 }
 
 export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'system'): CognitiveModeConfig {
+  console.log(`${LOG_PREFIX} saveCognitiveMode() called with mode: ${nextMode}, actor: ${actor}`);
   const configPath = getModeConfigPath();
   const config = ensureConfig();
 
@@ -195,7 +215,12 @@ export function saveCognitiveMode(nextMode: CognitiveModeId, actor: string = 'sy
     ],
   };
 
-  fs.writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8');
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to save cognitive mode config:`, (error as Error).message);
+    throw new Error(`Failed to save cognitive mode configuration: ${(error as Error).message}`);
+  }
 
   audit({
     level: 'info',
@@ -224,7 +249,7 @@ export function applyModeDefaults(mode: CognitiveModeId): void {
       defaults: def.defaults,
     },
   });
-  // TODO: integrate with agent scheduler, memory service, and training pipeline toggles.
+  // Note: Agent scheduler, memory service, and training pipeline read mode from file
 }
 
 /**
