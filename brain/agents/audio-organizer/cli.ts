@@ -14,20 +14,24 @@
 import { initGlobalLogger } from '@metahuman/core';
 import { runCycle, type AudioOrganizerOptions } from './core.js';
 
-async function main() {
+const LOG_PREFIX = '[audio-organizer]';
+
+async function main(): Promise<void> {
   initGlobalLogger('audio-organizer');
+  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
 
   const args = process.argv.slice(2);
   const options: AudioOrganizerOptions = {
     oneShot: args.includes('--oneshot'),
   };
+  console.log(`${LOG_PREFIX} Options: oneShot=${options.oneShot}`);
 
   try {
     const result = await runCycle(options);
-    console.log(`[audio-organizer] Completed: ${result.transcriptsOrganized} organized, ${result.transcriptsFailed} failed`);
+    console.log(`${LOG_PREFIX} Completed: ${result.transcriptsOrganized} organized, ${result.transcriptsFailed} failed`);
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error('[audio-organizer] Fatal error:', error);
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
     process.exit(1);
   }
 }
