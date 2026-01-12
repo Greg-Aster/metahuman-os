@@ -13,6 +13,7 @@ import { systemPaths, registerProfileStorageConfigGetter } from './path-builder.
 import { audit } from './audit.js';
 import type { OnboardingState } from './types/onboarding.js';
 
+const LOG_PREFIX = '[users]';
 const BCRYPT_ROUNDS = 12; // Standard secure rounds for bcrypt
 
 /**
@@ -147,7 +148,7 @@ function loadUsers(): UserStore {
     const raw = fs.readFileSync(usersFile, 'utf-8');
     return JSON.parse(raw) as UserStore;
   } catch (error) {
-    console.error('[users] Failed to load users:', error);
+    console.error(`${LOG_PREFIX} Failed to load users:`, error);
     return { users: [], version: 1 };
   }
 }
@@ -167,7 +168,7 @@ function saveUsers(store: UserStore): void {
 
     fs.writeFileSync(usersFile, JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
-    console.error('[users] Failed to save users:', error);
+    console.error(`${LOG_PREFIX} Failed to save users:`, error);
     throw error;
   }
 }
@@ -192,7 +193,7 @@ function verifyPassword(password: string, hash: string): boolean {
     return bcrypt.compareSync(password, hash);
   } catch (error) {
     // Invalid hash format
-    console.error('[users] Password verification error:', error);
+    console.error(`${LOG_PREFIX} Password verification error:`, error);
     return false;
   }
 }
@@ -547,7 +548,7 @@ export function updateUsername(userId: string, newUsername: string): void {
  */
 export function updateUserMetadata(
   userId: string,
-  metadata: Record<string, any>
+  metadata: Partial<User['metadata']>
 ): void {
   const store = loadUsers();
   const user = store.users.find((u) => u.id === userId);
