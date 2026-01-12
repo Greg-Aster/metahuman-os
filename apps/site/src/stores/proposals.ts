@@ -1,5 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import { apiFetch } from '../lib/client/api-config';
+import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
 
 /**
  * Proposals store - real-time state for operator proposals
@@ -81,6 +82,7 @@ export const postFeedbackCount = derived(
 export const proposalsConnected = derived(proposalsStore, ($store) => $store.connected);
 
 // SSE connection management
+let connectionHandle: ConnectionHandle | null = null;
 let eventSource: EventSource | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
@@ -90,9 +92,10 @@ const RECONNECT_DELAY_MS = 3000;
 /**
  * Connect to the proposals SSE stream.
  * Call this once when the app initializes (e.g., in ChatInterface).
+ * Now uses connection pool for priority-based allocation.
  */
 export function connectProposalsStream(): void {
-  if (eventSource?.readyState === EventSource.OPEN) {
+  if (connectionHandle && connectionHandle.getStatus() === 'active') {
     return; // Already connected
   }
 
@@ -100,76 +103,85 @@ export function connectProposalsStream(): void {
   disconnectProposalsStream();
 
   try {
-    eventSource = new EventSource('/api/operator-proposals/stream');
+    connectionHandle = connectionPool.request({
+      id: 'proposals-stream',
+      name: 'Proposals Stream',
+      url: '/api/operator-proposals/stream',
+      priority: ConnectionPriority.MEDIUM,
+      defer: true,
+      onOpen: (source) => {
+        eventSource = source;
+        reconnectAttempts = 0;
+        proposalsStore.update((s) => ({ ...s, connected: true, error: null }));
 
-    eventSource.onopen = () => {
-      reconnectAttempts = 0;
-      proposalsStore.update((s) => ({ ...s, connected: true, error: null }));
-    };
+        // Handle named events
+        source.addEventListener('connected', () => {
+          proposalsStore.update((s) => ({ ...s, connected: true }));
+        });
 
-    eventSource.onerror = () => {
-      proposalsStore.update((s) => ({ ...s, connected: false }));
+        source.addEventListener('state', (event) => {
+          try {
+            const data = JSON.parse((event as MessageEvent).data);
+            proposalsStore.update((s) => ({
+              ...s,
+              proposals: data.proposals || [],
+              postFeedbackRequests: data.postFeedbackRequests || [],
+              lastUpdated: Date.now(),
+            }));
+          } catch (e) {
+            console.error('[proposals-store] Failed to parse state event:', e);
+          }
+        });
 
-      // Attempt to reconnect
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts++;
-        reconnectTimeout = setTimeout(() => {
-          connectProposalsStream();
-        }, RECONNECT_DELAY_MS);
-      } else {
-        proposalsStore.update((s) => ({
-          ...s,
-          error: 'Failed to connect to proposals stream',
-        }));
-      }
-    };
+        source.addEventListener('proposal-created', (event) => {
+          try {
+            const data = JSON.parse((event as MessageEvent).data);
+            proposalsStore.update((s) => ({
+              ...s,
+              proposals: [...s.proposals, data.proposal],
+              lastUpdated: Date.now(),
+            }));
+          } catch (e) {
+            console.error('[proposals-store] Failed to parse proposal-created event:', e);
+          }
+        });
 
-    // Handle named events
-    eventSource.addEventListener('connected', () => {
-      proposalsStore.update((s) => ({ ...s, connected: true }));
-    });
+        source.addEventListener('proposal-resolved', (event) => {
+          try {
+            const data = JSON.parse((event as MessageEvent).data);
+            proposalsStore.update((s) => ({
+              ...s,
+              proposals: s.proposals.filter((p) => p.id !== data.proposalId),
+              lastUpdated: Date.now(),
+            }));
+          } catch (e) {
+            console.error('[proposals-store] Failed to parse proposal-resolved event:', e);
+          }
+        });
+      },
+      onClose: () => {
+        eventSource = null;
+        proposalsStore.update((s) => ({ ...s, connected: false }));
+      },
+      onError: () => {
+        proposalsStore.update((s) => ({ ...s, connected: false }));
 
-    eventSource.addEventListener('state', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        proposalsStore.update((s) => ({
-          ...s,
-          proposals: data.proposals || [],
-          postFeedbackRequests: data.postFeedbackRequests || [],
-          lastUpdated: Date.now(),
-        }));
-      } catch (e) {
-        console.error('[proposals-store] Failed to parse state event:', e);
-      }
-    });
-
-    eventSource.addEventListener('proposal-created', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        proposalsStore.update((s) => ({
-          ...s,
-          proposals: [...s.proposals, data.proposal],
-          lastUpdated: Date.now(),
-        }));
-      } catch (e) {
-        console.error('[proposals-store] Failed to parse proposal-created event:', e);
-      }
-    });
-
-    eventSource.addEventListener('proposal-resolved', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        proposalsStore.update((s) => ({
-          ...s,
-          proposals: s.proposals.filter((p) => p.id !== data.proposalId),
-          lastUpdated: Date.now(),
-        }));
-      } catch (e) {
-        console.error('[proposals-store] Failed to parse proposal-resolved event:', e);
-      }
+        // Attempt to reconnect
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          reconnectTimeout = setTimeout(() => {
+            connectProposalsStream();
+          }, RECONNECT_DELAY_MS);
+        } else {
+          proposalsStore.update((s) => ({
+            ...s,
+            error: 'Failed to connect to proposals stream',
+          }));
+        }
+      },
     });
   } catch (e) {
-    console.error('[proposals-store] Failed to create EventSource:', e);
+    console.error('[proposals-store] Failed to create connection:', e);
     proposalsStore.update((s) => ({
       ...s,
       connected: false,
@@ -187,8 +199,9 @@ export function disconnectProposalsStream(): void {
     reconnectTimeout = null;
   }
 
-  if (eventSource) {
-    eventSource.close();
+  if (connectionHandle) {
+    connectionHandle.close();
+    connectionHandle = null;
     eventSource = null;
   }
 

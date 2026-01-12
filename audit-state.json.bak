@@ -1,0 +1,3485 @@
+{
+  "_metadata": {
+    "auditStarted": "2026-01-12T00:00:00Z",
+    "auditVersion": "1.0",
+    "totalFiles": 1146,
+    "completedFiles": 0,
+    "inProgressFiles": 1,
+    "activeAgents": [
+      "Agent-1"
+    ],
+    "lastUpdated": "2026-01-12T22:49:08.948Z"
+  },
+  "_instructions": {
+    "howToUse": "Each agent MUST update this file before and after working on any file",
+    "claimFormat": {
+      "status": "in-progress",
+      "reviewer": "Agent-Name",
+      "started": "ISO-8601-timestamp"
+    },
+    "completeFormat": {
+      "status": "completed",
+      "reviewer": "Agent-Name",
+      "started": "ISO-8601-timestamp",
+      "completed": "ISO-8601-timestamp",
+      "issuesFound": 0,
+      "issuesFixed": 0,
+      "criticalIssues": 0,
+      "followUpNeeded": false,
+      "notes": "Brief summary"
+    },
+    "statusValues": [
+      "pending",
+      "in-progress",
+      "completed",
+      "blocked",
+      "needs-review"
+    ]
+  },
+  "files": {
+    "packages/core/src/audit.ts": {
+      "status": "in-progress",
+      "reviewer": "Agent-1",
+      "started": "2026-01-12T22:49:08.948Z"
+    },
+    "packages/core/src/auth.ts": {
+      "status": "in-progress",
+      "reviewer": "Agent-1",
+      "started": "2026-01-12T10:00:00Z"
+    },
+    "packages/core/src/identity.ts": {
+      "status": "in-progress",
+      "reviewer": "Agent-2", 
+      "started": "2026-01-12T22:51:00Z"
+    },
+    "packages/core/src/llm.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/security-policy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/users.ts": {
+      "status": "pending"
+    },
+    "brain/agents/audio-organizer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/audio-organizer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/audio-organizer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/auto-indexer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/auto-indexer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/auto-indexer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/babysitter.ts": {
+      "status": "pending"
+    },
+    "brain/agents/coder/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/coder/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/coder/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curator/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curator/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curator/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-researcher/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-researcher/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-researcher/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-service/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-service/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/curiosity-service/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/daydreamer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/daydreamer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/daydreamer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-executor/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-executor/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-executor/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-explorer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-explorer/run.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-generator/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-generator/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-generator/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-planner/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-planner/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/desire-planner/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/digest/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/digest/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/digest/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/dreamer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/dreamer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/dreamer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/ingestor/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/ingestor/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/ingestor/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/inner-curiosity/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/inner-curiosity/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/inner-curiosity/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-pruner/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-pruner/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-pruner/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-sync/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-sync/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/memory-sync/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/night-pipeline/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/night-pipeline/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/night-pipeline/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/organizer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/organizer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/organizer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/profile-sync/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/profile-sync/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/profile-sync/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/psychoanalyzer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/psychoanalyzer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/psychoanalyzer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/reflector/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/reflector/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/reflector/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/summarizer/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/summarizer/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/summarizer/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/train-of-thought/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/train-of-thought/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/train-of-thought/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/transcriber/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/transcriber/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/transcriber/index.ts": {
+      "status": "pending"
+    },
+    "brain/agents/update-check/cli.ts": {
+      "status": "pending"
+    },
+    "brain/agents/update-check/core.ts": {
+      "status": "pending"
+    },
+    "brain/agents/update-check/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agent-graph-executor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agent-monitor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agent-scheduler.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ActiveOperatorDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ActiveOperatorSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AdapterDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AddonsManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AgencyDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AgentMonitor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ApprovalPrompt.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ApprovalQueue.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AudioRecorder.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AudioUpload.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AuditStreamEnhanced.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AuditViewer.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/AuthGate.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/BackendSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/BigBrotherTerminalPanel.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/BoredomControl.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/CenterContent.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ChatInterface.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ChatSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/Dashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/DatasetManagement.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/DesireCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/DirectVoiceRecorder.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/GPUMonitor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/HeadlessClaimBanner.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/LeftSidebar.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/Lifeline.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/LizardBrainPanel.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/LocalModelsSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/LogStream.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/MemoryControls.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/MemoryEditor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ModelSelector.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/NetworkServerSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/NodePalette.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/OnboardingWizard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/OperatorProposalCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/OvernightLearnings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/PersonaEditor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/PersonaGenerator.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProfileCreation.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProfileDangerZone.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProfileLocation.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProfileManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProfileSelector.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ProjectDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ReferenceAudioSelector.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ReviewApplyDialog.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/RightSidebar.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SchedulerSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SecuritySettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ServerStatus.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ServerStatusIndicator.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SyncManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SyncStatus.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SystemCoderDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SystemControls.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/SystemSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TaskManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TerminalManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/ThemeToggle.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/components/Thinking.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TierSelector.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TrainingDataControls.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TrainingHistory.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TrainingMonitor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/TrainingWizard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/UnifiedQueueDashboard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/UpdateManager.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/UserGuide.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/UserMenu.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/VoiceSettings.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/VoiceTrainingWidget.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/FeedbackButtons.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/InputArea.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/MessageList.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/card-types.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/AgencyCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/AssistantMessageCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/BaseMessageCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/CuriosityCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/DreamCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/LizardBrainCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/ReasoningCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/ReflectionCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/SystemMessageCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/UserMessageCard.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/cards/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/components/chat/message-discriminator.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/components/flow-editor/BaseNode.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/flow-editor/FlowEditor.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/flow-editor/NoteNode.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/flow-editor/PropertyInspector.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/PersonaGeneratorEmbed.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step1_Welcome.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step3_Personality.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step3_PersonalityChoice.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step4_Context.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step5_Goals.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/components/onboarding/Step6_Complete.svelte": {
+      "status": "pending"
+    },
+    "apps/site/src/env.d.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/api-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/app-updater.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/composables/useMessages.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/composables/useMicrophone.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/composables/useTTS.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/composables/useThinkingTrace.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/flow-editor/node-component-map.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/flow-editor/template-converter.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/local-memory.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/memory-sync.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/profile-sync.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/server-health.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/sync-settings.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/tier-selection.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/unified-chat.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/utils/audio-utils.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/utils/kokoro-training.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/client/window-session.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/server/api-adapter.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/server/file_operations.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/server/rvc-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/server/sovits-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/lib/stores/sleep-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/middleware.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/middleware/cognitiveModeGuard.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/active-operator/approvals.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/active-operator/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/active-operator/control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/active-operator/proposals.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/active-operator/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/activity-ping.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/adapters/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons/install-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons/install.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons/mark-installed.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons/toggle.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/addons/uninstall.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/advance.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/answer.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/approve.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/checkin.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/confirm-complete.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/execute.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/executions.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/feedback.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/generate-plan-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/generate-plan.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/ready-to-plan.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/reject.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/request-revision.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/reset.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/retry.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/review.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/revise.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/run-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/desires/[id]/run.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/metrics.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/plans.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agency/scratchpad.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agent-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agent.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agents/control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/agents/run.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/app-version.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/approvals.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/astro-servers.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/audio/upload.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/audit-control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/audit.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/audit/clear.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/change-password.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/change-username.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/guest.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/login.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/me.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/register.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/reset-password.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/sync-user.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/update-profile.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/auth/users.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/babysitter/patterns.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/babysitter/reports.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/babysitter/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/big-brother-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/big-brother-escalate.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/big-brother-input.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/big-brother-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/big-brother/terminal-events.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/boot.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/boredom.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/buffer-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/buffer.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cancel-chat.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/capture.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat-settings.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat/credentials.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat/history.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat/provider.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat/providers.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/chat/usage.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/claude-session.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cloudflare/start.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cloudflare/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cloudflare/stop.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cloudflare/toggle.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/code-approvals/[...path].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/code-approvals/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cognitive-graph.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cognitive-graphs.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cognitive-layers-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/cognitive-mode.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/conversation-buffer.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/conversation/summarize.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/conversation/summary.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/curiosity-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/curiosity/questions.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/drift/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/drift/history.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/drift/reports.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/drift/reports/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/drift/summary.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/embeddings-control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/embeddings.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/encryption/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/encryption/lock.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/encryption/setup.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/encryption/unlock.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/execute-graph-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/execute-graph.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/execute.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/export/conversations.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/feedback.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/file_operations.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/fine-tune/models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/functions.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/gpu-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/graph-traces.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/interpreter-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/kokoro-addon.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/kokoro-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/kokoro-training.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/kokoro-voices.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/lifeline/trigger.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/lizard-brain/logs.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/lizard-brain/trigger-review.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm-backend/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm-backend/ollama.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm-backend/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm-backend/switch.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm-backend/vllm.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/llm/chat.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/download.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/load.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/start.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/stop.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/local-models/unload.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/logging-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/lora-state.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/lora-toggle.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memories.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memories/delete.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memories/search.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memories/validate.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memories_all.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memory-content.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memory-metrics.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memory/sync/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memory/sync/pull.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/memory/sync/push.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/mobile/download.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/mobile/version.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/model-info.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/model-registry.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/monitor.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/monitor/stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/node-pipeline.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/node-schemas.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/onboarding/complete.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/onboarding/extract-persona.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/onboarding/skip.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/onboarding/state.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/improve.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/post-feedback.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/respond.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/review.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/operator-proposals/stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/pause-state.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-archives.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-core-manage.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-core.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-decision-rules.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-facet.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-facets-manage.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-icon.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-insights.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-relationships.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona-toggle.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/add-notes.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/answer.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/apply.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/discard.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/finalize.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/load.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/purge-sessions.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/reset-persona.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/start.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/generator/update-answer.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona/summary.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/persona_chat.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/process-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-path.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-path/decrypt.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-path/devices.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-path/encrypt.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-path/validate.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync-state.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/changes.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/credentials.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/export-priority.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/export.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/import.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/memories.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/metadata.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/tasks.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profile-sync/user.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profiles/create.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profiles/delete.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profiles/list.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profiles/select.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/profiles/visibility.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/psychoanalyzer-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/queue-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/queue/lane-control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/queue/metrics.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/recovery-codes.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/remote-server/connect.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/remote-server/disconnect.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/remote-server/health.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/remote-server/models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/remote-server/test.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/reset-factory.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/response-pipeline.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/runpod/config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/runpod/validate.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/runtime/mode.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/rvc-addon.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/rvc-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/rvc-training.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/scheduler-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/security/policy.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/semantic-turn.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/server-info.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/server-update.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/server-update/restart.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/sleep-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/sovits-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/sovits-training.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/storage-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/stt.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/capture-error.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/errors.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/errors/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/errors/[id]/fix.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/errors/[id]/ignore.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes/[id]/apply.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes/[id]/approve.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes/[id]/reject.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/fixes/[id]/revert.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/maintenance/report.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/maintenance/reports.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/maintenance/run.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/maintenance/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/request.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/requests.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/requests/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-coder/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/system/gpu-info.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/tasks.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/template-watch.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/template/[name].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/terminal/cleanup.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/terminal/kill/[port].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/terminal/list.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/terminal/spawn-claude.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/terminal/spawn.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training-config.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training-data.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training-models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/[operation].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/console-logs.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/dataset-stats.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/history.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/launch.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/load-model.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/log-file.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/logs.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/running.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/training/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/trust-coupling.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/trust.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/tts-queue-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/tts-stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/tts.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/unified-queue/activity.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/unified-queue/control.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/unified-queue/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/unified-queue/trigger/[agentId].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/unified-queue/triggers.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/update-state.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/user-guide/[id].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/user-guide/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/user-guide/search.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/veracrypt/status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-models.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-profile/upload.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-samples/[sampleId].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-settings.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-status.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/voice-training.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/warmup-model.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/whisper-server.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/window-session/[windowId].ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/window-session/index.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/api/window-session/stream.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/audit.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/events.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/guide.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/index.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/monitor.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/persona.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/tasks.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/pages/user-guide.astro": {
+      "status": "pending"
+    },
+    "apps/site/src/prewarm.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/approvals.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/audit.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/bigBrotherTerminal.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/clear-events.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/navigation.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/proposals.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/security-policy.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/stores/systemCoder.ts": {
+      "status": "pending"
+    },
+    "apps/site/src/utils/node-pipeline.ts": {
+      "status": "pending"
+    },
+    "apps/site/svelte.config.js": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/adapter.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/fine-tune.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/kokoro.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/persona.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/profile.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/rvc.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/commands/sovits.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/mh-new.ts": {
+      "status": "pending"
+    },
+    "packages/cli/src/mh.ts": {
+      "status": "pending"
+    },
+    "apps/react-native/.eslintrc.js": {
+      "status": "pending"
+    },
+    "apps/react-native/.prettierrc.js": {
+      "status": "pending"
+    },
+    "apps/react-native/App.tsx": {
+      "status": "pending"
+    },
+    "apps/react-native/babel.config.js": {
+      "status": "pending"
+    },
+    "apps/react-native/index.js": {
+      "status": "pending"
+    },
+    "apps/react-native/jest.config.js": {
+      "status": "pending"
+    },
+    "apps/react-native/metro.config.js": {
+      "status": "pending"
+    },
+    "apps/react-native/nodejs-assets/nodejs-project/main.js": {
+      "status": "pending"
+    },
+    "apps/react-native/nodejs-assets/nodejs-project/sample-main.js": {
+      "status": "pending"
+    },
+    "brain/scripts/_bootstrap.ts": {
+      "status": "pending"
+    },
+    "brain/scripts/ai-ingestor.ts": {
+      "status": "pending"
+    },
+    "brain/scripts/auto-approver.ts": {
+      "status": "pending"
+    },
+    "brain/scripts/drift-monitor.ts": {
+      "status": "pending"
+    },
+    "brain/scripts/morning-loader.ts": {
+      "status": "pending"
+    },
+    "brain/services/headless-watcher.ts": {
+      "status": "pending"
+    },
+    "brain/services/memory-service.ts": {
+      "status": "pending"
+    },
+    "brain/services/scheduler-service.ts": {
+      "status": "pending"
+    },
+    "brain/services/semantic-search-service.ts": {
+      "status": "pending"
+    },
+    "brain/services/sleep-service.ts": {
+      "status": "pending"
+    },
+    "brain/training/adapter-merger.ts": {
+      "status": "pending"
+    },
+    "brain/training/curated-aggregator.ts": {
+      "status": "pending"
+    },
+    "brain/training/eval-adapter.ts": {
+      "status": "pending"
+    },
+    "brain/training/fine-tune-cycle.ts": {
+      "status": "pending"
+    },
+    "brain/training/fine-tune-trainer.ts": {
+      "status": "pending"
+    },
+    "brain/training/full-cycle-local.ts": {
+      "status": "pending"
+    },
+    "brain/training/full-cycle.ts": {
+      "status": "pending"
+    },
+    "brain/training/gguf-converter.ts": {
+      "status": "pending"
+    },
+    "brain/training/lora-trainer.ts": {
+      "status": "pending"
+    },
+    "brain/training/mode-formatter.ts": {
+      "status": "pending"
+    },
+    "brain/training/training-exporter.ts": {
+      "status": "pending"
+    },
+    "ecosystem.config.js": {
+      "status": "pending"
+    },
+    "edit.ts": {
+      "status": "pending"
+    },
+    "enhanced_init_modification.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/executors/interface.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/executors/mobile-inproc.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/executors/web-process.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/index.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/loader.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/registry.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/runtime.ts": {
+      "status": "pending"
+    },
+    "packages/agent-runtime/src/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/big-brother-tasks.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/cost-tracker.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/critic.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/lizard-brain-logger.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/lizard-brain.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/mode-controller.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/operator-proposals.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/pause-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/self-healing.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/service-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/state-persister.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/system-state.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/task-executor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/active-operator/unified-queue.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/adapters.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agency/config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agency/executor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agency/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agency/storage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/agency/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/adapters/astro.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/adapters/http.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/adapters/mobile.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/activity-ping.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/addons.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agency-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agency-metrics.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agency-plans.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agency-scratchpad.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agency.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agent-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/agent.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/app-version.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/approvals.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/audit-clear.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/audit-control.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/audit.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/auth.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/big-brother-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/big-brother-escalate.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/buffer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/calendar.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/chat-history.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/chat-ingestion.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/chat-settings.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/chat.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/clip-tagging.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/cloudflare.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/code-approvals.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/cognitive-graph.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/cognitive-graphs.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/cognitive-layers-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/cognitive-mode.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/conversation-summary.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/conversation.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/credentials-sync.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/curiosity-questions.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/document-ingestion.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/drift-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/drift-history.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/drift-report.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/drift-reports.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/drift-summary.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/embeddings-control.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/encryption-profile.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/encryption.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/execute-graph-stream.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/execute-graph.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/execute.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/export-conversations.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/file-operations.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/fine-tune-models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/functions.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/goal-reviews.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/gpu-info.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/gpu-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/graph-traces.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/interpreter-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/kokoro-voices.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/lifeline-trigger.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-backend-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-backend-ollama.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-backend-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-backend-switch.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-backend-vllm.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/llm-proxy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/local-models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/logging-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/lora-state.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/lora-toggle.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memories-all.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memories-delete.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memories-validate.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memories.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memory-content.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memory-metrics.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/memory-sync.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/mobile-download.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/mobile-version.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/model-info.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/model-registry.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/monitor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/node-schemas.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/onboarding.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-archives.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-chat.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-core-manage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-facet.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-facets-manage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-icon.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona-toggle.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/persona.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/photo-ingestion.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/preferences.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/profile-path.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/profile-sync.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/profiles-manage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/profiles.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/projects.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/psychoanalyzer-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/recovery-codes.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/remote-server.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/reset-factory.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/response-pipeline.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/runpod-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/runpod-validate.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/runtime-mode.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/scheduler-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/security-policy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/semantic-turn.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/server-update.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/sleep-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/storage-devices.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/storage-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/stt.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/system-coder.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/system-operator.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/system-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/system.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/task-suggestions.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/tasks.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-console-logs.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-dataset-stats.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-history.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-log-file.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-logs.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-running.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/training.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/trust-coupling.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/trust.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/tts.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/unified-queue.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/user-guide.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/vector-index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/veracrypt-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/vllm-loras.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/voice-memo-ingestion.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/voice-models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/voice-samples.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/voice-status.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/voice.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/warmup-model.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/window-session-stream.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/handlers/window-session.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/api/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/audio-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/autonomy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/aider-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/claude-code-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/codex-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/gemini-cli-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/open-interpreter-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/backends/qwen-code-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/big-brother-terminal.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/big-brother.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/buffer-locks.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/chat-settings.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cloudflare-tunnel.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-graph-schema.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/config-loader.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/layers/meta-cognition-layer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/layers/personality-core-layer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/layers/subconscious-layer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/pipeline.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/utils/lora-utils.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/utils/refinement-wrapper.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/utils/refiner.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/utils/safety-wrapper.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/validators/consistency.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/validators/safety.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-layers/validators/value-alignment.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/cognitive-mode.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/calendar-connector.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/chat-ingestor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/clip-tagger.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/document-ingestor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/photo-ingestor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/connectors/voice-memo-ingestor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/context-window.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/context.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/conversation-buffer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/curator-prompts.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/deployment.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/drift/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/drift/storage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/drift/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/embeddings.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/encryption-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/encryption.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/env-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/escalation-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/escalation-constants.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/external-storage.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/fs-glob.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/function-memory.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/goal-review.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/graph-error-handler.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/graph-executor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/graph-streaming.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/help-tickets/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/help-tickets/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/intelligent-memory-retrieval.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/legacy-cli-adapters.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/llm-backend.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/llm-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/local-model-service-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/locks.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/logger.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/logging.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/luks.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory-cleanup.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory-content-filter.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory-metrics-cache.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory-policy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/memory-validation.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mobile-handlers/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mobile-handlers/mobile-agents.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mobile-handlers/mobile-scheduler.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mobile-handlers/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mobile-providers.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/mode-validator.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/model-registry.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/model-resolver.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/big-brother-decision.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/big-brother-reviewer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/current-queue.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/decision-engine.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/scratchpad-context.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/system-state.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/task-execution.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/trigger-candidates.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/active-operator/unified-decision-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/approval-queue.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-alignment-reviewer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-conversation-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-detector.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-enricher.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-executor.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-folder-creator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-memory-analyzer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-plan-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-question-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-safety-reviewer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-updater.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/desire-verdict.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agency/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agent/agent-timer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agent/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agent/llm-enricher.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agent/memory-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/agent/memory-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/audit-logger.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/inner-dialogue-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/persona-formatter.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/plan-validator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/policy-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/quality-scorer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/cognitive/scratchpad-writer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/context/conversation-history.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/context/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/context/semantic-search.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/context/session-context.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/context/system-settings.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/conditional-branch.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/for-each.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/gateway.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/loop-controller.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/control-flow/switch.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/curated-memory-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/curator-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/memory-marker.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/persona-summary-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/training-pair-appender.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/training-pair-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curator/uncurated-memory-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curiosity/curiosity-activity-check.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curiosity/curiosity-question-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curiosity/curiosity-question-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curiosity/curiosity-weighted-sampler.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/curiosity/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/daydreamer-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-continuation-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-dream-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-dream-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-learnings-extractor.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-learnings-writer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/dreamer-memory-curator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/dreamer/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/emulation/buffer-manager.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/emulation/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/emulation/reply-to-handler.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/emulation/scratchpad-initializer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/emulation/scratchpad-updater.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/input/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/input/mic-input.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/input/speech-to-text.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/input/text-input.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/input/user-input.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/llm/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/llm/model-resolver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/llm/orchestrator-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/llm/persona-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/llm/reflector-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/memory/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/memory/search-interpreter.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/big-brother-executor.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/claude-full-task.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/completion-checker.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/error-recovery.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/iteration-counter.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/observation-formatter.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/plan-parser.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/react-planner.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/response-synthesizer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/scratchpad-completion-checker.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/scratchpad-formatter.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/scratchpad-manager.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/skill-executor.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/operator/stuck-detector.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/decision-rules-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/decision-rules-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/goal-manager.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/identity-extractor.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/persona-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/persona-saver.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/trust-level-reader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/trust-level-writer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/persona/value-manager.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/response/card-context-loader.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/response/card-input.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/response/dual-writer.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/response/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/response/response-llm.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/safety/chain-of-thought-stripper.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/safety/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/safety/response-refiner.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/safety/safety-validator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/schemas.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/conversational-response.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/fs-list.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/fs-read.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/fs-write.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/search-index.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/task-create.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/task-list.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/task-update.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/skill/web-search.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/agent-trigger.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/loop-memory-search.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/thought-aggregator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/thought-evaluator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/thought/thought-generator.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/cache.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/data-transform.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/graph-note.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/json-parser.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/nodes/utility/text-template.node.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/ollama.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/onboarding.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/open-interpreter.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/operator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/operator/observation-formatter.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/path-resolver.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/path-security.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/paths.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/persona/cleanup.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/persona/extractor.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/persona/merger.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/persona/question-generator.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/persona/session-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/plugin-system.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/policy.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/preference-learner.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/profile-migration.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/profile.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/progress-tracker.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/providers/bridge.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/providers/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/providers/local-models.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/providers/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/execution-engine.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/lane-metrics.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/queue-persister.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/queue-system.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/remote-dispatcher.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/trigger-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/queue/unified-queue-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/engine.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/errors.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/observers.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/planner.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/prompts/psychotherapist.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/scratchpad.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/telemetry.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reasoning/validators.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/recent-tools-cache.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/recovery-codes.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/reflection-to-task.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/response-buffer.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/runtime-mode.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/s3-upload.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/schema-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/sessions.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/skills.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/specialist-broker.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/state.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/storage-client.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/stt.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/stt/providers/whisper-service.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/summary-state.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-activity.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/coding-requests.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/error-capture.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/fix-generator.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/fix-management.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/maintenance-runner.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-coder/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/backup.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/housekeeping.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/index-maintenance.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/ingestion-qa.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/safety-invariants.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/system-operator/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tool-catalog.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tool-executor-config.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/training-cleanup.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/transcription.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/trust-coupling.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/cache.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/interface.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/providers/gpt-sovits-service.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/providers/kokoro-service.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/providers/piper-service.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/providers/rvc-service.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/tts/server-manager.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/types/onboarding.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/user-data-collector.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/user-resolver.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/uuid.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/vector-index-queue.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/vector-index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/veracrypt.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/vllm-lora.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/vllm.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice-training.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice/asr-integration.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice/index.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice/tts-integration.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice/types.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/voice/voice-loop.ts": {
+      "status": "pending"
+    },
+    "packages/core/src/window-session.ts": {
+      "status": "pending"
+    },
+    "packages/core/test_skills.ts": {
+      "status": "pending"
+    },
+    "packages/local-model-service/src/config.ts": {
+      "status": "pending"
+    },
+    "packages/local-model-service/src/index.ts": {
+      "status": "pending"
+    },
+    "packages/local-model-service/src/model-manager.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/index.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/provider-bridge.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/providers/huggingface.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/providers/index.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/providers/runpod.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/queue/index.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/scaling/index.ts": {
+      "status": "pending"
+    },
+    "packages/server/src/storage/index.ts": {
+      "status": "pending"
+    },
+    "scripts/active-operator-status.ts": {
+      "status": "pending"
+    },
+    "scripts/audio-cleanup.ts": {
+      "status": "pending"
+    },
+    "scripts/cleanup-model-registry.ts": {
+      "status": "pending"
+    },
+    "scripts/cleanup-old-training-runs.ts": {
+      "status": "pending"
+    },
+    "scripts/create-guest.ts": {
+      "status": "pending"
+    },
+    "scripts/create-owner.ts": {
+      "status": "pending"
+    },
+    "scripts/dev-session.ts": {
+      "status": "pending"
+    },
+    "scripts/migrate-legacy-desires.ts": {
+      "status": "pending"
+    },
+    "scripts/migrate-to-bcrypt.ts": {
+      "status": "pending"
+    },
+    "scripts/migrate-to-profiles.ts": {
+      "status": "pending"
+    },
+    "scripts/process-desire-review.ts": {
+      "status": "pending"
+    },
+    "scripts/repair-profiles.ts": {
+      "status": "pending"
+    },
+    "scripts/seed-core-desires.ts": {
+      "status": "pending"
+    },
+    "scripts/seed-function-memory.ts": {
+      "status": "pending"
+    },
+    "scripts/send-to-big-brother.ts": {
+      "status": "pending"
+    },
+    "scripts/start-active-operator.ts": {
+      "status": "pending"
+    },
+    "scripts/stop-active-operator.ts": {
+      "status": "pending"
+    },
+    "scripts/test-big-brother-discovery.ts": {
+      "status": "pending"
+    },
+    "scripts/test-cleanup.ts": {
+      "status": "pending"
+    },
+    "scripts/test-fine-tune-pipeline.ts": {
+      "status": "pending"
+    },
+    "scripts/test-function-retrieval.ts": {
+      "status": "pending"
+    },
+    "scripts/test-graceful-failure.ts": {
+      "status": "pending"
+    },
+    "scripts/test-index.ts": {
+      "status": "pending"
+    },
+    "scripts/test-nodes.ts": {
+      "status": "pending"
+    },
+    "scripts/test-path.ts": {
+      "status": "pending"
+    },
+    "scripts/test-search.ts": {
+      "status": "pending"
+    },
+    "scripts/test-vector-search.ts": {
+      "status": "pending"
+    },
+    "scripts/update-models-json.ts": {
+      "status": "pending"
+    },
+    "src/env.d.ts": {
+      "status": "pending"
+    },
+    "test-paths.js": {
+      "status": "pending"
+    },
+    "tests/test-coder-permissions.ts": {
+      "status": "pending"
+    },
+    "tests/test-coder-workflow.ts": {
+      "status": "pending"
+    }
+  }
+}

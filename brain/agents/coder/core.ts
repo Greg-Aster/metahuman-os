@@ -23,9 +23,9 @@ import {
   updateErrorStatus,
   type CapturedError,
 } from '@metahuman/core';
-import { escalateToBigBrother, shouldEscalateToBigBrother } from '@metahuman/core/big-brother';
-import type { OperatorConfig } from '@metahuman/core/config';
+import { escalateToBigBrother } from '@metahuman/core/big-brother';
 
+const LOG_PREFIX = '[coder]';
 const AGENT_NAME = 'coder';
 
 interface SystemCoderConfig {
@@ -165,7 +165,7 @@ async function findRelatedFiles(error: CapturedError): Promise<string[]> {
   return [...new Set(relatedFiles)].slice(0, 5);
 }
 
-function assessRisk(error: CapturedError, response: any): 'none' | 'low' | 'medium' | 'high' | 'critical' {
+function assessRisk(error: CapturedError, response: { success: boolean; reasoning?: string; suggestions?: string[] }): 'none' | 'low' | 'medium' | 'high' | 'critical' {
   if (error.context.file?.includes('packages/core')) return 'high';
   if (error.context.file?.includes('pages/api')) return 'medium';
   if (error.context.file?.includes('components')) return 'low';
@@ -196,16 +196,19 @@ function extractTestCommands(suggestions: string[]): string[] {
 }
 
 async function processError(username: string, errorId: string, config: SystemCoderConfig): Promise<ProposedFix | null> {
+  console.log(`${LOG_PREFIX} ========== processError HIT ==========`);
+  console.log(`${LOG_PREFIX} Processing error ${errorId} for user ${username}`);
+  
   const profilePaths = getProfilePaths(username);
 
   const error = await getError(username, errorId);
   if (!error) {
-    console.error(`[coder] Error not found: ${errorId}`);
+    console.error(`${LOG_PREFIX} Error not found: ${errorId}`);
     return null;
   }
 
   if (error.status !== 'new') {
-    console.log(`[coder] Skipping error ${errorId} - status: ${error.status}`);
+    console.log(`${LOG_PREFIX} Skipping error ${errorId} - status: ${error.status}`);
     return null;
   }
 
@@ -223,7 +226,7 @@ async function processError(username: string, errorId: string, config: SystemCod
   const operatorConfig = loadFreshOperatorConfig(username);
 
   if (!config.bigBrother.useForFixes || !operatorConfig.bigBrotherMode?.enabled) {
-    console.log('[coder] Big Brother not enabled, cannot generate fix');
+    console.log(`${LOG_PREFIX} Big Brother not enabled, cannot generate fix`);
     return null;
   }
 
@@ -256,7 +259,7 @@ async function processError(username: string, errorId: string, config: SystemCod
     }, operatorConfig);
 
     if (!response.success) {
-      console.error('[coder] Big Brother failed to generate fix:', response.error);
+      console.error(`${LOG_PREFIX} Big Brother failed to generate fix:`, response.error);
       return null;
     }
 
@@ -298,7 +301,7 @@ async function processError(username: string, errorId: string, config: SystemCod
 
     return proposedFix;
   } catch (err) {
-    console.error('[coder] Error generating fix:', err);
+    console.error(`${LOG_PREFIX} Error generating fix:`, err);
     audit({
       level: 'error',
       category: 'action',
@@ -319,7 +322,7 @@ async function processNewErrors(username: string, config: SystemCoderConfig): Pr
       const fix = await processError(username, error.id, config);
       if (fix) processed++;
     } catch (err) {
-      console.error(`[coder] Error processing error ${error.id}:`, err);
+      console.error(`${LOG_PREFIX} Error processing error ${error.id}:`, err);
     }
   }
 
@@ -328,7 +331,7 @@ async function processNewErrors(username: string, config: SystemCoderConfig): Pr
 
 async function runMaintenance(username: string, config: SystemCoderConfig): Promise<void> {
   if (!config.maintenance.enabled) {
-    console.log('[coder] Maintenance disabled');
+    console.log(`${LOG_PREFIX} Maintenance disabled`);
     return;
   }
 
@@ -346,7 +349,7 @@ async function runMaintenance(username: string, config: SystemCoderConfig): Prom
 
   const report = {
     timestamp: new Date().toISOString(),
-    checks: {} as Record<string, any>,
+    checks: {} as Record<string, { status: string; reason?: string; output?: string }>,
     summary: { issuesFound: 0, suggestions: [] as string[] }
   };
 
@@ -370,6 +373,9 @@ async function runMaintenance(username: string, config: SystemCoderConfig): Prom
 }
 
 export async function runCycle(options: CoderOptions = {}): Promise<CoderResult> {
+  console.log(`${LOG_PREFIX} ========== runCycle HIT ==========`);
+  console.log(`${LOG_PREFIX} Options:`, options);
+  
   const result: CoderResult = {
     success: true,
     usersProcessed: 0,
@@ -382,7 +388,7 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
   const config = await loadConfig();
 
   if (!config.enabled) {
-    console.log('[coder] Agent is disabled');
+    console.log(`${LOG_PREFIX} Agent is disabled`);
     return result;
   }
 
@@ -401,11 +407,11 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
   }
 
   if (!user || !user.username) {
-    console.log('[coder] No active user found');
+    console.log(`${LOG_PREFIX} No active user found`);
     return result;
   }
 
-  console.log(`[coder] Processing user: ${user.username}`);
+  console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
   try {
     await withUserContext(user.username, async () => {
@@ -413,7 +419,7 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
         const processed = await processNewErrors(user!.username, config);
         result.errorsProcessed += processed;
         result.fixesGenerated += processed;
-        console.log(`[coder] Processed ${processed} errors for ${user!.username}`);
+        console.log(`${LOG_PREFIX} Processed ${processed} errors for ${user!.username}`);
       }
 
       const profilePaths = getProfilePaths(user!.username);
@@ -423,8 +429,9 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
 
       try {
         await fs.access(reportPath);
-        console.log(`[coder] Maintenance already run today for ${user!.username}`);
-      } catch {
+        console.log(`${LOG_PREFIX} Maintenance already run today for ${user!.username}`);
+      } catch (error) {
+        console.log(`${LOG_PREFIX} Maintenance report not found, running maintenance for ${user!.username}`);
         await runMaintenance(user!.username, config);
         result.maintenanceRun = true;
       }
@@ -446,6 +453,7 @@ export async function runCycle(options: CoderOptions = {}): Promise<CoderResult>
 }
 
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  console.log(`${LOG_PREFIX} ========== run HIT ==========`);
   const startTime = Date.now();
   const args = input.args || [];
   const opts = input.options || {};

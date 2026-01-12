@@ -2,8 +2,7 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Response Pipeline (Card Responses)",
-  "description": "Focused 5-node pipeline for card-based responses. No memory search, no conversation buffer - only loads the selected card as context. Single-pass LLM with card-type-specific prompts.",
-  "cognitiveMode": "response_pipeline",
+  "description": "Focused 5-node pipeline for card-based responses. No memory search, no conversation buffer - only loads the selected card as context. Single-pass LLM with card-type-specific prompts. Works across all cognitive modes (dual, agent, emulation).",
   "last_modified": "2026-01-09T00:00:00.000Z",
   "nodes": [
     {

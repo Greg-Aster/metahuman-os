@@ -30,6 +30,8 @@ import {
 } from '@metahuman/core';
 import { registerAgent, unregisterAgent } from '@metahuman/core/agent-monitor';
 
+const LOG_PREFIX = '[curator-core]';
+
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
@@ -58,7 +60,9 @@ export interface UserCuratorStats {
  * Load curator cognitive graph
  */
 export async function loadCuratorGraph(): Promise<SvelteFlowGraph> {
+  console.log(`${LOG_PREFIX} ========== loadCuratorGraph HIT ==========`);
   const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'curator-mode.json');
+  console.log(`${LOG_PREFIX} Loading curator graph from: ${graphPath}`);
   const raw = await fs.readFile(graphPath, 'utf-8');
   const parsed = JSON.parse(raw);
   // curator-mode.json is in Svelte Flow format - validate and return it directly
@@ -69,10 +73,19 @@ export async function loadCuratorGraph(): Promise<SvelteFlowGraph> {
  * Run curator for a single user
  */
 export async function runCuratorForUser(username: string): Promise<UserCuratorStats> {
+  console.log(`${LOG_PREFIX} ========== runCuratorForUser HIT ==========`);
+  
+  // Validate username for security (alphanumeric + underscore/hyphen only)
+  if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+    throw new Error(`Invalid username format: ${username}`);
+  }
+  
+  console.log(`${LOG_PREFIX} Input username: ${username}`);
+  
   return await withUserContext(
     { userId: username, username: username, role: 'owner' },
     async () => {
-    console.log(`[curator] Processing user: ${username}`);
+    console.log(`${LOG_PREFIX} Processing user: ${username}`);
 
     // Register in agent monitor so it shows up while running
     registerAgent('curator', process.pid);
@@ -88,14 +101,14 @@ export async function runCuratorForUser(username: string): Promise<UserCuratorSt
         cognitiveMode: 'dual' as const,
       };
 
-      console.log('[curator] Executing curator workflow graph...');
+      console.log(`${LOG_PREFIX} Executing curator workflow graph...`);
       const graphResult = await executeGraph(graph, graphContext);
 
       // Extract results from graph execution (node IDs are strings in Svelte Flow format)
       const curatorLLMNode = graphResult.nodes.get('4');
       const memoriesProcessed = curatorLLMNode?.outputs?.count || 0;
 
-      console.log(`[curator] ✅ Processed ${memoriesProcessed} memories`);
+      console.log(`${LOG_PREFIX} ✅ Processed ${memoriesProcessed} memories`);
 
       // Save inner dialogue notification so user can see curation activity
       if (memoriesProcessed > 0) {
@@ -112,9 +125,9 @@ export async function runCuratorForUser(username: string): Promise<UserCuratorSt
               },
             },
           });
-          console.log('[curator] Saved inner dialogue notification');
+          console.log(`${LOG_PREFIX} Saved inner dialogue notification`);
         } catch (err) {
-          console.warn('[curator] Failed to save inner dialogue:', (err as Error).message);
+          console.warn(`${LOG_PREFIX} Failed to save inner dialogue:`, (err as Error).message);
         }
       }
 
@@ -135,6 +148,9 @@ export async function runCuratorForUser(username: string): Promise<UserCuratorSt
  * Run curator cycle for all users (CLI usage)
  */
 export async function runCycle(options: CuratorOptions = {}): Promise<CuratorResult> {
+  console.log(`${LOG_PREFIX} ========== runCycle HIT ==========`);
+  console.log(`${LOG_PREFIX} Input options:`, options);
+  
   const result: CuratorResult = {
     success: true,
     usersProcessed: 0,
@@ -159,11 +175,20 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
     }
 
     if (!username) {
-      console.log('[curator] No active user found');
+      console.log(`${LOG_PREFIX} No active user found`);
       return result;
     }
 
-    console.log(`[curator] Processing user: ${username}`);
+    // Validate username for security (alphanumeric + underscore/hyphen only)
+    if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+      const errorMsg = `Invalid username format: ${username}`;
+      result.errors.push(errorMsg);
+      console.error(`${LOG_PREFIX} ${errorMsg}`);
+      result.success = false;
+      return result;
+    }
+
+    console.log(`${LOG_PREFIX} Processing user: ${username}`);
 
     try {
       const stats = await runCuratorForUser(username);
@@ -183,7 +208,7 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
     } catch (error) {
       const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
       result.errors.push(errorMsg);
-      console.error(`[curator] ${errorMsg}`);
+      console.error(`${LOG_PREFIX} ${errorMsg}`);
 
       audit({
         category: 'action',
@@ -199,7 +224,7 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
   } catch (error) {
     result.success = false;
     result.errors.push((error as Error).message);
-    console.error('[curator] Fatal error:', error);
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
   }
 
   return result;
@@ -213,9 +238,13 @@ export async function runCycle(options: CuratorOptions = {}): Promise<CuratorRes
  * Agent runtime entry point for mobile execution
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  console.log(`${LOG_PREFIX} ========== run HIT ==========`);
   const startTime = Date.now();
   const args = input.args || [];
   const opts = input.options || {};
+  console.log(`${LOG_PREFIX} Agent context:`, { userId: ctx.userId });
+  console.log(`${LOG_PREFIX} Input args:`, args);
+  console.log(`${LOG_PREFIX} Input options:`, opts);
 
   // Extract username from args or options
   let username = opts.username as string | undefined;

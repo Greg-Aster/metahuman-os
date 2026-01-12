@@ -1,0 +1,22 @@
+════════════════════════════════════════════════════════════════════════════════
+COPY-PASTE THIS INTO EACH CLAUDE CODE TERMINAL
+════════════════════════════════════════════════════════════════════════════════
+
+Your agent name is "Agent-9".
+
+Read and follow the instructions in AUDIT-INSTRUCTIONS.md EXACTLY.
+
+Start by claiming your first file from audit-state.json and begin the comprehensive audit.
+
+CRITICAL REMINDERS:
+- Re-read AUDIT-INSTRUCTIONS.md every 3 files to prevent corner-cutting
+- Fix ALL issues found (do not just document them)
+- Update audit-scratchpad.md after EVERY file
+- Commit changes after EVERY file
+- Expected time per file: 60-90 minutes minimum
+
+BEGIN YOUR AUDIT NOW.
+
+════════════════════════════════════════════════════════════════════════════════
+REPLACE [NUMBER] WITH YOUR AGENT NUMBER (1, 2, 3, etc.)
+════════════════════════════════════════════════════════════════════════════════

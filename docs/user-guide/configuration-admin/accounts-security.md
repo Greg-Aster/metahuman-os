@@ -251,15 +251,20 @@ On mobile devices:
 
 ## Encryption
 
-For users who want additional privacy, MetaHuman supports profile encryption.
+**Implementation**: `packages/core/src/encryption-manager.ts` (638 lines)
+
+MetaHuman supports three encryption types for profile data:
 
 ### Available Encryption Options
 
-| Method | Platform | Stability | Notes |
-|--------|----------|-----------|-------|
-| **LUKS** | Linux | Stable | Recommended. Full disk encryption |
-| **AES-256** | All | Experimental | Software-based encryption |
-| **None** | All | Stable | Default. Data stored in plaintext |
+| Method | Platform | Implementation | Performance | Notes |
+|--------|----------|---------------|-------------|-------|
+| **LUKS** | Linux | `luks.ts` (663 lines) | Fast (block-level) | Recommended. Native Linux encryption via cryptsetup |
+| **VeraCrypt** | All platforms | `veracrypt.ts` (672 lines) | Fast (volume) | Cross-platform container encryption |
+| **AES-256-GCM** | All platforms | `encryption.ts` (739 lines) | Slower (per-file) | Pure software, works on any filesystem |
+| **None** | All | - | - | Default. Data stored in plaintext |
+
+**Total encryption code**: 2,074 lines across 3 implementations + 638-line unified manager
 
 ### LUKS Encryption (Recommended for Linux)
 
@@ -287,7 +292,17 @@ Mobile security relies on:
 
 ## Recovery Codes
 
-Recovery codes allow you to reset your password if you forget it.
+**Implementation**: `packages/core/src/recovery-codes.ts` (117 lines)
+
+Recovery codes allow password reset when you forget your password.
+
+### How Recovery Codes Work
+
+- **10 codes generated** per user
+- **Format**: XXXX-XXXX-XXXX-XXXX (16 random characters)
+- **One-time use**: Each code can only be used once
+- **Storage**: `profiles/<username>/recovery-codes.json` (custom storage aware)
+- **Security**: Cryptographically random (crypto.randomBytes)
 
 ### Finding Your Recovery Codes
 
@@ -298,12 +313,38 @@ After creating an account:
 
 ### Using Recovery Codes
 
-Each code:
-- Can only be used **once**
-- Resets your password
-- Generates new recovery codes after use
+During password reset:
+1. Click "Forgot Password" on login screen
+2. Enter your username
+3. Enter one of your recovery codes
+4. Set new password
+5. Code is marked as used (cannot reuse)
 
 **Store your codes securely** — in a password manager or printed copy.
+
+### API Functions
+
+```typescript
+import {
+  generateRecoveryCodes,
+  saveRecoveryCodes,
+  verifyRecoveryCode,
+  getRemainingCodes
+} from '@metahuman/core';
+
+// Generate codes for new user
+const codes = generateRecoveryCodes();  // Returns 10 codes
+saveRecoveryCodes('username', codes);
+
+// Verify during password reset
+if (verifyRecoveryCode('username', userCode)) {
+  // Code valid, allow password reset
+  updatePassword(userId, newPassword);
+}
+
+// Check remaining codes
+const remaining = getRemainingCodes('username');  // Unused codes
+```
 
 ---
 

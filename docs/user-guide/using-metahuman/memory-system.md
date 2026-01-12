@@ -129,6 +129,45 @@ All chat conversations are captured automatically from the web UI and CLI chat.
 
 `mh remember` automatically uses semantic search if an index exists for the current user.
 
+## Memory System Architecture
+
+**Core Implementation**: `packages/core/src/memory.ts` (1,359 lines)
+
+MetaHuman's memory system includes 12 specialized modules:
+
+### Core Memory Functions
+-  `memory.ts` - Main memory operations (capture, search, retrieve)
+- `memory-validation.ts` - Schema validation and integrity checks
+- `memory-cleanup.ts` - Pruning and archival
+- `memory-policy.ts` - Access control and retention policies
+- `memory-content-filter.ts` - Content filtering and safety
+- `memory-metrics-cache.ts` - Performance metrics and caching
+
+### Advanced Memory Features
+- `intelligent-memory-retrieval.ts` - Smart semantic search with relevance ranking
+- `function-memory.ts` - Remember function calls and tool usage
+- `vector-index.ts` - Vector embeddings for semantic search
+- `vector-index-queue.ts` - Background indexing queue
+- `embeddings.ts` - Generate vector embeddings via Ollama
+- `context-builder.ts` - Build conversation context from memories
+
+### Memory Operations
+
+**Create Memory** (via CLI or chat):
+```bash
+./bin/mh capture "Met with Sarah about the ML project"
+```
+
+**Search Memories**:
+```bash
+./bin/mh remember "ML project"
+```
+
+**Search Methods**:
+1. **Semantic Search** (if index exists) - Vector similarity matching
+2. **Keyword Search** (fallback) - Text pattern matching
+3. **Tag Search** - Filter by tags added by organizer agent
+
 ## Background Agents
 
 Several agents enrich and manage memory behind the scenes. Common examples:
@@ -147,3 +186,4 @@ Use these commands to inspect and control agents:
 
 - [Task Management](task-management.md) for task-specific memory
 - [Voice Features](voice-features.md) for audio workflows
+- [Architecture](../advanced-features/architecture.md) for memory system details

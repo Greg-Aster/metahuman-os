@@ -58,26 +58,33 @@ At the end, output a JSON block with your decision:
 }
 \`\`\``,
 
-  clarifying_question: `## Task: Process User's Answer to Clarifying Question
+  clarifying_question: `## CRITICAL: User is Answering Clarifying Questions (NOT requesting help)
 
-The user is answering a clarifying question about their desire/goal.
+The user has been asked clarifying questions about their desire/goal, and they are now PROVIDING ANSWERS to those questions.
 
-Your responsibilities:
-1. Process their answer and extract key information
-2. Determine if the answer is complete enough for planning
-3. Ask follow-up questions if needed for clarity
-4. Use your tools if you need to check something (e.g., verify a file exists, check calendar)
+**DO NOT**:
+- Offer advice or solutions
+- Search for resources or help
+- Create files or take actions
+- Treat this as a help request
 
-Be conversational and appreciative of their input.
+**DO**:
+- Acknowledge their answer respectfully and empathetically
+- Extract the key information they provided
+- Determine if their answer is complete enough
+- Ask follow-up questions ONLY if critical information is missing
+
+The user's message is their ANSWER to the question(s). Extract what they said and acknowledge it.
+
+Be brief, empathetic, and focused on acknowledging their answer.
 
 At the end, output a JSON block:
 \`\`\`json
 {
   "suggestedAction": "save_answer" | "request_more_detail" | "move_to_planning",
   "actionData": {
-    "answerComplete": true/false,
-    "followUpQuestion": "string if more detail needed (optional)",
-    "extractedAnswer": "The key information from their answer"
+    "answerComplete": true,
+    "extractedAnswer": "Summarize what the user told you - this is what gets saved"
   }
 }
 \`\`\``,
@@ -302,7 +309,7 @@ function buildBigBrotherPrompt(
 - **Description**: ${desire.description || 'No description'}
 - **Status**: ${desire.status}
 - **Reason**: ${desire.reason || 'Not specified'}
-- **Risk Level**: ${desire.riskLevel || 'unknown'}
+- **Risk Level**: ${desire.risk || 'unknown'}
 ${desire.plan?.steps?.length ? `
 - **Plan Steps**:
 ${desire.plan.steps.map((s, i) => `  ${i + 1}. ${s.action}${s.skill ? ` (${s.skill})` : ''}`).join('\n')}` : ''}
@@ -333,31 +340,49 @@ Remember to include the JSON block at the end with your suggestedAction and acti
  * Parse Big Brother response to extract text response and JSON action
  */
 function parseBigBrotherResponse(rawResponse: string): ResponseLLMOutput {
+  console.log(`${LOG_PREFIX} ========== PARSING BIG BROTHER RESPONSE ==========`);
+  console.log(`${LOG_PREFIX} Raw response length: ${rawResponse.length} chars`);
+  console.log(`${LOG_PREFIX} First 500 chars:\n${rawResponse.substring(0, 500)}`);
+  console.log(`${LOG_PREFIX} Last 500 chars:\n${rawResponse.substring(Math.max(0, rawResponse.length - 500))}`);
+
   // Try to find JSON block at the end
   const jsonMatch = rawResponse.match(/```json\s*\n?([\s\S]*?)\n?```\s*$/);
 
   if (jsonMatch) {
+    console.log(`${LOG_PREFIX} ✅ Found JSON code block at end`);
+    console.log(`${LOG_PREFIX} JSON block content:\n${jsonMatch[1]}`);
     try {
       const actionData = JSON.parse(jsonMatch[1]);
       // Response is everything before the JSON block
       const response = rawResponse.substring(0, rawResponse.lastIndexOf('```json')).trim();
 
+      console.log(`${LOG_PREFIX} ✅ Parsed JSON successfully`);
+      console.log(`${LOG_PREFIX} Response text length: ${response.length} chars`);
+      console.log(`${LOG_PREFIX} Suggested action: ${actionData.suggestedAction}`);
+
       return {
         response: response || rawResponse,
         suggestedAction: actionData.suggestedAction || 'acknowledge',
         actionData: actionData.actionData || actionData,
       };
     } catch (e) {
-      console.warn(`${LOG_PREFIX} Failed to parse JSON action block:`, e);
+      console.error(`${LOG_PREFIX} ❌ Failed to parse JSON action block:`, e);
+      console.error(`${LOG_PREFIX} JSON content was:\n${jsonMatch[1]}`);
     }
+  } else {
+    console.log(`${LOG_PREFIX} ⚠️  No JSON code block found at end of response`);
   }
 
   // Try to find bare JSON at the end (without code fence)
   const bareJsonMatch = rawResponse.match(/\{[\s\S]*"suggestedAction"[\s\S]*\}\s*$/);
   if (bareJsonMatch) {
+    console.log(`${LOG_PREFIX} ✅ Found bare JSON at end`);
     try {
       const actionData = JSON.parse(bareJsonMatch[0]);
       const response = rawResponse.substring(0, rawResponse.lastIndexOf(bareJsonMatch[0])).trim();
+
+      console.log(`${LOG_PREFIX} ✅ Parsed bare JSON successfully`);
+      console.log(`${LOG_PREFIX} Response text length: ${response.length} chars`);
 
       return {
         response: response || rawResponse,
@@ -365,11 +390,15 @@ function parseBigBrotherResponse(rawResponse: string): ResponseLLMOutput {
         actionData: actionData.actionData || actionData,
       };
     } catch (e) {
-      // Not valid JSON, continue with fallback
+      console.error(`${LOG_PREFIX} ❌ Failed to parse bare JSON:`, e);
     }
+  } else {
+    console.log(`${LOG_PREFIX} ⚠️  No bare JSON with suggestedAction found`);
   }
 
   // Fallback: return raw response with default action
+  console.log(`${LOG_PREFIX} ⚠️  FALLBACK: Using raw response as-is`);
+  console.log(`${LOG_PREFIX} Returning ${rawResponse.length} chars with 'acknowledge' action`);
   return {
     response: rawResponse,
     suggestedAction: 'acknowledge',

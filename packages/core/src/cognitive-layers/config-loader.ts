@@ -7,6 +7,8 @@
  * @module cognitive-layers/config-loader
  */
 
+const LOG_PREFIX = '[cognitive-layers/config-loader]';
+
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import type { CognitiveModeId } from '../cognitive-mode.js';
@@ -34,14 +36,18 @@ export function getConfigPath(): string {
     return process.env.METAHUMAN_LAYER_CONFIG;
   }
 
-  // Default: etc/cognitive-layers.json relative to project root
-  // Try to find project root (has package.json)
-  let current = process.cwd();
-  for (let i = 0; i < 10; i++) {
-    if (existsSync(join(current, 'package.json'))) {
-      return join(current, 'etc', 'cognitive-layers.json');
+  try {
+    // Default: etc/cognitive-layers.json relative to project root
+    // Try to find project root (has package.json)
+    let current = process.cwd();
+    for (let i = 0; i < 10; i++) {
+      if (existsSync(join(current, 'package.json'))) {
+        return join(current, 'etc', 'cognitive-layers.json');
+      }
+      current = join(current, '..');
     }
-    current = join(current, '..');
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error finding project root:`, error);
   }
 
   // Fallback
@@ -65,6 +71,9 @@ export function getConfigPath(): string {
  * @throws PipelineConfigError if config invalid or missing
  */
 export function loadLayerConfigFile(forceReload = false): LayerConfigFile {
+  console.log(`${LOG_PREFIX} ========== loadLayerConfigFile HIT ==========`);
+  console.log(`${LOG_PREFIX} Parameters: forceReload=${forceReload}`);
+  
   const configPath = getConfigPath();
 
   // Check if file exists
@@ -76,22 +85,34 @@ export function loadLayerConfigFile(forceReload = false): LayerConfigFile {
   }
 
   // Check if file changed (for hot-reload)
-  const stats = statSync(configPath);
-  const lastModified = stats.mtimeMs;
+  let stats;
+  let lastModified;
+  try {
+    stats = statSync(configPath);
+    lastModified = stats.mtimeMs;
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to stat config file ${configPath}:`, error);
+    throw new Error(`Cannot read config file stats: ${configPath}`) as PipelineConfigError;
+  }
 
   if (!forceReload && configCache && lastModified === configLastModified) {
     // Use cached config
+    console.log(`${LOG_PREFIX} Using cached config (last modified: ${new Date(lastModified).toISOString()})`);
     return configCache;
   }
 
+  console.log(`${LOG_PREFIX} Loading configuration from: ${configPath}`);
+  
   try {
     // Load and parse JSON
     const raw = readFileSync(configPath, 'utf-8');
     const config = JSON.parse(raw) as LayerConfigFile;
 
     // Validate configuration
+    console.log(`${LOG_PREFIX} Validating configuration structure`);
     const validation = validateLayerConfigFile(config);
     if (!validation.valid) {
+      console.error(`${LOG_PREFIX} Configuration validation failed: ${validation.errors?.join(', ')}`);
       const error = new Error(
         `Invalid layer configuration: ${validation.errors?.join(', ')}`
       ) as PipelineConfigError;
@@ -102,14 +123,18 @@ export function loadLayerConfigFile(forceReload = false): LayerConfigFile {
     // Cache config
     configCache = config;
     configLastModified = lastModified;
+    
+    console.log(`${LOG_PREFIX} Configuration loaded successfully and cached (${Object.keys(config).length} modes)`);
 
     return config;
   } catch (error) {
     if (error instanceof SyntaxError) {
+      console.error(`${LOG_PREFIX} JSON parsing failed: ${error.message}`);
       throw new Error(
         `Failed to parse layer configuration: ${error.message}`
       ) as PipelineConfigError;
     }
+    console.error(`${LOG_PREFIX} Failed to load configuration:`, error);
     throw error;
   }
 }
@@ -125,6 +150,9 @@ export function loadLayerConfig(
   mode: CognitiveModeId,
   forceReload = false
 ): ModeLayerConfig {
+  console.log(`${LOG_PREFIX} ========== loadLayerConfig HIT ==========`);
+  console.log(`${LOG_PREFIX} Parameters: mode=${mode}, forceReload=${forceReload}`);
+  
   const config = loadLayerConfigFile(forceReload);
   return config[mode];
 }

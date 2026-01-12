@@ -21,6 +21,7 @@
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
   import { apiEventSource, apiFetch, isMobileApp } from '../lib/client/api-config';
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
+  import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
 
   // Component state
   let input = '';
@@ -37,8 +38,11 @@
   let bigBrotherProviderLabel = 'Claude Code';
   let claudeSessionReady = false;
   let claudeSessionChecking = false;
+  let chatResponseHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
+  let innerDialogueHandle: ConnectionHandle | null = null;
   let innerDialogueStream: EventSource | null = null;
+  let ttsQueueHandle: ConnectionHandle | null = null;
   let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
   let isTabVisible = true;
   let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
@@ -455,6 +459,32 @@
 
     // Listen for voice settings changes (triggered when user updates VAD settings in UI)
     window.addEventListener('voice-settings-updated', handleVoiceSettingsUpdate);
+
+    // CRITICAL: Aggressive cleanup on page unload to prevent connection leaks
+    // This ensures EventSource connections are closed even if Svelte cleanup doesn't run
+    const aggressiveCleanup = () => {
+      console.log('[chat] Page unload - force closing ALL connections');
+      chatResponseStream?.close();
+      innerDialogueStream?.close();
+      disconnectAllBufferStreams();
+      disconnectTTSQueueStream();
+      disconnectProposalsStream();
+    };
+    window.addEventListener('beforeunload', aggressiveCleanup);
+    window.addEventListener('pagehide', aggressiveCleanup);
+
+    // Store cleanup for onDestroy
+    const windowCleanupFunctions = [
+      () => window.removeEventListener('beforeunload', aggressiveCleanup),
+      () => window.removeEventListener('pagehide', aggressiveCleanup),
+    ];
+
+    // Add to existing cleanup
+    const originalVisibilityCleanup = visibilityCleanup;
+    visibilityCleanup = () => {
+      originalVisibilityCleanup?.();
+      windowCleanupFunctions.forEach(fn => fn());
+    };
   });
 
   // Event handler stored at module level for proper cleanup
@@ -574,16 +604,19 @@
   }
 
   function disconnectAllBufferStreams() {
-    if (innerDialogueStream) {
-      innerDialogueStream.close();
+    if (innerDialogueHandle) {
+      innerDialogueHandle.close();
+      innerDialogueHandle = null;
       innerDialogueStream = null;
     }
-    if (conversationStream) {
-      conversationStream.close();
+    if (conversationHandle) {
+      conversationHandle.close();
+      conversationHandle = null;
       conversationStream = null;
     }
-    if (systemStream) {
-      systemStream.close();
+    if (systemHandle) {
+      systemHandle.close();
+      systemHandle = null;
       systemStream = null;
     }
   }
@@ -597,61 +630,76 @@
     if (typeof document !== 'undefined' && document.hidden) {
       return;
     }
-    if (ttsQueueStream) {
-      ttsQueueStream.close();
+    if (ttsQueueHandle) {
+      ttsQueueHandle.close();
+      ttsQueueHandle = null;
+      ttsQueueStream = null;
     }
 
-    console.log('[chat-tts] Connecting to TTS queue stream...');
-    ttsQueueStream = apiEventSource('/api/tts-queue-stream');
+    console.log('[chat-tts] Requesting TTS queue stream from connection pool...');
 
-    ttsQueueStream.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+    ttsQueueHandle = connectionPool.request({
+      id: 'tts-queue',
+      name: 'TTS Queue Stream',
+      url: '/api/tts-queue-stream',
+      priority: ConnectionPriority.MEDIUM,
+      viewDependency: 'chat',
+      defer: true,
+      onOpen: (source) => {
+        console.log('[chat-tts] TTS queue stream opened via pool');
+        ttsQueueStream = source;
+      },
+      onClose: () => {
+        console.log('[chat-tts] TTS queue stream closed via pool');
+        ttsQueueStream = null;
+      },
+      onMessage: (event) => {
+        try {
+          const data = JSON.parse(event.data);
 
-        if (data.type === 'connected') {
-          console.log('[chat-tts] TTS queue stream connected');
-          return;
-        }
+          if (data.type === 'connected') {
+            console.log('[chat-tts] TTS queue stream connected');
+            return;
+          }
 
-        if (data.type === 'error') {
-          console.error('[chat-tts] TTS queue stream error:', data.error);
-          return;
-        }
+          if (data.type === 'error') {
+            console.error('[chat-tts] TTS queue stream error:', data.error);
+            return;
+          }
 
-        if (data.type === 'tts' && Array.isArray(data.items)) {
-          // Process queued TTS items - unified toggle for all modes (conversation, inner, system)
-          for (const item of data.items) {
-            console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
+          if (data.type === 'tts' && Array.isArray(data.items)) {
+            for (const item of data.items) {
+              console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
-            if (ttsEnabled) {
-              console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
-              void ttsApi.speak(item.text);
-            } else {
-              console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
+              if (ttsEnabled) {
+                console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
+                void ttsApi.speak(item.text);
+              } else {
+                console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
+              }
             }
           }
+        } catch (err) {
+          console.error('[chat-tts] TTS queue stream parse error:', err);
         }
-      } catch (err) {
-        console.error('[chat-tts] TTS queue stream parse error:', err);
-      }
-    };
-
-    ttsQueueStream.onerror = (err) => {
-      console.error('[chat-tts] TTS queue stream error:', err);
-      // Attempt reconnection after a delay
-      setTimeout(() => {
-        if (isComponentMounted && !document.hidden) {
-          console.log('[chat-tts] Attempting TTS queue stream reconnection...');
-          connectTTSQueueStream();
-        }
-      }, 5000);
-    };
+      },
+      onError: (err) => {
+        console.error('[chat-tts] TTS queue stream error:', err);
+        setTimeout(() => {
+          if (isComponentMounted && !document.hidden) {
+            console.log('[chat-tts] Attempting TTS queue stream reconnection...');
+            connectTTSQueueStream();
+          }
+        }, 5000);
+      },
+    });
   }
 
   function disconnectTTSQueueStream() {
-    if (ttsQueueStream) {
+    if (ttsQueueHandle) {
       console.log('[chat-tts] Disconnecting TTS queue stream');
-      ttsQueueStream.close();
+      ttsQueueHandle.close();
+      ttsQueueHandle = null;
       ttsQueueStream = null;
     }
   }
@@ -765,6 +813,9 @@
     const timestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const startTime = Date.now();
 
+    // Preserve original message for restoration on failure
+    const originalMessage = message;
+
     // Add user message to UI
     messagesApi.pushMessage('user', message);
 
@@ -788,64 +839,165 @@
     let abortController = new AbortController();
     responsePipelineAbortController = abortController; // Store for cancel button
 
+    // Helper to restore input and cleanup on failure
+    const restoreInputAndCleanup = () => {
+      input = originalMessage; // Restore the message to input field
+      thinkingTraceApi.stop();
+      loading = false;
+    };
+
     try {
       // Step 0: Pre-flight validation
       console.log('[response-pipeline] Step 0: Pre-flight checks');
 
-      // Check 1: Session validity
-      try {
-        thinkingTraceApi.appendTrace(`[${timestamp()}] Checking session...`, 5);
-        const authController = new AbortController();
-        const authTimeout = setTimeout(() => authController.abort(), 5000);
+      // CRITICAL: Close ALL EventSource connections FIRST
+      // Browsers limit concurrent connections per-origin (typically 6 for HTTP/1.1)
+      // If limit is reached, fetch() hangs indefinitely waiting for a slot
+      // SYMPTOMS OF CONNECTION EXHAUSTION:
+      // - No CPU/GPU activity
+      // - No network requests visible in DevTools
+      // - Request just sits in "pending" state forever
+      // - No error, no timeout - just infinite hang
+      console.log('[response-pipeline] ========== CONNECTION CLEANUP START ==========');
+      console.log('[response-pipeline] Reason: Browser connection limit (6 per origin)');
+      console.log('[response-pipeline] Closing all EventSource connections to free slots...');
 
-        const authCheck = await apiFetch('/api/auth/me', { signal: authController.signal });
-        clearTimeout(authTimeout);
+      let closedCount = 0;
+      if (chatResponseStream) {
+        console.log('[response-pipeline] → Closing chatResponseStream');
+        try {
+          chatResponseStream.close();
+          chatResponseStream = null;
+          closedCount++;
+        } catch (e) {
+          console.error('[response-pipeline] ❌ Error closing chatResponseStream:', e);
+        }
+      }
+      if (innerDialogueStream) {
+        console.log('[response-pipeline] → Closing innerDialogueStream');
+        try {
+          innerDialogueStream.close();
+          innerDialogueStream = null;
+          closedCount++;
+        } catch (e) {
+          console.error('[response-pipeline] ❌ Error closing innerDialogueStream:', e);
+        }
+      }
+
+      try {
+        disconnectAllBufferStreams();
+        console.log('[response-pipeline] → Closed buffer streams');
+        closedCount++;
+      } catch (e) {
+        console.error('[response-pipeline] ❌ Error closing buffer streams:', e);
+      }
+
+      try {
+        disconnectTTSQueueStream();
+        console.log('[response-pipeline] → Closed TTS queue stream');
+        closedCount++;
+      } catch (e) {
+        console.error('[response-pipeline] ❌ Error closing TTS queue stream:', e);
+      }
+
+      console.log(`[response-pipeline] ✅ Closed ${closedCount} connections`);
+      console.log('[response-pipeline] ========== CONNECTION CLEANUP COMPLETE ==========');
+
+      // Check 1: Session validity (NO TIMEOUT - but with progress notifications)
+      try {
+        console.log('[response-pipeline] Starting auth check at', new Date().toISOString());
+        thinkingTraceApi.appendTrace(`[${timestamp()}] Checking session...`, 5);
+
+        // Progress indicator to show we're waiting (NO TIMEOUT, just visibility)
+        let notificationShown = false;
+        const progressInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          console.log(`[response-pipeline] ⏳ Still waiting for auth check... (${elapsed}s)`);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Still checking session... (${elapsed}s)`, 3);
+
+          // Show user notification after 10 seconds
+          if (elapsed >= 10 && !notificationShown) {
+            notificationShown = true;
+            console.warn('[response-pipeline] ⚠️  AUTH CHECK TAKING LONGER THAN EXPECTED (>10s)');
+            console.warn('[response-pipeline] This usually indicates:');
+            console.warn('[response-pipeline]   1. Server is overloaded');
+            console.warn('[response-pipeline]   2. Network connection is very slow');
+            console.warn('[response-pipeline]   3. All browser connection slots were full (now freed)');
+            messagesApi.pushMessage('system', '⏳ **Session Check Taking Longer Than Expected**\n\nChecking your session is taking over 10 seconds. This is unusual and may indicate server load or network issues.\n\n**Status**: Still trying (no timeout)...\n**Your reply is preserved** and will be restored if this fails.');
+          }
+
+          // Escalate notification after 30 seconds
+          if (elapsed >= 30) {
+            console.error('[response-pipeline] ⚠️  AUTH CHECK EXTREMELY SLOW (>30s)');
+            console.error('[response-pipeline] Consider:');
+            console.error('[response-pipeline]   - Checking server logs for errors');
+            console.error('[response-pipeline]   - Verifying network connection');
+            console.error('[response-pipeline]   - Using browser DevTools Network tab to see what\'s stuck');
+          }
+        }, 5000);
+
+        let authCheck: Response;
+        try {
+          console.log('[response-pipeline] Calling apiFetch(/api/auth/me)...');
+          const authStartTime = Date.now();
+          authCheck = await apiFetch('/api/auth/me');
+          const authDuration = Date.now() - authStartTime;
+          console.log(`[response-pipeline] Auth check completed in ${authDuration}ms:`, authCheck.status, authCheck.ok);
+
+          if (authDuration > 5000) {
+            console.warn(`[response-pipeline] ⚠️  AUTH CHECK WAS SLOW (${authDuration}ms)`);
+          }
+        } finally {
+          clearInterval(progressInterval);
+        }
 
         if (!authCheck.ok) {
           thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ SESSION EXPIRED`, 5);
-          messagesApi.pushMessage('system', '⚠️ **Session Expired**\n\nYour session has expired. Please refresh the page and log in again.');
-          thinkingTraceApi.stop();
-          loading = false;
+          messagesApi.pushMessage('system', '⚠️ **Session Expired - Your Reply Was Not Sent**\n\nYour session has expired. Your message has been restored to the input field.\n\n💡 Please refresh the page, log in again, and resubmit your message.');
+          restoreInputAndCleanup();
           return;
         }
         thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Session valid`, 5);
       } catch (authError: any) {
         console.error('[response-pipeline] Auth check error:', authError);
 
-        let errorTitle = '⚠️ Connection Error';
+        let errorTitle = '⚠️ Connection Error - Your Reply Was Not Sent';
         let errorMessage = 'Unable to connect to the server.';
-        let suggestion = 'Please check your network connection and try again.';
+        let suggestion = 'Your message has been restored to the input field. Please check your network connection and try again.';
 
-        // Differentiate error types
-        if (authError?.name === 'AbortError') {
-          errorTitle = '⏱️ Auth Check Timeout';
-          errorMessage = 'Session verification timed out (5s limit exceeded).';
-          suggestion = 'This usually means the server is under heavy load. Try again in a moment.';
-        } else if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
-          errorTitle = '🔌 Server Unreachable';
+        // Differentiate error types (NO timeout handling - just real errors)
+        if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
+          errorTitle = '🔌 Server Unreachable - Your Reply Was Not Sent';
           errorMessage = 'Cannot connect to the MetaHuman server.';
-          suggestion = 'Check that the dev server is running with `pnpm dev` in apps/site/.';
+          suggestion = 'Your message has been restored. Check that the dev server is running with `pnpm dev` in apps/site/.';
         } else if (authError?.status === 404) {
-          errorTitle = '🔍 Endpoint Not Found';
+          errorTitle = '🔍 Endpoint Not Found - Your Reply Was Not Sent';
           errorMessage = `API endpoint returned 404: ${authError?.url || '/api/auth/me'}`;
-          suggestion = 'This may be a build issue. Try rebuilding with `pnpm build` in apps/site/.';
+          suggestion = 'Your message has been restored. This may be a build issue. Try rebuilding with `pnpm build` in apps/site/.';
         } else if (authError?.status >= 500) {
-          errorTitle = '💥 Server Error';
+          errorTitle = '💥 Server Error - Your Reply Was Not Sent';
           errorMessage = `Server returned error ${authError?.status || 'unknown'}`;
-          suggestion = 'Check the server logs for details.';
+          suggestion = 'Your message has been restored. Check the server logs for details.';
         } else if (authError?.status === 401 || authError?.status === 403) {
-          errorTitle = '🔐 Auth Check Failed';
+          errorTitle = '🔐 Auth Check Failed - Your Reply Was Not Sent';
           errorMessage = 'Unable to verify your session.';
-          suggestion = 'Your session may have expired. Please refresh and log in again.';
+          suggestion = 'Your message has been restored. Your session may have expired. Please refresh and log in again.';
         } else {
           // Unknown error - show actual message
           errorMessage = authError?.message || 'An unexpected error occurred during authentication.';
+          suggestion = 'Your message has been restored to the input field. Please try again.';
         }
 
-        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ${errorTitle}: ${errorMessage}`, 5);
-        messagesApi.pushMessage('system', `${errorTitle}\n\n${errorMessage}\n\n💡 ${suggestion}`);
-        thinkingTraceApi.stop();
-        loading = false;
+        // Add context about what was being replied to
+        const contextInfo = cardData.desireTitle
+          ? `\n\n**You were replying to**: ${cardData.desireTitle}`
+          : cardData.questionId
+            ? '\n\n**You were replying to a question**'
+            : '';
+
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ${errorTitle}`, 5);
+        messagesApi.pushMessage('system', `${errorTitle}\n\n${errorMessage}${contextInfo}\n\n💡 ${suggestion}`);
+        restoreInputAndCleanup();
         return;
       }
 
@@ -857,9 +1009,8 @@
           ? 'Cannot send response: vLLM server is not running. Please start vLLM from Settings → Backend.'
           : 'Cannot send response: Ollama is not running or no models are loaded. Please check Settings → Backend.';
         thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Backend not ready`, 5);
-        messagesApi.pushMessage('system', `⚠️ **Backend Not Ready**\n\n${msg}`);
-        thinkingTraceApi.stop();
-        loading = false;
+        messagesApi.pushMessage('system', `⚠️ **Backend Not Ready - Your Reply Was Not Sent**\n\n${msg}\n\nYour message has been restored to the input field.`);
+        restoreInputAndCleanup();
         return;
       }
       thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Backend ready`, 5);
@@ -869,9 +1020,8 @@
       const healthResult = await forceHealthCheck();
       if (!healthResult.connected) {
         thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Server offline`, 5);
-        messagesApi.pushMessage('system', '⚠️ **Server Offline**\n\nThe server is not responding. Please check if the server is running.');
-        thinkingTraceApi.stop();
-        loading = false;
+        messagesApi.pushMessage('system', '⚠️ **Server Offline - Your Reply Was Not Sent**\n\nThe server is not responding. Your message has been restored to the input field.\n\n💡 Please check if the server is running and try again.');
+        restoreInputAndCleanup();
         return;
       }
       thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Server connected`, 5);
@@ -1082,14 +1232,6 @@
     }
   }
 
-  // Cancel function for response pipeline
-  function cancelResponsePipeline() {
-    if (responsePipelineAbortController) {
-      console.log('[response-pipeline] User cancelled request');
-      responsePipelineAbortController.abort();
-    }
-  }
-
   async function sendMessage() {
     // No input - nothing to do
     if (!input.trim()) return;
@@ -1259,18 +1401,99 @@
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
 
+      // CRITICAL: Close ALL EventSource connections FIRST to free browser connection slots
+      // Browsers limit concurrent connections per-origin (typically 6 for HTTP/1.1)
+      // If all slots are full, fetch() will hang forever in the browser's request queue
+      // SYMPTOMS: No CPU, no network, just infinite pending - exactly what you experienced
+      console.log('[sendMessage] ========== CONNECTION CLEANUP START ==========');
+      console.log('[sendMessage] Reason: Prevent browser connection limit exhaustion');
+      console.log('[sendMessage] Closing all EventSource connections to free slots...');
+
+      let closedCount = 0;
+      if (chatResponseStream) {
+        console.log('[sendMessage] → Closing chatResponseStream');
+        try {
+          chatResponseStream.close();
+          chatResponseStream = null;
+          closedCount++;
+        } catch (e) {
+          console.error('[sendMessage] ❌ Error closing chatResponseStream:', e);
+        }
+      }
+      if (innerDialogueStream) {
+        console.log('[sendMessage] → Closing innerDialogueStream');
+        try {
+          innerDialogueStream.close();
+          innerDialogueStream = null;
+          closedCount++;
+        } catch (e) {
+          console.error('[sendMessage] ❌ Error closing innerDialogueStream:', e);
+        }
+      }
+
+      try {
+        disconnectAllBufferStreams();
+        console.log('[sendMessage] → Closed buffer streams');
+        closedCount++;
+      } catch (e) {
+        console.error('[sendMessage] ❌ Error closing buffer streams:', e);
+      }
+
+      try {
+        disconnectTTSQueueStream();
+        console.log('[sendMessage] → Closed TTS queue stream');
+        closedCount++;
+      } catch (e) {
+        console.error('[sendMessage] ❌ Error closing TTS queue stream:', e);
+      }
+
+      console.log(`[sendMessage] ✅ Closed ${closedCount} connections`);
+      console.log('[sendMessage] ========== CONNECTION CLEANUP COMPLETE ==========');
+
       // PRE-FLIGHT AUTH CHECK: Verify session is valid before opening EventSource
       // This prevents silent hangs when session cookie is stale/mismatched
-      // Use a 5-second timeout to avoid blocking if server is slow
+      // NO TIMEOUT - User has cancel button, let the server take as long as it needs
       try {
         console.log('[sendMessage] Starting auth check...');
         thinkingTraceApi.appendTrace(`[${timestamp()}] 🔐 Verifying session...`, 15);
 
-        const authController = new AbortController();
-        const authTimeout = setTimeout(() => authController.abort(), 5000);
+        // Progress notifications (same as response pipeline)
+        let notificationShown = false;
+        const authProgressInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          console.log(`[sendMessage] ⏳ Still waiting for auth check... (${elapsed}s)`);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Still checking session... (${elapsed}s)`, 10);
 
-        const authCheck = await apiFetch('/api/auth/me', { signal: authController.signal });
-        clearTimeout(authTimeout);
+          if (elapsed >= 10 && !notificationShown) {
+            notificationShown = true;
+            console.warn('[sendMessage] ⚠️  AUTH CHECK TAKING LONGER THAN EXPECTED (>10s)');
+            const msg = {
+              id: crypto.randomUUID(),
+              role: 'system' as const,
+              content: '⏳ **Session Check Slow**\n\nVerifying your session is taking longer than expected (>10s). Still trying...',
+              timestamp: Date.now(),
+            };
+            messages.update(m => [...m, msg]);
+          }
+
+          if (elapsed >= 30) {
+            console.error('[sendMessage] ⚠️  AUTH CHECK EXTREMELY SLOW (>30s)');
+          }
+        }, 5000);
+
+        let authCheck: Response;
+        try {
+          const authStartTime = Date.now();
+          authCheck = await apiFetch('/api/auth/me');
+          const authDuration = Date.now() - authStartTime;
+          console.log(`[sendMessage] Auth check completed in ${authDuration}ms:`, authCheck.status);
+
+          if (authDuration > 5000) {
+            console.warn(`[sendMessage] ⚠️  AUTH CHECK WAS SLOW (${authDuration}ms)`);
+          }
+        } finally {
+          clearInterval(authProgressInterval);
+        }
 
         if (!authCheck.ok) {
           const errorData = await authCheck.json().catch(() => ({}));
@@ -1295,12 +1518,7 @@
         let errorType = 'Unknown Error';
         let shouldContinue = false;
 
-        if (authError?.name === 'AbortError') {
-          errorType = 'Timeout (5s limit)';
-          shouldContinue = true; // Server might still work, just slow
-          console.warn('[sendMessage] Auth check timed out after 5s, proceeding anyway');
-          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏱️ Auth check timed out, proceeding...`, 15);
-        } else if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
+        if (authError?.message?.includes('fetch failed') || authError?.message?.includes('ECONNREFUSED')) {
           errorType = 'Server Unreachable';
           shouldContinue = false;
           console.error('[sendMessage] Server unreachable:', authError);
@@ -1596,29 +1814,41 @@
 
   /**
    * Stop/cancel the current request
+   * Aborts both client-side fetch and notifies server
    */
   async function stopRequest() {
-    if (!loading || !$conversationSessionId) return;
+    if (!loading) return;
 
-    try {
-      console.log('[stop-request] Cancelling session:', $conversationSessionId);
+    console.log('[stop-request] Stopping request...');
 
-      const response = await apiFetch('/api/cancel-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: $conversationSessionId,
-          reason: 'User clicked stop button'
-        })
-      });
+    // 1. Abort client-side fetch immediately
+    if (responsePipelineAbortController) {
+      console.log('[stop-request] Aborting client-side fetch');
+      responsePipelineAbortController.abort();
+      responsePipelineAbortController = null;
+    }
 
-      if (!response.ok) {
-        console.error('[stop-request] Failed to cancel:', await response.text());
-      } else {
-        console.log('[stop-request] Cancellation requested successfully');
+    // 2. Notify server to stop processing (if session exists)
+    if ($conversationSessionId) {
+      try {
+        console.log('[stop-request] Requesting server-side cancellation for session:', $conversationSessionId);
+        const response = await apiFetch('/api/cancel-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: $conversationSessionId,
+            reason: 'User clicked stop button'
+          })
+        });
+
+        if (!response.ok) {
+          console.error('[stop-request] Failed to cancel:', await response.text());
+        } else {
+          console.log('[stop-request] Server-side cancellation requested successfully');
+        }
+      } catch (error) {
+        console.error('[stop-request] Error requesting server-side cancellation:', error);
       }
-    } catch (error) {
-      console.error('[stop-request] Error cancelling request:', error);
     }
   }
 
@@ -1729,7 +1959,9 @@
   }
 
   // Stores for multiple buffer streams (all three can be active simultaneously)
+  let conversationHandle: ConnectionHandle | null = null;
   let conversationStream: EventSource | null = null;
+  let systemHandle: ConnectionHandle | null = null;
   let systemStream: EventSource | null = null;
 
   /**
@@ -1746,94 +1978,126 @@
       console.log('[chat] Skipping buffer stream connect (tab hidden)');
       return;
     }
-    // Close existing streams
-    if (innerDialogueStream) {
-      innerDialogueStream.close();
+    // Close existing connection handles (pool will close underlying EventSource)
+    if (innerDialogueHandle) {
+      innerDialogueHandle.close();
+      innerDialogueHandle = null;
       innerDialogueStream = null;
     }
-    if (conversationStream) {
-      conversationStream.close();
+    if (conversationHandle) {
+      conversationHandle.close();
+      conversationHandle = null;
       conversationStream = null;
     }
-    if (systemStream) {
-      systemStream.close();
+    if (systemHandle) {
+      systemHandle.close();
+      systemHandle = null;
       systemStream = null;
     }
 
     // Connect to streams for each selected view (1:1 mapping)
     // System stream only connected when system tab is selected
     if (selectedViews.has('conversation')) {
-      connectBufferStreamForMode('conversation', (stream) => { conversationStream = stream; });
+      connectBufferStreamForMode(
+        'conversation',
+        (stream) => { conversationStream = stream; },
+        (handle) => { conversationHandle = handle; }
+      );
     }
     if (selectedViews.has('inner')) {
-      connectBufferStreamForMode('inner', (stream) => { innerDialogueStream = stream; });
+      connectBufferStreamForMode(
+        'inner',
+        (stream) => { innerDialogueStream = stream; },
+        (handle) => { innerDialogueHandle = handle; }
+      );
     }
     if (selectedViews.has('system')) {
-      connectBufferStreamForMode('system', (stream) => { systemStream = stream; });
+      connectBufferStreamForMode(
+        'system',
+        (stream) => { systemStream = stream; },
+        (handle) => { systemHandle = handle; }
+      );
     }
   }
 
   /**
    * Connect to a single buffer stream with proper merge handling
+   * Now uses connection pool for priority-based allocation
    */
   function connectBufferStreamForMode(
     streamMode: 'conversation' | 'inner' | 'system',
-    setStream: (stream: EventSource) => void
+    setStream: (stream: EventSource | null) => void,
+    setHandle: (handle: ConnectionHandle | null) => void
   ) {
-    console.log(`[chat] Connecting to ${streamMode} buffer stream (multi-mode)...`);
-    const stream = apiEventSource(`/api/buffer-stream?mode=${streamMode}`);
-    setStream(stream);
+    console.log(`[chat] Requesting ${streamMode} buffer stream from connection pool...`);
 
-    stream.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'connected') {
-          console.log(`[chat] ${streamMode} buffer stream connected`);
-          // Reset message counts on connect
-          const currentCount = get(messages).length;
-          if (streamMode === 'inner') {
-            lastInnerMessageCount = currentCount;
-          } else {
-            lastConversationMessageCount = currentCount;
+    const handle = connectionPool.request({
+      id: `buffer-${streamMode}`,
+      name: `Buffer Stream (${streamMode})`,
+      url: `/api/buffer-stream?mode=${streamMode}`,
+      priority: ConnectionPriority.HIGH,
+      viewDependency: 'chat',
+      defer: false,
+      onOpen: (source) => {
+        console.log(`[chat] ${streamMode} buffer stream opened via pool`);
+        setStream(source);
+        const currentCount = get(messages).length;
+        if (streamMode === 'inner') {
+          lastInnerMessageCount = currentCount;
+        } else {
+          lastConversationMessageCount = currentCount;
+        }
+      },
+      onClose: () => {
+        console.log(`[chat] ${streamMode} buffer stream closed via pool`);
+        setStream(null);
+      },
+      onMessage: (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'connected') {
+            console.log(`[chat] ${streamMode} buffer stream connected`);
+            const currentCount = get(messages).length;
+            if (streamMode === 'inner') {
+              lastInnerMessageCount = currentCount;
+            } else {
+              lastConversationMessageCount = currentCount;
+            }
+            return;
           }
-          return;
-        }
-        if (data.type === 'error') {
-          console.error(`[chat] ${streamMode} buffer stream error:`, data.error);
-          return;
-        }
-        if (data.type === 'update' && Array.isArray(data.messages)) {
-          // Only update store for inner/system buffers - these messages come from agents
-          // and don't have a direct push path. Conversation buffer messages are already
-          // added via pushMessage() in the streaming handler, so skip to avoid duplicates.
-          if (streamMode !== 'conversation' && data.messages.length > 0) {
-            console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
-            messages.update(msgs => {
-              // Add new messages that aren't already in the store (by content)
-              const existingContent = new Set(msgs.map(m => `${m.role}-${m.content}`));
-              const newMsgs = data.messages.filter((m: any) => !existingContent.has(`${m.role}-${m.content}`));
-              if (newMsgs.length > 0) {
-                return [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp);
-              }
-              return msgs;
-            });
+          if (data.type === 'error') {
+            console.error(`[chat] ${streamMode} buffer stream error:`, data.error);
+            return;
           }
+          if (data.type === 'update' && Array.isArray(data.messages)) {
+            if (streamMode !== 'conversation' && data.messages.length > 0) {
+              console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
+              messages.update(msgs => {
+                const existingContent = new Set(msgs.map(m => `${m.role}-${m.content}`));
+                const newMsgs = data.messages.filter((m: any) => !existingContent.has(`${m.role}-${m.content}`));
+                if (newMsgs.length > 0) {
+                  return [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp);
+                }
+                return msgs;
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
         }
-      } catch (err) {
-        console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
-      }
-    };
+      },
+      onError: (err) => {
+        console.error(`[chat] ${streamMode} buffer stream error:`, err);
+        setTimeout(() => {
+          const isSelected = selectedViews.has(streamMode);
+          if (isComponentMounted && !document.hidden && isSelected) {
+            connectBufferStreamForMode(streamMode, setStream, setHandle);
+          }
+        }, 3000);
+      },
+    });
 
-    stream.onerror = (err) => {
-      console.error(`[chat] ${streamMode} buffer stream error:`, err);
-      // Attempt reconnection after a delay
-      setTimeout(() => {
-        const isSelected = selectedViews.has(streamMode);
-        if (isComponentMounted && !document.hidden && isSelected) {
-          connectBufferStreamForMode(streamMode, setStream);
-        }
-      }, 3000);
-    };
+    setHandle(handle);
   }
 
 
@@ -2316,19 +2580,6 @@
 
   <!-- Input Area -->
   <div class="input-container">
-    <!-- Cancel button for response pipeline -->
-    {#if loading && responsePipelineAbortController}
-      <div class="cancel-button-container">
-        <button
-          class="btn-cancel"
-          on:click={cancelResponsePipeline}
-          title="Cancel this request"
-        >
-          ⏸️ Cancel Request
-        </button>
-      </div>
-    {/if}
-
     <InputArea
       bind:input
       {loading}
@@ -2448,45 +2699,5 @@
   @keyframes glow-delegation {
     0% { box-shadow: 0 0 5px #ff3838; }
     100% { box-shadow: 0 0 15px #ff3838, 0 0 25px #ff3838; }
-  }
-
-  /* Cancel button for response pipeline */
-  .cancel-button-container {
-    display: flex;
-    justify-content: center;
-    padding: 8px 0;
-    margin-bottom: 8px;
-  }
-
-  .btn-cancel {
-    padding: 8px 16px;
-    background: #ff4444;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 4px rgba(255, 68, 68, 0.2);
-  }
-
-  .btn-cancel:hover {
-    background: #ff2222;
-    box-shadow: 0 4px 8px rgba(255, 68, 68, 0.3);
-    transform: translateY(-1px);
-  }
-
-  .btn-cancel:active {
-    transform: translateY(0);
-    box-shadow: 0 1px 2px rgba(255, 68, 68, 0.2);
-  }
-
-  :global(.dark) .btn-cancel {
-    background: #cc3333;
-  }
-
-  :global(.dark) .btn-cancel:hover {
-    background: #dd4444;
   }
 </style>
