@@ -5,9 +5,10 @@
  * Used by training orchestrators to get user context from CLI arguments.
  */
 
-import { getUserByUsername } from './users.js';
+import { getUserByUsername, getUsers } from './users.js';
 import { getProfilePaths, systemPaths } from './paths.js';
 import type { UserContext } from './context.js';
+import type { SafeUser } from './users.js';
 
 /**
  * Resolve username to full UserContext object
@@ -92,9 +93,8 @@ export function requireUserInfo(username: string): UserContext {
  * @returns Array of usernames
  */
 export function listUsernames(): string[] {
-  const { getUsers } = require('./users.js');
   const users = getUsers();
-  return users.map((u: any) => u.username);
+  return users.map((u: SafeUser) => u.username);
 }
 
 /**
