@@ -100,6 +100,30 @@
     executionSummary?: string;
   }
 
+  // Long-running goal types
+  type DesireGoalType = 'one_time' | 'recurring' | 'long_running';
+
+  interface DesireMilestone {
+    id: string;
+    order: number;
+    title: string;
+    description?: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'skipped';
+    completedAt?: string;
+    tasks?: string[];
+    calendarEvents?: string[];
+  }
+
+  interface DesireGoalProgress {
+    currentMilestone: number;
+    totalMilestones: number;
+    completedMilestones: number;
+    progressPercent: number;
+    estimatedCompletionDate?: string;
+    lastCheckinAt?: string;
+    nextCheckinAt?: string;
+  }
+
   interface Desire {
     id: string;
     title: string;
@@ -127,6 +151,11 @@
     scratchpad?: DesireScratchpadSummary;
     outcomeReview?: DesireOutcomeReview;
     folderPath?: string;  // For folder-based storage
+    // Long-running goal fields
+    goalType?: DesireGoalType;
+    completionCriteria?: string;
+    milestones?: DesireMilestone[];
+    goalProgress?: DesireGoalProgress;
   }
 
   interface AgencyMetrics {
@@ -171,8 +200,15 @@
     title: '',
     description: '',
     reason: '',
-    risk: 'low',
+    risk: 'low' as 'none' | 'low' | 'medium' | 'high',
+    // Advanced options
+    goalType: 'one_time' as 'one_time' | 'recurring' | 'long_running',
+    strength: 0.8,
+    status: 'pending' as 'nascent' | 'pending',
+    decayRate: 0.03,
+    tags: '',
   };
+  let showAdvancedOptions = false;
 
   // Compact card expansion state
   let expandedCardId: string | null = null;  // Which desire card is expanded
@@ -193,11 +229,20 @@
   const scratchpadLimit = 10;
   let expandedEntryIndex: number | null = null;
 
+  // Individual file viewer state
+  let selectedFileName: string | null = null;
+  let selectedFileContent: any = null;
+  let fileViewLoading = false;
+
   // Plan browser state
   let planVersions: string[] = [];
   let planLoading = false;
   let selectedPlanVersion: number | null = null;
   let viewingPlan: DesirePlan | null = null;
+
+  // Execution data state
+  let executionData: Record<string, any[]> = {}; // desireId -> executions array
+  let executionLoading: Record<string, boolean> = {};
 
   // Lizard Brain panel state
   let showLizardBrain = false;
@@ -490,6 +535,57 @@
     }
   }
 
+  // Goal type helpers for long-running goals
+  function getGoalTypeIcon(goalType: DesireGoalType | undefined): string {
+    switch (goalType) {
+      case 'long_running': return '🏔️';
+      case 'recurring': return '🔄';
+      case 'one_time': return '✓';
+      default: return '';
+    }
+  }
+
+  function getGoalTypeLabel(goalType: DesireGoalType | undefined): string {
+    switch (goalType) {
+      case 'long_running': return 'Long-term';
+      case 'recurring': return 'Recurring';
+      case 'one_time': return 'One-time';
+      default: return '';
+    }
+  }
+
+  function getGoalTypeColor(goalType: DesireGoalType | undefined): string {
+    switch (goalType) {
+      case 'long_running': return 'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200';
+      case 'recurring': return 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200';
+      case 'one_time': return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+      default: return '';
+    }
+  }
+
+  function getMilestoneStatusIcon(status: string): string {
+    switch (status) {
+      case 'completed': return '✅';
+      case 'in_progress': return '🔄';
+      case 'skipped': return '⏭️';
+      case 'pending': return '⬜';
+      default: return '⬜';
+    }
+  }
+
+  // Svelte action to load execution data when element mounts
+  function loadExecutionOnMount(node: HTMLElement, desireId: string) {
+    loadExecutionData(desireId);
+    return {
+      update(newDesireId: string) {
+        if (newDesireId !== desireId) {
+          desireId = newDesireId;
+          loadExecutionData(desireId);
+        }
+      }
+    };
+  }
+
   // Map grouped filter options to actual status values
   function getStatusesForFilter(filter: string): string[] {
     switch (filter) {
@@ -571,6 +667,33 @@
   }
 
   /**
+   * Load a specific scratchpad file by name
+   */
+  async function loadScratchpadFile(desireId: string, filename: string) {
+    if (selectedFileName === filename) {
+      // Toggle off if already selected
+      selectedFileName = null;
+      selectedFileContent = null;
+      return;
+    }
+
+    fileViewLoading = true;
+    selectedFileName = filename;
+    try {
+      const params = new URLSearchParams({ desireId, filename });
+      const res = await apiFetch(`/api/agency/scratchpad?${params}`);
+      if (!res.ok) throw new Error('Failed to load file');
+      const data = await res.json();
+      selectedFileContent = data.entry;
+    } catch (e) {
+      console.error('Failed to load scratchpad file:', e);
+      selectedFileContent = { error: 'Failed to load file content' };
+    } finally {
+      fileViewLoading = false;
+    }
+  }
+
+  /**
    * Load plan versions for a desire
    */
   async function loadPlanVersions(desireId: string) {
@@ -604,6 +727,28 @@
       viewingPlan = null;
     } finally {
       planLoading = false;
+    }
+  }
+
+  /**
+   * Load execution attempts for a desire
+   */
+  async function loadExecutionData(desireId: string) {
+    if (executionData[desireId] || executionLoading[desireId]) {
+      return; // Already loaded or loading
+    }
+
+    executionLoading = { ...executionLoading, [desireId]: true };
+    try {
+      const res = await apiFetch(`/api/agency/desires/${desireId}/executions`);
+      if (!res.ok) throw new Error('Failed to load executions');
+      const data = await res.json();
+      executionData = { ...executionData, [desireId]: data.executions || [] };
+    } catch (e) {
+      console.error('Failed to load execution data:', e);
+      executionData = { ...executionData, [desireId]: [] };
+    } finally {
+      executionLoading = { ...executionLoading, [desireId]: false };
     }
   }
 
@@ -682,6 +827,34 @@
       await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  /**
+   * Request a check-in for a long-running desire.
+   * Queues a desire_checkin task for the active operator.
+   */
+  async function requestCheckin(id: string) {
+    processingId = id;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${id}/checkin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to request check-in');
+      }
+      const data = await res.json();
+      // Show success feedback
+      alert(`✅ Check-in requested!\n\n${data.message || 'The system will evaluate progress on this goal shortly.'}`);
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+      alert(`❌ Failed to request check-in: ${error}`);
     } finally {
       processingId = null;
     }
@@ -1192,17 +1365,37 @@
     }
 
     try {
+      // Convert tags string to array
+      const tagsArray = newDesire.tags
+        .split(',')
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+
       const res = await apiFetch('/api/agency/desires', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newDesire),
+        body: JSON.stringify({
+          ...newDesire,
+          tags: tagsArray,
+        }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to create desire');
       }
-      newDesire = { title: '', description: '', reason: '', risk: 'low' };
+      newDesire = {
+        title: '',
+        description: '',
+        reason: '',
+        risk: 'low',
+        goalType: 'one_time',
+        strength: 0.8,
+        status: 'pending',
+        decayRate: 0.03,
+        tags: '',
+      };
       showNewDesire = false;
+      showAdvancedOptions = false;
       await loadAll(true, true); // Force reload after action
     } catch (e) {
       error = (e as Error).message;
@@ -1351,17 +1544,90 @@
           class="input-field"
           rows="2"
         ></textarea>
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-4 flex-wrap">
           <label class="text-sm">
-            Risk Level:
-            <select bind:value={newDesire.risk} class="select-field ml-2">
+            Risk:
+            <select bind:value={newDesire.risk} class="select-field ml-1">
               <option value="none">None</option>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
           </label>
-          <button class="btn-primary btn-sm" on:click={handleCreateDesire}>Create</button>
+          <label class="text-sm">
+            Type:
+            <select bind:value={newDesire.goalType} class="select-field ml-1">
+              <option value="one_time">One-time</option>
+              <option value="recurring">Recurring</option>
+              <option value="long_running">Long-running</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="text-sm text-blue-500 hover:text-blue-600 dark:text-blue-400"
+            on:click={() => showAdvancedOptions = !showAdvancedOptions}
+          >
+            {showAdvancedOptions ? '▼ Hide' : '▶ Advanced'}
+          </button>
+        </div>
+
+        <!-- Advanced Options (collapsible) -->
+        {#if showAdvancedOptions}
+          <div class="border-t border-gray-200 dark:border-gray-700 pt-3 mt-2 space-y-3">
+            <div class="grid grid-cols-2 gap-4">
+              <label class="text-sm flex flex-col gap-1">
+                <span class="text-gray-600 dark:text-gray-400">Initial Strength: {newDesire.strength.toFixed(2)}</span>
+                <input
+                  type="range"
+                  bind:value={newDesire.strength}
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  class="w-full accent-blue-500"
+                />
+                <span class="text-xs text-gray-500">
+                  {newDesire.strength >= 0.7 ? '✓ Above threshold (0.7)' : '○ Below threshold - needs reinforcement'}
+                </span>
+              </label>
+              <label class="text-sm flex flex-col gap-1">
+                <span class="text-gray-600 dark:text-gray-400">Decay Rate: {newDesire.decayRate.toFixed(3)}/run</span>
+                <input
+                  type="range"
+                  bind:value={newDesire.decayRate}
+                  min="0.005"
+                  max="0.05"
+                  step="0.005"
+                  class="w-full accent-blue-500"
+                />
+                <span class="text-xs text-gray-500">
+                  {newDesire.decayRate <= 0.01 ? 'Slow decay (persistent)' : newDesire.decayRate >= 0.04 ? 'Fast decay' : 'Normal decay'}
+                </span>
+              </label>
+            </div>
+            <div class="flex items-center gap-4">
+              <label class="text-sm">
+                Start Status:
+                <select bind:value={newDesire.status} class="select-field ml-1">
+                  <option value="pending">Pending (ready for planning)</option>
+                  <option value="nascent">Nascent (needs reinforcement)</option>
+                </select>
+              </label>
+            </div>
+            <label class="text-sm flex flex-col gap-1">
+              <span class="text-gray-600 dark:text-gray-400">Tags (comma-separated)</span>
+              <input
+                type="text"
+                bind:value={newDesire.tags}
+                placeholder="e.g., health, fitness, core-value"
+                class="input-field"
+              />
+            </label>
+          </div>
+        {/if}
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button class="btn-secondary btn-sm" on:click={() => { showNewDesire = false; showAdvancedOptions = false; }}>Cancel</button>
+          <button class="btn-primary btn-sm" on:click={handleCreateDesire}>Create Desire</button>
         </div>
       </div>
     {/if}
@@ -1401,6 +1667,12 @@
                 </span>
                 <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getStatusColor(desire.status)}">{desire.status}</span>
                 <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getRiskColor(desire.risk)}">{desire.risk}</span>
+                {#if desire.goalType && desire.goalType !== 'one_time'}
+                  <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getGoalTypeColor(desire.goalType)}"
+                    title={desire.goalType === 'long_running' ? `${desire.goalProgress?.progressPercent || 0}% complete` : 'Recurring goal'}>
+                    {getGoalTypeIcon(desire.goalType)} {getGoalTypeLabel(desire.goalType)}
+                  </span>
+                {/if}
                 <span class="text-xs text-gray-400 ml-auto flex-shrink-0">{expandedCardId === desire.id ? '▼' : '▶'}</span>
               </div>
 
@@ -1435,6 +1707,30 @@
                   <span class="text-violet-500 dark:text-violet-400">{desire.scratchpad.entryCount} events</span>
                 {/if}
               </div>
+
+              <!-- Row 3: Milestone progress (for long-running goals only) -->
+              {#if desire.goalType === 'long_running' && desire.milestones && desire.milestones.length > 0}
+                <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 pl-7 mt-1">
+                  <span class="text-violet-500 dark:text-violet-400 font-medium">
+                    📍 {desire.milestones[desire.goalProgress?.currentMilestone || 0]?.title || 'Starting'}
+                  </span>
+                  <span class="text-gray-300 dark:text-gray-600">•</span>
+                  <div class="flex items-center gap-1 flex-1 max-w-[200px]">
+                    <div class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-violet-500 rounded-full transition-all duration-500"
+                        style="width: {desire.goalProgress?.progressPercent || 0}%;"
+                      ></div>
+                    </div>
+                    <span class="font-semibold text-violet-500 min-w-[40px] text-right">
+                      {desire.goalProgress?.progressPercent || 0}%
+                    </span>
+                  </div>
+                  <span class="text-gray-400 dark:text-gray-500">
+                    ({desire.goalProgress?.completedMilestones || 0}/{desire.goalProgress?.totalMilestones || 0} milestones)
+                  </span>
+                </div>
+              {/if}
             </div>
 
             <!-- ========== EXPANDED VIEW (conditional) ========== -->
@@ -1497,6 +1793,183 @@
                     </div>
                   {/if}
                 </details>
+
+                <!-- Long-Running Goals: Milestones Section -->
+                {#if desire.goalType === 'long_running' && desire.milestones && desire.milestones.length > 0}
+                  <details class="mb-3" open>
+                    <summary class="cursor-pointer p-2 bg-violet-50 dark:bg-violet-900/20 rounded-md text-sm font-medium flex justify-between list-none [&::-webkit-details-marker]:hidden border border-violet-200 dark:border-violet-800">
+                      <span>🏔️ Milestones ({desire.goalProgress?.completedMilestones || 0}/{desire.goalProgress?.totalMilestones || 0})</span>
+                      <span class="text-xs text-violet-600 dark:text-violet-400">
+                        {desire.goalProgress?.progressPercent || 0}% complete
+                      </span>
+                    </summary>
+                    <div class="p-3 bg-violet-50/50 dark:bg-violet-900/10 rounded-b-md border border-t-0 border-violet-200 dark:border-violet-800">
+                      <!-- Completion Criteria -->
+                      {#if desire.completionCriteria}
+                        <div class="mb-3 p-2 bg-white dark:bg-gray-900 rounded border border-violet-200 dark:border-violet-800">
+                          <p class="text-xs text-gray-500 dark:text-gray-400 uppercase font-semibold mb-1">🎯 Done when:</p>
+                          <p class="text-sm text-gray-700 dark:text-gray-300">{desire.completionCriteria}</p>
+                        </div>
+                      {/if}
+
+                      <!-- Milestone List -->
+                      <div class="flex flex-col gap-2">
+                        {#each desire.milestones as milestone, i}
+                          <details class="rounded {
+                            milestone.status === 'completed' ? 'bg-green-50 dark:bg-green-900/20' :
+                            milestone.status === 'in_progress' ? 'bg-blue-50 dark:bg-blue-900/20' :
+                            'bg-gray-50 dark:bg-gray-800/50'
+                          }">
+                            <summary class="flex items-start gap-2 p-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                              <span class="text-lg flex-shrink-0">{getMilestoneStatusIcon(milestone.status)}</span>
+                              <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                  <span class="text-xs text-gray-400 font-mono">#{milestone.order || i + 1}</span>
+                                  <span class="font-medium text-sm {
+                                    milestone.status === 'completed' ? 'text-green-700 dark:text-green-300' :
+                                    milestone.status === 'in_progress' ? 'text-blue-700 dark:text-blue-300' :
+                                    'text-gray-700 dark:text-gray-300'
+                                  }">{milestone.title}</span>
+                                  {#if (desire.goalProgress?.currentMilestone || 0) === i && milestone.status !== 'completed'}
+                                    <span class="text-[0.6rem] px-1 py-0.5 bg-blue-500 text-white rounded uppercase font-bold">Current</span>
+                                  {/if}
+                                </div>
+                                {#if milestone.description}
+                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{milestone.description}</p>
+                                {/if}
+                                {#if milestone.completedAt}
+                                  <p class="text-[0.6rem] text-gray-400 dark:text-gray-500 mt-0.5">Completed: {formatTimestamp(milestone.completedAt)}</p>
+                                {/if}
+                              </div>
+                              <span class="text-xs text-gray-400 flex-shrink-0 mt-1">▶</span>
+                            </summary>
+
+                            <!-- Milestone Details (expanded) -->
+                            <div class="p-3 border-t {
+                              milestone.status === 'completed' ? 'border-green-200 dark:border-green-800' :
+                              milestone.status === 'in_progress' ? 'border-blue-200 dark:border-blue-800' :
+                              'border-gray-200 dark:border-gray-700'
+                            }" use:loadExecutionOnMount={desire.id}>
+                              {#if milestone.status === 'completed'}
+                                <!-- Completed milestone: show what was accomplished -->
+                                <div class="text-xs">
+                                  <p class="font-semibold text-green-700 dark:text-green-300 mb-2">✅ Accomplishments:</p>
+
+                                  {#if executionLoading[desire.id]}
+                                    <p class="text-gray-500 dark:text-gray-400 italic">Loading execution details...</p>
+                                  {:else if executionData[desire.id]?.length > 0}
+                                    <!-- Show execution results from loaded data -->
+                                    {@const latestExecution = executionData[desire.id][0]}
+                                    {#if latestExecution.stepResults?.length > 0}
+                                      <div class="space-y-3">
+                                        {#each latestExecution.stepResults as result, ri}
+                                          <details class="bg-white dark:bg-gray-900 rounded border border-green-200 dark:border-green-800 overflow-hidden">
+                                            <summary class="p-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 hover:bg-green-50 dark:hover:bg-green-900/30">
+                                              <span class="{result.success ? 'text-green-500' : 'text-red-500'}">{result.success ? '✓' : '✗'}</span>
+                                              <span class="font-medium flex-1">Step {ri + 1}</span>
+                                              <span class="text-gray-400 text-[0.65rem]">▼</span>
+                                            </summary>
+                                            <div class="p-3 border-t border-green-100 dark:border-green-900 bg-gray-50 dark:bg-gray-950">
+                                              {#if result.result?.response}
+                                                <div class="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 whitespace-pre-wrap text-xs leading-relaxed max-h-96 overflow-y-auto">
+                                                  {result.result.response}
+                                                </div>
+                                              {:else if result.output}
+                                                <p class="text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{typeof result.output === 'string' ? result.output : JSON.stringify(result.output, null, 2)}</p>
+                                              {:else}
+                                                <p class="text-gray-500 dark:text-gray-400 italic">No detailed output recorded.</p>
+                                              {/if}
+                                              {#if result.result?.executionTime}
+                                                <p class="text-[0.6rem] text-gray-400 mt-2">Execution time: {(result.result.executionTime / 1000).toFixed(1)}s</p>
+                                              {/if}
+                                            </div>
+                                          </details>
+                                        {/each}
+                                      </div>
+                                    {:else}
+                                      <p class="text-gray-500 dark:text-gray-400 italic">Execution completed but no step details recorded.</p>
+                                    {/if}
+                                  {:else}
+                                    <p class="text-gray-500 dark:text-gray-400 italic">
+                                      No execution data found. Check the Journey Log below for activity records.
+                                    </p>
+                                  {/if}
+
+                                  {#if milestone.tasks && milestone.tasks.length > 0}
+                                    <div class="mt-2">
+                                      <p class="font-semibold text-gray-600 dark:text-gray-400">📋 Related Tasks:</p>
+                                      <ul class="list-disc list-inside text-gray-500 dark:text-gray-400">
+                                        {#each milestone.tasks as taskId}
+                                          <li class="font-mono text-[0.65rem]">{taskId}</li>
+                                        {/each}
+                                      </ul>
+                                    </div>
+                                  {/if}
+                                </div>
+
+                              {:else if milestone.status === 'in_progress'}
+                                <!-- Current milestone: show what's happening -->
+                                <div class="text-xs">
+                                  <p class="font-semibold text-blue-700 dark:text-blue-300 mb-2">🔄 In Progress:</p>
+                                  {#if desire.plan?.steps}
+                                    <p class="text-gray-600 dark:text-gray-400 mb-2">Current plan has {desire.plan.steps.length} step(s):</p>
+                                    <ul class="space-y-1">
+                                      {#each desire.plan.steps.slice(0, 5) as step}
+                                        <li class="flex items-start gap-2 text-gray-600 dark:text-gray-400">
+                                          <span class="text-blue-500">→</span>
+                                          <span>{step.action}</span>
+                                        </li>
+                                      {/each}
+                                      {#if desire.plan.steps.length > 5}
+                                        <li class="text-gray-400 dark:text-gray-500 italic">...and {desire.plan.steps.length - 5} more</li>
+                                      {/if}
+                                    </ul>
+                                  {:else}
+                                    <p class="text-gray-500 dark:text-gray-400 italic">No plan generated yet for this milestone.</p>
+                                  {/if}
+                                </div>
+
+                              {:else}
+                                <!-- Pending milestone -->
+                                <p class="text-xs text-gray-500 dark:text-gray-400 italic">
+                                  This milestone hasn't started yet. Complete earlier milestones first.
+                                </p>
+                              {/if}
+                            </div>
+                          </details>
+                        {/each}
+                      </div>
+
+                      <!-- Last Check-in Info -->
+                      {#if desire.goalProgress?.lastCheckinAt}
+                        <div class="mt-3 pt-2 border-t border-violet-200 dark:border-violet-800 flex items-center justify-between">
+                          <span class="text-xs text-gray-500 dark:text-gray-400">
+                            Last check-in: {formatTimestamp(desire.goalProgress.lastCheckinAt)}
+                          </span>
+                          <button
+                            type="button"
+                            class="text-xs px-2 py-1 bg-violet-100 hover:bg-violet-200 dark:bg-violet-800 dark:hover:bg-violet-700 text-violet-700 dark:text-violet-200 rounded transition-colors"
+                            on:click|stopPropagation={() => requestCheckin(desire.id)}
+                            disabled={processingId === desire.id}
+                          >
+                            {processingId === desire.id ? '⏳' : '🔄'} Request Check-in
+                          </button>
+                        </div>
+                      {:else}
+                        <div class="mt-3 pt-2 border-t border-violet-200 dark:border-violet-800 flex items-center justify-end">
+                          <button
+                            type="button"
+                            class="text-xs px-2 py-1 bg-violet-100 hover:bg-violet-200 dark:bg-violet-800 dark:hover:bg-violet-700 text-violet-700 dark:text-violet-200 rounded transition-colors"
+                            on:click|stopPropagation={() => requestCheckin(desire.id)}
+                            disabled={processingId === desire.id}
+                          >
+                            {processingId === desire.id ? '⏳' : '🔄'} Request Check-in
+                          </button>
+                        </div>
+                      {/if}
+                    </div>
+                  </details>
+                {/if}
 
                 <!-- Meta info -->
                 <div class="flex gap-4 text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -1855,18 +2328,78 @@
                           <p class="text-xs muted">No journey events logged yet</p>
                         {/if}
 
-                        <!-- File List (collapsed) -->
+                        <!-- File List (clickable) -->
                         {#if scratchpadFiles.length > 0}
-                          <details class="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-                            <summary class="text-xs muted cursor-pointer select-none">📁 {scratchpadFiles.length} files in scratchpad/</summary>
-                            <ul class="list-none p-0 m-0 mt-2 max-h-36 overflow-y-auto">
-                              {#each scratchpadFiles.slice(-10) as file}
-                                <li class="py-0.5 text-xs font-mono">{file}</li>
+                          <details class="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700" open>
+                            <summary class="text-xs font-semibold text-gray-700 dark:text-gray-300 cursor-pointer select-none">📁 {scratchpadFiles.length} scratchpad files</summary>
+                            <div class="mt-2 flex flex-col gap-1 max-h-60 overflow-y-auto">
+                              {#each scratchpadFiles as file}
+                                <button
+                                  type="button"
+                                  class="w-full text-left px-2 py-1.5 text-xs font-mono rounded transition-colors flex items-center gap-2 {
+                                    selectedFileName === file
+                                      ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border border-violet-300 dark:border-violet-700'
+                                      : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                  }"
+                                  on:click={() => loadScratchpadFile(desire.id, file)}
+                                >
+                                  <span class="flex-shrink-0">
+                                    {#if file.includes('plan')}📋
+                                    {:else if file.includes('execution')}⚡
+                                    {:else if file.includes('status')}🔄
+                                    {:else if file.includes('note')}📝
+                                    {:else}📄{/if}
+                                  </span>
+                                  <span class="flex-1 truncate">{file}</span>
+                                  {#if selectedFileName === file}
+                                    <span class="text-violet-500">▼</span>
+                                  {:else}
+                                    <span class="text-gray-400">▶</span>
+                                  {/if}
+                                </button>
+
+                                <!-- File content viewer (inline below selected file) -->
+                                {#if selectedFileName === file}
+                                  <div class="ml-4 p-3 bg-gray-50 dark:bg-gray-900 border-l-2 border-violet-500 rounded-r text-xs">
+                                    {#if fileViewLoading}
+                                      <p class="text-gray-500">Loading...</p>
+                                    {:else if selectedFileContent}
+                                      {#if selectedFileContent.error}
+                                        <p class="text-red-500">{selectedFileContent.error}</p>
+                                      {:else}
+                                        <!-- File metadata -->
+                                        <div class="flex flex-wrap gap-3 mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+                                          {#if selectedFileContent.type}
+                                            <span class="px-2 py-0.5 bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 rounded text-[0.65rem] uppercase font-semibold">{selectedFileContent.type}</span>
+                                          {/if}
+                                          {#if selectedFileContent.timestamp}
+                                            <span class="text-gray-500">🕐 {formatTimestamp(selectedFileContent.timestamp)}</span>
+                                          {/if}
+                                          {#if selectedFileContent.actor}
+                                            <span class="text-gray-500">👤 {selectedFileContent.actor}</span>
+                                          {/if}
+                                        </div>
+
+                                        <!-- Description -->
+                                        {#if selectedFileContent.description}
+                                          <p class="text-gray-700 dark:text-gray-300 mb-2">{selectedFileContent.description}</p>
+                                        {/if}
+
+                                        <!-- Data payload -->
+                                        {#if selectedFileContent.data && Object.keys(selectedFileContent.data).length > 0}
+                                          <details class="mt-2">
+                                            <summary class="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 select-none">📦 Data payload</summary>
+                                            <pre class="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-[0.65rem] overflow-x-auto max-h-40">{JSON.stringify(selectedFileContent.data, null, 2)}</pre>
+                                          </details>
+                                        {/if}
+                                      {/if}
+                                    {:else}
+                                      <p class="text-gray-500">No content</p>
+                                    {/if}
+                                  </div>
+                                {/if}
                               {/each}
-                              {#if scratchpadFiles.length > 10}
-                                <li class="text-xs muted">...and {scratchpadFiles.length - 10} more</li>
-                              {/if}
-                            </ul>
+                            </div>
                           </details>
                         {/if}
                       </div>

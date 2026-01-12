@@ -19,7 +19,8 @@ import { isWithinBudget, shouldPauseDueToErrors } from './cost-tracker.js';
 import { checkFocusConstraints } from './lizard-brain.js';
 import { getPendingProposalTaskTypes, proposalEvents } from './operator-proposals.js';
 import { shouldPauseForUser, setDesireAwaiting, clearDesireAwaiting, type PauseCheckResult } from './pause-manager.js';
-import { listDesiresByStatus, listDesiresPendingApproval } from '../agency/storage.js';
+import { listDesiresPendingApproval } from '../agency/storage.js';
+import { appendAgencyMessageToConversation } from '../conversation-buffer.js';
 import type { QueuedTask } from './types.js';
 import { executeTask } from './task-executor.js';
 import { audit } from '../audit.js';
@@ -39,6 +40,11 @@ import type { TaskType as LaneTaskType } from '../queue/types.js';
 import { setUserContext } from '../context.js';
 
 const LOG_PREFIX = '[active-operator]';
+
+// Track which desires we've already notified the user about (to avoid spam)
+// Key: desireId, Value: timestamp of notification
+const notifiedAwaitingDesires = new Map<string, number>();
+const NOTIFICATION_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes before re-notifying
 
 /**
  * Wait for a proposal to be resolved (approved/rejected) or timeout.
@@ -89,31 +95,16 @@ let lizardBrainGraphMtime: number = 0;
  * Load the Lizard Brain cognitive graph.
  * Caches the graph and reloads if file changed.
  *
- * If Big Brother mode is enabled with delegateAll, uses the Big Brother variant
- * which delegates decision making to Claude instead of local vLLM.
+ * Note: Big Brother routing is now handled at the LLM call level via useBigBrother option,
+ * not via separate graph variants.
  */
-async function loadLizardBrainGraph(username?: string): Promise<SvelteFlowGraph | null> {
-  // Check if Big Brother mode should use the Big Brother variant
-  const { loadOperatorConfig } = await import('../config.js');
-
-  const operatorConfig = username ? loadOperatorConfig(username) : null;
-  const useBigBrotherVariant = operatorConfig?.bigBrotherMode?.enabled && operatorConfig?.bigBrotherMode?.delegateAll;
-
-  const graphFile = useBigBrotherVariant ? 'lizard-brain-bigbrother.json' : 'lizard-brain.json';
-  const graphPath = `${ROOT}/etc/cognitive-graphs/${graphFile}`;
+async function loadLizardBrainGraph(_username?: string): Promise<SvelteFlowGraph | null> {
+  // NOTE: Big Brother routing is now handled at the LLM call level (via useBigBrother option)
+  // Separate -bigbrother graph variants are no longer used.
+  const graphPath = `${ROOT}/etc/cognitive-graphs/lizard-brain.json`;
 
   try {
     if (!existsSync(graphPath)) {
-      // Fall back to regular graph if Big Brother variant doesn't exist
-      if (useBigBrotherVariant) {
-        console.warn(`${LOG_PREFIX} Big Brother variant not found, falling back to regular graph`);
-        const fallbackPath = `${ROOT}/etc/cognitive-graphs/lizard-brain.json`;
-        if (existsSync(fallbackPath)) {
-          const raw = await readFile(fallbackPath, 'utf-8');
-          const parsed = JSON.parse(raw);
-          return validateSvelteFlowGraph(parsed);
-        }
-      }
       console.error(`${LOG_PREFIX} Lizard Brain graph not found: ${graphPath}`);
       return null;
     }
@@ -134,8 +125,7 @@ async function loadLizardBrainGraph(username?: string): Promise<SvelteFlowGraph 
     lizardBrainGraph = validated;
     lizardBrainGraphMtime = stats.mtimeMs;
 
-    const variant = useBigBrotherVariant ? ' (Big Brother variant)' : '';
-    console.log(`${LOG_PREFIX} Loaded Lizard Brain graph${variant}: ${validated.nodes.length} nodes, ${validated.edges.length} edges`);
+    console.log(`${LOG_PREFIX} Loaded Lizard Brain graph: ${validated.nodes.length} nodes, ${validated.edges.length} edges`);
     return validated;
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to load Lizard Brain graph:`, error);
@@ -316,34 +306,76 @@ async function runDecisionLoop(username: string): Promise<void> {
         continue;
       }
 
-      // Check if any desires are awaiting user input (questioning, awaiting_approval, reviewing)
-      // Update the pause manager state before checking pause conditions
+      // ARCHITECTURAL FIX (2026-01-12):
+      // Desires in 'questioning' status should NOT block the decision loop.
+      // The Lizard Brain needs to run and decide what to do - it may choose to:
+      // 1. Re-present the question to the user
+      // 2. Attempt to answer from existing context
+      // 3. Skip the desire and do other work
+      //
+      // We still track 'awaiting_approval' desires for notification purposes,
+      // but we no longer set a hard pause for 'questioning' desires.
+      // The Lizard Brain prompt includes questioningDesires count to make informed decisions.
       try {
-        const [questioningDesires, approvalDesires] = await Promise.all([
-          listDesiresByStatus('questioning', username),
-          listDesiresPendingApproval(username),
-        ]);
-        const awaitingDesires = [...questioningDesires, ...approvalDesires];
+        const approvalDesires = await listDesiresPendingApproval(username);
 
-        if (awaitingDesires.length > 0) {
-          // Set the first awaiting desire in pause manager
-          setDesireAwaiting(username, awaitingDesires[0].id);
+        if (approvalDesires.length > 0) {
+          const firstDesire = approvalDesires[0];
+          // Set the first awaiting desire in pause manager (only for approval, not questioning)
+          setDesireAwaiting(username, firstDesire.id);
+
+          // Check if we should notify the user (haven't notified recently)
+          const now = Date.now();
+          const lastNotified = notifiedAwaitingDesires.get(firstDesire.id);
+          if (!lastNotified || (now - lastNotified) > NOTIFICATION_COOLDOWN_MS) {
+            // Notify the user in chat that we're waiting for approval
+            appendAgencyMessageToConversation(
+              username,
+              `⏳ **Awaiting Your Approval**\n\n"${firstDesire.title}" is ready for your review.\n\n_Check the Agency tab to approve or reject._`,
+              {
+                dialogueSource: 'agency-system',
+                displayColor: '#f59e0b',
+                type: 'desire_awaiting_input',
+                desireId: firstDesire.id,
+                desireTitle: firstDesire.title,
+                desireStatus: firstDesire.status,
+              }
+            );
+
+            notifiedAwaitingDesires.set(firstDesire.id, now);
+            console.log(`${LOG_PREFIX} Notified user about desire awaiting approval: ${firstDesire.title}`);
+          }
         } else {
-          // Clear desire awaiting state if no desires are waiting
+          // Clear desire awaiting state if no desires need approval
           clearDesireAwaiting(username);
+
+          // Clean up old notifications from the map
+          const now = Date.now();
+          for (const [desireId, timestamp] of notifiedAwaitingDesires.entries()) {
+            if (now - timestamp > NOTIFICATION_COOLDOWN_MS * 2) {
+              notifiedAwaitingDesires.delete(desireId);
+            }
+          }
         }
       } catch (desireError) {
         console.warn(`${LOG_PREFIX} Failed to check desire states:`, desireError);
       }
 
       // Check if we should pause for user interaction (TTS, curiosity, conversation, etc.)
-      // This is the intelligent pause system - waits for user to respond before continuing
+      // Note: 'questioning' desires are NO LONGER included in pause conditions.
+      // The Lizard Brain will handle them intelligently.
       const pauseCheck: PauseCheckResult = shouldPauseForUser(username);
       if (pauseCheck.shouldPause) {
-        console.log(`${LOG_PREFIX} Pausing: ${pauseCheck.reason} (wait ${Math.round(pauseCheck.waitMs / 1000)}s)`);
-        recordThought(`Pausing: ${pauseCheck.reason}`);
-        await sleep(pauseCheck.waitMs);
-        continue;
+        // Don't pause for desire-related reasons - let Lizard Brain decide
+        if (pauseCheck.pauseType === 'desire') {
+          console.log(`${LOG_PREFIX} Desire awaiting input, but letting Lizard Brain decide how to handle`);
+          // Don't pause - continue to Lizard Brain execution
+        } else {
+          console.log(`${LOG_PREFIX} Pausing: ${pauseCheck.reason} (wait ${Math.round(pauseCheck.waitMs / 1000)}s)`);
+          recordThought(`Pausing: ${pauseCheck.reason}`);
+          await sleep(pauseCheck.waitMs);
+          continue;
+        }
       }
 
       // Execute the Lizard Brain graph

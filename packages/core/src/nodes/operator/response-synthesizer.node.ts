@@ -7,6 +7,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { loadOperatorConfig } from '../../config.js';
 // NOTE: getIdentitySummary import REMOVED (2025-12-18)
 // Persona injection should ONLY come from graph nodes (persona_loader → persona_formatter)
 // Hidden fallbacks bypass the graph editor workflow and cause unexpected behavior
@@ -77,6 +78,13 @@ You are responding based on information that was gathered or generated. Your tas
 const execute: NodeExecutor = async (inputs, context) => {
   // Extract username for LLM calls
   const username = context.userId || context.username;
+
+  // Check Big Brother hybrid mode - use Big Brother for central thinking when enabled but not delegateAll
+  const operatorConfig = username ? loadOperatorConfig(username) : null;
+  const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
+  const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
+  // Hybrid mode: Big Brother enabled but not delegate all - this node requests Big Brother for central thinking
+  const useBigBrother = bigBrotherEnabled && !bigBrotherDelegateAll;
 
   // Named inputs from graph edges:
   // - goal: from orchestrator_llm (node 24)
@@ -310,6 +318,7 @@ Respond conversationally to help refine this goal.
           maxTokens,
           repeatPenalty: 1.3,
           temperature,
+          useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
         onProgress: context.emitProgress,
       });
@@ -319,6 +328,7 @@ Respond conversationally to help refine this goal.
         contextBased: true,
         unknownSignal,
         memoriesUsed: memories.length,
+        usedBigBrother: useBigBrother,
       };
     } catch (error) {
       console.error('[ResponseSynthesizer] Error in context-based generation:', error);
@@ -401,6 +411,7 @@ Respond conversationally to help refine this goal.
           maxTokens,
           repeatPenalty: 1.3,
           temperature,
+          useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
         onProgress: context.emitProgress,
       });
@@ -409,6 +420,7 @@ Respond conversationally to help refine this goal.
         response: response.content,
         orchestratorGuidance: true,
         responseStyle: loopResult.responseStyle,
+        usedBigBrother: useBigBrother,
       };
     } catch (error) {
       console.error('[ResponseSynthesizer] Error generating response from orchestrator guidance:', error);
@@ -607,6 +619,7 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
               maxTokens: 512,
               repeatPenalty: 1.2,
               temperature: 0.7,
+              useBigBrother, // Use Big Brother in hybrid mode for central thinking
             },
             onProgress: context.emitProgress,
           });
@@ -615,6 +628,7 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
             response: response.content,
             unknownResponse: true,
             personaSynthesized: true,
+            usedBigBrother: useBigBrother,
           };
         } catch (error) {
           console.error('[ResponseSynthesizer] Error generating response:', error);
@@ -678,6 +692,7 @@ Based on these execution steps, provide a clear, helpful response to the user's 
         maxTokens: 2048,
         repeatPenalty: 1.2,
         temperature: 0.7,
+        useBigBrother, // Hybrid mode: use Big Brother for central thinking
       },
       onProgress: context.emitProgress,
     });

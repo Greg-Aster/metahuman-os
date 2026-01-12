@@ -200,6 +200,31 @@ async function checkFeasibility(
   username: string,
   toolCatalog?: string
 ): Promise<FeasibilityResult> {
+  // Build goal type context
+  const isLongRunning = desire.goalType === 'long_running';
+  const goalTypeContext = isLongRunning
+    ? `
+## IMPORTANT: Long-Running Goal Context
+**Goal Type**: long_running
+**Completion Criteria**: ${desire.completionCriteria || 'Not specified'}
+**Milestones**: ${desire.milestones?.length || 0} defined
+
+This is a LONG-RUNNING goal that may take weeks, months, or longer. The user will accomplish the goal themselves.
+**The system's role is to SUPPORT the user, NOT to directly execute the goal.**
+
+For long-running goals, feasibility means: "Can the system meaningfully help the user progress toward this goal?"
+Support activities include:
+- Research and information gathering
+- Creating task lists and reminders
+- Setting up calendar events for milestones
+- Tracking progress and sending check-in questions
+- Organizing relevant information
+- Helping with logistics (bookings, permits, etc.)
+
+Do NOT reject because the goal requires physical action by the user. If the system can help with planning/research/tracking, it's feasible.
+`
+    : '';
+
   const prompt = `You are assessing the feasibility of an autonomous agent's desire.
 
 ## Desire to Assess
@@ -207,7 +232,8 @@ async function checkFeasibility(
 **Description**: ${desire.description}
 **Reason**: ${desire.reason || 'Not specified'}
 **Source**: ${desire.source}
-
+**Goal Type**: ${desire.goalType || 'one_time'}
+${goalTypeContext}
 ## Available Capabilities
 The agent has access to:
 - Full computer access (read/write files, run commands)
@@ -218,17 +244,21 @@ The agent has access to:
 ${toolCatalog ? `\n## Tool Catalog\n${toolCatalog}` : ''}
 
 ## Assessment Criteria
-1. **Achievable**: Can this be accomplished with available tools and capabilities?
+${isLongRunning ? `For this LONG-RUNNING goal, assess if the system can meaningfully SUPPORT the user:
+1. **Supportable**: Can the system help with research, planning, tracking, or logistics?
+2. **Progressive**: Can the system help track progress through milestones?
+3. **Safe**: Are the support activities within acceptable boundaries?
+4. **Clear**: Are the milestones and completion criteria clear enough to track?` : `1. **Achievable**: Can this be accomplished with available tools and capabilities?
 2. **Time-bounded**: Can meaningful progress be made in a single execution session?
 3. **Safe**: Does this not require actions outside acceptable boundaries?
-4. **Clear**: Are the success criteria clear enough to verify completion?
+4. **Clear**: Are the success criteria clear enough to verify completion?`}
 
 ## Instructions
-Assess whether this desire is feasible. Consider:
+${isLongRunning ? `Assess whether this long-running goal can be SUPPORTED by the system. Remember: the user will do the physical work; the system helps with planning, research, tracking, and logistics. If the system can meaningfully help, mark it as feasible.` : `Assess whether this desire is feasible. Consider:
 - Is this something that can be done with computer-based tools?
 - Does it require physical action that cannot be automated?
 - Does it require access or permissions the system doesn't have?
-- Is it too vague to create an actionable plan?
+- Is it too vague to create an actionable plan?`}
 
 Respond in this JSON format:
 {
@@ -353,6 +383,23 @@ async function processDesire(
               desireId: desire.id,
               feasibility,
             },
+          }
+        );
+
+        // Also notify user in main chat so they can see the rejection and respond
+        await appendAgencyMessageToConversation(
+          username,
+          `❌ **Desire Not Feasible:** "${desire.title}"\n\n` +
+          `**Reason:** ${feasibility.reasoning}\n\n` +
+          `${feasibility.blockers?.length ? `**Blockers:**\n${feasibility.blockers.map(b => `• ${b}`).join('\n')}\n\n` : ''}` +
+          `_You can provide feedback to clarify or adjust this desire, or create a new one._`,
+          {
+            dialogueSource: 'agency-system',
+            displayColor: '#ef4444',
+            type: 'desire_rejected',
+            desireId: desire.id,
+            desireTitle: desire.title,
+            feasibility,
           }
         );
 
@@ -520,6 +567,25 @@ async function processDesire(
 
     if (verdict === 'reject') {
       console.log(`${LOG_PREFIX}     Plan rejected by review`);
+
+      // Extract rejection reason if available
+      const reviewReason = verdictNode?.outputs?.reasoning || verdictNode?.outputs?.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
+
+      // Notify user in main chat
+      await appendAgencyMessageToConversation(
+        username,
+        `❌ **Plan Rejected:** "${desire.title}"\n\n` +
+        `**Reason:** ${reviewReason}\n\n` +
+        `_The plan was reviewed but did not pass alignment or safety checks. You can provide feedback to adjust the approach._`,
+        {
+          dialogueSource: 'agency-system',
+          displayColor: '#ef4444',
+          type: 'plan_rejected',
+          desireId: desire.id,
+          desireTitle: desire.title,
+        }
+      );
+
       return { success: true, outcome: 'rejected' };
     }
 

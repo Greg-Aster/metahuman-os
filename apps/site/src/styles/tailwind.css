@@ -535,6 +535,12 @@
   .chat-input:disabled {
     @apply opacity-50 cursor-not-allowed;
   }
+  .chat-input.queuing {
+    @apply border-amber-500/50 dark:border-amber-400/50;
+  }
+  .chat-input.queuing:focus {
+    @apply border-amber-500 dark:border-amber-400 ring-amber-500/20 dark:ring-amber-400/20;
+  }
 
   .input-actions {
     @apply flex items-center gap-2;
@@ -550,12 +556,21 @@
   .send-btn:disabled {
     @apply opacity-50 cursor-not-allowed;
   }
+  .send-btn.queuing {
+    @apply bg-amber-500 dark:bg-amber-400;
+  }
+  .send-btn.queuing:hover {
+    @apply bg-amber-600 dark:bg-amber-300;
+  }
 
   .mic-btn {
     @apply inline-flex items-center justify-center px-2.5 py-2.5 border border-black/10 dark:border-white/10 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 cursor-pointer;
   }
   .mic-btn:disabled {
     @apply opacity-60 cursor-not-allowed;
+  }
+  .mic-btn.queuing {
+    @apply border-amber-500/50 dark:border-amber-400/50 text-amber-600 dark:text-amber-400;
   }
 
   .welcome-screen {

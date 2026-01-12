@@ -17,11 +17,17 @@
   const dispatch = createEventDispatcher();
 
   // Compute display name based on role
+  // IMPORTANT: If roleLabel is explicitly provided (e.g., by AgencyCard, CuriosityCard),
+  // use it instead of the default persona/user name. This allows specialized cards
+  // to override the header display.
   $: displayName = (() => {
+    // If a custom roleLabel is provided, always use it
+    if (roleLabel) return roleLabel;
+    // Otherwise fall back to role-based defaults
     if (message.role === 'user') return $userDisplayNameStore;
     if (message.role === 'assistant') return $personaNameStore;
-    // For other roles, use the roleLabel if provided, otherwise derive from role
-    return roleLabel || message.role;
+    // For other roles, derive from role
+    return message.role;
   })();
 
   // Compute icon based on role (only for special message types)

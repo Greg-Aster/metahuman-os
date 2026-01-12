@@ -38,6 +38,13 @@ export const GET: APIRoute = ({ request }) => {
           const statuses = getAgentStatuses();
           const agents = listAvailableAgents();
 
+          // Debug logging
+          if (agents.length === 0) {
+            console.warn('[monitor/stream] No agents found by listAvailableAgents()');
+            console.warn('[monitor/stream] systemPaths.agents:', systemPaths.agents);
+            console.warn('[monitor/stream] agents dir exists:', fs.existsSync(systemPaths.agents));
+          }
+
           // Build comprehensive metrics for each agent
           const agentMetrics = agents.map((name) => {
             const status = statuses.find((s) => s.name === name);

@@ -146,20 +146,37 @@ export function useMessages(options: UseMessagesOptions) {
 
   /**
    * Get reply-to metadata from selected message
-   * Supports curiosity questions and desire/goal messages
+   * Supports curiosity questions, desire/goal messages, and card responses
    */
   function getReplyToMetadata(): {
     questionId: string | null;
     content: string | null;
     desireId: string | null;
     desireTitle: string | null;
+    cardType: string | null;
+    dialogueSource: string | null;
+    isAgencyMessage: boolean;
+    isCuriosityQuestion: boolean;
+    responseBufferId: string | null;
+    meta: Record<string, any> | null;
   } {
     const selected = get(selectedMessage);
+    const meta = selected?.meta || null;
+    // Check both questionId and curiosityQuestionId for backwards compatibility
+    // curiosity-question-saver.node.ts saves as meta.questionId with isCuriosityQuestion: true
+    const isCuriosity = !!(meta?.isCuriosityQuestion);
+    const questionId = meta?.questionId || meta?.curiosityQuestionId || null;
     return {
-      questionId: selected?.meta?.curiosityQuestionId || null,
+      questionId: isCuriosity ? questionId : null,
       content: selected?.content || null,
-      desireId: selected?.meta?.desireId || null,
-      desireTitle: selected?.meta?.desireTitle || null,
+      desireId: meta?.desireId || null,
+      desireTitle: meta?.desireTitle || null,
+      cardType: meta?.type || null,
+      dialogueSource: meta?.dialogueSource || null,
+      isAgencyMessage: !!(meta?.dialogueSource === 'agency-system' || meta?.isAgencyMessage),
+      isCuriosityQuestion: isCuriosity,
+      responseBufferId: meta?.responseBufferId || null,
+      meta,
     };
   }
 

@@ -150,9 +150,9 @@ async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | nu
 /**
  * Load a cognitive graph by mode name with caching
  * @param graphKey - The cognitive mode key (e.g., 'dual', 'agent', 'emulation')
- * @param username - Optional username for Big Brother config lookup (bypasses getUserContext())
+ * @param _username - Deprecated: Big Brother routing now handled at LLM call level
  */
-export async function loadGraphForMode(graphKey: string, username?: string): Promise<LoadedGraph | null> {
+export async function loadGraphForMode(graphKey: string, _username?: string): Promise<LoadedGraph | null> {
   const loadStart = Date.now();
 
   if (!graphKey) {
@@ -162,66 +162,15 @@ export async function loadGraphForMode(graphKey: string, username?: string): Pro
 
   const normalizedKey = graphKey.toLowerCase();
 
-  // Check if Big Brother Mode is enabled for dual mode
-  let useBigBrotherGraph = false;
-  if (normalizedKey === 'dual') {
-    try {
-      const bbCheckStart = Date.now();
-
-      // Use provided username, or fall back to getUserContext()
-      let resolvedUsername = username;
-      if (!resolvedUsername) {
-        const { getUserContext } = await import('./context.js');
-        const userContext = getUserContext();
-        resolvedUsername = userContext?.username;
-      }
-      console.log(`[graph-streaming] ⏱️ Username resolved in ${Date.now() - bbCheckStart}ms`);
-
-      // Skip Big Brother check if no authenticated user (all configs are user-specific)
-      if (resolvedUsername) {
-        const configStart = Date.now();
-        const { loadOperatorConfig } = await import('./config.js');
-        const { ensureBackendsInitialized, getActiveBackend, getBackend } = await import('./escalation-backend.js');
-        const operatorConfig = loadOperatorConfig(resolvedUsername);
-        const bigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled === true;
-        console.log(`[graph-streaming] ⏱️ Config loaded in ${Date.now() - configStart}ms`);
-
-        console.log(`[graph-streaming] Big Brother check: username=${resolvedUsername}, enabled=${bigBrotherEnabled}, provider=${operatorConfig.bigBrotherMode?.provider}`);
-
-        if (bigBrotherEnabled) {
-          const rawProvider = operatorConfig.bigBrotherMode?.provider;
-          const provider = rawProvider === 'ollama' || rawProvider === 'openai'
-            ? 'open-interpreter'
-            : rawProvider;
-
-          const backendInitStart = Date.now();
-          await ensureBackendsInitialized();
-          console.log(`[graph-streaming] ⏱️ Backends initialized in ${Date.now() - backendInitStart}ms`);
-
-          const availableCheckStart = Date.now();
-          const backend = provider ? getBackend(provider) : getActiveBackend(resolvedUsername);
-          const backendAvailable = backend ? await backend.isAvailable() : false;
-          console.log(`[graph-streaming] ⏱️ Backend available check in ${Date.now() - availableCheckStart}ms (result: ${backendAvailable})`);
-
-          if (backendAvailable) {
-            useBigBrotherGraph = true;
-            console.log('[graph-streaming] Big Brother Mode active');
-          }
-        }
-      }
-      console.log(`[graph-streaming] ⏱️ Total Big Brother check: ${Date.now() - bbCheckStart}ms`);
-    } catch (error) {
-      console.warn('[graph-streaming] Could not check Big Brother status:', error);
-    }
-  }
-
-  const baseName = useBigBrotherGraph ? `${normalizedKey}-mode-bigbrother` : `${normalizedKey}-mode`;
+  // NOTE: Big Brother routing is now handled at the LLM call level (via useBigBrother option in response-synthesizer)
+  // Separate -bigbrother graph variants are no longer used. All modes use the standard graph.
+  const baseName = `${normalizedKey}-mode`;
   const pathsToCheck = [
     path.join(ROOT, 'etc', 'cognitive-graphs', 'custom', `${baseName}.json`),
     path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
   ];
 
-  console.log(`[graph-streaming] Loading graph: "${graphKey}" (${useBigBrotherGraph ? 'Big Brother' : 'standard'})`);
+  console.log(`[graph-streaming] Loading graph: "${graphKey}"`);
 
   for (const filePath of pathsToCheck) {
     try {

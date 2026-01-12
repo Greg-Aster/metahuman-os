@@ -17,6 +17,8 @@ import type {
   DesireScratchpadEntryType,
   DesireOutcomeReview,
   DesireExecution,
+  DesireMilestone,
+  DesireGoalProgress,
 } from './types.js';
 
 // ============================================================================
@@ -967,6 +969,103 @@ export async function saveExecutionToFolder(
 }
 
 /**
+ * Load execution attempts from desire folder
+ * Returns list of execution attempts, newest first
+ */
+export async function loadExecutionAttempts(
+  desireId: string,
+  username?: string
+): Promise<DesireExecution[]> {
+  const folderPath = getDesireFolderPath(desireId);
+
+  const result = await storageClient.list({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: `${folderPath}/executions`,
+  });
+
+  if (!result.success || !result.files) {
+    return [];
+  }
+
+  const executionFiles = result.files
+    .filter(f => f.startsWith('attempt-') && f.endsWith('.json'));
+
+  const executions: DesireExecution[] = [];
+
+  for (const file of executionFiles) {
+    const readResult = await storageClient.read({
+      username,
+      category: CATEGORY,
+      subcategory: SUBCATEGORY,
+      relativePath: `${folderPath}/executions/${file}`,
+    });
+
+    if (readResult.success && readResult.data) {
+      try {
+        const dataStr = typeof readResult.data === 'string' ? readResult.data : readResult.data.toString('utf8');
+        const execution = JSON.parse(dataStr);
+
+        // Skip executions with garbage terminal output (escape codes)
+        const hasGarbageContent = execution.stepResults?.some((r: any) => {
+          const response = r.result?.response || r.output || '';
+          return typeof response === 'string' && (
+            response.includes('\u001b[') ||  // ANSI escape codes
+            response.includes('Bypassing Permissions') ||
+            response.includes('Reticulating…')
+          );
+        });
+
+        if (!hasGarbageContent) {
+          executions.push(execution);
+        }
+      } catch {
+        // Skip malformed files
+      }
+    }
+  }
+
+  // Sort by startedAt timestamp descending (newest first)
+  executions.sort((a, b) => {
+    const dateA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+    const dateB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return executions;
+}
+
+/**
+ * Load a specific execution attempt by number
+ */
+export async function loadExecutionAttempt(
+  desireId: string,
+  attemptNumber: number,
+  username?: string
+): Promise<DesireExecution | null> {
+  const folderPath = getDesireFolderPath(desireId);
+
+  const result = await storageClient.read({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: `${folderPath}/executions/attempt-${String(attemptNumber).padStart(3, '0')}.json`,
+  });
+
+  if (!result.success || !result.data) {
+    return null;
+  }
+
+  try {
+    const dataStr = typeof result.data === 'string' ? result.data : result.data.toString('utf8');
+    return JSON.parse(dataStr);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get folder size (rough metric of processing effort)
  */
 export async function getDesireFolderSize(desireId: string, username?: string): Promise<number> {
@@ -1323,4 +1422,197 @@ export async function depreciateDesire(
   }, username);
 
   return desire;
+}
+
+// ============================================================================
+// Long-Running Goal & Milestone Operations
+// ============================================================================
+
+/**
+ * Update milestones for a long-running desire.
+ */
+export async function updateDesireMilestones(
+  desireId: string,
+  milestones: DesireMilestone[],
+  username?: string
+): Promise<Desire | null> {
+  const desire = await loadDesireFromFolder(desireId, username);
+  if (!desire) return null;
+
+  const now = new Date().toISOString();
+
+  // Update milestones
+  desire.milestones = milestones;
+  desire.updatedAt = now;
+
+  // Update goal progress
+  if (desire.goalProgress) {
+    const completedCount = milestones.filter(m => m.status === 'completed').length;
+    desire.goalProgress.totalMilestones = milestones.length;
+    desire.goalProgress.completedMilestones = completedCount;
+    desire.goalProgress.progressPercent = milestones.length > 0
+      ? Math.round((completedCount / milestones.length) * 100)
+      : 0;
+  }
+
+  await saveDesireManifest(desire, username);
+  return desire;
+}
+
+/**
+ * Advance to the next milestone for a long-running desire.
+ * Marks the current milestone as completed and moves to the next.
+ */
+export async function advanceDesireMilestone(
+  desireId: string,
+  username?: string
+): Promise<{ desire: Desire; completedMilestone: DesireMilestone; nextMilestone?: DesireMilestone } | null> {
+  const desire = await loadDesireFromFolder(desireId, username);
+  if (!desire || !desire.milestones || !desire.goalProgress) return null;
+
+  const now = new Date().toISOString();
+  const currentIndex = desire.goalProgress.currentMilestone;
+
+  // Validate we have a current milestone
+  if (currentIndex >= desire.milestones.length) {
+    console.warn(`[agency:storage] Cannot advance: current milestone index ${currentIndex} >= total ${desire.milestones.length}`);
+    return null;
+  }
+
+  // Mark current milestone as completed
+  const completedMilestone = desire.milestones[currentIndex];
+  completedMilestone.status = 'completed';
+  completedMilestone.completedAt = now;
+
+  // Update progress
+  desire.goalProgress.completedMilestones++;
+  desire.goalProgress.progressPercent = Math.round(
+    (desire.goalProgress.completedMilestones / desire.goalProgress.totalMilestones) * 100
+  );
+  desire.goalProgress.lastCheckinAt = now;
+
+  // Determine next milestone
+  let nextMilestone: DesireMilestone | undefined;
+  if (currentIndex + 1 < desire.milestones.length) {
+    desire.goalProgress.currentMilestone = currentIndex + 1;
+    nextMilestone = desire.milestones[currentIndex + 1];
+    nextMilestone.status = 'in_progress';
+  }
+
+  desire.updatedAt = now;
+
+  // Save manifest
+  await saveDesireManifest(desire, username);
+
+  // Add scratchpad entry
+  await addScratchpadEntryToFolder(desireId, {
+    timestamp: now,
+    type: 'status_change',
+    description: `Milestone ${currentIndex + 1} completed: "${completedMilestone.title}". Progress: ${desire.goalProgress.progressPercent}%`,
+    actor: 'system',
+    data: {
+      completedMilestoneId: completedMilestone.id,
+      completedMilestoneOrder: completedMilestone.order,
+      nextMilestoneId: nextMilestone?.id,
+      progressPercent: desire.goalProgress.progressPercent,
+    },
+  }, username);
+
+  return { desire, completedMilestone, nextMilestone };
+}
+
+/**
+ * Get all long-running desires that need check-in.
+ * Returns desires in 'executing' status with goalType='long_running'.
+ */
+export async function listLongRunningDesiresNeedingCheckin(
+  username?: string,
+  maxAgeHours: number = 24
+): Promise<Desire[]> {
+  const allDesires = await listDesiresFromFolders(username);
+  const now = Date.now();
+  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+
+  return allDesires.filter(d => {
+    // Must be long-running and executing
+    if (d.goalType !== 'long_running') return false;
+    if (d.status !== 'executing') return false;
+
+    // Check if check-in is due
+    if (!d.goalProgress?.lastCheckinAt) return true;
+
+    const lastCheckin = new Date(d.goalProgress.lastCheckinAt).getTime();
+    return (now - lastCheckin) > maxAgeMs;
+  });
+}
+
+/**
+ * Update goal progress check-in timestamp.
+ */
+export async function recordDesireCheckin(
+  desireId: string,
+  username?: string,
+  notes?: string
+): Promise<Desire | null> {
+  const desire = await loadDesireFromFolder(desireId, username);
+  if (!desire) return null;
+
+  const now = new Date().toISOString();
+
+  // Initialize goalProgress if missing
+  if (!desire.goalProgress) {
+    desire.goalProgress = {
+      currentMilestone: 0,
+      totalMilestones: desire.milestones?.length || 0,
+      completedMilestones: 0,
+      progressPercent: 0,
+    };
+  }
+
+  desire.goalProgress.lastCheckinAt = now;
+  desire.updatedAt = now;
+
+  await saveDesireManifest(desire, username);
+
+  // Add scratchpad entry
+  await addScratchpadEntryToFolder(desireId, {
+    timestamp: now,
+    type: 'note',
+    description: `Check-in recorded${notes ? `: ${notes}` : ''}`,
+    actor: 'system',
+    data: {
+      progressPercent: desire.goalProgress.progressPercent,
+      currentMilestone: desire.goalProgress.currentMilestone,
+    },
+  }, username);
+
+  return desire;
+}
+
+/**
+ * Check if a long-running desire has met its completion criteria.
+ * Returns true only if all milestones are completed.
+ */
+export function isDesireComplete(desire: Desire): boolean {
+  // One-time desires complete when execution finishes (existing behavior)
+  if (!desire.goalType || desire.goalType === 'one_time') {
+    return desire.execution?.status === 'completed';
+  }
+
+  // Recurring desires never complete by definition
+  if (desire.goalType === 'recurring') {
+    return false;
+  }
+
+  // Long-running desires complete when ALL milestones are done
+  if (desire.goalType === 'long_running') {
+    if (!desire.milestones || desire.milestones.length === 0) {
+      // No milestones defined - fall back to execution status
+      return desire.execution?.status === 'completed';
+    }
+
+    return desire.milestones.every(m => m.status === 'completed');
+  }
+
+  return false;
 }

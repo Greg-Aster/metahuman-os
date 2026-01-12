@@ -27,6 +27,7 @@ export type TaskType =
   | 'desire_advance' // Process pending desires through planning/review/approval
   | 'desire_execute' // Execute an APPROVED desire (not pending!)
   | 'desire_review' // Review execution outcomes (retry/escalate/complete/abandon)
+  | 'desire_checkin' // Intelligent check-in on long-running goals (LLM-driven evaluation)
   | 'psychoanalyze' // Run psychoanalyzer to update persona
   | 'code_analyze' // Self-healing: analyze codebase for errors
   | 'help_ticket_review' // Review user feedback tickets and propose fixes
@@ -59,6 +60,7 @@ export const DEFAULT_TASK_PRIORITIES: Record<TaskType, Priority> = {
   help_ticket_review: 'high', // User feedback is important - address quickly
   desire_explore: 'normal', // Explore desires before planning
   desire_advance: 'normal', // Process pending desires through approval pipeline
+  desire_checkin: 'normal', // Check on long-running goals periodically
   memory_curate: 'normal',
   training_curate: 'normal', // Curate training data during idle time
   index_build: 'normal',
@@ -119,6 +121,7 @@ export type TaskPayload =
   | DesireAdvancePayload
   | DesireExecutePayload
   | DesireReviewPayload
+  | DesireCheckinPayload
   | PsychoanalyzePayload
   | CodeAnalyzePayload
   | TriggerPayload;
@@ -171,6 +174,22 @@ export interface DesireExecutePayload {
 export interface DesireReviewPayload {
   type: 'desire_review';
   desireId?: string; // Optional: specific desire to review, or process all awaiting_review
+}
+
+/**
+ * Payload for intelligent long-running desire check-ins.
+ * Triggered by Lizard Brain when long-running desires need evaluation.
+ */
+export interface DesireCheckinPayload {
+  type: 'desire_checkin';
+  /** Optional: specific long-running desire to check on, or check all */
+  desireId?: string;
+  /** Check milestone progress and determine if advancement is needed */
+  checkProgress?: boolean;
+  /** Allow the check-in to suggest plan modifications */
+  adjustPlan?: boolean;
+  /** Force a check-in even if lastCheckinAt is recent */
+  force?: boolean;
 }
 
 export interface PsychoanalyzePayload {
@@ -282,6 +301,7 @@ export const DEFAULT_CONFIG: ActiveOperatorConfig = {
     'desire_advance',
     'desire_execute',
     'desire_review',
+    'desire_checkin',
     'psychoanalyze',
   ],
   cooldownMs: 5000,
@@ -323,11 +343,29 @@ export interface SystemState {
   /** Number of desires awaiting user approval */
   awaitingApprovalDesires: number;
 
+  /** Number of desires in 'questioning' status - have unanswered clarifying questions */
+  questioningDesires: number;
+
+  /** Details about desires with pending questions (for Lizard Brain decision making) */
+  questioningDesireDetails?: {
+    id: string;
+    title: string;
+    questionCount: number;
+    answeredCount: number;
+    askedAt: string;
+  }[];
+
   /** Number of approved desires ready for autonomous execution */
   approvedDesires: number;
 
   /** Number of desires awaiting outcome review (post-execution) - need desire_review to process! */
   awaitingReviewDesires: number;
+
+  /** Number of long-running desires currently in 'executing' status */
+  longRunningDesires?: number;
+
+  /** Number of long-running desires that need a check-in (stale lastCheckinAt) */
+  longRunningDesiresNeedingCheckin?: number;
 
   /** Task types with pending HITL proposals (awaiting user approval) */
   pendingProposalTasks?: string[];

@@ -23,10 +23,24 @@ interface Plan {
 const execute: NodeExecutor = async (inputs, _context, properties) => {
   // Input comes via NAMED handle from graph links (not positional index!)
   // In desire-planner.json: edge e-5-slot_0-6-slot_0 -> inputs.slot_0
-  // The plan generator outputs {plan, success, error} via fallback (entire output object)
-  const slot0 = (inputs.slot_0 || inputs[0]) as { plan?: Plan; success?: boolean } | Plan | undefined;
+  // The plan generator outputs {plan, success, error, goalType, completionCriteria, milestones, goalProgress}
+  const slot0 = (inputs.slot_0 || inputs[0]) as {
+    plan?: Plan;
+    success?: boolean;
+    goalType?: string;
+    completionCriteria?: string;
+    milestones?: unknown[];
+    goalProgress?: unknown;
+  } | Plan | undefined;
 
   const plan = (slot0 && 'plan' in slot0 ? slot0.plan : slot0) as Plan | undefined;
+
+  // Extract long-running goal fields to pass through
+  const goalType = slot0 && 'goalType' in slot0 ? slot0.goalType : undefined;
+  const completionCriteria = slot0 && 'completionCriteria' in slot0 ? slot0.completionCriteria : undefined;
+  const milestones = slot0 && 'milestones' in slot0 ? slot0.milestones : undefined;
+  const goalProgress = slot0 && 'goalProgress' in slot0 ? slot0.goalProgress : undefined;
+
   const checkSkillAvailability = properties?.checkSkillAvailability ?? true;
   const checkTrustLevel = properties?.checkTrustLevel ?? true;
 
@@ -81,6 +95,11 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     errors: errors.length > 0 ? errors : undefined,
     warnings: warnings.length > 0 ? warnings : undefined,
     stepCount: plan?.steps?.length ?? 0,
+    // Pass through long-running goal fields
+    goalType,
+    completionCriteria,
+    milestones,
+    goalProgress,
   };
 };
 
@@ -96,6 +115,10 @@ export const PlanValidatorNode: NodeDefinition = defineNode({
     { name: 'plan', type: 'object', description: 'Validated plan (or null if invalid)' },
     { name: 'errors', type: 'array', optional: true, description: 'Validation errors' },
     { name: 'warnings', type: 'array', optional: true, description: 'Validation warnings' },
+    { name: 'goalType', type: 'string', optional: true, description: 'Goal type (one_time, recurring, long_running)' },
+    { name: 'completionCriteria', type: 'string', optional: true, description: 'Verifiable completion condition' },
+    { name: 'milestones', type: 'array', optional: true, description: 'Milestones for long_running goals' },
+    { name: 'goalProgress', type: 'object', optional: true, description: 'Progress tracking for long_running goals' },
   ],
   properties: {
     checkSkillAvailability: true,

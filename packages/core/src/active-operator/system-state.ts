@@ -116,7 +116,7 @@ async function getIndexAgeHours(username: string): Promise<number> {
     // Use file mtime for more accurate "last updated" signal
     // This captures both full rebuilds and incremental appends
     const profilePaths = getProfilePaths(username);
-    const vectorsPath = path.join(profilePaths.index, 'vectors.json');
+    const vectorsPath = path.join(profilePaths.indexDir, 'vectors.json');
 
     if (fs.existsSync(vectorsPath)) {
       const stats = fs.statSync(vectorsPath);
@@ -154,12 +154,25 @@ async function getIndexAgeHours(username: string): Promise<number> {
  *
  * @param username - The user profile to query (required for multi-user support)
  */
+/**
+ * Details about desires with pending questions.
+ */
+interface QuestioningDesireDetail {
+  id: string;
+  title: string;
+  questionCount: number;
+  answeredCount: number;
+  askedAt: string;
+}
+
 async function getDesireCounts(username: string): Promise<{
   pending: number;
   pendingReadyToAdvance: number;
   inPipeline: number;
   active: number;
   awaitingApproval: number;
+  questioning: number;
+  questioningDetails: QuestioningDesireDetail[];
   approved: number;
   awaitingReview: number;
 }> {
@@ -178,6 +191,8 @@ async function getDesireCounts(username: string): Promise<{
     let inPipeline = 0;
     let active = 0;
     let awaitingApproval = 0;
+    let questioning = 0;
+    const questioningDetails: QuestioningDesireDetail[] = [];
     let approved = 0;
     let awaitingReview = 0;
 
@@ -189,6 +204,22 @@ async function getDesireCounts(username: string): Promise<{
           // Check if this pending desire is ABOVE activation threshold
           if (desire.strength >= activationThreshold) {
             pendingReadyToAdvance++;
+          }
+          break;
+        case 'questioning':
+          // Has unanswered clarifying questions - Lizard Brain needs to know about these!
+          questioning++;
+          active++;
+          if (desire.clarifyingQuestions) {
+            const questions = desire.clarifyingQuestions.questions || [];
+            const answers = desire.clarifyingQuestions.answers || [];
+            questioningDetails.push({
+              id: desire.id,
+              title: desire.title,
+              questionCount: questions.length,
+              answeredCount: answers.length,
+              askedAt: desire.clarifyingQuestions.askedAt || desire.updatedAt || '',
+            });
           }
           break;
         case 'evaluating':
@@ -218,10 +249,10 @@ async function getDesireCounts(username: string): Promise<{
       }
     }
 
-    return { pending, pendingReadyToAdvance, inPipeline, active, awaitingApproval, approved, awaitingReview };
+    return { pending, pendingReadyToAdvance, inPipeline, active, awaitingApproval, questioning, questioningDetails, approved, awaitingReview };
   } catch (error) {
     console.warn('[system-state] Failed to get desire counts:', error);
-    return { pending: 0, pendingReadyToAdvance: 0, inPipeline: 0, active: 0, awaitingApproval: 0, approved: 0, awaitingReview: 0 };
+    return { pending: 0, pendingReadyToAdvance: 0, inPipeline: 0, active: 0, awaitingApproval: 0, questioning: 0, questioningDetails: [], approved: 0, awaitingReview: 0 };
   }
 }
 
@@ -239,7 +270,17 @@ export interface DesireSummary {
 
 // Cache desire counts within a single gatherSystemState call
 // This prevents multiple queries to the storage system
-let cachedDesireCounts: { pending: number; pendingReadyToAdvance: number; inPipeline: number; active: number; awaitingApproval: number; approved: number; awaitingReview: number } | null = null;
+let cachedDesireCounts: {
+  pending: number;
+  pendingReadyToAdvance: number;
+  inPipeline: number;
+  active: number;
+  awaitingApproval: number;
+  questioning: number;
+  questioningDetails: QuestioningDesireDetail[];
+  approved: number;
+  awaitingReview: number;
+} | null = null;
 let cachedDesireSummaries: DesireSummary[] | null = null;
 let cacheUsername: string | null = null;
 
@@ -321,6 +362,61 @@ async function getAwaitingReviewDesireCount(username: string): Promise<number> {
     cacheUsername = username;
   }
   return cachedDesireCounts.awaitingReview;
+}
+
+/**
+ * Get count of desires in 'questioning' status (have unanswered clarifying questions).
+ * The Lizard Brain needs to know about these to decide whether to re-present questions.
+ */
+async function getQuestioningDesireCount(username: string): Promise<number> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.questioning;
+}
+
+/**
+ * Get details about desires with pending questions.
+ * Includes question count, answered count, and when questions were asked.
+ */
+async function getQuestioningDesireDetails(username: string): Promise<QuestioningDesireDetail[]> {
+  if (!cachedDesireCounts || cacheUsername !== username) {
+    cachedDesireCounts = await getDesireCounts(username);
+    cacheUsername = username;
+  }
+  return cachedDesireCounts.questioningDetails;
+}
+
+/**
+ * Get count of long-running desires and those needing check-in.
+ * Long-running desires have goalType='long_running' and persist for weeks/months.
+ */
+async function getLongRunningDesireCounts(username: string): Promise<{
+  longRunning: number;
+  needingCheckin: number;
+}> {
+  try {
+    const { listDesiresFromFolders, listLongRunningDesiresNeedingCheckin } = await import('../agency/storage.js');
+
+    // Count all long-running desires in executing or approved status
+    const allDesires = await listDesiresFromFolders(username);
+    const longRunning = allDesires.filter(d =>
+      d.goalType === 'long_running' &&
+      (d.status === 'executing' || d.status === 'approved')
+    ).length;
+
+    // Get desires that need check-in (stale lastCheckinAt)
+    const needingCheckin = await listLongRunningDesiresNeedingCheckin(username, 24); // 24 hour threshold
+
+    return {
+      longRunning,
+      needingCheckin: needingCheckin.length,
+    };
+  } catch (error) {
+    console.warn('[system-state] Failed to get long-running desire counts:', error);
+    return { longRunning: 0, needingCheckin: 0 };
+  }
 }
 
 /**
@@ -727,8 +823,11 @@ export async function gatherSystemState(
     inPipelineDesires,
     activeDesires,
     awaitingApprovalDesires,
+    questioningDesires,
+    questioningDesireDetails,
     approvedDesires,
     awaitingReviewDesires,
+    longRunningDesireCounts,
     desireSummaries,
     hoursSinceReflection,
     hoursSinceDream,
@@ -742,8 +841,11 @@ export async function gatherSystemState(
     getInPipelineDesireCount(username),
     getActiveDesireCount(username),
     getAwaitingApprovalDesireCount(username),
+    getQuestioningDesireCount(username),
+    getQuestioningDesireDetails(username),
     getApprovedDesireCount(username),
     getAwaitingReviewDesireCount(username),
+    getLongRunningDesireCounts(username),
     getDesireSummaries(username),
     getHoursSinceEventType(username, 'inner_dialogue', ['idle-thought']),
     getHoursSinceEventType(username, 'dream'),
@@ -771,8 +873,13 @@ export async function gatherSystemState(
     inPipelineDesires,
     activeDesires,
     awaitingApprovalDesires,
+    questioningDesires,
+    questioningDesireDetails,
     approvedDesires,
     awaitingReviewDesires,
+    // Long-running goal support
+    longRunningDesires: longRunningDesireCounts.longRunning,
+    longRunningDesiresNeedingCheckin: longRunningDesireCounts.needingCheckin,
     pendingProposalTasks,
     desireSummaries,
     hoursSinceReflection,
@@ -911,6 +1018,15 @@ export function getTaskRecommendations(state: SystemState): {
       task: 'desire_execute',
       reason: `🚀 ${state.approvedDesires} APPROVED desire(s) ready for autonomous execution!`,
       urgency: 'high', // Approved = user has blessed this, execute now!
+    });
+  }
+
+  // Long-running goals needing check-in
+  if (state.longRunningDesiresNeedingCheckin && state.longRunningDesiresNeedingCheckin > 0) {
+    recommendations.push({
+      task: 'desire_checkin',
+      reason: `🎯 ${state.longRunningDesiresNeedingCheckin} long-running goal(s) need progress check-in`,
+      urgency: 'medium', // Important but not urgent
     });
   }
 

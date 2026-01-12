@@ -85,6 +85,9 @@
   let activeOperatorLoading = false;
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
+  // Message queue - FIFO array for typed messages while LLM is processing
+  // Supports multiple queued messages that will be sent in order
+  let messageQueue: string[] = [];
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -127,10 +130,10 @@
       const autoSend = get(mic.isContinuousMode) || get(mic.isConversationMode);
 
       if (autoSend) {
-        // If LLM is busy (thinking or responding), queue the message
+        // If LLM is busy (thinking or responding), queue the message in FIFO queue
         if (loading) {
-          console.log('[chat-queue] LLM busy, queueing message:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
-          mic.queuedMessage.set(transcript); // Will auto-send when loading becomes false
+          messageQueue = [...messageQueue, transcript]; // Add to unified FIFO queue
+          console.log('[chat-queue] LLM busy, queued voice message #' + messageQueue.length + ':', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
         } else {
           // LLM idle, send immediately
           console.log('[chat-mic] Transcribed & sending:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
@@ -160,7 +163,6 @@
   const {
     isRecording: micIsRecording,
     isContinuousMode: micIsContinuousMode,
-    queuedMessage: micQueuedMessage,
     interimTranscript: micInterimTranscript,
     isNativeMode: micIsNativeMode,
     isWakeWordListening: micIsWakeWordListening,
@@ -299,7 +301,6 @@
   }
 
   // Server-first conversation buffer management
-
 
   onMount(async () => {
     loadChatPrefs();
@@ -744,10 +745,198 @@
     }
   }
 
+  /**
+   * Send a response to an agency card via the dedicated response pipeline.
+   * Uses a focused 5-node graph instead of the full dual-consciousness pipeline.
+   * - No memory search (only loads the card context)
+   * - No conversation buffer noise
+   * - Single-pass LLM with card-type-specific prompts
+   * - Saves as 'card_response' memory type for training
+   */
+  async function sendResponsePipeline(
+    message: string,
+    cardType: string,
+    cardData: Record<string, any>,
+    responseBufferId?: string | null
+  ) {
+    if (!message.trim()) return;
+
+    const timestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const startTime = Date.now();
+
+    // Add user message to UI
+    messagesApi.pushMessage('user', message);
+
+    loading = true;
+    thinkingTraceApi.start();
+    thinkingTraceApi.setStatusLabel(`📝 Processing ${cardType} response...`);
+    thinkingTraceApi.setTrace([
+      `[${timestamp()}] 📤 RESPONSE PIPELINE INITIATED`,
+      `[${timestamp()}] Card type: ${cardType}`,
+      `[${timestamp()}] Desire: ${cardData.desireTitle || cardData.desireId || 'N/A'}`,
+      `[${timestamp()}] Multi-turn buffer: ${responseBufferId || 'creating new'}`,
+    ]);
+
+    try {
+      // Step 1: Prepare request
+      console.log('[response-pipeline] Step 1: Preparing request', {
+        cardType,
+        desireId: cardData.desireId,
+        hasBuffer: !!responseBufferId,
+        messageLength: message.length,
+      });
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 1: Preparing request...`, 10);
+
+      const requestBody = {
+        message: message.trim(),
+        cardType,
+        cardData,
+        responseBufferId: responseBufferId || undefined,
+      };
+
+      // Step 2: Send request (NO timeout - LLM calls can take minutes)
+      console.log('[response-pipeline] Step 2: Sending POST to /api/response-pipeline');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 2: Sending to server...`, 10);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Waiting for LLM response (no timeout - this may take a while)...`, 10);
+
+      let response: Response;
+      try {
+        response = await apiFetch('/api/response-pipeline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+      } catch (fetchError) {
+        throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Unknown fetch error'}`);
+      }
+
+      console.log('[response-pipeline] Step 3: Got response', {
+        status: response.status,
+        ok: response.ok,
+        elapsed: Date.now() - startTime,
+      });
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 3: Response received (${response.status})`, 10);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        let errorData: any = {};
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `Server error: ${response.status}` };
+        }
+        console.error('[response-pipeline] Server error:', { status: response.status, error: errorData });
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Server error: ${response.status}`, 10);
+        throw new Error(errorData.error || `Pipeline failed with status ${response.status}`);
+      }
+
+      // Step 4: Parse response
+      console.log('[response-pipeline] Step 4: Parsing JSON response');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 4: Parsing response...`, 10);
+
+      let result: any;
+      try {
+        result = await response.json();
+      } catch (parseErr) {
+        console.error('[response-pipeline] Failed to parse response JSON:', parseErr);
+        throw new Error('Server returned invalid JSON response');
+      }
+
+      const elapsed = Date.now() - startTime;
+      console.log('[response-pipeline] Step 5: Processing result', {
+        success: result.success,
+        actionTaken: result.actionTaken,
+        pipelineTriggered: result.pipelineTriggered,
+        newBufferId: result.responseBufferId,
+        executionTimeMs: result.executionTimeMs,
+        totalElapsed: elapsed,
+      });
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 5: Result received (${elapsed}ms total)`, 10);
+
+      if (!result.success) {
+        console.error('[response-pipeline] Pipeline returned error:', result.error);
+        throw new Error(result.error || 'Pipeline execution failed');
+      }
+
+      // Add assistant response to UI with response pipeline metadata
+      if (result.response) {
+        messagesApi.pushMessage('assistant', result.response, undefined, {
+          source: 'response_pipeline',
+          cardType,
+          desireId: cardData.desireId,
+          responseBufferId: result.responseBufferId,
+          actionTaken: result.actionTaken,
+          pipelineTriggered: result.pipelineTriggered,
+          dialogueSource: 'response-pipeline',
+        });
+      } else {
+        console.warn('[response-pipeline] No response text in result');
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ No response text returned`, 10);
+      }
+
+      // Update thinking trace with result
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Action: ${result.actionTaken || 'completed'}`, 10);
+      if (result.pipelineTriggered) {
+        thinkingTraceApi.appendTrace(`[${timestamp()}] 🔄 Re-planning triggered`, 10);
+      }
+      if (result.nextStatus) {
+        thinkingTraceApi.appendTrace(`[${timestamp()}] 📊 Status → ${result.nextStatus}`, 10);
+      }
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ RESPONSE PIPELINE COMPLETE (${elapsed}ms)`, 10);
+
+      // Clear curiosity awaiting state if this was a curiosity response
+      if (cardType === 'curiosity_response' && cardData.questionId) {
+        try {
+          await apiFetch('/api/pause-state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'clearCuriosity',
+              reason: 'responded_via_pipeline',
+            }),
+          });
+          console.log('[response-pipeline] Cleared curiosity awaiting state');
+        } catch (e) {
+          // Non-critical, continue
+          console.warn('[response-pipeline] Failed to clear curiosity state:', e);
+        }
+      }
+
+      thinkingTraceApi.stop();
+    } catch (err) {
+      const elapsed = Date.now() - startTime;
+      console.error('[response-pipeline] FATAL ERROR:', err);
+      console.error('[response-pipeline] Error details:', {
+        name: err instanceof Error ? err.name : 'unknown',
+        message: err instanceof Error ? err.message : String(err),
+        elapsed,
+      });
+      const errorMsg = err instanceof Error ? err.message : 'Response pipeline failed';
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ ERROR: ${errorMsg}`, 10);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ PIPELINE FAILED after ${elapsed}ms`, 10);
+      messagesApi.pushMessage('system', `⚠️ Response Pipeline Error: ${errorMsg}`);
+      thinkingTraceApi.stop();
+    } finally {
+      loading = false;
+    }
+  }
+
   async function sendMessage() {
-    // Synchronous guard: prevent race condition where multiple clicks
-    // get past the loading check before loading is set to true
-    if (!input.trim() || loading || sendInProgress) return;
+    // No input - nothing to do
+    if (!input.trim()) return;
+
+    // Already processing a send - ignore
+    if (sendInProgress) return;
+
+    // LLM is busy - queue this message for later (FIFO)
+    if (loading) {
+      const msg = input.trim();
+      messageQueue = [...messageQueue, msg]; // Add to end of queue
+      console.log('[chat-queue] LLM busy, queued message #' + messageQueue.length + ':', msg.substring(0, 50) + (msg.length > 50 ? '...' : ''));
+      input = ''; // Clear input so user knows it's queued
+      return;
+    }
+
     sendInProgress = true;
 
     let connected = get(isConnected);
@@ -793,10 +982,44 @@
     const replyToContent = replyToMetadata.content;
     const replyToDesireId = replyToMetadata.desireId;
     const replyToDesireTitle = replyToMetadata.desireTitle;
+    const replyToCardType = replyToMetadata.cardType;
+    const replyToDialogueSource = replyToMetadata.dialogueSource;
+    const isAgencyCardReply = replyToMetadata.isAgencyMessage;
+    const existingResponseBufferId = replyToMetadata.responseBufferId;
 
     // Clear selection after capturing metadata
     const wasReplying = $selectedMessage !== null;
     messagesApi.clearSelection();
+
+    // Route ALL selected card responses through the dedicated response pipeline
+    // This provides focused context and routes through Big Brother for tool execution
+    // The response pipeline handles ANY card type - not just agency cards
+    if (wasReplying && replyToContent) {
+      sendInProgress = false; // Reset guard before delegating
+
+      // Determine the card type for context - use the card's type or derive from role/source
+      let effectiveCardType = replyToCardType || 'selected_card';
+      if (!effectiveCardType || effectiveCardType === 'selected_card') {
+        // Try to determine a more specific type from available metadata
+        if (isAgencyCardReply || replyToDialogueSource === 'agency-system') {
+          effectiveCardType = replyToDesireId ? 'desire_awaiting_input' : 'agency_notification';
+        } else if (replyToQuestionId) {
+          effectiveCardType = 'curiosity_response';
+        }
+      }
+
+      console.log(`[sendMessage] Routing to response pipeline: type=${effectiveCardType}, hasDesire=${!!replyToDesireId}`);
+
+      await sendResponsePipeline(userMessage, effectiveCardType, {
+        desireId: replyToDesireId,
+        desireTitle: replyToDesireTitle,
+        content: replyToContent,
+        dialogueSource: replyToDialogueSource,
+        questionId: replyToQuestionId,
+        ...replyToMetadata.meta,
+      }, existingResponseBufferId);
+      return;
+    }
 
     messagesApi.pushMessage('user', userMessage);
 
@@ -867,6 +1090,48 @@
       // Force graph pipeline; some runtime toggles can disable it after settings load
       params.set('graph', 'true');
 
+      // PRE-FLIGHT AUTH CHECK: Verify session is valid before opening EventSource
+      // This prevents silent hangs when session cookie is stale/mismatched
+      // Use a 5-second timeout to avoid blocking if server is slow
+      try {
+        console.log('[sendMessage] Starting auth check...');
+        thinkingTraceApi.appendTrace(`[${timestamp()}] 🔐 Verifying session...`, 15);
+
+        const authController = new AbortController();
+        const authTimeout = setTimeout(() => authController.abort(), 5000);
+
+        const authCheck = await apiFetch('/api/auth/me', { signal: authController.signal });
+        clearTimeout(authTimeout);
+
+        if (!authCheck.ok) {
+          const errorData = await authCheck.json().catch(() => ({}));
+          console.error('[sendMessage] Auth check failed:', authCheck.status, errorData);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ SESSION EXPIRED - Please refresh and log in again`, 15);
+          thinkingTraceApi.setStatusLabel('🔒 Session Expired');
+          loading = false;
+          // Show error to user
+          const errorMsg = {
+            id: crypto.randomUUID(),
+            role: 'system' as const,
+            content: '⚠️ **Session Expired**\n\nYour session has expired or is invalid. Please refresh the page and log in again.',
+            timestamp: Date.now(),
+          };
+          messages.update(m => [...m, errorMsg]);
+          return;
+        }
+        console.log('[sendMessage] Auth check passed');
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Session verified`, 15);
+      } catch (authError: any) {
+        if (authError?.name === 'AbortError') {
+          console.warn('[sendMessage] Auth check timed out after 5s, proceeding anyway');
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ Auth check timed out, proceeding...`, 15);
+        } else {
+          console.error('[sendMessage] Auth check error:', authError);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ Could not verify session`, 15);
+        }
+        // Continue anyway - might work, might not
+      }
+
       // Use EventSource for SSE streaming (works for both web and React Native WebView)
       // CRITICAL: Close any existing EventSource before creating a new one
       if (chatResponseStream) {
@@ -883,6 +1148,29 @@
       // Track connection time for user visibility
       const connectStart = Date.now();
       let connectionTimer: ReturnType<typeof setInterval> | null = null;
+      let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
+      let connectionEstablished = false;
+
+      // CONNECTION TIMEOUT: If no data received within 30s, abort and show error
+      connectionTimeout = setTimeout(() => {
+        if (!connectionEstablished && chatResponseStream) {
+          console.error('[EventSource] Connection timeout - no data received in 30s');
+          chatResponseStream.close();
+          if (connectionTimer) clearInterval(connectionTimer);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ CONNECTION TIMEOUT after 30s`, 15);
+          thinkingTraceApi.appendTrace(`[${timestamp()}] This usually means your session is invalid - try refreshing and logging in again`, 15);
+          thinkingTraceApi.setStatusLabel('⏱️ Timeout - Session Issue?');
+          loading = false;
+          // Show error to user
+          const errorMsg = {
+            id: crypto.randomUUID(),
+            role: 'system' as const,
+            content: '⚠️ **Connection Timeout**\n\nNo response received from server after 30 seconds. This usually indicates a session issue.\n\n**Try:** Refresh the page and log in again.',
+            timestamp: Date.now(),
+          };
+          messages.update(m => [...m, errorMsg]);
+        }
+      }, 30000);
 
       // Start timer to show elapsed time WITH timestamps
       connectionTimer = setInterval(() => {
@@ -892,6 +1180,8 @@
       }, 2000);
 
       chatResponseStream.onopen = () => {
+        connectionEstablished = true;
+        if (connectionTimeout) clearTimeout(connectionTimeout);
         console.log('[EventSource] Connection opened!');
         if (connectionTimer) clearInterval(connectionTimer);
         const elapsed = Math.floor((Date.now() - connectStart) / 1000);
@@ -909,6 +1199,8 @@
       };
 
       chatResponseStream.onmessage = (event) => {
+        connectionEstablished = true;
+        if (connectionTimeout) clearTimeout(connectionTimeout);
         if (connectionTimer) clearInterval(connectionTimer);
         console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
         thinkingTraceApi.appendTrace(`[${timestamp()}] 📥 Received server event`, 15);
@@ -1241,19 +1533,6 @@
   let conversationStream: EventSource | null = null;
   let systemStream: EventSource | null = null;
 
-  // Debounce timer for SSE-triggered fetches to prevent rapid-fire requests
-  let sseRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function debouncedFetchAllBuffers() {
-    if (sseRefreshDebounceTimer) {
-      clearTimeout(sseRefreshDebounceTimer);
-    }
-    sseRefreshDebounceTimer = setTimeout(() => {
-      console.log('[chat] Debounced fetch triggered');
-      fetchAllSelectedBuffers();
-    }, 150); // Wait 150ms after last SSE update before fetching (reduced from 500ms for faster updates)
-  }
-
   /**
    * Connect to buffer streams for all selected views
    * Handles real-time updates from multiple sources
@@ -1325,20 +1604,21 @@
           return;
         }
         if (data.type === 'update' && Array.isArray(data.messages)) {
-          // Direct store update for instant UI refresh
-          // Merge new messages directly into the store instead of waiting for debounced fetch
-          if (data.messages.length > 0) {
-            const currentMsgs = get(messages);
-            const newMsgs = data.messages.filter((m: any) =>
-              !currentMsgs.some(c => c.timestamp === m.timestamp && c.content?.substring(0, 50) === m.content?.substring(0, 50))
-            );
-            if (newMsgs.length > 0) {
-              console.log(`[chat] ${streamMode} buffer: ${newMsgs.length} new messages, updating store directly`);
-              messages.update(msgs => [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp));
-            }
+          // Only update store for inner/system buffers - these messages come from agents
+          // and don't have a direct push path. Conversation buffer messages are already
+          // added via pushMessage() in the streaming handler, so skip to avoid duplicates.
+          if (streamMode !== 'conversation' && data.messages.length > 0) {
+            console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
+            messages.update(msgs => {
+              // Add new messages that aren't already in the store (by content)
+              const existingContent = new Set(msgs.map(m => `${m.role}-${m.content}`));
+              const newMsgs = data.messages.filter((m: any) => !existingContent.has(`${m.role}-${m.content}`));
+              if (newMsgs.length > 0) {
+                return [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp);
+              }
+              return msgs;
+            });
           }
-          // Also trigger debounced fetch as fallback for full sync (ensures consistency)
-          debouncedFetchAllBuffers();
         }
       } catch (err) {
         console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
@@ -1537,11 +1817,11 @@
     backendApi.checkStatus();
   }
 
-  // Watch for LLM completion and auto-send queued messages
-  $: if (!loading && $micQueuedMessage.trim()) {
-    console.log('[chat-queue] LLM finished, sending queued message:', $micQueuedMessage.substring(0, 50) + ($micQueuedMessage.length > 50 ? '...' : ''));
-    const msg = $micQueuedMessage;
-    micQueuedMessage.set(''); // Clear queue before sending
+  // Watch for LLM completion and auto-send queued messages (unified FIFO queue for both voice and text)
+  $: if (!loading && messageQueue.length > 0) {
+    const msg = messageQueue[0]; // Get first message (FIFO)
+    messageQueue = messageQueue.slice(1); // Remove from queue
+    console.log('[chat-queue] LLM finished, sending next queued message (' + messageQueue.length + ' remaining):', msg.substring(0, 50) + (msg.length > 50 ? '...' : ''));
     input = msg;
     void sendMessage();
   }
@@ -1826,6 +2106,7 @@
           <div bind:this={scrollSentinel} class="scroll-sentinel"></div>
         {/if}
       </div>
+
   <!-- Approval Prompt - appears above input when desires need approval -->
   <!-- Shows in BOTH conversation AND inner dialogue modes - users need to see approval requests regardless of view -->
   <ApprovalPrompt onApprovalChange={() => {
@@ -1839,6 +2120,7 @@
     <InputArea
       bind:input
       {loading}
+      {messageQueue}
       selectedMessage={$selectedMessage}
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}

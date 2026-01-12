@@ -83,6 +83,9 @@ import * as memoryNodes from './memory/index.js';
 // Active Operator nodes
 import * as activeOperatorNodes from './active-operator/index.js';
 
+// Response Pipeline nodes
+import * as responseNodes from './response/index.js';
+
 // ============================================================================
 // COLLECT ALL NODES
 // ============================================================================
@@ -124,6 +127,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   cognitiveNodes,
   memoryNodes,
   activeOperatorNodes,
+  responseNodes,
 );
 
 // ============================================================================

@@ -16,7 +16,15 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import type { Desire, DesireStatus, DesirePlan, DesireReview } from '../../agency/types.js';
+import type {
+  Desire,
+  DesireStatus,
+  DesirePlan,
+  DesireReview,
+  DesireGoalType,
+  DesireMilestone,
+  DesireGoalProgress,
+} from '../../agency/types.js';
 import {
   saveDesireManifest,
   savePlanToFolder,
@@ -47,7 +55,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   // Try named properties first, then fall back to positional for legacy compatibility
   const loaderOutput = (inputs.desire || inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | undefined;
-  const validatorOutput = (inputs.newStatus || inputs.slot_1 || inputs[1]) as { valid?: boolean; plan?: DesirePlan } | undefined;
+  const validatorOutput = (inputs.newStatus || inputs.slot_1 || inputs[1]) as {
+    valid?: boolean;
+    plan?: DesirePlan;
+    // New fields for long-running goal support
+    goalType?: DesireGoalType;
+    completionCriteria?: string;
+    milestones?: DesireMilestone[];
+    goalProgress?: DesireGoalProgress;
+  } | undefined;
   const reviewerOutput = (inputs.review || inputs.slot_2 || inputs[2]) as { review?: DesireReview; verdict?: string } | undefined;
 
   // Extract desire from loader output OR from context (desire-planner agent passes desire in context)
@@ -130,18 +146,41 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         updatedDesire.critiqueAt = undefined;
       }
 
+      // Apply long-running goal fields from plan generator output
+      if (validatorOutput?.goalType) {
+        updatedDesire.goalType = validatorOutput.goalType;
+      }
+      if (validatorOutput?.completionCriteria) {
+        updatedDesire.completionCriteria = validatorOutput.completionCriteria;
+      }
+      if (validatorOutput?.milestones && validatorOutput.milestones.length > 0) {
+        updatedDesire.milestones = validatorOutput.milestones;
+      }
+      if (validatorOutput?.goalProgress) {
+        updatedDesire.goalProgress = validatorOutput.goalProgress;
+      }
+
       // Save plan to folder
       await savePlanToFolder(updatedDesire.id, plan, username);
+
+      // Log milestone info for long-running goals
+      const milestoneInfo = updatedDesire.goalType === 'long_running' && updatedDesire.milestones
+        ? `, ${updatedDesire.milestones.length} milestones`
+        : '';
+
       await addScratchpadEntryToFolder(updatedDesire.id, {
         type: 'plan_generated',
         timestamp: now,
-        description: `Plan v${plan.version} generated with ${plan.steps?.length || 0} steps`,
+        description: `Plan v${plan.version} generated with ${plan.steps?.length || 0} steps${milestoneInfo}. Goal type: ${updatedDesire.goalType || 'one_time'}`,
         actor: 'llm',
         agentName: 'desire-planner',
         data: {
           planId: plan.id,
           version: plan.version,
           stepCount: plan.steps?.length || 0,
+          goalType: updatedDesire.goalType,
+          completionCriteria: updatedDesire.completionCriteria,
+          milestoneCount: updatedDesire.milestones?.length,
         },
       }, username);
     }

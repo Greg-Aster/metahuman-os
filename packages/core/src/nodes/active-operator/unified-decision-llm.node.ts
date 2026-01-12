@@ -32,9 +32,11 @@ const TASK_DESCRIPTIONS: Record<TaskType, string> = {
   desire_advance: 'Process QUESTIONING/PENDING desires through planning/review/approval (after exploration)',
   desire_execute: 'Execute APPROVED desires only (after user or auto-approval)',
   desire_review: 'Review execution outcomes to determine: retry, escalate, complete, or abandon',
+  desire_checkin: 'Intelligent check-in on LONG-RUNNING goals - evaluate progress, ask questions, advance milestones',
   psychoanalyze: 'Run psychoanalyzer to update persona based on recent memories',
   code_analyze: 'Analyze codebase for TypeScript errors (self-healing)',
   help_ticket_review: 'Review user feedback tickets, analyze issues, and propose fixes to System Coder',
+  idle: 'No-op task - do nothing and wait for conditions to change',
 };
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -58,12 +60,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     : '(No triggers fired this cycle)';
 
   // Format desire details for the LLM to reason about
+  const questioningDetails = systemState.questioningDesireDetails || [];
   const desireDetails = desireSummaries.length > 0
     ? desireSummaries.map((d: any) => {
         const strengthPct = (d.strength * 100).toFixed(0);
         const ready = d.readyToAdvance ? '✓ READY' : '';
         const status = d.status.toUpperCase();
-        return `- "${d.title}" [${status}] ${strengthPct}% strength ${ready}`;
+        // Add questioning details if this desire has pending questions
+        const qDetail = questioningDetails.find((q: any) => q.id === d.id);
+        const questionInfo = qDetail
+          ? ` ❓ ${qDetail.questionCount - qDetail.answeredCount} unanswered question(s)`
+          : '';
+        return `- "${d.title}" [${status}] ${strengthPct}% strength ${ready}${questionInfo}`;
       }).join('\n')
     : '(No desires in pipeline)';
 
@@ -117,22 +125,34 @@ Guidelines:
 4. If queue has items, consider executing those before adding more
 5. Balance reactive (triggers) with proactive (recommendations)
 6. ONLY consider memory_curate if user is INACTIVE and unprocessed memories > 5
-7. DESIRE SYSTEM (IMPORTANT - five-step flow):
+7. DESIRE SYSTEM (IMPORTANT - six-step flow):
    - desire_generate: Create new desires (when 0 pending, 0 active, 0 approved)
    - desire_explore: Research feasibility & generate smart questions (when desires cross threshold)
-   - desire_advance: Process desires through planning/review/approval pipeline (after questioning)
+   - desire_advance: Process desires through planning/review/approval pipeline (handles QUESTIONING desires!)
    - desire_execute: Execute APPROVED desires ONLY (after approval granted)
    - desire_review: Review execution outcomes (after execution, decide: retry/escalate/complete/abandon)
+   - desire_checkin: Check on LONG-RUNNING goals (multi-week/month projects with milestones)
    - FLOW: pending → (build strength) → desire_explore → questioning → (user answers) → desire_advance → planning → reviewing → awaiting_approval → approved → desire_execute → awaiting_review → desire_review → completed/retry/escalate/abandon
    - 🔬 If pendingReadyToAdvance > 0 AND not yet explored: run desire_explore first!
    - 🚀 If approved > 0: run desire_execute immediately!
    - 🔍 If awaitingReview > 0: run desire_review immediately! (Post-execution review decides next steps)
+   - ❓ QUESTIONING DESIRES (CRITICAL - do NOT block on these!):
+     * questioningDesires > 0 means desires have unanswered clarifying questions
+     * Run desire_advance to RE-PRESENT the questions to the user in chat
+     * desire_advance will post the questions as a message the user can respond to
+     * Do NOT wait indefinitely - if user hasn't answered after multiple cycles, continue with other tasks
+     * The user can respond in chat at their convenience
    - 📋 Run desire_advance when:
-     * questioningDesires > 0 with answers (ready to plan)
+     * questioningDesires > 0 (re-present unanswered questions to user!)
      * OR inPipelineDesires > 0 (desires in planning/reviewing need to continue!)
    - ⚠️ If pending > 0 but pendingReadyToAdvance = 0: those desires are below activation threshold, don't explore them
    - ⏳ If awaiting_approval > 0: wait for user approval (these need manual approval) - DO NOT run desire_advance on those!
    - 🔄 activeDesires includes ALL of: questioning, planning, reviewing, executing
+   - 🎯 LONG-RUNNING GOALS: Desires like "Hike the PCT" persist for months with milestones
+     * longRunningDesires: Count of active long-running goals
+     * longRunningDesiresNeedingCheckin: Goals that haven't been checked on recently
+     * Run desire_checkin when longRunningDesiresNeedingCheckin > 0 (especially when user is engaged!)
+     * Check-ins evaluate progress, ask questions, and can advance milestones
 8. TRUST LEVELS:
    - observe/suggest: desires need user approval before execution
    - supervised_auto: low-risk desires auto-approved, medium/high need user approval
@@ -199,10 +219,13 @@ ${queueList}
 - Pending desires (total): ${systemState.pendingDesires || 0}
 - 📋 Pending desires READY to advance (above threshold): ${systemState.pendingDesiresReadyToAdvance || 0}
 - 🔄 In-pipeline desires (evaluating/planning/reviewing): ${systemState.inPipelineDesires || 0} ${(systemState.inPipelineDesires || 0) > 0 ? '← NEED ADVANCEMENT via desire_advance!' : ''}
+- ❓ QUESTIONING desires (have unanswered questions): ${systemState.questioningDesires || 0} ${(systemState.questioningDesires || 0) > 0 ? '← RUN desire_advance to re-present questions!' : ''}
 - Active desires (all stages including executing): ${systemState.activeDesires || 0}
 - Desires awaiting approval: ${systemState.awaitingApprovalDesires || 0}
 - 🚀 APPROVED desires (ready to execute!): ${systemState.approvedDesires || 0}
 - 🔍 AWAITING REVIEW (post-execution): ${systemState.awaitingReviewDesires || 0} ${(systemState.awaitingReviewDesires || 0) > 0 ? '← NEED REVIEW via desire_review!' : ''}
+- 🎯 LONG-RUNNING desires (active): ${systemState.longRunningDesires || 0}
+- 📅 Long-running needing check-in: ${systemState.longRunningDesiresNeedingCheckin || 0} ${(systemState.longRunningDesiresNeedingCheckin || 0) > 0 ? '← RUN desire_checkin!' : ''}
 - Last reflection: ${(systemState.hoursSinceReflection || 0).toFixed(1)} hours ago
 
 === DESIRE PIPELINE (what I'm considering) ===
@@ -228,16 +251,18 @@ What should I do next?`,
     const operatorConfig = loadOperatorConfig(username);
     const isBigBrotherEnabled = operatorConfig.bigBrotherMode?.enabled || false;
     const isBigBrotherDelegateAll = operatorConfig.bigBrotherMode?.delegateAll || false;
-    
+
+    // Hybrid mode: Big Brother enabled but not delegateAll - use Big Brother for decision-making
+    // This sends autonomous decisions to external LLM (Claude) for better reasoning
+    const useBigBrother = isBigBrotherEnabled && !isBigBrotherDelegateAll;
+
     // Determine max tokens based on whether Big Brother mode is active
-    // When Big Brother delegates to external LLMs, they have much larger context windows
+    // When Big Brother is used (hybrid or delegateAll), external LLMs have much larger context windows
     let maxTokens: number | undefined;
-    if (isBigBrotherEnabled && isBigBrotherDelegateAll) {
-      // Big Brother mode with full delegation - external LLMs like Claude have huge context windows
-      // Big Brother mode - but this is for the DECISION making, not execution
-      // The decision still happens locally with vLLM before delegating to Big Brother
-      maxTokens = 800;  // Conservative limit for vLLM decision making
-      console.log(`[UnifiedDecisionLLM] Big Brother mode active - using conservative limit for local decision`);
+    if (isBigBrotherEnabled) {
+      // Big Brother mode (hybrid or delegateAll) - external LLMs like Claude handle the decision
+      maxTokens = 4000;  // Can be more generous with external LLM context
+      console.log(`[UnifiedDecisionLLM] Big Brother mode active (${useBigBrother ? 'hybrid' : 'delegateAll'}) - routing to external LLM`);
     } else {
       // Local LLM mode - must be conservative with context window
       // Model context is 4096, input can grow to ~2700+ tokens with recent activity
@@ -245,7 +270,7 @@ What should I do next?`,
       maxTokens = 1000;
       console.log(`[UnifiedDecisionLLM] Local LLM mode - using conservative token limit: ${maxTokens}`);
     }
-    
+
     // Note: We don't pass cognitiveMode here because the lizard brain is a system utility,
     // not a cognitive mode. It uses the orchestrator role directly without mode-specific mappings.
     const response = await callLLM({
@@ -259,6 +284,8 @@ What should I do next?`,
         temperature: properties?.temperature || 0.3,
         // Dynamic token limit based on Big Brother mode
         maxTokens,
+        // Hybrid mode: route this decision to Big Brother for complex autonomous reasoning
+        useBigBrother,
       },
     });
 

@@ -495,6 +495,60 @@ async function checkCalendarFocusWindow(username: string): Promise<TriggerResult
 // Desire System Triggers
 // ============================================================================
 
+const EXPLORATION_THRESHOLD = 0.5; // Lower than activation (0.7) - explore early
+
+/**
+ * Check if any desires need exploration (research + smart questions).
+ * Fires for pending desires that have crossed the exploration threshold
+ * but haven't been explored yet.
+ */
+async function checkDesiresNeedExploration(username: string): Promise<TriggerResult> {
+  try {
+    const { listDesiresFromFolders } = await import('../agency/storage.js');
+    const allDesires = await listDesiresFromFolders(username);
+
+    // Find pending/evaluating desires above exploration threshold that haven't been explored
+    const needsExploration = allDesires.filter(d => {
+      // Must be in pending or evaluating status
+      if (d.status !== 'pending' && d.status !== 'evaluating') {
+        return false;
+      }
+      // Must be above exploration threshold
+      if ((d.strength || 0) < EXPLORATION_THRESHOLD) {
+        return false;
+      }
+      // Must not already have exploration research (stored by desire-explorer agent)
+      // Using type assertion since explorationResearch is dynamically added
+      const desireAny = d as any;
+      if (desireAny.metadata?.explorationResearch) {
+        return false;
+      }
+      // Must not already have clarifying questions
+      if (d.clarifyingQuestions?.questions && d.clarifyingQuestions.questions.length > 0) {
+        return false;
+      }
+      return true;
+    });
+
+    if (needsExploration.length > 0) {
+      return {
+        shouldTrigger: true,
+        reason: `🔍 ${needsExploration.length} desire(s) need exploration/research`,
+        urgency: 'soon',
+        data: {
+          count: needsExploration.length,
+          desireIds: needsExploration.map(d => d.id),
+          titles: needsExploration.map(d => d.title),
+        },
+      };
+    }
+
+    return { shouldTrigger: false };
+  } catch {
+    return { shouldTrigger: false };
+  }
+}
+
 /**
  * Check if any APPROVED desires are ready for execution.
  * Only fires for desires that have been approved (by user or auto-approval).
@@ -861,6 +915,15 @@ export const TRIGGERS: Trigger[] = [
     condition: checkCalendarFocusWindow,
   },
   // === DESIRE SYSTEM TRIGGERS ===
+  {
+    id: 'desire_exploration',
+    name: 'Desire Exploration',
+    description: 'Research desires and generate smart questions before planning',
+    taskType: 'desire_explore',
+    priority: 'normal',
+    checkInterval: 120000, // 2 minutes - less frequent than advancement
+    condition: checkDesiresNeedExploration,
+  },
   {
     id: 'desire_advancement',
     name: 'Desire Advancement',

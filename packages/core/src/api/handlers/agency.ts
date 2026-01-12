@@ -22,8 +22,12 @@ import {
   generateDesireId,
   initializeDesireMetrics,
   initializeScratchpadSummary,
+  initializeStageIterations,
+  getSourceWeight,
   type Desire,
   type DesireStatus,
+  type DesireGoalType,
+  type DesireStage,
 } from '../../agency/index.js';
 import { audit } from '../../audit.js';
 
@@ -181,12 +185,32 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
     };
   }
 
-  const { title, description, reason, risk = 'low', source = 'persona_goal' } = (body || {}) as {
+  const {
+    title,
+    description,
+    reason,
+    risk = 'low',
+    source = 'persona_goal',
+    // Advanced options
+    goalType = 'one_time',
+    strength: initialStrength = 0.8,
+    status: initialStatus = 'pending',
+    decayRate: customDecayRate = 0.03,
+    completionCriteria,
+    tags = [],
+  } = (body || {}) as {
     title?: string;
     description?: string;
     reason?: string;
     risk?: Desire['risk'];
     source?: Desire['source'];
+    // Advanced options
+    goalType?: DesireGoalType;
+    strength?: number;
+    status?: 'nascent' | 'pending';
+    decayRate?: number;
+    completionCriteria?: string;
+    tags?: string[];
   };
 
   if (!title || !description) {
@@ -195,6 +219,15 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
       error: 'Missing required fields: title, description',
     };
   }
+
+  // Validate and clamp strength to valid range
+  const strength = Math.max(0, Math.min(1, initialStrength));
+
+  // Validate status - only allow nascent or pending for new desires
+  const status: DesireStatus = initialStatus === 'nascent' ? 'nascent' : 'pending';
+
+  // Map status to stage
+  const currentStage: DesireStage = status === 'nascent' ? 'nascent' : 'strengthening';
 
   try {
     const now = new Date().toISOString();
@@ -205,20 +238,33 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
       reason: reason || 'User-created desire',
       source,
       sourceId: `manual-${Date.now()}`,
-      status: 'pending',
-      strength: 0.8,
-      baseWeight: 1.0,
+      status,
+      currentStage,
+      stageIterations: initializeStageIterations(),
+      strength,
+      baseWeight: getSourceWeight(source),
       threshold: 0.7,
-      decayRate: 0.03,
+      decayRate: Math.max(0.001, Math.min(0.1, customDecayRate)), // Clamp decay rate
       lastReviewedAt: now,
       reinforcements: 0,
-      runCount: 1,
+      runCount: status === 'nascent' ? 0 : 1,
       risk,
       requiredTrustLevel: risk === 'high' || risk === 'critical' ? 'bounded_auto' : 'supervised_auto',
-      metrics: initializeDesireMetrics(),
+      metrics: {
+        ...initializeDesireMetrics(),
+        peakStrength: strength,
+        lastActivityAt: now,
+      },
       scratchpad: initializeScratchpadSummary(),
       createdAt: now,
       updatedAt: now,
+      // Advanced options
+      goalType,
+      completionCriteria: completionCriteria || (goalType === 'recurring'
+        ? 'This is a recurring desire - it cycles continuously and is never fully complete.'
+        : undefined),
+      tags: tags.length > 0 ? tags : undefined,
+      userId: user.username,
     };
 
     // Save to flat-file storage
@@ -238,6 +284,9 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
         source,
         risk,
         initialStrength: desire.strength,
+        initialStatus: desire.status,
+        goalType: desire.goalType,
+        decayRate: desire.decayRate,
         username: user.username,
       },
     }, user.username);
