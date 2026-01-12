@@ -15,8 +15,11 @@
 import { initGlobalLogger, audit } from '@metahuman/core';
 import { runCycle, type CuriosityResearcherOptions } from './core.js';
 
-async function main() {
+const LOG_PREFIX = '[curiosity-researcher]';
+
+async function main(): Promise<void> {
   initGlobalLogger('curiosity-researcher');
+  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
 
   // Parse arguments
   const args = process.argv.slice(2);
@@ -27,25 +30,31 @@ async function main() {
   // Parse username
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
+      const username = args[i + 1];
+      // Validate username for security (alphanumeric, underscore, hyphen only)
+      if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+        console.error(`${LOG_PREFIX} Invalid username: ${username}`);
+        process.exit(1);
+      }
+      options.username = username;
       break;
     }
   }
 
-  console.log('[curiosity-researcher] Starting with options:', options);
+  console.log(`${LOG_PREFIX} Starting with options:`, options);
 
   try {
     const result = await runCycle(options);
 
-    console.log(`[curiosity-researcher] Completed: ${result.researchCompleted} research tasks`);
+    console.log(`${LOG_PREFIX} Completed: ${result.researchCompleted} research tasks`);
 
     if (result.errors.length > 0) {
-      console.error('[curiosity-researcher] Errors:', result.errors);
+      console.error(`${LOG_PREFIX} Errors:`, result.errors);
     }
 
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error('[curiosity-researcher] Fatal error:', error);
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
 
     audit({
       category: 'system',
