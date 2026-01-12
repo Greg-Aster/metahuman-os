@@ -17,6 +17,8 @@ import './users.js';
 // Re-export core path building functions
 export { findRepoRoot, ROOT, getProfilePaths, systemPaths } from './path-builder.js';
 
+const LOG_PREFIX = '[paths]';
+
 /**
  * Get today's date in YYYY-MM-DD format
  */
@@ -37,6 +39,15 @@ export function timestamp(): string {
  * @returns A unique ID like 'event-20251201123456789'
  */
 export function generateId(prefix: string): string {
+  if (!prefix || typeof prefix !== 'string') {
+    throw new Error('generateId: prefix must be a non-empty string');
+  }
+  
+  // Sanitize prefix to prevent injection (alphanumeric, underscore, hyphen only)
+  if (!/^[a-zA-Z0-9_-]+$/.test(prefix)) {
+    throw new Error('generateId: prefix must contain only alphanumeric characters, underscores, and hyphens');
+  }
+  
   const now = new Date();
   const dateStr = now.toISOString()
     .replace(/[-:T.Z]/g, '')
