@@ -14,6 +14,8 @@ import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
 import { recordSystemActivity, readSystemActivityTimestamp, readLastActiveUsername } from './system-activity.js';
 
+const LOG_PREFIX = '[agent-scheduler]';
+
 // Agent runtime for new modular agents
 import type { AgentRuntime } from '@metahuman/agent-runtime';
 
@@ -166,7 +168,7 @@ export class AgentScheduler extends EventEmitter {
       // Load all modular agents from brain/agents/
       const agentsDir = systemPaths.agents;
       const loadedCount = await loadAgents(agentsDir);
-      console.log(`[AgentScheduler] Loaded ${loadedCount} modular agents from runtime`);
+      console.log(`${LOG_PREFIX} Loaded ${loadedCount} modular agents from runtime`);
 
       // Get runtime instance
       this.runtime = getRuntime(ROOT);
@@ -180,7 +182,7 @@ export class AgentScheduler extends EventEmitter {
         details: { agentsLoaded: loadedCount },
       });
     } catch (error) {
-      console.warn('[AgentScheduler] Failed to initialize agent runtime, using legacy mode:', (error as Error).message);
+      console.warn(`${LOG_PREFIX} Failed to initialize agent runtime, using legacy mode:`, (error as Error).message);
       this.runtimeInitialized = true; // Mark as initialized even on failure to avoid retries
     }
   }
@@ -193,9 +195,10 @@ export class AgentScheduler extends EventEmitter {
    * Load configuration from etc/agents.json
    */
   public loadConfig(): boolean {
+    console.log(`${LOG_PREFIX} ========== loadConfig HIT ==========`);
     try {
       if (!fs.existsSync(this.configPath)) {
-        console.warn('[AgentScheduler] No agents.json found, using defaults');
+        console.warn(`${LOG_PREFIX} No agents.json found, using defaults`);
         this.config = this.getDefaultConfig();
         return false;
       }
@@ -216,7 +219,7 @@ export class AgentScheduler extends EventEmitter {
 
       return true;
     } catch (error) {
-      console.error('[AgentScheduler] Failed to load config:', error);
+      console.error(`${LOG_PREFIX} Failed to load config:`, error);
       this.config = this.getDefaultConfig();
       return false;
     }
@@ -268,7 +271,7 @@ export class AgentScheduler extends EventEmitter {
 
       return true;
     } catch (error) {
-      console.error('[AgentScheduler] Failed to save config:', error);
+      console.error(`${LOG_PREFIX} Failed to save config:`, error);
       return false;
     }
   }
@@ -321,7 +324,7 @@ export class AgentScheduler extends EventEmitter {
 
       return true;
     } catch (error) {
-      console.error(`[AgentScheduler] Failed to register agent ${config.id}:`, error);
+      console.error(`${LOG_PREFIX} Failed to register agent ${config.id}:`, error);
       return false;
     }
   }
@@ -364,9 +367,10 @@ export class AgentScheduler extends EventEmitter {
    * Start the scheduler
    */
   public start(): boolean {
+    console.log(`${LOG_PREFIX} ========== start HIT ==========`);
     try {
       if (this.running) {
-        console.warn('[AgentScheduler] Already running');
+        console.warn(`${LOG_PREFIX} Already running`);
         return false;
       }
 
@@ -411,10 +415,10 @@ export class AgentScheduler extends EventEmitter {
       // Start activity monitoring
       this.startActivityMonitoring();
 
-      console.log(`[AgentScheduler] Started with ${this.agents.size} agents`);
+      console.log(`${LOG_PREFIX} Started with ${this.agents.size} agents`);
       return true;
     } catch (error) {
-      console.error('[AgentScheduler] Failed to start:', error);
+      console.error(`${LOG_PREFIX} Failed to start:`, error);
       return false;
     }
   }
@@ -425,7 +429,7 @@ export class AgentScheduler extends EventEmitter {
   public stop(): boolean {
     try {
       if (!this.running) {
-        console.warn('[AgentScheduler] Not running');
+        console.warn(`${LOG_PREFIX} Not running`);
         return false;
       }
 
@@ -452,10 +456,10 @@ export class AgentScheduler extends EventEmitter {
         actor: 'agent_scheduler',
       });
 
-      console.log('[AgentScheduler] Stopped');
+      console.log(`${LOG_PREFIX} Stopped`);
       return true;
     } catch (error) {
-      console.error('[AgentScheduler] Failed to stop:', error);
+      console.error(`${LOG_PREFIX} Failed to stop:`, error);
       return false;
     }
   }
@@ -532,16 +536,16 @@ export class AgentScheduler extends EventEmitter {
 
       case 'event':
         // Event-based agents are triggered externally via triggerEvent()
-        console.log(`[AgentScheduler] Agent ${agentId} registered for event: ${config.eventPattern}`);
+        console.log(`${LOG_PREFIX} Agent ${agentId} registered for event: ${config.eventPattern}`);
         break;
 
       case 'activity':
         // Activity-based agents are checked by activity monitor
-        console.log(`[AgentScheduler] Agent ${agentId} registered for inactivity: ${config.inactivityThreshold}s`);
+        console.log(`${LOG_PREFIX} Agent ${agentId} registered for inactivity: ${config.inactivityThreshold}s`);
         break;
 
       default:
-        console.warn(`[AgentScheduler] Unknown trigger type for agent ${agentId}: ${config.type}`);
+        console.warn(`${LOG_PREFIX} Unknown trigger type for agent ${agentId}: ${config.type}`);
     }
   }
 
@@ -554,7 +558,7 @@ export class AgentScheduler extends EventEmitter {
 
     const { config } = state;
     if (!config.interval) {
-      console.error(`[AgentScheduler] No interval specified for agent ${agentId}`);
+      console.error(`${LOG_PREFIX} No interval specified for agent ${agentId}`);
       return;
     }
 
@@ -570,7 +574,7 @@ export class AgentScheduler extends EventEmitter {
       }
     }, delay);
 
-    console.log(`[AgentScheduler] Agent ${agentId} scheduled in ${delay / 1000}s`);
+    console.log(`${LOG_PREFIX} Agent ${agentId} scheduled in ${delay / 1000}s`);
   }
 
   /**
@@ -582,14 +586,14 @@ export class AgentScheduler extends EventEmitter {
 
     const { config } = state;
     if (!config.schedule) {
-      console.error(`[AgentScheduler] No schedule specified for agent ${agentId}`);
+      console.error(`${LOG_PREFIX} No schedule specified for agent ${agentId}`);
       return;
     }
 
     // Parse schedule (HH:MM format)
     const [hours, minutes] = config.schedule.split(':').map(Number);
     if (isNaN(hours) || isNaN(minutes)) {
-      console.error(`[AgentScheduler] Invalid schedule format for agent ${agentId}: ${config.schedule}`);
+      console.error(`${LOG_PREFIX} Invalid schedule format for agent ${agentId}: ${config.schedule}`);
       return;
     }
 
@@ -615,31 +619,32 @@ export class AgentScheduler extends EventEmitter {
       }
     }, delay);
 
-    console.log(`[AgentScheduler] Agent ${agentId} scheduled for ${nextRun.toLocaleString()}`);
+    console.log(`${LOG_PREFIX} Agent ${agentId} scheduled for ${nextRun.toLocaleString()}`);
   }
 
   /**
    * Run an agent (with queue management for LLM agents)
    */
   private async runAgent(agentId: string): Promise<void> {
+    console.log(`${LOG_PREFIX} ========== runAgent HIT ========== Agent: ${agentId}`);
     const state = this.agents.get(agentId);
     if (!state) return;
 
     // Check if scheduler is paused
     if (this.config?.globalSettings.pauseAll) {
-      console.log(`[AgentScheduler] Agent ${agentId} skipped (scheduler paused)`);
+      console.log(`${LOG_PREFIX} Agent ${agentId} skipped (scheduler paused)`);
       return;
     }
 
     // Check if in quiet hours
     if (this.isQuietHours()) {
-      console.log(`[AgentScheduler] Agent ${agentId} skipped (quiet hours)`);
+      console.log(`${LOG_PREFIX} Agent ${agentId} skipped (quiet hours)`);
       return;
     }
 
     // Check conditions
     if (!this.checkConditions(state.config)) {
-      console.log(`[AgentScheduler] Agent ${agentId} skipped (conditions not met)`);
+      console.log(`${LOG_PREFIX} Agent ${agentId} skipped (conditions not met)`);
       return;
     }
 
@@ -650,7 +655,7 @@ export class AgentScheduler extends EventEmitter {
       // LLM agents: enforce serialization via queue
       if (this.currentLLMAgent !== null) {
         // Already running an LLM agent, enqueue this one
-        console.log(`[AgentScheduler] Agent ${agentId} queued (LLM agent ${this.currentLLMAgent} is running)`);
+        console.log(`${LOG_PREFIX} Agent ${agentId} queued (LLM agent ${this.currentLLMAgent} is running)`);
         this.enqueueLLMAgent(agentId, state.config.priority);
         return;
       }
@@ -658,7 +663,7 @@ export class AgentScheduler extends EventEmitter {
       // No LLM agent running, check global max
       const runningCount = Array.from(this.agents.values()).filter(s => s.status === 'running').length;
       if (runningCount >= (this.config?.globalSettings.maxConcurrentAgents || 3)) {
-        console.log(`[AgentScheduler] Agent ${agentId} queued (max concurrent agents reached)`);
+        console.log(`${LOG_PREFIX} Agent ${agentId} queued (max concurrent agents reached)`);
         this.enqueueLLMAgent(agentId, state.config.priority);
         return;
       }
@@ -673,7 +678,7 @@ export class AgentScheduler extends EventEmitter {
       const maxNonLLM = this.config?.globalSettings.maxConcurrentNonLLMAgents || 10;
 
       if (runningNonLLM >= maxNonLLM) {
-        console.log(`[AgentScheduler] Agent ${agentId} skipped (max concurrent non-LLM agents reached)`);
+        console.log(`${LOG_PREFIX} Agent ${agentId} skipped (max concurrent non-LLM agents reached)`);
         return;
       }
 
@@ -706,7 +711,7 @@ export class AgentScheduler extends EventEmitter {
       },
     });
 
-    console.log(`[AgentScheduler] Running agent: ${agentId}`);
+    console.log(`${LOG_PREFIX} Running agent: ${agentId}`);
 
     try {
       if (state.config.task) {
@@ -716,13 +721,13 @@ export class AgentScheduler extends EventEmitter {
         // Run agent file
         await this.runAgentFile(state.config);
       } else {
-        console.error(`[AgentScheduler] No task or agent path specified for ${agentId}`);
+        console.error(`${LOG_PREFIX} No task or agent path specified for ${agentId}`);
       }
 
       state.status = 'idle';
       state.errorCount = 0;
     } catch (error) {
-      console.error(`[AgentScheduler] Agent ${agentId} failed:`, error);
+      console.error(`${LOG_PREFIX} Agent ${agentId} failed:`, error);
       state.status = 'error';
       state.errorCount++;
 
@@ -775,7 +780,7 @@ export class AgentScheduler extends EventEmitter {
     // Try runtime first for modular agents
     await this.initializeRuntime();
     if (this.runtime && this.runtime.hasAgent(agentId)) {
-      console.log(`[AgentScheduler] Running agent '${agentId}' via runtime`);
+      console.log(`${LOG_PREFIX} Running agent '${agentId}' via runtime`);
 
       const result = await this.runtime.run(
         agentId,
@@ -796,7 +801,7 @@ export class AgentScheduler extends EventEmitter {
     }
 
     // Fall back to legacy tsx spawn for non-modular agents
-    console.log(`[AgentScheduler] Running agent '${config.agentPath}' via legacy spawn`);
+    console.log(`${LOG_PREFIX} Running agent '${config.agentPath}' via legacy spawn`);
 
     return new Promise((resolve, reject) => {
       const agentFullPath = path.join(systemPaths.agents, config.agentPath!);
@@ -930,7 +935,7 @@ export class AgentScheduler extends EventEmitter {
   private enqueueLLMAgent(agentId: string, priority: AgentPriority): void {
     // Check if already queued
     if (this.llmQueue.some(q => q.id === agentId)) {
-      console.log(`[AgentScheduler] Agent ${agentId} already in LLM queue`);
+      console.log(`${LOG_PREFIX} Agent ${agentId} already in LLM queue`);
       return;
     }
 
@@ -952,7 +957,7 @@ export class AgentScheduler extends EventEmitter {
       },
     });
 
-    console.log(`[AgentScheduler] Agent ${agentId} added to LLM queue (${this.llmQueue.length} in queue)`);
+    console.log(`${LOG_PREFIX} Agent ${agentId} added to LLM queue (${this.llmQueue.length} in queue)`);
 
     // Try to process queue
     this.processLLMQueue();
@@ -964,13 +969,13 @@ export class AgentScheduler extends EventEmitter {
   private async processLLMQueue(): Promise<void> {
     // Don't process if queue is paused
     if (this.queuePaused) {
-      console.log('[AgentScheduler] LLM queue is paused');
+      console.log(`${LOG_PREFIX} LLM queue is paused`);
       return;
     }
 
     // Don't process if already running an LLM agent
     if (this.currentLLMAgent) {
-      console.log(`[AgentScheduler] LLM agent ${this.currentLLMAgent} is running, queue processing delayed`);
+      console.log(`${LOG_PREFIX} LLM agent ${this.currentLLMAgent} is running, queue processing delayed`);
       return;
     }
 
@@ -993,7 +998,7 @@ export class AgentScheduler extends EventEmitter {
 
     const state = this.agents.get(queued.id);
     if (!state) {
-      console.warn(`[AgentScheduler] Queued agent ${queued.id} not found in state`);
+      console.warn(`${LOG_PREFIX} Queued agent ${queued.id} not found in state`);
       // Continue processing next in queue
       this.processLLMQueue();
       return;
@@ -1002,7 +1007,7 @@ export class AgentScheduler extends EventEmitter {
     // Mark as current LLM agent
     this.currentLLMAgent = queued.id;
 
-    console.log(`[AgentScheduler] Processing LLM agent ${queued.id} from queue (${this.llmQueue.length} remaining)`);
+    console.log(`${LOG_PREFIX} Processing LLM agent ${queued.id} from queue (${this.llmQueue.length} remaining)`);
 
     audit({
       level: 'info',
@@ -1037,7 +1042,7 @@ export class AgentScheduler extends EventEmitter {
     if (this.queuePaused) return;
 
     this.queuePaused = true;
-    console.log('[AgentScheduler] LLM queue paused (user activity detected)');
+    console.log(`${LOG_PREFIX} LLM queue paused (user activity detected)`);
 
     audit({
       level: 'info',
@@ -1073,7 +1078,7 @@ export class AgentScheduler extends EventEmitter {
     const requiredInactivity = this.config?.globalSettings.activityResumeDelay || 60;
 
     if (inactiveSeconds < requiredInactivity) {
-      console.log(`[AgentScheduler] Not resuming queue yet (only ${inactiveSeconds.toFixed(0)}s inactive, need ${requiredInactivity}s)`);
+      console.log(`${LOG_PREFIX} Not resuming queue yet (only ${inactiveSeconds.toFixed(0)}s inactive, need ${requiredInactivity}s)`);
       // Reschedule resume check
       const remainingDelay = (requiredInactivity - inactiveSeconds) * 1000;
       this.queueResumeTimer = setTimeout(() => {
@@ -1083,7 +1088,7 @@ export class AgentScheduler extends EventEmitter {
     }
 
     this.queuePaused = false;
-    console.log('[AgentScheduler] LLM queue resumed (user inactive)');
+    console.log(`${LOG_PREFIX} LLM queue resumed (user inactive)`);
 
     audit({
       level: 'info',
@@ -1156,7 +1161,7 @@ export class AgentScheduler extends EventEmitter {
 
     // Check sleep mode condition
     if (config.conditions.requiresSleepMode) {
-      // TODO: Implement sleep mode detection
+      // Note: Sleep mode detection handled by night-pipeline agent
       // For now, always return true
       return true;
     }
