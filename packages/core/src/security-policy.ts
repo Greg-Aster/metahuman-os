@@ -25,31 +25,13 @@ export type UserRole = 'owner' | 'standard' | 'guest';
  * Check if a user has administrator privileges
  * Administrators can edit system code and access all profiles
  *
- * NOTE: Admin privileges are granted to users with 'owner' role.
- * The ADMIN_USERS environment variable is deprecated and no longer used.
+ * Admin privileges are granted exclusively to users with 'owner' role.
  */
 export function isAdministrator(username?: string, role?: UserRole): boolean {
   if (!username) return false;
 
-  // Owner role automatically grants admin privileges
-  if (role === 'owner') return true;
-
-  // Legacy ADMIN_USERS support (deprecated, but kept for backward compatibility)
-  // This will be removed in a future version
-  const adminUsers = process.env.ADMIN_USERS || '';
-  if (adminUsers) {
-    const adminList = adminUsers
-      .split(',')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0);
-
-    if (adminList.includes(username)) {
-      console.warn(`[Security] ADMIN_USERS is deprecated. User '${username}' should have 'owner' role instead.`);
-      return true;
-    }
-  }
-
-  return false;
+  // Owner role grants admin privileges
+  return role === 'owner';
 }
 
 /**
