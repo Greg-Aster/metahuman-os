@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { storageClient } from './storage-client.js';
 
+const LOG_PREFIX = '[identity]';
+
 /**
  * Identity Module - User Profile Management
  *
@@ -36,17 +38,69 @@ export interface PersonaCore {
     email?: string;
     aliases?: string[];
   };
-  personality: any;
-  values: any;
-  goals: any;
-  context: any;
+  personality: PersonalityConfig;
+  values: ValuesConfig;
+  goals: GoalsConfig;
+  context: ContextConfig;
   // Extended properties used by cognitive-layers (experimental)
   name?: string;  // Shorthand for identity.name
-  traits?: string[] | { [key: string]: any };  // Personality traits
-  currentGoals?: string[] | { [key: string]: any };  // Current goals
-  background?: string | { [key: string]: any };  // Background context
+  traits?: string[] | Record<string, unknown>;  // Personality traits
+  currentGoals?: string[] | Record<string, unknown>;  // Current goals
+  background?: string | Record<string, unknown>;  // Background context
   // Allow additional properties for flexibility
-  [key: string]: any;
+  [key: string]: unknown;
+}
+
+interface PersonalityConfig {
+  communicationStyle?: {
+    tone: string[];
+    verbosity: string;
+    emphasis: string;
+  };
+  traits?: {
+    openness: number;
+    conscientiousness: number;
+    extraversion: number;
+    agreeableness: number;
+    neuroticism: number;
+  };
+  [key: string]: unknown;
+}
+
+interface ValuesConfig {
+  core: Array<{
+    value: string;
+    description: string;
+    priority: number;
+  }>;
+  boundaries: string[];
+  [key: string]: unknown;
+}
+
+interface GoalsConfig {
+  shortTerm: GoalEntry[];
+  midTerm: GoalEntry[];
+  longTerm: GoalEntry[];
+  [key: string]: unknown;
+}
+
+interface GoalEntry {
+  id?: string;
+  goal: string;
+  status: string;
+  description?: string;
+  sourceDesireId?: string;
+  sourceType?: string;
+  proposedAt?: string;
+  proposedReason?: string;
+  approvedAt?: string;
+}
+
+interface ContextConfig {
+  domains: string[];
+  projects: string[];
+  currentFocus: string[];
+  [key: string]: unknown;
 }
 
 export interface DecisionRules {
@@ -54,11 +108,36 @@ export interface DecisionRules {
   trustLevel: string;
   availableModes: string[];
   modeDescription?: Record<string, string>;
-  hardRules: any[];
-  softPreferences: any[];
-  decisionHeuristics: any[];
-  riskLevels: any;
+  hardRules: HardRule[];
+  softPreferences: SoftPreference[];
+  decisionHeuristics: DecisionHeuristic[];
+  riskLevels: RiskLevels;
   lastUpdated?: string;
+}
+
+interface HardRule {
+  id: string;
+  description: string;
+  scope: string;
+  enforcement: string;
+}
+
+interface SoftPreference {
+  id: string;
+  description: string;
+  weight: number;
+}
+
+interface DecisionHeuristic {
+  situation: string;
+  action: string;
+  rationale: string;
+}
+
+interface RiskLevels {
+  low: string;
+  medium: string;
+  high: string;
 }
 
 /**
@@ -127,7 +206,7 @@ export function getDefaultPersonaCore(): PersonaCore {
 /**
  * Ensure persona file exists by copying from system template or generating default
  */
-function ensurePersonaFile(filename: string, defaultGenerator: () => any): string {
+function ensurePersonaFile(filename: string, defaultGenerator: () => PersonaCore | DecisionRules): string {
   const result = storageClient.resolvePath({
     category: 'config',
     subcategory: 'persona',
@@ -158,24 +237,30 @@ function ensurePersonaFile(filename: string, defaultGenerator: () => any): strin
 
   if (fs.existsSync(templatePath)) {
     fs.copyFileSync(templatePath, userFilePath);
-    console.log(`[identity] ✓ Created ${filename} from template for user profile`);
+    console.log(`${LOG_PREFIX} ✓ Created ${filename} from template for user profile`);
   } else if (fs.existsSync(systemFilePath)) {
     fs.copyFileSync(systemFilePath, userFilePath);
-    console.log(`[identity] ✓ Created ${filename} from system persona for user profile`);
+    console.log(`${LOG_PREFIX} ✓ Created ${filename} from system persona for user profile`);
   } else {
     // No template exists - generate default and save
     const defaultConfig = defaultGenerator();
     fs.writeFileSync(userFilePath, JSON.stringify(defaultConfig, null, 2), 'utf8');
-    console.log(`[identity] ✓ Generated default ${filename} for user profile`);
+    console.log(`${LOG_PREFIX} ✓ Generated default ${filename} for user profile`);
   }
 
   return userFilePath;
 }
 
 export function loadPersonaCore(): PersonaCore {
-  const filePath = ensurePersonaFile('core.json', getDefaultPersonaCore);
-  const content = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(content);
+  console.log(`${LOG_PREFIX} ========== loadPersonaCore HIT ==========`);
+  try {
+    const filePath = ensurePersonaFile('core.json', getDefaultPersonaCore);
+    const content = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(content);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error loading persona core:`, error);
+    throw new Error(`Failed to load persona core: ${(error as Error).message}`);
+  }
 }
 
 /**
@@ -247,35 +332,50 @@ export function getDefaultDecisionRules(): DecisionRules {
 }
 
 export function loadDecisionRules(): DecisionRules {
-  const filePath = ensurePersonaFile('decision-rules.json', getDefaultDecisionRules);
-  const content = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(content);
+  try {
+    const filePath = ensurePersonaFile('decision-rules.json', getDefaultDecisionRules);
+    const content = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(content);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error loading decision rules:`, error);
+    throw new Error(`Failed to load decision rules: ${(error as Error).message}`);
+  }
 }
 
 export function savePersonaCore(persona: PersonaCore): void {
-  const result = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'core.json',
-  });
-  if (!result.success || !result.path) {
-    throw new Error('Cannot resolve persona core path');
+  try {
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'core.json',
+    });
+    if (!result.success || !result.path) {
+      throw new Error('Cannot resolve persona core path');
+    }
+    persona.lastUpdated = new Date().toISOString();
+    fs.writeFileSync(result.path, JSON.stringify(persona, null, 2));
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error saving persona core:`, error);
+    throw new Error(`Failed to save persona core: ${(error as Error).message}`);
   }
-  persona.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(result.path, JSON.stringify(persona, null, 2));
 }
 
 export function saveDecisionRules(rules: DecisionRules): void {
-  const result = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'decision-rules.json',
-  });
-  if (!result.success || !result.path) {
-    throw new Error('Cannot resolve decision rules path');
+  try {
+    const result = storageClient.resolvePath({
+      category: 'config',
+      subcategory: 'persona',
+      relativePath: 'decision-rules.json',
+    });
+    if (!result.success || !result.path) {
+      throw new Error('Cannot resolve decision rules path');
+    }
+    rules.lastUpdated = new Date().toISOString();
+    fs.writeFileSync(result.path, JSON.stringify(rules, null, 2));
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error saving decision rules:`, error);
+    throw new Error(`Failed to save decision rules: ${(error as Error).message}`);
   }
-  rules.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(result.path, JSON.stringify(rules, null, 2));
 }
 
 export function getIdentitySummary(): string {
@@ -292,10 +392,10 @@ Role: ${persona.identity.role}
 Trust Level: ${rules.trustLevel}
 
 Core Values:
-${persona.values.core.map((v: any) => `  ${v.priority}. ${v.value} - ${v.description}`).join('\n')}
+${persona.values.core.map((v) => `  ${v.priority}. ${v.value} - ${v.description}`).join('\n')}
 
 Current Goals:
-${persona.goals.shortTerm.map((g: any) => `  • ${g.goal} (${g.status})`).join('\n')}
+${persona.goals.shortTerm.map((g) => `  • ${g.goal} (${g.status})`).join('\n')}
 
 Last Updated: ${persona.lastUpdated}
 `.trim();
@@ -305,16 +405,21 @@ Last Updated: ${persona.lastUpdated}
 }
 
 export function setTrustLevel(level: string): void {
-  const rules = loadDecisionRules();
-  const validModes = rules.availableModes;
+  try {
+    const rules = loadDecisionRules();
+    const validModes = rules.availableModes;
 
-  if (!validModes.includes(level)) {
-    throw new Error(`Invalid trust level. Must be one of: ${validModes.join(', ')}`);
+    if (!validModes.includes(level)) {
+      throw new Error(`Invalid trust level. Must be one of: ${validModes.join(', ')}`);
+    }
+
+    rules.trustLevel = level;
+    saveDecisionRules(rules);
+    console.log(`${LOG_PREFIX} Trust level set to: ${level}`);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error setting trust level:`, error);
+    throw new Error(`Failed to set trust level: ${(error as Error).message}`);
   }
-
-  rules.trustLevel = level;
-  saveDecisionRules(rules);
-  console.log(`Trust level set to: ${level}`);
 }
 
 /**
@@ -323,6 +428,7 @@ export function setTrustLevel(level: string): void {
  * Falls back to core.json if facets not configured or facet file missing
  */
 export function loadPersonaWithFacet(): PersonaCore | null {
+  console.log(`${LOG_PREFIX} ========== loadPersonaWithFacet HIT ==========`);
   try {
     // Resolve persona directory via storage router
     const personaResult = storageClient.resolvePath({
@@ -354,7 +460,7 @@ export function loadPersonaWithFacet(): PersonaCore | null {
     // INACTIVE FACET: Return null to rely entirely on LoRA
     // No system prompt persona context will be added
     if (activeFacet === 'inactive' || !facetInfo?.personaFile) {
-      console.log('[identity] Persona inactive - relying on LoRA only');
+      console.log(`${LOG_PREFIX} Persona inactive - relying on LoRA only`);
       return null;
     }
 
@@ -362,7 +468,7 @@ export function loadPersonaWithFacet(): PersonaCore | null {
 
     // If facet file doesn't exist, fall back to core
     if (!fs.existsSync(facetFilePath)) {
-      console.warn(`[identity] Facet file not found: ${facetFilePath}, using core persona`);
+      console.warn(`${LOG_PREFIX} Facet file not found: ${facetFilePath}, using core persona`);
       return loadPersonaCore();
     }
 
@@ -395,7 +501,7 @@ export function loadPersonaWithFacet(): PersonaCore | null {
     }
 
     // For other errors, try loading core persona
-    console.warn('[identity] Error loading faceted persona, using core:', error);
+    console.warn(`${LOG_PREFIX} Error loading faceted persona, using core:`, error);
     return loadPersonaCore();
   }
 }
@@ -458,7 +564,7 @@ export function proposeGoalFromDesire(desire: {
     ];
 
     const alreadyProposed = allGoals.some(
-      (g: any) => g.sourceDesireId === desire.id || g.goal.toLowerCase() === desire.title.toLowerCase()
+      (g) => g.sourceDesireId === desire.id || g.goal.toLowerCase() === desire.title.toLowerCase()
     );
 
     if (alreadyProposed) {
@@ -494,7 +600,7 @@ export function proposeGoalFromDesire(desire: {
     // Save the updated persona
     savePersonaCore(persona);
 
-    console.log(`[identity] ✓ Proposed goal "${desire.title}" from desire ${desire.id}`);
+    console.log(`${LOG_PREFIX} ✓ Proposed goal "${desire.title}" from desire ${desire.id}`);
 
     return {
       proposed: true,
@@ -502,7 +608,7 @@ export function proposeGoalFromDesire(desire: {
       goalId,
     };
   } catch (error) {
-    console.error('[identity] Error proposing goal from desire:', error);
+    console.error(`${LOG_PREFIX} Error proposing goal from desire:`, error);
     return {
       proposed: false,
       message: `Error: ${(error as Error).message}`,
@@ -525,11 +631,11 @@ export function approveProposedGoal(
     const persona = loadPersonaCore();
 
     // Find the proposed goal across all tiers
-    let foundGoal: any = null;
+    let foundGoal: GoalEntry | null = null;
 
     for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
       const goals = persona.goals?.[tier] || [];
-      const idx = goals.findIndex((g: any) => g.id === goalId);
+      const idx = goals.findIndex((g) => g.id === goalId);
       if (idx !== -1) {
         foundGoal = goals[idx];
         // Remove from source tier
@@ -558,14 +664,14 @@ export function approveProposedGoal(
 
     savePersonaCore(persona);
 
-    console.log(`[identity] ✓ Approved goal "${foundGoal.goal}" → ${targetTier}`);
+    console.log(`${LOG_PREFIX} ✓ Approved goal "${foundGoal.goal}" → ${targetTier}`);
 
     return {
       approved: true,
       message: `Goal "${foundGoal.goal}" approved and added to ${targetTier}`,
     };
   } catch (error) {
-    console.error('[identity] Error approving goal:', error);
+    console.error(`${LOG_PREFIX} Error approving goal:`, error);
     return { approved: false, message: `Error: ${(error as Error).message}` };
   }
 }
@@ -584,7 +690,7 @@ export function rejectProposedGoal(goalId: string, reason?: string): { rejected:
     // Find and remove the proposed goal
     for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
       const goals = persona.goals?.[tier] || [];
-      const idx = goals.findIndex((g: any) => g.id === goalId);
+      const idx = goals.findIndex((g) => g.id === goalId);
       if (idx !== -1) {
         const goal = goals[idx];
         if (goal.status !== 'proposed') {
@@ -595,7 +701,7 @@ export function rejectProposedGoal(goalId: string, reason?: string): { rejected:
         persona.goals[tier].splice(idx, 1);
         savePersonaCore(persona);
 
-        console.log(`[identity] ✓ Rejected proposed goal "${goal.goal}"${reason ? `: ${reason}` : ''}`);
+        console.log(`${LOG_PREFIX} ✓ Rejected proposed goal "${goal.goal}"${reason ? `: ${reason}` : ''}`);
 
         return {
           rejected: true,
@@ -606,7 +712,7 @@ export function rejectProposedGoal(goalId: string, reason?: string): { rejected:
 
     return { rejected: false, message: `Goal ${goalId} not found` };
   } catch (error) {
-    console.error('[identity] Error rejecting goal:', error);
+    console.error(`${LOG_PREFIX} Error rejecting goal:`, error);
     return { rejected: false, message: `Error: ${(error as Error).message}` };
   }
 }
@@ -625,7 +731,7 @@ export function getProposedGoals(): Array<{
 }> {
   try {
     const persona = loadPersonaCore();
-    const proposed: any[] = [];
+    const proposed: Array<GoalEntry & { tier: string }> = [];
 
     for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
       const goals = persona.goals?.[tier] || [];
@@ -638,7 +744,7 @@ export function getProposedGoals(): Array<{
 
     return proposed;
   } catch (error) {
-    console.error('[identity] Error getting proposed goals:', error);
+    console.error(`${LOG_PREFIX} Error getting proposed goals:`, error);
     return [];
   }
 }
@@ -663,7 +769,9 @@ export function getActiveFacet(): string {
     }
     const facetsConfig = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
     return facetsConfig.activeFacet || 'default';
-  } catch {
+  } catch (error) {
+    // Return default when facets.json doesn't exist or cannot be read
+    console.log(`${LOG_PREFIX} Cannot read facets config, using default facet:`, error);
     return 'default';
   }
 }
