@@ -17,6 +17,8 @@ import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 
+const LOG_PREFIX = '[vllm]';
+
 // ============================================================================
 // Python Environment Detection
 // ============================================================================
@@ -132,7 +134,8 @@ export class VLLMClient {
         signal: AbortSignal.timeout(3000),
       });
       return response.ok;
-    } catch {
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Health check failed, trying models endpoint:`, error);
       // Try the models endpoint as fallback (some vLLM versions)
       try {
         const response = await fetch(`${this.endpoint}/v1/models`, {
@@ -140,7 +143,8 @@ export class VLLMClient {
           signal: AbortSignal.timeout(3000),
         });
         return response.ok;
-      } catch {
+      } catch (error) {
+        console.warn(`${LOG_PREFIX} Both health and models endpoints failed:`, error);
         return false;
       }
     }
@@ -193,7 +197,8 @@ export class VLLMClient {
 
       const data = await response.json() as { data: VLLMModel[] };
       return data.data?.[0]?.id || null;
-    } catch {
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Failed to get loaded model:`, error);
       return null;
     }
   }
@@ -227,8 +232,9 @@ export class VLLMClient {
           // Process doesn't exist, remove stale PID file
           fs.unlinkSync(pidFile);
         }
-      } catch {
-        try { fs.unlinkSync(pidFile); } catch { }
+      } catch (error) {
+        console.warn(`${LOG_PREFIX} Error cleaning stale PID file:`, error);
+        try { fs.unlinkSync(pidFile); } catch { /* File doesn't exist */ }
       }
     }
 
@@ -265,7 +271,7 @@ export class VLLMClient {
       return { available, freeGB, totalGB, requiredGB };
     } catch (error) {
       // nvidia-smi not available or failed - assume OK and let vLLM handle it
-      console.warn('[vllm] Could not check GPU memory, proceeding anyway');
+      console.warn(`${LOG_PREFIX} Could not check GPU memory, proceeding anyway:`, error);
       return { available: true, freeGB: 0, totalGB: 0, requiredGB: 0 };
     }
   }
@@ -334,19 +340,22 @@ export class VLLMClient {
    * Spawns: python -m vllm.entrypoints.openai.api_server --model <model> [options]
    */
   async startServer(config: VLLMConfig): Promise<{ pid: number; success: boolean; error?: string }> {
+    console.log(`${LOG_PREFIX} ========== startServer HIT ==========`);
+    console.log(`${LOG_PREFIX} Input: model=${config.model}, endpoint=${config.endpoint}, gpuUtil=${config.gpuMemoryUtilization}`);
+    
     // STEP 1: Clean up any zombie vLLM processes first
-    console.log('[vllm] Cleaning up any existing processes...');
+    console.log(`${LOG_PREFIX} Cleaning up any existing processes...`);
     await this.cleanupZombieProcesses();
 
     // STEP 2: Check if already running with same model
     if (await this.isRunning()) {
       const loadedModel = await this.getLoadedModel();
       if (loadedModel === config.model) {
-        console.log('[vllm] Server already running with requested model');
+        console.log(`${LOG_PREFIX} Server already running with requested model`);
         return { pid: this.serverProcess?.pid || 0, success: true };
       }
       // Different model - need to stop first
-      console.log('[vllm] Stopping existing server (different model)...');
+      console.log(`${LOG_PREFIX} Stopping existing server (different model)...`);
       await this.stopServer();
     }
 
@@ -355,8 +364,8 @@ export class VLLMClient {
     if (config.autoUtilization) {
       const optimal = await this.calculateOptimalUtilization();
       effectiveUtilization = optimal.utilization;
-      console.log(`[vllm] Auto-utilization: ${optimal.recommendation}`);
-      console.log(`[vllm] Using ${(effectiveUtilization * 100).toFixed(0)}% GPU memory (${optimal.freeGB.toFixed(1)}GB free of ${optimal.totalGB.toFixed(1)}GB)`);
+      console.log(`${LOG_PREFIX} Auto-utilization: ${optimal.recommendation}`);
+      console.log(`${LOG_PREFIX} Using ${(effectiveUtilization * 100).toFixed(0)}% GPU memory (${optimal.freeGB.toFixed(1)}GB free of ${optimal.totalGB.toFixed(1)}GB)`);
     }
 
     // STEP 3: Check GPU memory availability
@@ -369,7 +378,7 @@ export class VLLMClient {
       };
     }
     if (!config.autoUtilization) {
-      console.log(`[vllm] GPU memory check passed: ${gpuCheck.freeGB.toFixed(1)}GB free of ${gpuCheck.totalGB.toFixed(1)}GB`);
+      console.log(`${LOG_PREFIX} GPU memory check passed: ${gpuCheck.freeGB.toFixed(1)}GB free of ${gpuCheck.totalGB.toFixed(1)}GB)`);
     }
 
     // Build command arguments
@@ -401,13 +410,13 @@ export class VLLMClient {
     // This trades performance for stability on memory-constrained GPUs
     if (config.enforceEager) {
       args.push('--enforce-eager');
-      console.log('[vllm] Eager mode enabled (CUDA graphs disabled for memory stability)');
+      console.log(`${LOG_PREFIX} Eager mode enabled (CUDA graphs disabled for memory stability)`);
     }
 
     // Note: Thinking mode for Qwen3 is controlled per-request via chat_template_kwargs
     // in the API request body, not via server startup flags. See chat() method.
     if (config.enableThinking === false) {
-      console.log('[vllm] Thinking mode will be disabled in API requests');
+      console.log(`${LOG_PREFIX} Thinking mode will be disabled in API requests`);
     }
 
     // LoRA adapters - load multiple adapters at startup
@@ -418,17 +427,17 @@ export class VLLMClient {
       // Each LoRA module must be a separate argument (vLLM argparse splits on '=')
       args.push('--lora-modules', ...config.loraModules.map(l => `${l.name}=${l.path}`));
       args.push('--max-lora-rank', String(config.maxLoraRank ?? 64));
-      console.log(`[vllm] Loading ${config.loraModules.length} LoRA adapter(s): ${config.loraModules.map(l => l.name).join(', ')}`);
+      console.log(`${LOG_PREFIX} Loading ${config.loraModules.length} LoRA adapter(s): ${config.loraModules.map(l => l.name).join(', ')}`);
     }
 
     // Spawn vLLM server process
     return new Promise((resolve) => {
       try {
         const pythonPath = getVLLMPython();
-        console.log(`[vllm] Starting server with model: ${config.model}`);
-        console.log(`[vllm] Config: maxModelLen=${config.maxModelLen}, enforceEager=${config.enforceEager}, gpuUtil=${effectiveUtilization}`);
-        console.log(`[vllm] Full args: ${args.join(' ')}`);
-        console.log(`[vllm] Using Python: ${pythonPath}`);
+        console.log(`${LOG_PREFIX} Starting server with model: ${config.model}`);
+        console.log(`${LOG_PREFIX} Config: maxModelLen=${config.maxModelLen}, enforceEager=${config.enforceEager}, gpuUtil=${effectiveUtilization}`);
+        console.log(`${LOG_PREFIX} Full args: ${args.join(' ')}`);
+        console.log(`${LOG_PREFIX} Using Python: ${pythonPath}`);
 
         // Set up log file
         const logDir = path.join(ROOT, 'logs', 'run');
@@ -448,7 +457,7 @@ export class VLLMClient {
 
         // Handle spawn errors (e.g., python not found - ENOENT)
         this.serverProcess.on('error', (error: NodeJS.ErrnoException) => {
-          console.error('[vllm] Failed to spawn process:', error.message);
+          console.error(`${LOG_PREFIX} Failed to spawn process:`, error.message);
           logStream.write(`\n=== Spawn error: ${error.message} ===\n`);
           logStream.end();
           this.serverProcess = null;
@@ -481,7 +490,7 @@ export class VLLMClient {
           const msg = data.toString();
           logStream.write(`[stdout] ${msg}`);
           if (msg.includes('Uvicorn running')) {
-            console.log('[vllm] Server started successfully');
+            console.log(`${LOG_PREFIX} Server started successfully`);
           }
         });
 
@@ -495,23 +504,23 @@ export class VLLMClient {
 
           // HuggingFace download progress
           if (msg.includes('Downloading') || msg.includes('downloading')) {
-            console.log('[vllm] 📥', msg);
+            console.log(`${LOG_PREFIX} 📥`, msg);
           } else if (msg.includes('%|') || msg.includes('B/s')) {
             // Progress bar or speed indicator
-            process.stdout.write(`\r[vllm] ${msg}`);
+            process.stdout.write(`\r${LOG_PREFIX} ${msg}`);
           } else if (msg.includes('Fetching') || msg.includes('Loading')) {
-            console.log('[vllm] 📦', msg);
+            console.log(`${LOG_PREFIX} 📦`, msg);
           } else if (msg.includes('error') || msg.includes('Error') || msg.includes('ERROR') || msg.includes('CUDA') || msg.includes('OOM') || msg.includes('OutOfMemory')) {
-            console.error('[vllm] ❌', msg);
+            console.error(`${LOG_PREFIX} ❌`, msg);
           } else if (msg.includes('INFO') || msg.includes('Uvicorn')) {
-            console.log('[vllm]', msg);
+            console.log(`${LOG_PREFIX}`, msg);
           }
           // Other messages are written to log but not console
         });
 
         // Handle exit
         this.serverProcess.on('exit', (code) => {
-          console.log(`[vllm] Server exited with code ${code}`);
+          console.log(`${LOG_PREFIX} Server exited with code ${code}`);
           logStream.write(`\n=== Server exited with code ${code} at ${new Date().toISOString()} ===\n`);
           logStream.end();
           this.serverProcess = null;
@@ -550,7 +559,8 @@ export class VLLMClient {
    * Stop vLLM server
    */
   async stopServer(): Promise<void> {
-    console.log('[vllm] Stopping server...');
+    console.log(`${LOG_PREFIX} ========== stopServer HIT ==========`);
+    console.log(`${LOG_PREFIX} Stopping server...`);
 
     // Try to kill our managed process
     if (this.serverProcess) {
@@ -595,7 +605,7 @@ export class VLLMClient {
       actor: 'system',
     });
 
-    console.log('[vllm] Server stopped');
+    console.log(`${LOG_PREFIX} Server stopped`);
   }
 
   /**
@@ -612,8 +622,9 @@ export class VLLMClient {
         if (response.ok) {
           return;
         }
-      } catch {
-        // Not ready yet
+      } catch (error) {
+        // Not ready yet - this is expected during startup
+        console.debug(`${LOG_PREFIX} Server not ready yet:`, error);
       }
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -640,7 +651,8 @@ export class VLLMClient {
 
       const data = await response.json() as { data: VLLMModel[] };
       return data.data || [];
-    } catch {
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Failed to list models:`, error);
       return [];
     }
   }
@@ -661,7 +673,8 @@ export class VLLMClient {
       }
       // Skip the first (base model) and return the rest as LoRA names
       return models.slice(1).map(m => m.id);
-    } catch {
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Failed to get loaded LoRAs:`, error);
       return [];
     }
   }
@@ -680,7 +693,7 @@ export class VLLMClient {
       quantization: config?.quantization,
     };
 
-    console.log(`[vllm] Switching to model: ${model}`);
+    console.log(`${LOG_PREFIX} Switching to model: ${model}`);
     await this.stopServer();
     const result = await this.startServer(fullConfig);
     return { success: result.success, error: result.error };
@@ -711,6 +724,9 @@ export class VLLMClient {
       repetitionPenalty?: number;
     }
   ): Promise<VLLMChatResponse> {
+    console.log(`${LOG_PREFIX} ========== chat HIT ==========`);
+    console.log(`${LOG_PREFIX} Input: messages=${messages.length}, model=${options?.model}, maxTokens=${options?.maxTokens}`);
+    
     const body: Record<string, unknown> = {
       model: options?.model || this.currentModel || 'default',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
@@ -846,8 +862,9 @@ export class VLLMClient {
             if (content) {
               onToken(content);
             }
-          } catch {
-            // Skip invalid JSON
+          } catch (error) {
+            // Skip invalid JSON - this is normal during streaming
+            console.debug(`${LOG_PREFIX} Skipping invalid JSON in stream:`, error);
           }
         }
       }
