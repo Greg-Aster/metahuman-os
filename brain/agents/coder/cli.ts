@@ -16,8 +16,11 @@
 import { initGlobalLogger } from '@metahuman/core';
 import { runCycle, type CoderOptions } from './core.js';
 
-async function main() {
+const LOG_PREFIX = '[coder]';
+
+async function main(): Promise<void> {
   initGlobalLogger('coder');
+  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
 
   const args = process.argv.slice(2);
   const options: CoderOptions = {
@@ -27,14 +30,26 @@ async function main() {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
+      const username = args[i + 1];
+      // Validate username for security (alphanumeric, underscore, hyphen only)
+      if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+        console.error(`${LOG_PREFIX} Invalid username: ${username}`);
+        process.exit(1);
+      }
+      options.username = username;
       break;
     }
   }
 
+  console.log(`${LOG_PREFIX} Options:`, {
+    singleUser: options.singleUser,
+    maintenanceOnly: options.maintenanceOnly,
+    username: options.username
+  });
+
   try {
     const result = await runCycle(options);
-    console.log(`[coder] Completed:`, {
+    console.log(`${LOG_PREFIX} Completed:`, {
       usersProcessed: result.usersProcessed,
       errorsProcessed: result.errorsProcessed,
       fixesGenerated: result.fixesGenerated,
@@ -42,7 +57,7 @@ async function main() {
     });
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error('[coder] Fatal error:', error);
+    console.error(`${LOG_PREFIX} Fatal error:`, error);
     process.exit(1);
   }
 }
