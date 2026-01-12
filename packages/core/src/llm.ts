@@ -54,6 +54,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   async generate(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
+    console.log('[llm] OllamaProvider.generate() called with model:', options.model);
     if (!options.model) {
       throw new Error(
         'MISSING MODEL: OllamaProvider.generate() requires options.model to be specified.\n' +
@@ -64,7 +65,16 @@ export class OllamaProvider implements LLMProvider {
     const model = options.model;
 
     try {
-      const body: any = {
+      const body: {
+        model: string;
+        messages: Array<{ role: string; content: string }>;
+        stream: boolean;
+        format?: string;
+        options: {
+          temperature: number;
+          num_predict?: number;
+        };
+      } = {
         model,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
         stream: false,
@@ -411,6 +421,7 @@ export class LLMManager {
       // @metahuman/server not installed or import failed
       // This is expected in local mode - not an error
       console.log('[llm] Server providers not available (local mode or @metahuman/server not installed)');
+      console.log('[llm] Error details:', (error as Error).message);
       this.serverProvidersLoaded = true; // Don't retry
       return false;
     }
@@ -425,6 +436,7 @@ export class LLMManager {
 
   getProvider(name?: string): LLMProvider {
     const providerName = name || this.defaultProvider;
+    console.log('[llm] getProvider() called for:', providerName);
 
     // If requesting a server provider and not loaded yet, try to load
     if (this.isServerProvider(providerName) && !this.serverProvidersLoaded) {
