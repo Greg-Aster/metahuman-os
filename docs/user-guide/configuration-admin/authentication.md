@@ -167,6 +167,40 @@ import {
 - **standard**: read + write
 - **owner**: read + write + admin
 
+#### User Management API
+
+**Source**: `packages/core/src/users.ts`
+
+```typescript
+import {
+  createUser, getUser, getUserByUsername, listUsers, deleteUser,
+  authenticateUser, changePassword, updatePassword,
+  updateUsername, updateUserMetadata, updateProfileVisibility,
+  getProfileStorageConfig, updateProfileStorage
+} from '@metahuman/core/users';
+```
+
+**User Operations**:
+- `createUser(username, password, role, metadata)` - Create user (enforces one owner, min 6 char password)
+- `getUser(id)` - Get user by ID (returns SafeUser without password)
+- `listUsers()` - List all users safely
+- `deleteUser(id)` - Delete user (protects owner from deletion)
+- `authenticateUser(username, password)` - Verify credentials
+
+**Password Management**:
+- `changePassword(userId, oldPassword, newPassword)` - User-initiated change
+- `updatePassword(userId, newPassword)` - Admin password reset (no verification)
+
+**Profile Management**:
+- `updateProfileVisibility(userId, 'public' | 'private')` - Control guest access
+- `updateProfileStorage(userId, config)` - Set custom storage location
+- `getProfileStorageConfig(username)` - Get custom storage config (used by path resolution)
+
+**Security**:
+- bcrypt password hashing (12 rounds)
+- Owner account protection
+- All operations audit logged to `logs/audit/`
+
 **For protected endpoints** (most endpoints):
 ```typescript
 const handler: APIRoute = async ({ cookies, request }) => {
