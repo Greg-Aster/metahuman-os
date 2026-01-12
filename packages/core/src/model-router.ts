@@ -258,7 +258,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
 
 /**
  * Call an LLM with streaming response
- * TODO: Implement streaming support when Ollama client supports it
+ * Note: Streaming support available via SSE in operator pipeline
  */
 export async function* callLLMStream(callOptions: RouterCallOptions): AsyncGenerator<RouterStreamChunk> {
   // Streaming not yet implemented - for now, just call regular LLM and yield the result

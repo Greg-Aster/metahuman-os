@@ -370,6 +370,40 @@ Dual mode provides highest-quality training data:
 
 ## Technical Details
 
+### Implementation Overview
+
+**Core Mode System** (`packages/core/src/cognitive-mode.ts` - 281 lines):
+- Mode switching and state management
+- Mode definitions and defaults
+- Memory write/operator permission checks
+
+**3-Layer Cognitive Pipeline** (`packages/core/src/cognitive-layers/` - 5,365 lines):
+- **Layer 1: Subconscious** (`subconscious-layer.ts` - 162 lines)
+  - Memory retrieval and context building
+  - Semantic search with configurable depth
+  - Pattern detection and filtering
+
+- **Layer 2: Personality Core** (`personality-core-layer.ts` - 422 lines)
+  - Response generation with LoRA adapters
+  - Voice consistency tracking
+  - Fallback to base model if adapter unavailable
+
+- **Layer 3: Meta-Cognition** (`meta-cognition-layer.ts` - 397 lines)
+  - Safety validation (`safety.ts` - 512 lines)
+  - Consistency checking (`consistency.ts` - 399 lines)
+  - Value alignment (`value-alignment.ts` - 333 lines)
+  - Response refinement (`refiner.ts` - 325 lines)
+
+**Supporting Modules**:
+- `config-loader.ts` (327 lines) - Load layer configs per mode
+- `pipeline.ts` (384 lines) - Orchestrate 3-layer execution
+- `prompt-builder.ts` (383 lines) - Build prompts for each layer
+- `lora-utils.ts` (431 lines) - LoRA adapter utilities
+- `safety-wrapper.ts` (316 lines) - Safety checks wrapper
+- `refinement-wrapper.ts` (416 lines) - Response refinement wrapper
+
+**Total cognitive architecture**: 5,646 lines (modes + layers)
+
 ### Mode Definition Structure
 
 **Source:** `packages/core/src/cognitive-mode.ts`

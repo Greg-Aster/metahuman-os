@@ -1,8 +1,39 @@
 # Autonomous Agents
 
-MetaHuman OS includes a comprehensive suite of **25 autonomous agents** that run as background processes to enrich memories, generate reflections, train models, and maintain the system. These agents are coordinated by the **Scheduler Service** and can be triggered by intervals, time-of-day, events, or user activity.
+**Implementation**: 28 agents in `brain/agents/`, managed by centralized scheduler.
 
-> **Source of Truth**: This documentation is generated from actual agent implementations in [`brain/agents/`](../../brain/agents/) as of 2025-11-25.
+**Core Systems**:
+- **Agent Scheduler** (`packages/core/src/agent-scheduler.ts` - 1,216 lines)
+  - Central event bus, trigger management, queue system
+  - Trigger types: interval, time-of-day, event-based, activity-based
+  - GPU agent serialization (one LLM agent at a time)
+
+- **Agent Monitor** (`packages/core/src/agent-monitor.ts` - 540 lines)
+  - Real-time status tracking, metrics, log streaming
+  - Success rates, uptime monitoring
+
+MetaHuman OS includes 28+ autonomous agents that run as background processes to enrich memories, generate reflections, train models, and maintain the system.
+
+---
+
+## Monitoring & Management
+
+**CLI Commands**:
+```bash
+./bin/mh agent list            # List all available agents
+./bin/mh agent status [name]   # Show agent statistics
+./bin/mh agent logs [name]     # View recent logs
+./bin/mh agent ps              # List running agents (PIDs)
+./bin/mh agent monitor         # Show processing status
+./bin/mh agent run <name>      # Run agent manually
+./bin/mh agent stop <name>     # Stop running agent
+```
+
+**Web UI**: Agent Monitor panel (right sidebar) shows:
+- Real-time agent activity
+- Success rates and run counts
+- Recent logs
+- Processing status (unprocessed memories)
 
 ---
 

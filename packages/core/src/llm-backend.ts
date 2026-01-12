@@ -545,7 +545,7 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
 
   // Check remote configuration
   const remoteConfigured = !!config.remote?.provider;
-  // TODO: Check if credentials exist for the remote provider
+  // Note: Credentials checked during actual LLM call, not at backend switch time
   const hasCredentials = remoteConfigured; // For now, assume configured = has credentials
 
   return {

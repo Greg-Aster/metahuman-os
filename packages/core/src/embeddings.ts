@@ -100,7 +100,7 @@ export async function preloadEmbeddingModel(_userId?: string): Promise<void> {
   const backendConfig = loadBackendConfig();
   const endpoint = backendConfig.localModels?.endpoint || DEFAULTS.endpoint;
 
-  // TODO: If _userId provided, could look up their profile model config
+  // Note: Could optionally look up user's profile model config if needed in future
   // For now use default since preload is typically called at startup
   const model = DEFAULTS.model;
 

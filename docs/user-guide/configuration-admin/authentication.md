@@ -86,10 +86,52 @@ Owners control whether their persona appears in the guest selector.
 
 ### 7. CLI & Script Helpers
 
-The CLI automatically operates under the first owner profile unless `--user <username>` is supplied. For administrative tasks that still require scripting (e.g., resetting passwords) you can interact with the user API directly:
+The CLI automatically operates under the first owner profile unless `--user <username>` is supplied. For administrative tasks that still require scripting (e.g., resetting passwords) you can interact with the user API directly.
 
-```ts
-import { createUser, deleteUser, listUsers } from '@metahuman/core/users';
+**Complete User Management API** (`packages/core/src/users.ts`):
+
+```typescript
+import {
+  // User CRUD
+  createUser, getUser, getUserByUsername, listUsers, deleteUser,
+  hasUsers, hasOwner, initUsers,
+
+  // Authentication
+  authenticateUser,
+
+  // Password management
+  changePassword, updatePassword, verifyUserPassword,
+
+  // User updates
+  updateUsername, updateUserMetadata, updateLastLogin,
+
+  // Profile management
+  updateProfileVisibility, listVisibleProfiles,
+  updateProfileStorage, getProfileStorageConfig
+} from '@metahuman/core/users';
+```
+
+**Common Operations**:
+
+```typescript
+// Create new user
+const user = createUser('username', 'password', 'standard', {
+  displayName: 'John Doe',
+  email: 'john@example.com'
+});
+
+// List all users
+const users = listUsers();  // Returns SafeUser[] (no passwords)
+
+// Change visibility
+updateProfileVisibility(userId, 'public');  // Make visible to guests
+
+// Configure custom storage
+updateProfileStorage(userId, {
+  path: '/media/user/external-drive/metahuman/username',
+  type: 'external',
+  fallbackBehavior: 'error'
+});
 ```
 
 > **Warning:** Do **not** edit `persona/users.json` by hand. Use the API helpers or the forthcoming owner UI to modify user records safely.

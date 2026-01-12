@@ -1,16 +1,24 @@
 # LLM Backend Configuration
 
+**Implementation**:
+- `packages/core/src/llm-backend.ts` (744 lines) - Backend switching and management
+- `packages/core/src/llm.ts` (490 lines) - Unified LLM adapter
+- `packages/core/src/ollama.ts` (703 lines) - Ollama integration
+- `packages/core/src/vllm.ts` (975 lines) - vLLM integration
+
 MetaHuman OS requires a local LLM backend for AI capabilities. This guide covers setup, configuration, and switching between backends.
 
 ---
 
 ## Supported Backends
 
-| Backend | Best For | Requirements |
-|---------|----------|--------------|
-| **Ollama** | Most users, models up to ~14B | 8GB+ RAM |
-| **vLLM** | Large models (30B+), high throughput | NVIDIA GPU with CUDA |
-| **Remote** | No local resources | Network connection |
+| Backend | Best For | Implementation | Requirements |
+|---------|----------|---------------|--------------|
+| **Ollama** | Most users, models up to ~14B | `ollama.ts` (703 lines) | 8GB+ RAM |
+| **vLLM** | Large models (30B+), high throughput | `vllm.ts` (975 lines) | NVIDIA GPU with CUDA |
+| **Remote** | No local resources | Remote API | Network connection |
+
+**Model Routing**: `model-router.ts` (498 lines) - Role-based model selection and routing
 
 ---
 

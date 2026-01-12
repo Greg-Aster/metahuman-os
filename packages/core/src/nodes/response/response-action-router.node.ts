@@ -59,6 +59,8 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
     { name: 'updatedDesire', type: 'object', optional: true, description: 'Updated desire' },
     { name: 'pipelineTriggered', type: 'boolean', description: 'Whether pipeline was triggered' },
     { name: 'nextStatus', type: 'string', optional: true, description: 'Next desire status' },
+    { name: 'response', type: 'string', description: 'Pass-through LLM response text' },
+    { name: 'responseBuffer', type: 'object', description: 'Pass-through response buffer' },
   ],
   properties: {},
   description: 'Takes action based on LLM suggestion. Updates desires, saves answers, triggers pipelines.',
@@ -88,17 +90,20 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
             actionData,
             desire,
             userId,
-            response
+            response,
+            responseBuffer
           ));
           break;
 
         case 'clarifying_question':
+        case 'clarifying_questions':  // Handle both singular and plural
           ({ actionTaken, pipelineTriggered, nextStatus, desire } = await handleClarifyingQuestion(
             suggestedAction,
             actionData,
             desire,
             userId,
-            response
+            response,
+            responseBuffer
           ));
           break;
 
@@ -108,7 +113,8 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
             actionData,
             desire,
             userId,
-            response
+            response,
+            responseBuffer
           ));
           break;
 
@@ -116,7 +122,9 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
           ({ actionTaken, pipelineTriggered } = await handleAgencyNotification(
             suggestedAction,
             actionData,
-            userId
+            userId,
+            response,
+            responseBuffer
           ));
           break;
 
@@ -135,6 +143,8 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
       updatedDesire: desire,
       pipelineTriggered,
       nextStatus,
+      response,  // Pass through the response text
+      responseBuffer,  // Pass through the buffer
     };
   },
 });
@@ -148,15 +158,18 @@ async function handleDesireRejection(
   data: Record<string, unknown>,
   desire: Desire | undefined,
   userId: string,
-  response: string
+  response: string,
+  responseBuffer?: ResponseBuffer
 ): Promise<{
   actionTaken: string;
   pipelineTriggered: boolean;
   nextStatus: DesireStatus | null;
   desire: Desire | undefined;
+  response: string;
+  responseBuffer?: ResponseBuffer;
 }> {
   if (!desire) {
-    return { actionTaken: 'No desire to update', pipelineTriggered: false, nextStatus: null, desire };
+    return { actionTaken: 'No desire to update', pipelineTriggered: false, nextStatus: null, desire, response, responseBuffer };
   }
 
   const now = new Date().toISOString();
@@ -209,6 +222,8 @@ async function handleDesireRejection(
       pipelineTriggered,
       nextStatus,
       desire,
+      response,
+      responseBuffer,
     };
   }
 
@@ -227,6 +242,8 @@ async function handleDesireRejection(
     pipelineTriggered: false,
     nextStatus: null,
     desire,
+    response,
+    responseBuffer,
   };
 }
 
@@ -235,15 +252,18 @@ async function handleClarifyingQuestion(
   data: Record<string, unknown>,
   desire: Desire | undefined,
   userId: string,
-  response: string
+  response: string,
+  responseBuffer?: ResponseBuffer
 ): Promise<{
   actionTaken: string;
   pipelineTriggered: boolean;
   nextStatus: DesireStatus | null;
   desire: Desire | undefined;
+  response: string;
+  responseBuffer?: ResponseBuffer;
 }> {
   if (!desire || !desire.clarifyingQuestions) {
-    return { actionTaken: 'No clarifying questions to answer', pipelineTriggered: false, nextStatus: null, desire };
+    return { actionTaken: 'No clarifying questions to answer', pipelineTriggered: false, nextStatus: null, desire, response, responseBuffer };
   }
 
   const now = new Date().toISOString();
@@ -255,7 +275,7 @@ async function handleClarifyingQuestion(
   const unansweredQuestion = desire.clarifyingQuestions.questions.find(q => !answeredIds.has(q.id));
 
   if (!unansweredQuestion) {
-    return { actionTaken: 'All questions already answered', pipelineTriggered: false, nextStatus: null, desire };
+    return { actionTaken: 'All questions already answered', pipelineTriggered: false, nextStatus: null, desire, response, responseBuffer };
   }
 
   // Save the answer
@@ -311,6 +331,8 @@ async function handleClarifyingQuestion(
     pipelineTriggered,
     nextStatus: pipelineTriggered ? nextStatus : null,
     desire,
+    response,
+    responseBuffer,
   };
 }
 
@@ -319,15 +341,18 @@ async function handleDesirePlan(
   data: Record<string, unknown>,
   desire: Desire | undefined,
   userId: string,
-  response: string
+  response: string,
+  responseBuffer?: ResponseBuffer
 ): Promise<{
   actionTaken: string;
   pipelineTriggered: boolean;
   nextStatus: DesireStatus | null;
   desire: Desire | undefined;
+  response: string;
+  responseBuffer?: ResponseBuffer;
 }> {
   if (!desire) {
-    return { actionTaken: 'No desire to update', pipelineTriggered: false, nextStatus: null, desire };
+    return { actionTaken: 'No desire to update', pipelineTriggered: false, nextStatus: null, desire, response, responseBuffer };
   }
 
   const now = new Date().toISOString();
@@ -433,16 +458,22 @@ async function handleDesirePlan(
     pipelineTriggered,
     nextStatus: pipelineTriggered || nextStatus !== desire.status ? nextStatus : null,
     desire,
+    response,
+    responseBuffer,
   };
 }
 
 async function handleAgencyNotification(
   action: string,
   data: Record<string, unknown>,
-  userId: string
+  userId: string,
+  response: string,
+  responseBuffer?: ResponseBuffer
 ): Promise<{
   actionTaken: string;
   pipelineTriggered: boolean;
+  response: string;
+  responseBuffer?: ResponseBuffer;
 }> {
   let actionTaken = 'Notification acknowledged';
 
@@ -454,6 +485,8 @@ async function handleAgencyNotification(
   return {
     actionTaken,
     pipelineTriggered: false,
+    response,
+    responseBuffer,
   };
 }
 

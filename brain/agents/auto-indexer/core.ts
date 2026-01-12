@@ -12,9 +12,7 @@
  * - Mobile: imported directly and run in-process
  */
 
-import fs from 'node:fs';
 import {
-  storageClient,
   audit,
   getTargetUser,
   withUserContext,
@@ -23,6 +21,8 @@ import {
   isEmbeddingServiceAvailable,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
+
+const LOG_PREFIX = '[auto-indexer]';
 
 // ============================================================================
 // Types
@@ -69,7 +69,8 @@ function isIndexRecent(maxAgeHours: number): boolean {
     const ageHours = ageMs / (1000 * 60 * 60);
 
     return ageHours < maxAgeHours;
-  } catch {
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error checking index age:`, (error as Error).message);
     return false;
   }
 }
@@ -78,17 +79,18 @@ function isIndexRecent(maxAgeHours: number): boolean {
  * Rebuild the vector index for the current user context
  */
 export async function rebuildIndex(options: AutoIndexerOptions = {}): Promise<IndexRebuildResult> {
+  console.log(`${LOG_PREFIX} ========== rebuildIndex HIT ==========`);
   const maxAgeHours = options.maxAgeHours ?? 24;
 
   // Check if we should skip (unless forced)
   if (!options.force && isIndexRecent(maxAgeHours)) {
     const status = getIndexStatus();
-    console.log(`[auto-indexer] Index is recent (created ${status.createdAt}), skipping rebuild`);
+    console.log(`${LOG_PREFIX} Index is recent (created ${status.createdAt}), skipping rebuild`);
     return { success: true, itemCount: status.items || 0, skipped: true };
   }
 
   try {
-    console.log('[auto-indexer] Starting index rebuild...');
+    console.log(`${LOG_PREFIX} Starting index rebuild...`);
 
     // Build the index using the model router (will use embedder role -> local-models provider)
     // The model router will automatically select the configured embedding model (qwen3-embedding-0.6b)
@@ -103,11 +105,11 @@ export async function rebuildIndex(options: AutoIndexerOptions = {}): Promise<In
 
     // Get the resulting status
     const status = getIndexStatus();
-    console.log(`[auto-indexer] Index rebuilt: ${status.items} items at ${indexPath}`);
+    console.log(`${LOG_PREFIX} Index rebuilt: ${status.items} items at ${indexPath}`);
 
     return { success: true, itemCount: status.items || 0 };
   } catch (error) {
-    console.error('[auto-indexer] Index rebuild failed:', (error as Error).message);
+    console.error(`${LOG_PREFIX} Index rebuild failed:`, (error as Error).message);
     return { success: false, itemCount: 0, error: (error as Error).message };
   }
 }
@@ -119,22 +121,28 @@ export async function processUserIndex(
   username: string,
   options: AutoIndexerOptions = {}
 ): Promise<IndexRebuildResult> {
-  console.log(`[auto-indexer] Processing user: ${username}`);
+  // Security: Validate username to prevent log injection attacks
+  if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
+    console.error(`${LOG_PREFIX} Invalid username: ${username}`);
+    return { success: false, itemCount: 0, error: 'Invalid username format' };
+  }
+  
+  console.log(`${LOG_PREFIX} Processing user: ${username}`);
 
   try {
     const result = await rebuildIndex(options);
 
     if (result.skipped) {
-      console.log(`[auto-indexer]   Skipped ${username}: index is recent`);
+      console.log(`${LOG_PREFIX}   Skipped ${username}: index is recent`);
     } else if (result.success) {
-      console.log(`[auto-indexer]   Completed ${username}: ${result.itemCount} items indexed`);
+      console.log(`${LOG_PREFIX}   Completed ${username}: ${result.itemCount} items indexed`);
     } else {
-      console.log(`[auto-indexer]   Failed ${username}: ${result.error}`);
+      console.log(`${LOG_PREFIX}   Failed ${username}: ${result.error}`);
     }
 
     return result;
   } catch (error) {
-    console.error(`[auto-indexer]   Error processing ${username}:`, (error as Error).message);
+    console.error(`${LOG_PREFIX}   Error processing ${username}:`, (error as Error).message);
     return { success: false, itemCount: 0, error: (error as Error).message };
   }
 }
@@ -147,7 +155,8 @@ export async function processUserIndex(
  * Run a full auto-indexer cycle (multi-user)
  */
 export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIndexerResult> {
-  console.log('[auto-indexer] Starting cycle...');
+  console.log(`${LOG_PREFIX} ========== runCycle HIT ==========`);
+  console.log(`${LOG_PREFIX} Starting cycle...`);
 
   audit({
     level: 'info',
@@ -170,7 +179,7 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
     const activeUser = getTargetUser();
 
     if (!activeUser) {
-      console.log('[auto-indexer] No active users found. Skipping cycle.');
+      console.log(`${LOG_PREFIX} No active users found. Skipping cycle.`);
       audit({
         level: 'info',
         category: 'action',
@@ -182,7 +191,7 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
       return result;
     }
 
-    console.log(`[auto-indexer] Processing user: ${activeUser.username}`);
+    console.log(`${LOG_PREFIX} Processing user: ${activeUser.username}`);
     result.userCount = 1;
 
     // Check embedding service availability using active user's context
@@ -193,7 +202,7 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
 
     if (!embeddingAvailable) {
       const errorMsg = 'Embedding service not available. Start local-model-service first.';
-      console.error(`[auto-indexer] ${errorMsg}`);
+      console.error(`${LOG_PREFIX} ${errorMsg}`);
       audit({
         level: 'error',
         category: 'action',
@@ -220,11 +229,11 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
       }
     } catch (error) {
       const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
-      console.error(`[auto-indexer] Failed: ${errorMsg}`);
+      console.error(`${LOG_PREFIX} Failed: ${errorMsg}`);
       result.errors.push(errorMsg);
     }
 
-    console.log(`[auto-indexer] Cycle finished. Indexed ${result.totalIndexed} items for user ${activeUser.username}.`);
+    console.log(`${LOG_PREFIX} Cycle finished. Indexed ${result.totalIndexed} items for user ${activeUser.username}.`);
 
     audit({
       level: 'info',
@@ -243,7 +252,7 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
     return result;
   } catch (error) {
     const errorMsg = (error as Error).message;
-    console.error('[auto-indexer] Cycle error:', errorMsg);
+    console.error(`${LOG_PREFIX} Cycle error:`, errorMsg);
 
     audit({
       level: 'error',
@@ -266,6 +275,7 @@ export async function runCycle(options: AutoIndexerOptions = {}): Promise<AutoIn
  * Run function for agent-runtime
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  console.log(`${LOG_PREFIX} ========== run HIT ==========`);
   const startTime = Date.now();
   const args = input.args || [];
   const opts = input.options || {};
