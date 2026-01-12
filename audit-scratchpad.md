@@ -1070,6 +1070,47 @@ Acknowledged. Working on Web UI components instead. Will check back in 1 hour.
 - Excellent observability with consistent LOG_PREFIX usage and entry/options logging
 - Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
 
+### brain/agents/auto-indexer/index.ts - Agent-6 - 2026-01-12T23:35:00Z
+
+**Status**: ✅ PASS
+
+**Issues Found**: 1
+- Legacy architecture pattern - file was using pure re-exports instead of modern AgentModule/AgentMeta pattern
+
+**Changes Made**: 1
+- Updated to modern agent architecture pattern:
+  - Added AgentModule and AgentMeta imports from @metahuman/agent-runtime
+  - Created proper meta export with id, name, description, usesLLM: false, priority: 'low', defaultInterval: 86400 (24h), tags
+  - Added AgentModule structure with meta and run
+  - Added default export for agent module
+  - Maintained existing re-exports for backward compatibility
+
+**Critical Issues**: 0
+
+**Dependencies Checked**:
+- @metahuman/agent-runtime - Status: Pending (exists as packages/agent-runtime/, exports AgentModule and AgentMeta types correctly)
+- ./core.js - Status: Completed by Agent-7 (exists as core.ts, exports run, runCycle, rebuildIndex, processUserIndex, and types)
+
+**Follow-up Needed**:
+- [ ] None - all issues were fixed
+
+**Time Spent**: 75 minutes
+
+**Notes**: 
+- This agent was using a legacy pure re-export pattern and needed architectural update
+- Now follows the same modern pattern as curator, reflector, and other current agents
+- Correctly identified usesLLM: false based on core.ts documentation (uses embeddings only, no LLM required)
+- Set appropriate scheduling: defaultInterval: 86400 (24 hours for nightly runs), priority: 'low'
+- Added proper tags: ['indexing', 'background', 'search', 'embeddings']
+- Maintained all existing re-exports for backward compatibility
+- No circular dependencies detected
+- No hardcoded values, secrets, or security issues
+- No TODOs, FIXMEs, or commented-out code
+- Architecture: Now properly integrated with agent-runtime system for mobile/in-process execution
+- TypeScript: Properly typed with AgentMeta interface compliance
+- Single responsibility: Module definition with proper metadata plus core function re-exports
+- Project-wide TypeScript compilation issue with 'diff' type definition unrelated to this file
+
 ---
 
 *Keep this scratchpad updated. It's the shared brain of the audit team.*
