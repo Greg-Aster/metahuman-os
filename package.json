@@ -34,10 +34,10 @@
 		"mobile:dev": "cd apps/mobile && ./scripts/dev.sh",
 		"mobile:sync": "cd apps/mobile && npx cap sync",
 		"mobile:open": "cd apps/mobile && npx cap open android",
-		"desktop": "pnpm --filter @metahuman/electron start",
-		"desktop:dev": "pnpm --filter @metahuman/electron dev",
-		"desktop:package": "pnpm --filter @metahuman/electron package",
-		"desktop:make": "pnpm --filter @metahuman/electron make"
+		"studio": "cd apps/code-oss && ./launch.sh",
+		"studio:dev": "cd apps/code-oss && ./launch-dev.sh",
+		"studio:build": "cd apps/code-oss && ./build.sh",
+		"studio:watch": "cd apps/code-oss && bash -c 'source ~/.nvm/nvm.sh && nvm use 22.21.1 && npm run watchd'"
 	},
 	"dependencies": {
 		"dotenv": "^17.2.3",
