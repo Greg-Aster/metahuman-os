@@ -198,35 +198,187 @@
   ],
   "edges": [
     {
-      "id": "e1-2",
+      "id": "e1-2-cardType",
       "source": "1",
-      "sourceHandle": "output-0",
+      "sourceHandle": "cardType",
       "target": "2",
-      "targetHandle": "input-0",
+      "targetHandle": "cardType",
       "type": "smoothstep"
     },
     {
-      "id": "e2-3",
-      "source": "2",
-      "sourceHandle": "output-0",
+      "id": "e1-2-cardData",
+      "source": "1",
+      "sourceHandle": "cardData",
+      "target": "2",
+      "targetHandle": "cardData",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-2-responseBufferId",
+      "source": "1",
+      "sourceHandle": "responseBufferId",
+      "target": "2",
+      "targetHandle": "responseBufferId",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-2-userId",
+      "source": "1",
+      "sourceHandle": "userId",
+      "target": "2",
+      "targetHandle": "userId",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-2-message",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "2",
+      "targetHandle": "message",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-3-cardType",
+      "source": "1",
+      "sourceHandle": "cardType",
       "target": "3",
-      "targetHandle": "input-0",
+      "targetHandle": "cardType",
       "type": "smoothstep"
     },
     {
-      "id": "e3-4",
-      "source": "3",
-      "sourceHandle": "output-0",
+      "id": "e1-3-message",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "3",
+      "targetHandle": "message",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-3-cardContext",
+      "source": "2",
+      "sourceHandle": "cardContext",
+      "target": "3",
+      "targetHandle": "cardContext",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-3-desire",
+      "source": "2",
+      "sourceHandle": "desire",
+      "target": "3",
+      "targetHandle": "desire",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-4-cardType",
+      "source": "1",
+      "sourceHandle": "cardType",
       "target": "4",
-      "targetHandle": "input-0",
+      "targetHandle": "cardType",
       "type": "smoothstep"
     },
     {
-      "id": "e4-5",
-      "source": "4",
-      "sourceHandle": "output-0",
+      "id": "e3-4-suggestedAction",
+      "source": "3",
+      "sourceHandle": "suggestedAction",
+      "target": "4",
+      "targetHandle": "suggestedAction",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e3-4-actionData",
+      "source": "3",
+      "sourceHandle": "actionData",
+      "target": "4",
+      "targetHandle": "actionData",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-4-desire",
+      "source": "2",
+      "sourceHandle": "desire",
+      "target": "4",
+      "targetHandle": "desire",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-4-userId",
+      "source": "1",
+      "sourceHandle": "userId",
+      "target": "4",
+      "targetHandle": "userId",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-4-responseBuffer",
+      "source": "2",
+      "sourceHandle": "responseBuffer",
+      "target": "4",
+      "targetHandle": "responseBuffer",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e3-4-response",
+      "source": "3",
+      "sourceHandle": "response",
+      "target": "4",
+      "targetHandle": "response",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e3-5-response",
+      "source": "3",
+      "sourceHandle": "response",
       "target": "5",
-      "targetHandle": "input-0",
+      "targetHandle": "response",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-5-responseBuffer",
+      "source": "2",
+      "sourceHandle": "responseBuffer",
+      "target": "5",
+      "targetHandle": "responseBuffer",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-5-userId",
+      "source": "1",
+      "sourceHandle": "userId",
+      "target": "5",
+      "targetHandle": "userId",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-5-cardType",
+      "source": "1",
+      "sourceHandle": "cardType",
+      "target": "5",
+      "targetHandle": "cardType",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e4-5-actionTaken",
+      "source": "4",
+      "sourceHandle": "actionTaken",
+      "target": "5",
+      "targetHandle": "actionTaken",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-5-message",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "5",
+      "targetHandle": "message",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e2-5-desire",
+      "source": "2",
+      "sourceHandle": "desire",
+      "target": "5",
+      "targetHandle": "desire",
       "type": "smoothstep"
     }
   ]

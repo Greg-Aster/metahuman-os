@@ -3,6 +3,8 @@
  * Provides commands for model management, chat, and status
  */
 
+import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
+
 export interface OllamaModel {
   name: string;
   model: string;
@@ -202,6 +204,17 @@ export class OllamaClient {
       keep_alive?: string | number // How long to keep model in VRAM (0 = unload immediately, "5m" = 5 minutes)
     }
   ): Promise<OllamaChatResponse> {
+    const requestId = generateRequestId();
+    const startTime = Date.now();
+
+    // Publish chat started event
+    eventBus.emit('ollama', EventTypes.OLLAMA_CHAT_STARTED, {
+      model,
+      messageCount: messages.length,
+      temperature: options?.temperature ?? 0.7,
+      format: options?.format,
+    }, { requestId });
+
     // BUGFIX: Build request body with format at top level (not in options)
     const requestBody: any = {
       model,
@@ -257,10 +270,28 @@ export class OllamaClient {
           console.error('[Ollama] Chat error text:', errorText);
         }
       }
+
+      // Publish chat failed event
+      eventBus.emit('ollama', EventTypes.OLLAMA_CHAT_FAILED, {
+        model,
+        error: errorMsg,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
+
       throw new Error(errorMsg);
     }
 
-    return response.json();
+    const result = await response.json();
+
+    // Publish chat completed event
+    eventBus.emit('ollama', EventTypes.OLLAMA_CHAT_COMPLETED, {
+      model,
+      responseLength: result.message?.content?.length || 0,
+      promptTokens: result.prompt_eval_count,
+      completionTokens: result.eval_count,
+      totalDuration: result.total_duration,
+    }, { requestId, durationMs: Date.now() - startTime });
+
+    return result;
   }
 
   /**
@@ -271,6 +302,16 @@ export class OllamaClient {
     prompt: string,
     options?: { temperature?: number }
   ): Promise<OllamaGenerateResponse> {
+    const requestId = generateRequestId();
+    const startTime = Date.now();
+
+    // Publish generate started event
+    eventBus.emit('ollama', EventTypes.OLLAMA_GENERATE_STARTED, {
+      model,
+      promptLength: prompt.length,
+      temperature: options?.temperature || 0.7,
+    }, { requestId });
+
     // 2 minute timeout for generation
     const response = await fetch(`${this.endpoint}/api/generate`, {
       method: 'POST',
@@ -287,10 +328,25 @@ export class OllamaClient {
     });
 
     if (!response.ok) {
+      eventBus.emit('ollama', EventTypes.OLLAMA_CHAT_FAILED, {
+        model,
+        error: `Generate request failed: ${response.status}`,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
       throw new Error(`Generate request failed: ${response.status}`);
     }
 
-    return response.json();
+    const result = await response.json();
+
+    // Publish generate completed event
+    eventBus.emit('ollama', EventTypes.OLLAMA_GENERATE_COMPLETED, {
+      model,
+      responseLength: result.response?.length || 0,
+      promptTokens: result.prompt_eval_count,
+      completionTokens: result.eval_count,
+      totalDuration: result.total_duration,
+    }, { requestId, durationMs: Date.now() - startTime });
+
+    return result;
   }
 
   /**
@@ -304,6 +360,16 @@ export class OllamaClient {
     prompt: string,
     options?: { num_gpu?: number }
   ): Promise<OllamaEmbeddingsResponse> {
+    const requestId = generateRequestId();
+    const startTime = Date.now();
+
+    // Publish embeddings started event
+    eventBus.emit('ollama', EventTypes.OLLAMA_EMBEDDINGS_STARTED, {
+      model,
+      promptLength: prompt.length,
+      cpuOnly: options?.num_gpu === 0,
+    }, { requestId });
+
     const body: Record<string, unknown> = { model, prompt };
 
     // num_gpu: 0 forces CPU inference (leaves GPU free for vLLM)
@@ -321,10 +387,23 @@ export class OllamaClient {
 
     if (!response.ok) {
       const bodyText = await response.text().catch(() => '');
-      throw new Error(`Embeddings request failed: ${response.status}${bodyText ? ` - ${bodyText}` : ''}`);
+      const error = `Embeddings request failed: ${response.status}${bodyText ? ` - ${bodyText}` : ''}`;
+      eventBus.emit('ollama', EventTypes.OLLAMA_CHAT_FAILED, {
+        model,
+        error,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
+      throw new Error(error);
     }
 
-    return response.json();
+    const result = await response.json();
+
+    // Publish embeddings completed event
+    eventBus.emit('ollama', EventTypes.OLLAMA_EMBEDDINGS_COMPLETED, {
+      model,
+      embeddingDimension: result.embedding?.length || 0,
+    }, { requestId, durationMs: Date.now() - startTime });
+
+    return result;
   }
 
   /**
@@ -410,6 +489,7 @@ export class OllamaClient {
       execSync('systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
       await new Promise(r => setTimeout(r, 1000));
       console.log('[ollama] Service stopped via systemctl');
+      eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'systemctl' });
       return { success: true };
     } catch {
       // Try with sudo -n (no password prompt)
@@ -417,6 +497,7 @@ export class OllamaClient {
         execSync('sudo -n systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
         await new Promise(r => setTimeout(r, 1000));
         console.log('[ollama] Service stopped via sudo systemctl');
+        eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'sudo-systemctl' });
         return { success: true };
       } catch {
         console.log('[ollama] systemctl failed, using pkill fallback...');
@@ -451,6 +532,7 @@ export class OllamaClient {
       }
 
       console.log('[ollama] Service stopped via pkill');
+      eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'pkill' });
       return { success: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -485,11 +567,13 @@ export class OllamaClient {
 
     if (await trySystemctl('systemctl start ollama')) {
       console.log('[ollama] Service started via systemctl');
+      eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STARTED, { method: 'systemctl' });
       return { success: true };
     }
 
     if (await trySystemctl('sudo -n systemctl start ollama')) {
       console.log('[ollama] Service started via sudo systemctl');
+      eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STARTED, { method: 'sudo-systemctl' });
       return { success: true };
     }
 
@@ -528,6 +612,7 @@ export class OllamaClient {
       while (Date.now() - start < maxWait) {
         if (await this.isRunning()) {
           console.log('[ollama] Service started directly');
+          eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STARTED, { method: 'direct' });
           return { success: true };
         }
         await new Promise(r => setTimeout(r, 500));

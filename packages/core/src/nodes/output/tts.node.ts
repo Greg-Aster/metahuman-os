@@ -31,12 +31,47 @@ export interface TTSQueue {
   lastUpdated: string;
 }
 
+function isNoSpaceError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOSPC';
+}
+
+function ensureQueueDir(queuePath: string): void {
+  const queueDir = path.dirname(queuePath);
+  fs.mkdirSync(queueDir, { recursive: true });
+}
+
+function writeQueueFile(
+  queuePath: string,
+  queue: TTSQueue,
+  fallbackPath?: string,
+  context: string = 'write'
+): string {
+  try {
+    ensureQueueDir(queuePath);
+    fs.writeFileSync(queuePath, JSON.stringify(queue, null, 2));
+    return queuePath;
+  } catch (error) {
+    if (fallbackPath && isNoSpaceError(error)) {
+      console.warn(`[TTS Queue] ${context} failed with ENOSPC, using fallback: ${fallbackPath}`);
+      ensureQueueDir(fallbackPath);
+      fs.writeFileSync(fallbackPath, JSON.stringify(queue, null, 2));
+      return fallbackPath;
+    }
+    throw error;
+  }
+}
+
 /**
  * Get TTS queue path for a user
  */
 export function getTTSQueuePath(username: string): string {
   const profilePaths = getProfilePaths(username);
   return path.join(profilePaths.state, 'tts-queue.json');
+}
+
+export function getFallbackTTSQueuePath(username: string): string {
+  const fallbackDir = path.join(systemPaths.run, 'tts-queue');
+  return path.join(fallbackDir, `${username}.json`);
 }
 
 /**
@@ -82,7 +117,14 @@ function safeLoadQueue(queuePath: string): TTSQueue {
     if (!raw || raw.length === 0) {
       console.warn(`[TTS Queue] Queue file is empty: ${queuePath}, initializing with default`);
       // Auto-recover: Write valid empty queue
-      fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+      try {
+        fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+      } catch (error) {
+        if (isNoSpaceError(error)) {
+          throw error;
+        }
+        throw error;
+      }
       return defaultQueue;
     }
 
@@ -119,7 +161,14 @@ function safeLoadQueue(queuePath: string): TTSQueue {
     }
 
     // Write fresh queue
-    fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+    try {
+      fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
+    } catch (error) {
+      if (isNoSpaceError(error)) {
+        throw error;
+      }
+      throw error;
+    }
 
     return defaultQueue;
   }
@@ -139,13 +188,25 @@ export function queueTTS(
   }
 
   const queuePath = getTTSQueuePath(username);
-  const queueDir = path.dirname(queuePath);
+  const fallbackPath = getFallbackTTSQueuePath(username);
 
   try {
-    fs.mkdirSync(queueDir, { recursive: true });
-
     // Load existing queue using safe loader
-    const queue = safeLoadQueue(queuePath);
+    let activePath = queuePath;
+    let queue: TTSQueue;
+    try {
+      ensureQueueDir(queuePath);
+      queue = safeLoadQueue(queuePath);
+    } catch (error) {
+      if (isNoSpaceError(error)) {
+        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
+        ensureQueueDir(fallbackPath);
+        queue = safeLoadQueue(fallbackPath);
+        activePath = fallbackPath;
+      } else {
+        throw error;
+      }
+    }
 
     // Create new item
     const item: TTSQueueItem = {
@@ -164,7 +225,13 @@ export function queueTTS(
     queue.lastUpdated = new Date().toISOString();
 
     // Save queue
-    fs.writeFileSync(queuePath, JSON.stringify(queue, null, 2));
+    const savedPath = writeQueueFile(
+      activePath,
+      queue,
+      activePath === fallbackPath ? undefined : fallbackPath,
+      'Queue write'
+    );
+    console.log(`[TTS Queue] Queued item ${item.id} (${mode}) -> ${savedPath}`);
 
     // Touch notification file for SSE
     touchTTSNotification(username);
@@ -181,10 +248,25 @@ export function queueTTS(
  */
 export function popTTSQueue(username: string): TTSQueueItem[] {
   const queuePath = getTTSQueuePath(username);
+  const fallbackPath = getFallbackTTSQueuePath(username);
 
   try {
     // Load queue using safe loader
-    const queue = safeLoadQueue(queuePath);
+    let activePath = queuePath;
+    let queue: TTSQueue;
+    try {
+      ensureQueueDir(queuePath);
+      queue = safeLoadQueue(queuePath);
+    } catch (error) {
+      if (isNoSpaceError(error)) {
+        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
+        ensureQueueDir(fallbackPath);
+        queue = safeLoadQueue(fallbackPath);
+        activePath = fallbackPath;
+      } else {
+        throw error;
+      }
+    }
     const items = queue.items || [];
 
     // Return empty array if no items
@@ -195,7 +277,13 @@ export function popTTSQueue(username: string): TTSQueueItem[] {
     // Clear the queue
     queue.items = [];
     queue.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(queuePath, JSON.stringify(queue, null, 2));
+    const savedPath = writeQueueFile(
+      activePath,
+      queue,
+      activePath === fallbackPath ? undefined : fallbackPath,
+      'Queue clear'
+    );
+    console.log(`[TTS Queue] Popped ${items.length} item(s) -> ${savedPath}`);
 
     return items;
   } catch (error) {
@@ -209,11 +297,23 @@ export function popTTSQueue(username: string): TTSQueueItem[] {
  */
 export function peekTTSQueue(username: string): TTSQueueItem[] {
   const queuePath = getTTSQueuePath(username);
+  const fallbackPath = getFallbackTTSQueuePath(username);
 
   try {
     // Load queue using safe loader
-    const queue = safeLoadQueue(queuePath);
-    return queue.items || [];
+    try {
+      ensureQueueDir(queuePath);
+      const queue = safeLoadQueue(queuePath);
+      return queue.items || [];
+    } catch (error) {
+      if (isNoSpaceError(error)) {
+        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
+        ensureQueueDir(fallbackPath);
+        const queue = safeLoadQueue(fallbackPath);
+        return queue.items || [];
+      }
+      throw error;
+    }
   } catch (error) {
     console.error('[TTS Queue] Error in peekTTSQueue:', error);
     return [];

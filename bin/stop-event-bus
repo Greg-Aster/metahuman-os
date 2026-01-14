@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+PID_FILE="$REPO_ROOT/logs/run/event-bus.pid"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+stopped=0
+
+# Stop by PID file
+if [ -f "$PID_FILE" ]; then
+  PID=$(cat "$PID_FILE")
+  if kill -0 "$PID" 2>/dev/null; then
+    echo "Stopping Event Bus (PID: $PID)..."
+    kill "$PID" 2>/dev/null || true
+    stopped=1
+  fi
+  rm -f "$PID_FILE"
+fi
+
+# Also kill any process on port 3100
+if pids=$(lsof -ti:3100 2>/dev/null); then
+  for pid in $pids; do
+    if [ "$pid" != "" ]; then
+      echo "Stopping Event Bus on port 3100 (PID: $pid)..."
+      kill "$pid" 2>/dev/null || true
+      stopped=1
+    fi
+  done
+fi
+
+if [ "$stopped" -eq 1 ]; then
+  echo -e "${GREEN}Event Bus stopped.${NC}"
+else
+  echo -e "${YELLOW}Event Bus was not running.${NC}"
+fi

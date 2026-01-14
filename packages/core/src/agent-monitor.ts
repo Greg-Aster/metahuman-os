@@ -57,7 +57,7 @@ export interface AgentLog {
  * Supports both legacy single-file agents (*.ts) and modular agents (directories with index.ts)
  */
 export function listAvailableAgents(): string[] {
-  console.log(`${LOG_PREFIX} listAvailableAgents() called`);
+
   const agentsDir = systemPaths.agents;
 
   if (!fs.existsSync(agentsDir)) {
@@ -270,7 +270,7 @@ function isProcessRunning(pid: number): boolean {
  * Get current agent statuses
  */
 export function getAgentStatuses(): AgentStatus[] {
-  console.log(`${LOG_PREFIX} getAgentStatuses() called`);
+
   const registry = readRegistry();
   const availableAgents = listAvailableAgents();
   const statuses: AgentStatus[] = [];

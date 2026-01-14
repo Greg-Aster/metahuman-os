@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { bigBrotherTerminal, bigBrotherTerminalOpened } from '../stores/bigBrotherTerminal';
   import { apiFetch } from '../lib/client/api-config';
+  import DebugDashboard from './DebugDashboard.svelte';
 
   interface TerminalTab {
     id: string;
@@ -10,6 +11,7 @@
     url: string;
     isBigBrother?: boolean;
     isServices?: boolean;
+    isEventBus?: boolean;
   }
 
   let tabs: TerminalTab[] = [];
@@ -17,6 +19,7 @@
   let isCreating = false;
   let bigBrotherTabId: string | null = null;
   let servicesTabId: string | null = null;
+  let eventBusTabId: string | null = null;
   let terminalEventsSource: EventSource | null = null;
 
   // Subscribe to Big Brother terminal requests
@@ -94,10 +97,20 @@
     const restoredTabs: TerminalTab[] = [];
     let regularTerminalCount = 0;
 
+    // First restore Event Bus tab from saved state (it doesn't have a running process)
+    const savedEventBusTab = savedTabs.find(t => t.isEventBus);
+    if (savedEventBusTab) {
+      restoredTabs.push(savedEventBusTab);
+      eventBusTabId = savedEventBusTab.id;
+    }
+
     for (const terminal of runningTerminals) {
       const savedTab = savedTabsByPort.get(terminal.port);
 
       if (savedTab) {
+        // Skip Event Bus tabs - they're handled above
+        if (savedTab.isEventBus) continue;
+
         // Restore from saved metadata
         restoredTabs.push(savedTab);
 
@@ -212,6 +225,24 @@
     }
   }
 
+  function createEventBusTab() {
+    if (eventBusTabId && tabs.find(t => t.id === eventBusTabId)) return; // Already created
+
+    const newTab: TerminalTab = {
+      id: crypto.randomUUID(),
+      port: 3100, // Event bus port
+      title: '📊 Event Bus',
+      url: '', // Not used for Event Bus
+      isEventBus: true
+    };
+
+    tabs = [...tabs, newTab];
+    eventBusTabId = newTab.id;
+
+    console.log('[TerminalManager] Created Event Bus tab');
+    updatePersistedState();
+  }
+
   onMount(async () => {
     // Discover and restore all running terminals (including orphaned ones)
     const restoredCount = await discoverAndRestoreTerminals();
@@ -224,6 +255,10 @@
       // Then spawn a regular bash terminal for user commands
       await createNewTerminal();
     }
+
+    // Event Bus tab is only created when:
+    // 1. Restored from localStorage (handled in discoverAndRestoreTerminals)
+    // 2. User explicitly requests it (add a menu item or button for this)
 
     // Check if Big Brother session is active and create tab if needed
     try {
@@ -292,7 +327,8 @@
           title: tab.title,
           url: tab.url,
           isBigBrother: tab.isBigBrother,
-          isServices: tab.isServices
+          isServices: tab.isServices,
+          isEventBus: tab.isEventBus
         }));
         localStorage.setItem('mh_terminal_tabs', JSON.stringify(persistentTabs));
         if (activeTabId) {
@@ -353,14 +389,18 @@
     if (tab.isServices) {
       servicesTabId = null;
     }
+    // If closing Event Bus tab, clear the ID
+    if (tab.isEventBus) {
+      eventBusTabId = null;
+    }
 
     if (tabs.length === 1) {
       // Don't close the last terminal, just create a new one first
       await createNewTerminal();
     }
 
-    // Kill the terminal process (Big Brother has its own lifecycle)
-    if (!tab.isBigBrother) {
+    // Kill the terminal process (Big Brother and Event Bus have their own lifecycle)
+    if (!tab.isBigBrother && !tab.isEventBus) {
       await killTerminal(tab.port);
     }
 
@@ -416,7 +456,8 @@
           title: tab.title,
           url: tab.url,
           isBigBrother: tab.isBigBrother,
-          isServices: tab.isServices
+          isServices: tab.isServices,
+          isEventBus: tab.isEventBus
         }));
         localStorage.setItem('mh_terminal_tabs', JSON.stringify(persistentTabs));
         if (activeTabId) {
@@ -469,15 +510,19 @@
     </button>
   </div>
 
-  <!-- Terminal Iframes -->
+  <!-- Terminal Iframes / Event Bus -->
   <div class="flex-1 relative overflow-hidden">
     {#each tabs as tab (tab.id)}
       <div class="terminal-pane absolute inset-0 hidden" class:active={tab.id === activeTabId}>
-        <iframe
-          src={tab.url}
-          title={tab.title}
-          class="w-full h-full border-0 bg-black"
-        ></iframe>
+        {#if tab.isEventBus}
+          <DebugDashboard />
+        {:else}
+          <iframe
+            src={tab.url}
+            title={tab.title}
+            class="w-full h-full border-0 bg-black"
+          ></iframe>
+        {/if}
       </div>
     {/each}
   </div>

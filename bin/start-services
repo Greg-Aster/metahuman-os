@@ -15,14 +15,32 @@ NC='\033[0m'
 echo -e "${GREEN}Starting MetaHuman Services...${NC}"
 echo
 
+CLEANUP_IN_PROGRESS=false
+
 cleanup() {
+  # Prevent re-entrant cleanup (multiple Ctrl+C)
+  if [ "$CLEANUP_IN_PROGRESS" = true ]; then
+    echo -e "\n${YELLOW}Cleanup already in progress, please wait...${NC}"
+    return
+  fi
+  CLEANUP_IN_PROGRESS=true
+
+  # Disable trap during cleanup to prevent cascading
+  trap '' INT TERM
+
   echo
-  echo -e "${YELLOW}Stopping services...${NC}"
-  "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
-  echo "Services stopped."
+  echo -e "${YELLOW}Shutting down MetaHuman services...${NC}"
+
+  # Stop agents with timeout (5 seconds max)
+  timeout 5 "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+
+  # Stop other services with timeouts
+  timeout 3 "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
+  timeout 3 "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
+  timeout 5 "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+  timeout 3 "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+
+  echo -e "${GREEN}Services stopped.${NC}"
 }
 
 trap cleanup EXIT INT TERM
@@ -41,6 +59,10 @@ else
   echo "Starting agents..."
   "$REPO_ROOT/bin/mh" start --restart 2>&1 || echo -e "${YELLOW}Warning: Failed to start some agents${NC}"
 fi
+
+# Start Event Bus first (other services depend on it for telemetry)
+echo "Starting Event Bus..."
+"$REPO_ROOT/bin/start-event-bus" 2>&1 || echo -e "${YELLOW}Warning: Event Bus failed to start${NC}"
 
 # Auto-start Cloudflare tunnel if enabled
 echo "Starting Cloudflare tunnel..."

@@ -88,14 +88,19 @@ export const DualWriterNode: NodeDefinition = defineNode({
 
   execute: async (inputs, context, properties) => {
     const slot0 = inputs[0] as DualWriterInput | undefined;
+    const structuredInput = slot0 && typeof slot0 === 'object' && (
+      'response' in slot0 ||
+      'responseBuffer' in slot0 ||
+      'userId' in slot0
+    ) ? slot0 : undefined;
 
-    const response = slot0?.response || '';
-    const responseBuffer = slot0?.responseBuffer;
-    const userId = slot0?.userId || context.userId || 'anonymous';
-    const cardType = slot0?.cardType || context.cardType || 'unknown';
-    const actionTaken = slot0?.actionTaken || '';
-    const message = slot0?.message || context.userMessage || '';
-    const desire = slot0?.desire;
+    const response = structuredInput?.response || (inputs[0] as string | undefined) || '';
+    const responseBuffer = structuredInput?.responseBuffer || (inputs[1] as ResponseBuffer | undefined);
+    const userId = structuredInput?.userId || (inputs[2] as string | undefined) || context.userId || 'anonymous';
+    const cardType = structuredInput?.cardType || (inputs[3] as string | undefined) || context.cardType || 'unknown';
+    const actionTaken = structuredInput?.actionTaken || (inputs[4] as string | undefined) || '';
+    const message = structuredInput?.message || (inputs[5] as string | undefined) || context.userMessage || '';
+    const desire = structuredInput?.desire || (inputs[6] as Desire | undefined);
 
     const saveMemory = properties?.saveMemory !== false;
     const memoryMode = (properties?.memoryMode as 'conversation' | 'inner') || 'conversation';

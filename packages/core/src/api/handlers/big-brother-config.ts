@@ -8,6 +8,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { loadFreshOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '../../config.js';
+import { getBigBrotherState, stopBigBrother } from '../../big-brother-terminal.js';
 import { audit } from '../../audit.js';
 
 const DEFAULT_CONFIG = {
@@ -101,6 +102,9 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     // Load current config (fresh, no cache - critical for merge operations)
     const config = loadFreshOperatorConfig(user.username);
 
+    const previousProvider = config.bigBrotherMode?.provider || 'claude-code';
+    const previousEnabled = config.bigBrotherMode?.enabled ?? false;
+
     // Update Big Brother mode settings (preserve model if not provided)
     const existingModel = config.bigBrotherMode?.model;
     config.bigBrotherMode = {
@@ -118,6 +122,17 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     // Save to operator.json
     saveUserConfig('operator.json', config, user.username);
     invalidateOperatorConfig(user.username);
+
+    const nextProvider = config.bigBrotherMode.provider;
+    const nextEnabled = config.bigBrotherMode.enabled;
+
+    // Stop Claude terminal if switching away from Claude or disabling Big Brother
+    if ((previousEnabled && !nextEnabled) || (previousProvider === 'claude-code' && nextProvider !== 'claude-code')) {
+      const state = getBigBrotherState();
+      if (state.isRunning) {
+        await stopBigBrother();
+      }
+    }
 
     // Audit the change
     audit({

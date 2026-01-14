@@ -96,11 +96,11 @@ function getActiveBackend(): BackendType {
  */
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
   const activeBackend = getActiveBackend();
-  console.log(`${LOG_PREFIX} Applying backend override: activeBackend=${activeBackend}, resolvedProvider=${resolved.provider}`);
+
 
   // Cloud providers and remote-server are NEVER overridden - user's choice is respected
   if (resolved.provider === 'runpod_serverless' || resolved.provider === 'huggingface' || resolved.provider === 'remote-server') {
-    console.log(`${LOG_PREFIX} Skipping override for cloud/remote provider: ${resolved.provider}`);
+
     return resolved;
   }
 
@@ -112,10 +112,10 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
 
   // If resolved model uses ollama but vLLM is active, check for vllm.active model
   if (activeBackend === 'vllm' && resolved.provider === 'ollama') {
-    console.log(`${LOG_PREFIX} Backend override needed: vLLM active but resolved model uses Ollama`);
+
     const vllmModel = registry.models['vllm.active'];
     if (vllmModel) {
-      console.log(`${LOG_PREFIX} Overriding to vllm.active model: ${vllmModel.model}`);
+
       return {
         id: 'vllm.active',
         provider: 'vllm' as ModelProvider,
@@ -127,7 +127,7 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
         metadata: { ...resolved.metadata, ...vllmModel.metadata, backendOverride: 'vllm' },
       };
     }
-    console.log(`${LOG_PREFIX} No vllm.active model found in registry, keeping original`);
+
   }
 
   // If resolved model uses vllm but Ollama is active, use default model
@@ -160,8 +160,7 @@ export function invalidateModelCache(): void {
  * @param username - Optional username to explicitly resolve user's profile path
  */
 export function loadModelRegistry(forceFresh = false, username?: string): ModelRegistry {
-  console.log(`${LOG_PREFIX} ========== loadModelRegistry CALLED ==========`);
-  console.log(`${LOG_PREFIX} Input: forceFresh=${forceFresh}, username=${username}`);
+
 
   const now = Date.now();
 
@@ -170,12 +169,9 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
   if (!forceFresh) {
     const cached = registryCache.get(registryPath);
     if (cached && (now - cached.timestamp) < CACHE_TTL) {
-      console.log(`${LOG_PREFIX} Cache hit for registry: ${registryPath}`);
+
       return cached.registry;
     }
-    console.log(`${LOG_PREFIX} Cache miss or expired for registry: ${registryPath}`);
-  } else {
-    console.log(`${LOG_PREFIX} Force refresh requested, bypassing cache`);
   }
 
   if (!fs.existsSync(registryPath)) {
@@ -239,8 +235,7 @@ export function resolveModel(
   overrides?: Partial<ResolvedModel>,
   username?: string
 ): ResolvedModel {
-  console.log(`${LOG_PREFIX} ========== resolveModel CALLED ==========`);
-  console.log(`${LOG_PREFIX} Input: role=${role}, username=${username}, hasOverrides=${!!overrides}`);
+
 
   // Input validation
   if (!role || typeof role !== 'string') {
@@ -337,8 +332,7 @@ export function resolveModelForCognitiveMode(
   role: ModelRole,
   username?: string
 ): ResolvedModel {
-  console.log(`${LOG_PREFIX} ========== resolveModelForCognitiveMode CALLED ==========`);
-  console.log(`${LOG_PREFIX} Input: cognitiveMode=${cognitiveMode}, role=${role}, username=${username}`);
+
 
   // Input validation
   if (!cognitiveMode || typeof cognitiveMode !== 'string') {

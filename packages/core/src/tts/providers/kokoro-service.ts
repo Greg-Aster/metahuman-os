@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
+import { eventBus, EventTypes, generateRequestId } from '../../infrastructure/event-bus/index.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import { stopServer } from '../server-manager.js';
 import type { ITextToSpeechService, TTSSynthesizeOptions, TTSStatus, KokoroConfig, CacheConfig } from '../interface.js';
@@ -44,7 +45,18 @@ export class KokoroService implements ITextToSpeechService {
       return cached;
     }
 
+    const requestId = generateRequestId();
     const startTime = Date.now();
+
+    // Publish synthesize started event
+    eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_STARTED, {
+      textLength: text.length,
+      voice: voiceKey,
+      langCode,
+      speed,
+      useCustomVoicepack: useCustom,
+      mode: this.config.server.useServer ? 'server' : 'cli',
+    }, { requestId });
 
     try {
       let audioBuffer: Buffer;
@@ -77,6 +89,13 @@ export class KokoroService implements ITextToSpeechService {
         actor: 'system',
       });
 
+      // Publish synthesize completed event
+      eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_COMPLETED, {
+        textLength: text.length,
+        audioSize: audioBuffer.length,
+        voice: voiceKey,
+      }, { requestId, durationMs: duration });
+
       return audioBuffer;
     } catch (error) {
       // Fallback to Piper if configured
@@ -93,8 +112,19 @@ export class KokoroService implements ITextToSpeechService {
           actor: 'system',
         });
 
+        // Publish fallback event
+        eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_FAILED, {
+          error: (error as Error).message,
+          fallbackTo: 'piper',
+        }, { requestId, level: 'warn', durationMs: Date.now() - startTime });
+
         return this.piperFallback.synthesize(text, options);
       }
+
+      // Publish synthesize failed event
+      eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_FAILED, {
+        error: (error as Error).message,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
 
       throw error;
     }
@@ -447,6 +477,12 @@ export class KokoroService implements ITextToSpeechService {
         actor: 'system',
       });
 
+      // Publish server started event
+      eventBus.emit('kokoro', EventTypes.KOKORO_SERVER_STARTED, {
+        pid: child.pid,
+        port,
+      });
+
       // Poll for server health with timeout (10 seconds default)
       const timeout = 10000;
       const pollInterval = 500;
@@ -480,5 +516,8 @@ export class KokoroService implements ITextToSpeechService {
   async shutdown(): Promise<void> {
     console.log('[KokoroService] Shutting down Kokoro server...');
     await stopServer('kokoro');
+
+    // Publish server stopped event
+    eventBus.emit('kokoro', EventTypes.KOKORO_SERVER_STOPPED, {});
   }
 }

@@ -323,6 +323,7 @@ export {
 
 export * from './context';  // DEPRECATED - will be removed
 export * from './config';
+export * from './safe-file';  // Atomic file writes with backup for data safety
 // users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
 export * from './window-session';  // Multi-window support

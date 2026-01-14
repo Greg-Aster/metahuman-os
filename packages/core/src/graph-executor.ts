@@ -8,6 +8,10 @@
 import type { SvelteFlowGraph, SvelteFlowNode, SvelteFlowEdge } from './cognitive-graph-schema.js';
 import { createLogger } from './logger.js';
 import { loadOperatorConfig } from './config.js';
+import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { systemPaths } from './path-builder.js';
 
 const log = createLogger('graph-pipeline');
 
@@ -21,6 +25,30 @@ const LLM_NODE_TYPES = new Set([
   'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
   'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer'
 ]);
+
+/**
+ * Write a graph execution trace to the NDJSON trace file.
+ * This populates the trace file that graph-traces.ts reads from.
+ */
+function writeGraphTrace(trace: {
+  timestamp: string;
+  mode?: string;
+  graph?: string;
+  sessionId?: string;
+  requestId?: string;
+  status: 'started' | 'completed' | 'failed';
+  durationMs?: number;
+  eventCount?: number;
+  error?: string;
+}): void {
+  try {
+    const traceFile = path.join(systemPaths.logs, 'graph-traces.ndjson');
+    fs.mkdirSync(path.dirname(traceFile), { recursive: true });
+    fs.appendFileSync(traceFile, JSON.stringify(trace) + '\n');
+  } catch (error) {
+    console.error('[graph-executor] Failed to write trace:', error);
+  }
+}
 
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -580,6 +608,29 @@ export async function executeGraph(
   log.debug(`   Cognitive Mode: ${graph.cognitiveMode || 'default'}`);
   log.debug(`   Context: userId=${contextData.userId}, sessionId=${contextData.sessionId}`);
 
+  // Generate request ID for tracing if not provided
+  const requestId = contextData.requestId || generateRequestId();
+  const sessionId = contextData.sessionId;
+  const userId = contextData.userId;
+
+  // Write trace start and publish to event bus
+  writeGraphTrace({
+    timestamp: new Date().toISOString(),
+    mode: graph.cognitiveMode,
+    graph: graph.name,
+    sessionId,
+    requestId,
+    status: 'started',
+  });
+
+  eventBus.emit('graph', EventTypes.GRAPH_EXECUTION_STARTED, {
+    graphName: graph.name,
+    graphVersion: graph.version,
+    nodeCount: graph.nodes.length,
+    edgeCount: graph.edges.length,
+    cognitiveMode: graph.cognitiveMode,
+  }, { requestId, sessionId, userId });
+
   try {
     // Identify back-edges for conditional loops
     const backEdges = identifyBackEdges(graph);
@@ -718,6 +769,25 @@ export async function executeGraph(
       log.info(`   Iterations: ${loopedNodes.map(([id, count]) => `node${id}x${count}`).join(', ')}`);
     }
 
+    // Write trace completion and publish to event bus
+    writeGraphTrace({
+      timestamp: new Date().toISOString(),
+      mode: graph.cognitiveMode,
+      graph: graph.name,
+      sessionId,
+      requestId,
+      status: 'completed',
+      durationMs: duration,
+      eventCount: totalExecutions,
+    });
+
+    eventBus.emit('graph', EventTypes.GRAPH_EXECUTION_COMPLETED, {
+      graphName: graph.name,
+      durationMs: duration,
+      totalExecutions,
+      loopedNodes: loopedNodes.length,
+    }, { requestId, sessionId, userId, durationMs: duration });
+
     if (eventHandler) {
       eventHandler({
         type: 'graph_complete',
@@ -731,6 +801,25 @@ export async function executeGraph(
   } catch (error) {
     graphState.status = 'failed';
     graphState.endTime = Date.now();
+    const duration = graphState.endTime - graphState.startTime;
+
+    // Write trace failure and publish to event bus
+    writeGraphTrace({
+      timestamp: new Date().toISOString(),
+      mode: graph.cognitiveMode,
+      graph: graph.name,
+      sessionId,
+      requestId,
+      status: 'failed',
+      durationMs: duration,
+      error: (error as Error).message,
+    });
+
+    eventBus.emit('graph', EventTypes.GRAPH_NODE_ERROR, {
+      graphName: graph.name,
+      error: (error as Error).message,
+      durationMs: duration,
+    }, { requestId, sessionId, userId, level: 'error' });
 
     if (eventHandler) {
       eventHandler({

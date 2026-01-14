@@ -642,9 +642,9 @@
       id: 'tts-queue',
       name: 'TTS Queue Stream',
       url: '/api/tts-queue-stream',
-      priority: ConnectionPriority.MEDIUM,
+      priority: ConnectionPriority.HIGH,
       viewDependency: 'chat',
-      defer: true,
+      defer: false,
       onOpen: (source) => {
         console.log('[chat-tts] TTS queue stream opened via pool');
         ttsQueueStream = source;
@@ -652,6 +652,7 @@
       onClose: () => {
         console.log('[chat-tts] TTS queue stream closed via pool');
         ttsQueueStream = null;
+        messagesApi.pushMessage('system', '⚠️ **TTS Stream Disconnected**\n\nSpeech playback is unavailable until the connection is restored. Refresh the page or re-open the chat tab to reconnect.');
       },
       onMessage: (event) => {
         try {
@@ -664,20 +665,12 @@
 
           if (data.type === 'error') {
             console.error('[chat-tts] TTS queue stream error:', data.error);
+            messagesApi.pushMessage('system', '⚠️ **TTS Stream Error**\n\nThe speech stream reported an error. Try refreshing the page or toggling TTS off/on.');
             return;
           }
 
           if (data.type === 'tts' && Array.isArray(data.items)) {
-            for (const item of data.items) {
-              console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
-
-              if (ttsEnabled) {
-                console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
-                void ttsApi.speak(item.text);
-              } else {
-                console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
-              }
-            }
+            handleTTSItems(data.items);
           }
         } catch (err) {
           console.error('[chat-tts] TTS queue stream parse error:', err);
@@ -685,12 +678,7 @@
       },
       onError: (err) => {
         console.error('[chat-tts] TTS queue stream error:', err);
-        setTimeout(() => {
-          if (isComponentMounted && !document.hidden) {
-            console.log('[chat-tts] Attempting TTS queue stream reconnection...');
-            connectTTSQueueStream();
-          }
-        }, 5000);
+        messagesApi.pushMessage('system', '⚠️ **TTS Stream Connection Lost**\n\nSpeech playback will not work until the stream reconnects. Try refreshing the page.');
       },
     });
   }
@@ -703,6 +691,20 @@
       ttsQueueStream = null;
     }
   }
+
+  function handleTTSItems(items: Array<{ text?: string; mode?: string; source?: string }>) {
+    for (const item of items) {
+      console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
+
+      if (ttsEnabled && item.text) {
+        console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
+        void ttsApi.speak(item.text);
+      } else {
+        console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
+      }
+    }
+  }
+
 
   onDestroy(() => {
     // Mark component as unmounted to stop animation loops
@@ -892,13 +894,7 @@
         console.error('[response-pipeline] ❌ Error closing buffer streams:', e);
       }
 
-      try {
-        disconnectTTSQueueStream();
-        console.log('[response-pipeline] → Closed TTS queue stream');
-        closedCount++;
-      } catch (e) {
-        console.error('[response-pipeline] ❌ Error closing TTS queue stream:', e);
-      }
+      // Keep TTS queue stream open so queued audio can play after the response.
 
       console.log(`[response-pipeline] ✅ Closed ${closedCount} connections`);
       console.log('[response-pipeline] ========== CONNECTION CLEANUP COMPLETE ==========');
@@ -1439,13 +1435,7 @@
         console.error('[sendMessage] ❌ Error closing buffer streams:', e);
       }
 
-      try {
-        disconnectTTSQueueStream();
-        console.log('[sendMessage] → Closed TTS queue stream');
-        closedCount++;
-      } catch (e) {
-        console.error('[sendMessage] ❌ Error closing TTS queue stream:', e);
-      }
+      // Keep TTS queue stream open so queued audio can play after the response.
 
       console.log(`[sendMessage] ✅ Closed ${closedCount} connections`);
       console.log('[sendMessage] ========== CONNECTION CLEANUP COMPLETE ==========');

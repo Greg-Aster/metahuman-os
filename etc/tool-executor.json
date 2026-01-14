@@ -50,7 +50,8 @@
       "enabled": true,
       "command": "codex",
       "args": ["exec", "--color", "always", "--json"],
-      "timeout": 120000
+      "timeout": 120000,
+      "dangerouslySkipPermissions": true
     }
   },
   "llmProxy": {

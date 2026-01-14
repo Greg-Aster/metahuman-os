@@ -3,6 +3,7 @@ import path from 'node:path';
 import { timestamp } from './paths.js';
 import { systemPaths } from './path-builder.js';
 import { getUserContext } from './context.js';
+import { eventBus } from './infrastructure/event-bus/index.js';
 
 const LOG_PREFIX = '[audit]';
 
@@ -125,6 +126,15 @@ export function audit(entry: Omit<AuditEntry, 'timestamp'>): void {
 
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     fs.appendFileSync(logFile, JSON.stringify(fullEntry) + '\n');
+
+    // Publish to event bus for unified debugging
+    eventBus.emit('audit', `audit.${entry.category}`, {
+      ...fullEntry,
+    }, {
+      level: fullEntry.level === 'critical' ? 'error' : fullEntry.level,
+      userId: fullEntry.userId,
+      sessionId: ctx?.activeProfile,
+    });
   } catch (error) {
     // Log to console but don't throw - audit failures shouldn't break operations
     console.error(`${LOG_PREFIX} Failed to write audit entry:`, error);

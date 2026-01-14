@@ -189,8 +189,9 @@ export const GET: APIRoute = async ({ cookies }) => {
   let bigBrotherStatus = null
   try {
     const operatorConfig = loadOperatorConfig(effectiveUsername, true) // Skip cache to get fresh config
-    console.log(`[boot] Big Brother config check: enabled=${operatorConfig.bigBrotherMode?.enabled}, headless=${headlessMode}`);
-    if (operatorConfig.bigBrotherMode?.enabled && !headlessMode) {
+    const bigBrotherProvider = operatorConfig.bigBrotherMode?.provider || 'claude-code';
+    console.log(`[boot] Big Brother config check: enabled=${operatorConfig.bigBrotherMode?.enabled}, provider=${bigBrotherProvider}, headless=${headlessMode}`);
+    if (operatorConfig.bigBrotherMode?.enabled && bigBrotherProvider === 'claude-code' && !headlessMode) {
       const currentState = bigBrotherTerminal.getState()
 
       if (currentState.isRunning) {
@@ -232,10 +233,14 @@ export const GET: APIRoute = async ({ cookies }) => {
         }
       }
     } else {
+      const currentState = bigBrotherTerminal.getState()
+      if (currentState.isRunning && bigBrotherProvider !== 'claude-code') {
+        await bigBrotherTerminal.stop()
+      }
       bigBrotherStatus = {
         attempted: false,
         running: false,
-        reason: headlessMode ? 'headless_mode' : 'disabled_in_config'
+        reason: headlessMode ? 'headless_mode' : (operatorConfig.bigBrotherMode?.enabled ? 'non_claude_provider' : 'disabled_in_config')
       }
     }
   } catch (e) {

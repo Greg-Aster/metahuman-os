@@ -2,7 +2,7 @@
  * Connection Manager
  *
  * Tracks and manages all EventSource connections to prevent browser connection limit exhaustion.
- * HTTP/1.1 browsers limit to 6 concurrent connections per origin.
+ * HTTP/1.1 browsers limit to 6 concurrent connections per origin; HTTP/2 allows more.
  *
  * Features:
  * - Track all active connections with metadata
@@ -23,7 +23,7 @@ export interface ConnectionInfo {
   errorCount: number;
 }
 
-const MAX_CONNECTIONS = 6; // HTTP/1.1 limit per origin
+const MAX_CONNECTIONS = 12; // Allow SSE + TTS without aggressive stream churn on HTTP/2
 const IDLE_TIMEOUT = 30000; // 30 seconds without activity = idle
 const STUCK_TIMEOUT = 60000; // 60 seconds in 'connecting' = stuck
 

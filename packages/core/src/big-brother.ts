@@ -238,9 +238,18 @@ export async function escalateToBigBrother(
     };
   }
 
-  // Auto-start the interactive terminal when Big Brother is first activated
-  // This ensures the user can see Claude working in real-time within the program
-  if (!isBigBrotherReady()) {
+  // Determine which backend to use
+  // Priority: request.preferredBackend > config.provider > tool-executor config > default
+  let backendId = request.preferredBackend || bigBrotherConfig.provider;
+
+  // If using legacy provider names, map them
+  if (backendId === 'ollama' || backendId === 'openai') {
+    // These are now handled via open-interpreter with appropriate LLM proxy config
+    backendId = 'open-interpreter';
+  }
+
+  // Auto-start the interactive terminal for Claude Code only
+  if (backendId === 'claude-code' && !isBigBrotherReady()) {
     audit({
       level: 'info',
       category: 'action',
@@ -271,16 +280,6 @@ export async function escalateToBigBrother(
       });
       // Continue with background mode if terminal fails
     }
-  }
-
-  // Determine which backend to use
-  // Priority: request.preferredBackend > config.provider > tool-executor config > default
-  let backendId = request.preferredBackend || bigBrotherConfig.provider;
-
-  // If using legacy provider names, map them
-  if (backendId === 'ollama' || backendId === 'openai') {
-    // These are now handled via open-interpreter with appropriate LLM proxy config
-    backendId = 'open-interpreter';
   }
 
   audit({

@@ -252,7 +252,7 @@ function ensurePersonaFile(filename: string, defaultGenerator: () => PersonaCore
 }
 
 export function loadPersonaCore(): PersonaCore {
-  console.log(`${LOG_PREFIX} ========== loadPersonaCore HIT ==========`);
+
   try {
     const filePath = ensurePersonaFile('core.json', getDefaultPersonaCore);
     const content = fs.readFileSync(filePath, 'utf8');

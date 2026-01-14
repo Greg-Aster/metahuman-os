@@ -8,6 +8,7 @@
  */
 
 import { audit } from './audit.js';
+import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
 import {
   loadToolExecutorConfig,
   type OpenInterpreterBackendConfig,
@@ -196,6 +197,13 @@ export async function startInterpreterServer(
           details: { endpoint, port },
           actor: username || 'system',
         });
+
+        // Publish server started event to event bus
+        eventBus.emit('interpreter', EventTypes.INTERPRETER_SERVER_STARTED, {
+          endpoint,
+          port,
+        });
+
         console.log(`[interpreter] ✅ Server started successfully after ${i + 1}s`);
         return { success: true };
       }
@@ -233,6 +241,11 @@ export async function stopInterpreterServer(
       event: 'interpreter_server_stopped',
       details: { endpoint },
       actor: username || 'system',
+    });
+
+    // Publish server stopped event to event bus
+    eventBus.emit('interpreter', EventTypes.INTERPRETER_SERVER_STOPPED, {
+      endpoint,
     });
 
     return { success: true };
@@ -358,6 +371,14 @@ export async function executeWithInterpreter(
       actor: username || 'system',
     });
 
+    // Publish task started event to event bus
+    const requestId = generateRequestId();
+    eventBus.emit('interpreter', EventTypes.INTERPRETER_TASK_STARTED, {
+      taskId,
+      taskLength: request.task.length,
+      hasContext: !!request.context,
+    }, { requestId });
+
     // Execute the task
     const response = await fetch(`${endpoint}/execute`, {
       method: 'POST',
@@ -447,6 +468,14 @@ export async function executeWithInterpreter(
       actor: username || 'system',
     });
 
+    // Publish task completed event to event bus
+    eventBus.emit('interpreter', EventTypes.INTERPRETER_TASK_COMPLETED, {
+      taskId: result.taskId,
+      success: result.success,
+      messageCount: result.messages.length,
+      codeBlocks: result.metadata?.codeBlocks,
+    }, { requestId, durationMs: result.executionTime });
+
     return result;
   } catch (error) {
     const executionTime = Date.now() - startTime;
@@ -462,6 +491,12 @@ export async function executeWithInterpreter(
       },
       actor: username || 'system',
     });
+
+    // Publish task failed event to event bus
+    eventBus.emit('interpreter', EventTypes.INTERPRETER_TASK_FAILED, {
+      taskId,
+      error: (error as Error).message,
+    }, { level: 'error', durationMs: executionTime });
 
     return {
       success: false,

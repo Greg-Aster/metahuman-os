@@ -13,12 +13,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import * as net from 'net';
+// ws is CommonJS - use default import for bundler compatibility
 import ws from 'ws';
-import type { WebSocket as WsWebSocketType } from 'ws';
 const WebSocketServer = ws.Server;
 const WebSocket = ws;
+import type { WebSocket as WsWebSocketType } from 'ws';
 import * as http from 'http';
 import { audit } from './audit.js';
+import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
 
 const REPO_ROOT = process.env.METAHUMAN_ROOT || '/home/greggles/metahuman';
 const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
@@ -363,6 +365,14 @@ class BigBrotherTerminalManager extends EventEmitter {
         actor: 'big-brother-terminal',
       });
 
+      // Publish to event bus
+      eventBus.emit('big-brother', EventTypes.BIG_BROTHER_ESCALATION_STARTED, {
+        port: BIG_BROTHER_PORT,
+        pid: this.claudeProcess.pid,
+        mode: 'stream-json',
+        username: this.currentUsername,
+      });
+
       this.emit('ready', { port: BIG_BROTHER_PORT, url: `http://localhost:${BIG_BROTHER_PORT}` });
 
       return true;
@@ -416,10 +426,17 @@ class BigBrotherTerminalManager extends EventEmitter {
                 });
               } else if (block.type === 'tool_use') {
                 // Broadcast tool usage to UI
-                const toolInfo = `🔧 Using tool: ${block.name || 'unknown'}`;
+                const toolName = block.name || 'unknown';
+                const toolInfo = `🔧 Using tool: ${toolName}`;
                 const inputPreview = JSON.stringify(block.input || {}, null, 2).substring(0, 500);
                 console.log(`[big-brother-terminal] ${toolInfo}`);
                 this.broadcastToClients({ type: 'tool_use', data: `${toolInfo}\n${inputPreview}` });
+
+                // Publish to event bus
+                eventBus.emit('big-brother', EventTypes.BIG_BROTHER_TOOL_INVOKED, {
+                  tool: toolName,
+                  inputPreview: inputPreview.substring(0, 200),
+                });
               } else if (block.type === 'tool_result') {
                 // Tool result
                 console.log(`[big-brother-terminal] 🔧 Tool result for ${block.tool_use_id}`);
@@ -495,6 +512,13 @@ class BigBrotherTerminalManager extends EventEmitter {
           if (subtype === 'success') {
             console.log('[big-brother-terminal] ✅ Claude completed successfully');
             this.broadcastToClients({ type: 'complete', data: 'Task completed successfully' });
+
+            // Publish completion to event bus
+            eventBus.emit('big-brother', EventTypes.BIG_BROTHER_ESCALATION_COMPLETED, {
+              status: 'success',
+              responseLength: this.currentResponseBuffer.length,
+            });
+
             if (this.responseResolve && this.currentResponseBuffer) {
               this.responseResolve(this.currentResponseBuffer);
               this.responseResolve = null;
@@ -505,6 +529,13 @@ class BigBrotherTerminalManager extends EventEmitter {
             const errorMsg = (msg as any).error || 'Claude API error';
             console.error(`[big-brother-terminal] ❌ Claude error: ${errorMsg}`);
             this.broadcastToClients({ type: 'error', data: errorMsg });
+
+            // Publish error to event bus
+            eventBus.emit('big-brother', EventTypes.BIG_BROTHER_ESCALATION_COMPLETED, {
+              status: 'error',
+              error: errorMsg,
+            }, { level: 'error' });
+
             if (this.responseReject) {
               this.responseReject(new Error(errorMsg));
               this.responseResolve = null;
@@ -658,7 +689,7 @@ class BigBrotherTerminalManager extends EventEmitter {
         }
 
         ws.on('close', () => {
-          console.log('[big-brother-terminal] WebSocket client disconnected');
+          // console.log('[big-brother-terminal] WebSocket client disconnected');
           this.clients.delete(ws);
         });
 
