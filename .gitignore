@@ -13,6 +13,19 @@ dist/
 build/
 
 # ============================================
+# METAHUMAN STUDIO (VS CODE) BUILD ARTIFACTS
+# ============================================
+apps/code-oss/.build/
+apps/code-oss/out/
+apps/code-oss/.vscode-test/
+apps/code-oss/extensions/**/dist/
+apps/code-oss/extensions/**/out/
+apps/code-oss/.profile-oss/
+apps/code-oss/resources/server/node_modules/
+apps/code-oss/*.tsbuildinfo
+apps/code-oss/**/*.log
+
+# ============================================
 # PERSONAL DATA - DO NOT COMMIT
 # ============================================
 

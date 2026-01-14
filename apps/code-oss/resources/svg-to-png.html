@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaHuman Studio Icon Converter</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #e94560;
+            border-bottom: 2px solid #e94560;
+            padding-bottom: 10px;
+        }
+        .preview {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .preview img {
+            max-width: 100%;
+            border: 2px solid #0f3460;
+        }
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .size-buttons {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        button {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #c23d54;
+        }
+        button:active {
+            background: #a33446;
+        }
+        .info {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #e94560;
+        }
+        canvas {
+            display: none;
+        }
+        .downloads {
+            margin: 20px 0;
+        }
+        .download-link {
+            display: block;
+            margin: 10px 0;
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .download-link:hover {
+            color: #81d4fa;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧠 MetaHuman Studio Icon Converter</h1>
+
+    <div class="info">
+        <strong>Instructions:</strong>
+        <ol>
+            <li>The SVG is loaded automatically from metahuman-studio-icon.svg</li>
+            <li>Click the size buttons below to generate PNG files</li>
+            <li>Each click will download a PNG at that size</li>
+            <li>Use these PNGs to create ICO and ICNS files</li>
+        </ol>
+    </div>
+
+    <div class="preview">
+        <h3>Preview (512x512)</h3>
+        <img id="svgPreview" alt="Icon Preview">
+    </div>
+
+    <div class="controls">
+        <h3>Generate PNG Files</h3>
+        <div class="size-buttons">
+            <button onclick="generatePNG(16)">16x16</button>
+            <button onclick="generatePNG(32)">32x32</button>
+            <button onclick="generatePNG(48)">48x48</button>
+            <button onclick="generatePNG(64)">64x64</button>
+            <button onclick="generatePNG(128)">128x128</button>
+            <button onclick="generatePNG(192)">192x192</button>
+            <button onclick="generatePNG(256)">256x256</button>
+            <button onclick="generatePNG(512)">512x512</button>
+        </div>
+        <button onclick="generateAll()" style="width: 100%; margin-top: 10px; background: #0f3460;">
+            📦 Download All Sizes (ZIP not available, click individually)
+        </button>
+    </div>
+
+    <div class="info">
+        <strong>File Naming Guide:</strong>
+        <ul>
+            <li><strong>512x512</strong> → linux/metahuman-studio.png</li>
+            <li><strong>512x512</strong> → server/code-512.png</li>
+            <li><strong>192x192</strong> → server/code-192.png</li>
+            <li><strong>256x256</strong> → win32/code_150x150.png</li>
+            <li>All sizes → temp-icons/ (for ICO/ICNS creation)</li>
+        </ul>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // Load and display SVG
+        const svgPath = 'metahuman-studio-icon.svg';
+        const preview = document.getElementById('svgPreview');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Load SVG file
+        fetch(svgPath)
+            .then(response => response.text())
+            .then(svgData => {
+                const blob = new Blob([svgData], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                preview.src = url;
+                window.svgData = svgData;
+                console.log('✓ SVG loaded successfully');
+            })
+            .catch(error => {
+                console.error('Error loading SVG:', error);
+                preview.alt = 'Error loading SVG file. Make sure metahuman-studio-icon.svg is in the same directory.';
+            });
+
+        function generatePNG(size) {
+            if (!window.svgData) {
+                alert('SVG not loaded yet. Please wait a moment and try again.');
+                return;
+            }
+
+            // Create a new image from SVG
+            const img = new Image();
+            const svgBlob = new Blob([window.svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(svgBlob);
+
+            img.onload = function() {
+                // Set canvas size
+                canvas.width = size;
+                canvas.height = size;
+
+                // Draw image to canvas
+                ctx.clearRect(0, 0, size, size);
+                ctx.drawImage(img, 0, 0, size, size);
+
+                // Convert to PNG and download
+                canvas.toBlob(function(blob) {
+                    const link = document.createElement('a');
+                    link.download = `metahuman-studio-${size}x${size}.png`;
+                    link.href = URL.createObjectURL(blob);
+                    link.click();
+
+                    console.log(`✓ Generated ${size}x${size} PNG`);
+
+                    // Clean up
+                    URL.revokeObjectURL(link.href);
+                }, 'image/png');
+
+                // Clean up
+                URL.revokeObjectURL(url);
+            };
+
+            img.onerror = function() {
+                alert('Error generating PNG. Please check the console for details.');
+                console.error('Failed to load SVG into image element');
+            };
+
+            img.src = url;
+        }
+
+        function generateAll() {
+            const sizes = [16, 32, 48, 64, 128, 192, 256, 512];
+            let index = 0;
+
+            function generateNext() {
+                if (index < sizes.length) {
+                    generatePNG(sizes[index]);
+                    index++;
+                    setTimeout(generateNext, 500); // Delay between downloads
+                }
+            }
+
+            generateNext();
+        }
+    </script>
+</body>
+</html>
