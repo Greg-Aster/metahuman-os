@@ -1,0 +1,186 @@
+# MetaHuman OS Docker Compose
+# Unified deployment for all services
+
+services:
+  # Event Bus - Central telemetry aggregation
+  event-bus:
+    build:
+      context: .
+      dockerfile: docker/event-bus.Dockerfile
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./logs/events:/app/logs/events
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Ollama - Local LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Core Backend - API server
+  core:
+    build:
+      context: .
+      dockerfile: docker/core.Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./profiles:/app/profiles
+      - ./etc:/app/etc
+      - ./persona:/app/persona
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - METAHUMAN_ROOT=/app
+      - EVENT_BUS_URL=ws://event-bus:3100
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      event-bus:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Web UI - Astro frontend
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    ports:
+      - "4321:4321"
+    environment:
+      - NODE_ENV=production
+      - PUBLIC_API_URL=http://core:3000
+      - PUBLIC_EVENT_BUS_URL=ws://localhost:3100
+    depends_on:
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4321"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Agents - Autonomous agent scheduler
+  agents:
+    build:
+      context: .
+      dockerfile: docker/agents.Dockerfile
+    volumes:
+      - ./profiles:/app/profiles
+      - ./etc:/app/etc
+      - ./persona:/app/persona
+      - ./brain:/app/brain
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - METAHUMAN_ROOT=/app
+      - EVENT_BUS_URL=ws://event-bus:3100
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      event-bus:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Whisper - Speech-to-text (GPU)
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+    ports:
+      - "9000:9000"
+    environment:
+      - ASR_MODEL=large-v3
+      - ASR_ENGINE=faster_whisper
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Kokoro TTS - Text-to-speech (GPU)
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi:latest-gpu
+    ports:
+      - "8880:8880"
+    environment:
+      - KOKORO_MODEL=kokoro-v0_19
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Big Brother - Claude CLI integration
+  big-brother:
+    build:
+      context: .
+      dockerfile: docker/big-brother.Dockerfile
+    ports:
+      - "3099:3099"
+    volumes:
+      - ./profiles:/app/profiles
+      - ./etc:/app/etc
+      - ./logs:/app/logs
+      # Mount Claude CLI auth from host
+      - ~/.config/claude:/root/.config/claude:ro
+    environment:
+      - NODE_ENV=production
+      - METAHUMAN_ROOT=/app
+      - EVENT_BUS_URL=ws://event-bus:3100
+    depends_on:
+      event-bus:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+    driver: local
+
+networks:
+  default:
+    name: metahuman-network

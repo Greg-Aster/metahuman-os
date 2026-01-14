@@ -93,6 +93,13 @@ cleanup_services() {
     # Stop terminal server
     "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
 
+    # Stop event bus
+    "$REPO_ROOT/bin/stop-event-bus" 2>/dev/null || true
+
+    # Stop voice and local model servers
+    "$REPO_ROOT/bin/stop-voice-server" 2>/dev/null || true
+    "$REPO_ROOT/bin/stop-local-models" 2>/dev/null || true
+
     # Force kill any remaining agents
     pkill -f "brain/agents" 2>/dev/null || true
     pkill -f "scheduler-service" 2>/dev/null || true
@@ -334,18 +341,18 @@ stop_existing() {
     fi
 
     # Ensure port 4321 is available before starting
-    PORT_PIDS=$(lsof -i :4321 -sTCP:LISTEN -t 2>/dev/null || true)
+    PORT_PIDS=$(lsof -n -i :4321 -sTCP:LISTEN -t 2>/dev/null || true)
     if [ -n "$PORT_PIDS" ]; then
         echo "Port 4321 in use (PIDs: $PORT_PIDS). Terminating..."
         echo "$PORT_PIDS" | xargs -r kill 2>/dev/null || true
         for _ in $(seq 1 5); do
-            if ! lsof -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+            if ! lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
                 break
             fi
             sleep 1
         done
 
-        if lsof -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+        if lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
             echo "Force killing processes on port 4321..."
             echo "$PORT_PIDS" | xargs -r kill -9 2>/dev/null || true
             sleep 1
@@ -433,7 +440,12 @@ cleanup_stale_files
 print_status "Stale files cleaned"
 echo
 
-# Start the web server (services are started from in-app terminal)
+# Start Event Bus (telemetry aggregation)
+echo "Starting Event Bus..."
+"$REPO_ROOT/bin/start-event-bus" 2>/dev/null || print_warning "Event Bus failed to start"
+echo
+
+# Start the web server
 echo "Starting MetaHuman OS web interface..."
 echo
 
@@ -491,4 +503,26 @@ fi
 
 # Start the production server (pipe to log file for in-app terminal)
 mkdir -p "$REPO_ROOT/logs"
+
+# Verify port is free before starting
+if lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+    print_error "Port 4321 is still in use after cleanup!"
+    echo "Please manually kill the process and try again:"
+    lsof -n -i :4321 -sTCP:LISTEN
+    exit 1
+fi
+
 node dist/server/entry.mjs 2>&1 | tee "$REPO_ROOT/logs/server.log"
+EXIT_CODE=$?
+
+# If server exited, report why
+if [ $EXIT_CODE -ne 0 ]; then
+    echo ""
+    print_error "Server exited with code $EXIT_CODE"
+    echo "Last 20 lines of log:"
+    tail -20 "$REPO_ROOT/logs/server.log"
+    exit $EXIT_CODE
+else
+    echo ""
+    print_warning "Server exited normally"
+fi

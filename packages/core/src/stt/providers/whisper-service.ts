@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
+import { eventBus, EventTypes, generateRequestId } from '../../infrastructure/event-bus/index.js';
 
 export interface WhisperServerConfig {
   useServer: boolean;
@@ -40,7 +41,17 @@ export class WhisperService {
    * Transcribe audio buffer to text
    */
   async transcribe(audioBuffer: Buffer, audioFormat: 'wav' | 'webm' | 'mp3' = 'wav'): Promise<string> {
+    const requestId = generateRequestId();
     const startTime = Date.now();
+
+    // Publish transcribe started event
+    eventBus.emit('whisper', EventTypes.WHISPER_TRANSCRIBE_STARTED, {
+      audioSize: audioBuffer.length,
+      audioFormat,
+      model: this.config.model,
+      device: this.config.device,
+      mode: this.config.server.useServer ? 'server' : 'cli',
+    }, { requestId });
 
     try {
       let result: TranscriptionResult;
@@ -73,6 +84,14 @@ export class WhisperService {
         actor: 'system',
       });
 
+      // Publish transcribe completed event
+      eventBus.emit('whisper', EventTypes.WHISPER_TRANSCRIBE_COMPLETED, {
+        textLength: result.text.length,
+        language: result.language,
+        languageProbability: result.language_probability,
+        model: this.config.model,
+      }, { requestId, durationMs: duration });
+
       return result.text;
     } catch (error) {
       audit({
@@ -86,6 +105,12 @@ export class WhisperService {
         },
         actor: 'system',
       });
+
+      // Publish transcribe failed event
+      eventBus.emit('whisper', EventTypes.WHISPER_TRANSCRIBE_FAILED, {
+        error: (error as Error).message,
+        model: this.config.model,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
 
       throw error;
     }
@@ -406,6 +431,14 @@ print(json.dumps(result))
 
       console.log(`[WhisperService] Started server (PID ${child.pid}) on port ${port}`);
 
+      // Publish server started event
+      eventBus.emit('whisper', EventTypes.WHISPER_SERVER_STARTED, {
+        pid: child.pid,
+        port,
+        model: this.config.model,
+        device: this.config.device,
+      });
+
       // Wait for server to respond (not necessarily model loaded - max 10 seconds)
       const maxWaitMs = 10000;
       const startWaitTime = Date.now();
@@ -450,6 +483,9 @@ print(json.dumps(result))
       process.kill(pid, 'SIGTERM');
       fs.unlinkSync(pidFile);
       console.log(`[WhisperService] Stopped server (PID ${pid})`);
+
+      // Publish server stopped event
+      eventBus.emit('whisper', EventTypes.WHISPER_SERVER_STOPPED, { pid });
     } catch (error) {
       console.error('[WhisperService] Failed to stop server:', error);
     }

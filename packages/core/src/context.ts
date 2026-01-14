@@ -59,8 +59,7 @@ export function withUserContext<T>(
   user: { userId: string; username: string; role: string; activeProfile?: string },
   fn: () => T | Promise<T>
 ): Promise<T> {
-  console.log(`${LOG_PREFIX} ========== withUserContext HIT ==========`);
-  console.log(`${LOG_PREFIX} User: ${user.username} (${user.role}), activeProfile: ${user.activeProfile || 'none'}`);
+
 
   // Safety check: ensure username is defined (all users must be authenticated)
   if (!user.username) {
@@ -80,7 +79,7 @@ export function withUserContext<T>(
   // Otherwise use the user's own username
   const profileUser =
     user.activeProfile && user.role !== 'owner' ? user.activeProfile : user.username;
-  console.log(`${LOG_PREFIX} Profile user resolved to: ${profileUser}`);
+
   
   const profilePaths = getProfilePaths(profileUser);
 
@@ -110,9 +109,7 @@ export function withUserContext<T>(
 
   return contextStorage.run(context, async () => {
     try {
-      console.log(`${LOG_PREFIX} Executing function within user context`);
       const result = await fn();
-      console.log(`${LOG_PREFIX} Function completed successfully`);
       return result;
     } catch (error) {
       console.error(`${LOG_PREFIX} Function execution failed within context:`, error);
@@ -151,8 +148,7 @@ export function setUserContext(
   username: string,
   role: 'owner' | 'standard' | 'guest'
 ): void {
-  console.log(`${LOG_PREFIX} ========== setUserContext HIT ==========`);
-  console.log(`${LOG_PREFIX} DEPRECATED: Setting context for ${username} (${role})`);
+
   
   // All authenticated users have profile paths
   const profilePaths = getProfilePaths(username);
@@ -186,8 +182,7 @@ export function setUserContext(
  * @deprecated Use withUserContext() instead for automatic cleanup
  */
 export function clearUserContext(): void {
-  console.log(`${LOG_PREFIX} ========== clearUserContext HIT ==========`);
-  console.log(`${LOG_PREFIX} DEPRECATED: Clearing user context`);
+
   
   // Log deprecated context clearing
   audit({
@@ -210,7 +205,7 @@ export function clearUserContext(): void {
  */
 export function getUserContext(): UserContext | undefined {
   const context = contextStorage.getStore();
-  console.log(`${LOG_PREFIX} getUserContext called, found: ${context ? `${context.username} (${context.role})` : 'none'}`);
+
   return context;
 }
 
@@ -221,6 +216,6 @@ export function getUserContext(): UserContext | undefined {
  */
 export function hasUserContext(): boolean {
   const hasContext = contextStorage.getStore() !== undefined;
-  console.log(`${LOG_PREFIX} hasUserContext called, result: ${hasContext}`);
+
   return hasContext;
 }

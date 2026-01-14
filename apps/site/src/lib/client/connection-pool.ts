@@ -85,7 +85,7 @@ export class ConnectionHandle {
 }
 
 class ConnectionPoolManager {
-  private maxConnections = 5; // Reserve 1 slot for regular fetch() requests
+  private maxConnections = 8; // Keep headroom for chat + buffers + TTS + proposals
   private activeConnections = new Map<string, PooledConnection>();
   private queuedRequests = new Map<string, ConnectionRequest>();
   private listeners = new Set<(status: PoolStatus) => void>();
@@ -362,8 +362,8 @@ class ConnectionPoolManager {
   }
 
   setMaxConnections(max: number): void {
-    if (max < 1 || max > 6) {
-      throw new Error('maxConnections must be between 1 and 6');
+    if (max < 1 || max > 12) {
+      throw new Error('maxConnections must be between 1 and 12');
     }
     this.maxConnections = max;
     console.log(`[pool] Max connections set to ${max}`);

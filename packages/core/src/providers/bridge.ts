@@ -106,8 +106,13 @@ export async function callProvider(
   // - enabled but not delegateAll (hybrid mode): only calls with useBigBrother option go to Big Brother
   // - disabled: all local
   const shouldUseBigBrother =
-    (bigBrotherEnabled && bigBrotherDelegateAll) ||  // Delegate all mode
-    (bigBrotherEnabled && options?.useBigBrother === true);  // Hybrid mode with explicit request
+    (bigBrotherEnabled && bigBrotherDelegateAll) || // Delegate all mode
+    (options?.useBigBrother === true); // Explicit request from node (even if config cache misses)
+
+  if (options?.useBigBrother === true && !bigBrotherEnabled) {
+    const reason = operatorConfig ? 'disabled in operator config' : 'operator config unavailable';
+    throw new Error(`Big Brother requested but ${reason}`);
+  }
 
   if (shouldUseBigBrother) {
     // Use the provider-agnostic escalation system
@@ -116,7 +121,12 @@ export async function callProvider(
     // Get configured backend from operator.json
     const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
     const backend = getActiveBackend(username);
-    const backendName = backend?.name || preferredBackend || 'Big Brother';
+    const backendName = preferredBackend || backend?.name || 'Big Brother';
+
+    console.log('[provider-bridge] Big Brother routing enabled', {
+      preferredBackend,
+      resolvedBackend: backend?.id || backend?.name || 'unknown',
+    });
 
     onProgress?.({ phase: 'loading', message: `${backendName}: Starting...` });
 

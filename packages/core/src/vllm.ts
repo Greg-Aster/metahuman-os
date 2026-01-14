@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
+import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
 
 const LOG_PREFIX = '[vllm]';
 
@@ -539,6 +540,16 @@ export class VLLMClient {
               actor: 'system',
               details: { model: config.model, pid: this.serverProcess?.pid },
             });
+
+            // Publish server started event to event bus
+            eventBus.emit('vllm', EventTypes.VLLM_SERVER_STARTED, {
+              model: config.model,
+              pid: this.serverProcess?.pid,
+              gpuMemoryUtilization: effectiveUtilization,
+              maxModelLen: config.maxModelLen,
+              loraModules: config.loraModules?.map(l => l.name),
+            });
+
             resolve({ pid: this.serverProcess?.pid || 0, success: true });
           })
           .catch((error) => {
@@ -604,6 +615,9 @@ export class VLLMClient {
       event: 'vllm_stopped',
       actor: 'system',
     });
+
+    // Publish server stopped event to event bus
+    eventBus.emit('vllm', EventTypes.VLLM_SERVER_STOPPED, {});
 
     console.log(`${LOG_PREFIX} Server stopped`);
   }
@@ -724,9 +738,22 @@ export class VLLMClient {
       repetitionPenalty?: number;
     }
   ): Promise<VLLMChatResponse> {
+    const requestId = generateRequestId();
+    const startTime = Date.now();
+    const modelName = options?.model || this.currentModel || 'default';
+
     console.log(`${LOG_PREFIX} ========== chat HIT ==========`);
     console.log(`${LOG_PREFIX} Input: messages=${messages.length}, model=${options?.model}, maxTokens=${options?.maxTokens}`);
-    
+
+    // Publish chat started event
+    eventBus.emit('vllm', EventTypes.VLLM_CHAT_STARTED, {
+      model: modelName,
+      messageCount: messages.length,
+      temperature: options?.temperature ?? 0.7,
+      maxTokens: options?.maxTokens ?? 2048,
+      enableThinking: options?.enableThinking,
+    }, { requestId });
+
     const body: Record<string, unknown> = {
       model: options?.model || this.currentModel || 'default',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
@@ -762,7 +789,15 @@ export class VLLMClient {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`vLLM request failed (${response.status}): ${errorText}`);
+      const error = `vLLM request failed (${response.status}): ${errorText}`;
+
+      // Publish chat failed event
+      eventBus.emit('vllm', EventTypes.VLLM_CHAT_FAILED, {
+        model: modelName,
+        error,
+      }, { requestId, level: 'error', durationMs: Date.now() - startTime });
+
+      throw new Error(error);
     }
 
     const data = await response.json() as {
@@ -770,6 +805,15 @@ export class VLLMClient {
       model: string;
       usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
     };
+
+    // Publish chat completed event
+    eventBus.emit('vllm', EventTypes.VLLM_CHAT_COMPLETED, {
+      model: data.model,
+      responseLength: data.choices[0]?.message?.content?.length || 0,
+      promptTokens: data.usage?.prompt_tokens,
+      completionTokens: data.usage?.completion_tokens,
+      totalTokens: data.usage?.total_tokens,
+    }, { requestId, durationMs: Date.now() - startTime });
 
     return {
       content: data.choices[0]?.message?.content || '',

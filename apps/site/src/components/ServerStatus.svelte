@@ -72,6 +72,16 @@
     endpoint: string;
   }
 
+  interface EventBusInfo {
+    running: boolean;
+    healthy: boolean;
+    port: number;
+    endpoint: string;
+    uptime?: number;
+    eventCount?: number;
+    subscribers?: number;
+  }
+
   export let isVisible = true;
 
   let servers: ServerInfo[] = [];
@@ -80,6 +90,7 @@
   let localModels: LocalModelsInfo | null = null;
   let interpreter: InterpreterInfo | null = null;
   let bigBrother: BigBrotherInfo | null = null;
+  let eventBus: EventBusInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -177,6 +188,25 @@
     } catch (error) {
       console.error('Failed to fetch Big Brother status:', error);
       bigBrother = null;
+    }
+
+    try {
+      const eventBusResponse = await apiFetch('/api/event-bus-status');
+      if (eventBusResponse.ok) {
+        const data = await eventBusResponse.json();
+        eventBus = {
+          running: data.running ?? false,
+          healthy: data.healthy ?? false,
+          port: data.port ?? 3100,
+          endpoint: data.endpoint || 'http://localhost:3100',
+          uptime: data.uptime,
+          eventCount: data.eventCount,
+          subscribers: data.subscribers,
+        };
+      }
+    } catch (error) {
+      console.error('Failed to fetch Event Bus status:', error);
+      eventBus = null;
     }
 
     for (const config of serverConfigs) {
@@ -294,6 +324,27 @@
       }
     } catch (error) {
       alert(`Error ${action}ing Big Brother: ${(error as Error).message}`);
+    } finally {
+      actionInProgress = null;
+    }
+  }
+
+  async function controlEventBus(action: 'start' | 'stop' | 'restart') {
+    actionInProgress = `eventbus-${action}`;
+    try {
+      const response = await apiFetch('/api/event-bus-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        alert(`Failed to ${action} Event Bus: ${data.error || 'Unknown error'}`);
+      } else {
+        setTimeout(fetchServerStatus, 2000);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing Event Bus: ${(error as Error).message}`);
     } finally {
       actionInProgress = null;
     }
@@ -696,6 +747,58 @@
                 class="inline-block px-2 py-1 bg-purple-500/10 dark:bg-purple-400/15 text-purple-600 dark:text-purple-400 rounded text-[0.7rem] font-medium hover:bg-purple-500/20 dark:hover:bg-purple-400/25 transition-colors"
               >
                 🔗 Open Terminal
+              </a>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Event Bus (Telemetry) -->
+        <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {eventBus?.running ? 'border-2 border-cyan-500/40 dark:border-cyan-400/40 bg-cyan-500/[0.02] dark:bg-cyan-400/[0.03]' : 'border-cyan-500/20 dark:border-cyan-400/20'}">
+          <div class="mb-3">
+            <div class="flex items-start gap-3">
+              <span class="text-xl leading-none">
+                {#if eventBus?.running && eventBus?.healthy}🟢
+                {:else if eventBus?.running}🟡
+                {:else}🔴{/if}
+              </span>
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-sm text-gray-900 dark:text-gray-100 mb-1">
+                  Event Bus
+                  <span class="inline-block px-1.5 py-0.5 ml-2 bg-cyan-500/15 dark:bg-cyan-400/20 text-cyan-600 dark:text-cyan-400 rounded text-[0.6rem] font-bold tracking-tight">Telemetry</span>
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  {eventBus?.endpoint || 'http://localhost:3100'}
+                  {#if eventBus?.running && eventBus?.eventCount !== undefined}
+                    • {eventBus.eventCount} events
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            {#if eventBus?.running}
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlEventBus('stop')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'eventbus-stop' ? '...' : 'Stop'}
+              </button>
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlEventBus('restart')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'eventbus-restart' ? '...' : 'Restart'}
+              </button>
+            {:else}
+              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlEventBus('start')} disabled={actionInProgress !== null}>
+                {actionInProgress === 'eventbus-start' ? '...' : 'Start'}
+              </button>
+            {/if}
+          </div>
+          {#if eventBus?.running}
+            <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/10 dark:border-white/10">
+              {#if eventBus.subscribers !== undefined}
+                <span class="inline-block px-2 py-1 bg-cyan-500/10 dark:bg-cyan-400/15 text-cyan-600 dark:text-cyan-400 rounded text-[0.7rem] font-medium">📡 {eventBus.subscribers} subscriber{eventBus.subscribers !== 1 ? 's' : ''}</span>
+              {/if}
+              <a
+                href="/debug"
+                class="inline-block px-2 py-1 bg-cyan-500/10 dark:bg-cyan-400/15 text-cyan-600 dark:text-cyan-400 rounded text-[0.7rem] font-medium hover:bg-cyan-500/20 dark:hover:bg-cyan-400/25 transition-colors"
+              >
+                🔗 Debug Dashboard
               </a>
             </div>
           {/if}

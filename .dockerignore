@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs (we build in Docker)
+dist/
+**/dist/
+.astro/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+*.local
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+coverage/
+*.test.ts
+*.spec.ts
+__tests__/
+
+# Documentation (not needed in production)
+docs/
+*.md
+!README.md
+
+# Development files
+*.map
+tsconfig.tsbuildinfo
+
+# Profile data (mounted at runtime)
+profiles/
+
+# External dependencies (handled separately)
+external/
+
+# Audit state
+audit-state.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp

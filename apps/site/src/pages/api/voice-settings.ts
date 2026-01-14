@@ -300,6 +300,7 @@ function ensureVoiceConfig(
   const defaultVoice = voices.find(v => v.id === 'en_US-lessac-medium') ?? voices[0];
 
   let config: VoiceConfig | null = null;
+  let needsWrite = false;
 
   if (fs.existsSync(voiceConfigPath)) {
     try {
@@ -307,11 +308,13 @@ function ensureVoiceConfig(
       config = JSON.parse(raw) as VoiceConfig;
     } catch (error) {
       console.warn('[voice-settings] Invalid voice config JSON, regenerating:', error);
+      needsWrite = true;
     }
   }
 
   if (!config) {
     config = buildDefaultVoiceConfig(profileRoot, rootDir, voicesDir, defaultVoice);
+    needsWrite = true;
   }
 
   // Ensure structure exists
@@ -329,6 +332,7 @@ function ensureVoiceConfig(
 
   if (!config.tts.piper.binary || !fs.existsSync(config.tts.piper.binary)) {
     config.tts.piper.binary = defaultBinary;
+    needsWrite = true;
   }
 
   if (
@@ -337,6 +341,7 @@ function ensureVoiceConfig(
     config.tts.piper.model.includes(`${path.sep}profiles${path.sep}`)
   ) {
     config.tts.piper.model = defaultModel;
+    needsWrite = true;
   }
 
   if (
@@ -345,13 +350,18 @@ function ensureVoiceConfig(
     config.tts.piper.config.includes(`${path.sep}profiles${path.sep}`)
   ) {
     config.tts.piper.config = defaultConfig;
+    needsWrite = true;
   }
 
   if (typeof config.tts.piper.speakingRate !== 'number') {
     config.tts.piper.speakingRate = 1.0;
+    needsWrite = true;
   }
 
-  config.tts.piper.outputFormat = config.tts.piper.outputFormat || 'wav';
+  if (!config.tts.piper.outputFormat) {
+    config.tts.piper.outputFormat = 'wav';
+    needsWrite = true;
+  }
 
   if (!config.tts.sovits) {
     config.tts.sovits = {
@@ -361,6 +371,7 @@ function ensureVoiceConfig(
       speed: 1.0,
       autoFallbackToPiper: true,
     };
+    needsWrite = true;
   }
 
   if (!config.tts.rvc) {
@@ -379,16 +390,29 @@ function ensureVoiceConfig(
       device: 'cuda',
       pauseOllamaDuringInference: true,
     };
+    needsWrite = true;
   }
 
   const rvcSamplesDir = path.join(profileRoot, 'out', 'voices', 'rvc-samples');
   const rvcModelsDir = path.join(profileRoot, 'out', 'voices', 'rvc-models');
 
-  config.tts.rvc.referenceAudioDir = config.tts.rvc.referenceAudioDir || rvcSamplesDir;
-  config.tts.rvc.modelsDir = config.tts.rvc.modelsDir || rvcModelsDir;
-  config.tts.rvc.outputFormat = config.tts.rvc.outputFormat || 'wav';
+  if (!config.tts.rvc.referenceAudioDir) {
+    config.tts.rvc.referenceAudioDir = rvcSamplesDir;
+    needsWrite = true;
+  }
+  if (!config.tts.rvc.modelsDir) {
+    config.tts.rvc.modelsDir = rvcModelsDir;
+    needsWrite = true;
+  }
+  if (!config.tts.rvc.outputFormat) {
+    config.tts.rvc.outputFormat = 'wav';
+    needsWrite = true;
+  }
   config.tts.rvc.pauseOllamaDuringInference = config.tts.rvc.pauseOllamaDuringInference ?? true;
-  config.tts.rvc.speakerId = config.tts.rvc.speakerId || 'default';
+  if (!config.tts.rvc.speakerId) {
+    config.tts.rvc.speakerId = 'default';
+    needsWrite = true;
+  }
   config.tts.rvc.pitchShift = typeof config.tts.rvc.pitchShift === 'number'
     ? clamp(config.tts.rvc.pitchShift, -12, 12)
     : 0;
@@ -425,10 +449,17 @@ function ensureVoiceConfig(
       customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
       device: 'cpu',
     };
+    needsWrite = true;
   }
 
-  config.tts.kokoro.langCode = config.tts.kokoro.langCode || 'a';
-  config.tts.kokoro.voice = config.tts.kokoro.voice || 'af_heart';
+  if (!config.tts.kokoro.langCode) {
+    config.tts.kokoro.langCode = 'a';
+    needsWrite = true;
+  }
+  if (!config.tts.kokoro.voice) {
+    config.tts.kokoro.voice = 'af_heart';
+    needsWrite = true;
+  }
   config.tts.kokoro.speed = typeof config.tts.kokoro.speed === 'number'
     ? clamp(config.tts.kokoro.speed, 0.5, 2.0)
     : 1.0;
@@ -442,9 +473,13 @@ function ensureVoiceConfig(
     directory: path.join(profileRoot, 'out', 'voice-cache'),
     maxSizeMB: 500,
   };
+  if (!config.cache) {
+    needsWrite = true;
+  }
 
   if (!config.cache.directory) {
     config.cache.directory = path.join(profileRoot, 'out', 'voice-cache');
+    needsWrite = true;
   }
 
   try {
@@ -467,10 +502,14 @@ function ensureVoiceConfig(
       },
     },
   };
+  if (!config.stt) {
+    needsWrite = true;
+  }
 
   // Ensure VAD defaults if not present
   if (!config.stt.whisper) {
     config.stt.whisper = {} as any;
+    needsWrite = true;
   }
   if (!config.stt.whisper.vad) {
     config.stt.whisper.vad = {
@@ -478,6 +517,7 @@ function ensureVoiceConfig(
       silenceDelay: 5000,
       minDuration: 500,
     };
+    needsWrite = true;
   }
 
   config.webSocket = config.webSocket ?? {
@@ -485,6 +525,9 @@ function ensureVoiceConfig(
     maxPayloadMB: 10,
     audioChunkMs: 100,
   };
+  if (!config.webSocket) {
+    needsWrite = true;
+  }
 
   config.training = config.training ?? {
     enabled: true,
@@ -493,15 +536,28 @@ function ensureVoiceConfig(
     minQuality: 0.6,
     targetHours: 3,
   };
+  if (!config.training) {
+    needsWrite = true;
+  }
 
-  fs.mkdirSync(path.dirname(voiceConfigPath), { recursive: true });
-  // Atomic write: write to temp file, then rename (prevents empty file on crash)
-  const tempPath = `${voiceConfigPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');
-  fs.renameSync(tempPath, voiceConfigPath);
+  if (needsWrite) {
+    try {
+      fs.mkdirSync(path.dirname(voiceConfigPath), { recursive: true });
+      // Atomic write: write to temp file, then rename (prevents empty file on crash)
+      const tempPath = `${voiceConfigPath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');
+      fs.renameSync(tempPath, voiceConfigPath);
+    } catch (error) {
+      console.warn('[voice-settings] Unable to persist voice config (continuing with defaults):', error);
+    }
+  }
 
   return config;
 }
+
+const AUTO_START_COOLDOWN_MS = 60000;
+let lastTtsAutostartAt = 0;
+let lastWhisperAutostartAt = 0;
 
 /**
  * GET: Return available voices and current settings
@@ -594,6 +650,16 @@ const getHandler: APIRoute = async ({ cookies }) => {
         // Server is likely still starting up (loading model)
         whisperServerStatus = 'loading';
       } else if (config.stt.whisper.server.autoStart) {
+        const now = Date.now();
+        if (now - lastWhisperAutostartAt < AUTO_START_COOLDOWN_MS) {
+          whisperServerStatus = 'cooldown';
+        } else {
+          lastWhisperAutostartAt = now;
+        }
+
+        if (whisperServerStatus === 'cooldown') {
+          // Skip repeated auto-start attempts in a tight loop
+        } else {
         // No server running and no PID file - safe to start
         whisperServerStatus = 'starting';
         console.log('[voice-settings] Auto-starting Whisper server...');
@@ -617,10 +683,15 @@ const getHandler: APIRoute = async ({ cookies }) => {
 
           const args = [serverScript, '--model', model, '--device', device, '--compute-type', computeType, '--port', port.toString()];
           const child = spawn(pythonBin, args, { detached: true, stdio: ['ignore', logFd, logFd], cwd: rootDir });
-          fs.writeFileSync(pidFile, child.pid!.toString());
+          try {
+            fs.writeFileSync(pidFile, child.pid!.toString());
+          } catch (error) {
+            console.warn('[voice-settings] Failed to write Whisper PID file:', error);
+          }
           child.unref();
 
           console.log('[voice-settings] Whisper server started with PID:', child.pid);
+        }
         }
       } else {
         whisperServerStatus = 'stopped';
@@ -642,6 +713,14 @@ const getHandler: APIRoute = async ({ cookies }) => {
       const startScript = path.join(rootDir, 'bin', 'start-voice-server');
 
       if (fs.existsSync(startScript)) {
+        const now = Date.now();
+        if (now - lastTtsAutostartAt < AUTO_START_COOLDOWN_MS) {
+          ttsServerStatus = 'cooldown';
+        } else {
+          lastTtsAutostartAt = now;
+        }
+
+        if (ttsServerStatus !== 'cooldown') {
         // Run start-voice-server which reads saved voice.json config
         // The script handles checking if server is already running
         console.log(`[voice-settings] Running start-voice-server for saved provider: ${activeProvider}`);
@@ -666,6 +745,7 @@ const getHandler: APIRoute = async ({ cookies }) => {
         } catch (err) {
           console.error(`[voice-settings] Failed to run start-voice-server:`, err);
           ttsServerStatus = 'error';
+        }
         }
       } else {
         console.warn(`[voice-settings] start-voice-server script not found at ${startScript}`);

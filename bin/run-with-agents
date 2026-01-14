@@ -19,6 +19,7 @@ cleanup() {
   "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
   "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
   "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+  "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM

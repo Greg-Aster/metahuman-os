@@ -3,10 +3,10 @@
  *
  * Sends user input to a running Big Brother session for bidirectional communication.
  * Used when Big Brother asks a question and the user needs to respond.
- * Provider-agnostic - works with any escalation backend (Claude Code, Open Interpreter, etc.)
+ * Only supported for claude-code (interactive terminal).
  */
 import type { APIRoute } from 'astro';
-import { getAuthenticatedUser, audit } from '@metahuman/core';
+import { getAuthenticatedUser, audit, loadFreshOperatorConfig } from '@metahuman/core';
 import { sendStdinInput, getSessionStatus } from '@metahuman/core/backends/claude-code-backend';
 
 export const POST: APIRoute = async ({ cookies, request }) => {
@@ -28,6 +28,18 @@ export const POST: APIRoute = async ({ cookies, request }) => {
       return new Response(
         JSON.stringify({ success: false, error: 'input is required and must be a string' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const operatorConfig = loadFreshOperatorConfig(user.username);
+    const provider = operatorConfig.bigBrotherMode?.provider || 'claude-code';
+    if (provider !== 'claude-code') {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Big Brother input is only supported for claude-code. Current provider: ${provider}`,
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
       );
     }
 

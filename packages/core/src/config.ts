@@ -25,6 +25,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { storageClient } from './storage-client.js';
+import { safeReadJSON, safeWriteJSON, listBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON } from './safe-file.js';
 
 // Get project root for fallback paths
 const ROOT = process.cwd().includes('/apps/site')
@@ -103,9 +104,9 @@ function ensureUserConfig<T>(filename: string, defaultGenerator: () => T, userna
     return true;
   } else {
     // No template exists - generate default and save to user profile
+    // Use safeWriteJSON which creates automatic backups
     const defaultConfig = defaultGenerator();
-    const json = JSON.stringify(defaultConfig, null, 2);
-    fs.writeFileSync(userConfigPath, json, 'utf8');
+    safeWriteJSON(userConfigPath, defaultConfig);
     console.log(`[config] ✓ Generated default ${filename} for user profile`);
     return true;
   }
@@ -147,9 +148,9 @@ export function loadUserConfig<T = any>(filename: string, defaultValue: T, usern
   ensureUserConfig(filename, () => defaultValue, username);
 
   // Now load from user's profile (which is guaranteed to exist)
+  // Use safeReadJSON which will auto-recover from corrupted files using backups
   try {
-    const raw = fs.readFileSync(configPath, 'utf8');
-    return JSON.parse(raw) as T;
+    return safeReadJSON<T>(configPath, defaultValue);
   } catch (error) {
     // This should rarely happen now, but handle gracefully
     console.error(`[config] ✗ CRITICAL: Failed to load ${filename} after ensuring it exists:`, error);
@@ -190,8 +191,8 @@ export function saveUserConfig<T = any>(filename: string, data: T, username?: st
   }
 
   try {
-    const json = JSON.stringify(data, null, 2);
-    fs.writeFileSync(configPath, json, 'utf8');
+    // Use safeWriteJSON which creates automatic backups before writing
+    safeWriteJSON(configPath, data);
     console.log(`[config] ✓ Saved config to: ${configPath}`);
   } catch (error) {
     console.error(`[config] Failed to save ${filename}:`, error);
@@ -487,4 +488,57 @@ export function invalidateCuriosityConfig(username?: string): void {
   } else {
     curiosityConfigCache.clear();
   }
+}
+
+// ============================================================================
+// Config Recovery Utilities
+// ============================================================================
+
+export { listBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON };
+
+/**
+ * Recover corrupted config files for a user from their backups
+ *
+ * This function scans the user's etc/ directory and attempts to recover
+ * any corrupted JSON config files from their automatic backups.
+ *
+ * @param username - Username whose configs to recover
+ * @returns Object with arrays of recovered and failed file paths
+ */
+export function recoverUserConfigs(username: string): { recovered: string[]; failed: string[] } {
+  const etcPath = resolveEtcPath(username);
+  console.log(`[config] Scanning ${etcPath} for corrupted configs...`);
+  return recoverCorruptedFiles(etcPath);
+}
+
+/**
+ * List available backups for a specific config file
+ *
+ * @param filename - Config filename (e.g., 'operator.json')
+ * @param username - Username whose config to check
+ * @returns Array of backup info objects
+ */
+export function listConfigBackups(filename: string, username: string): Array<{ path: string; timestamp: Date; size: number }> {
+  const configPath = path.join(resolveEtcPath(username), filename);
+  return listBackups(configPath);
+}
+
+/**
+ * Restore a specific config file from its most recent backup
+ *
+ * @param filename - Config filename (e.g., 'operator.json')
+ * @param username - Username whose config to restore
+ * @returns true if restored successfully
+ */
+export function restoreConfigFromBackup(filename: string, username: string): boolean {
+  const configPath = path.join(resolveEtcPath(username), filename);
+
+  // Invalidate caches for this config
+  if (filename === 'operator.json') {
+    operatorConfigCache.delete(username);
+  } else if (filename === 'curiosity.json') {
+    curiosityConfigCache.delete(username);
+  }
+
+  return restoreFromBackup(configPath);
 }

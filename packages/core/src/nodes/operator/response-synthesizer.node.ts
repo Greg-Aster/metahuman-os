@@ -77,14 +77,14 @@ You are responding based on information that was gathered or generated. Your tas
 
 const execute: NodeExecutor = async (inputs, context) => {
   // Extract username for LLM calls
-  const username = context.userId || context.username;
+  const username = context.username || context.userId;
 
   // Check Big Brother hybrid mode - use Big Brother for central thinking when enabled but not delegateAll
   const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
   const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
   const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
-  // Hybrid mode: Big Brother enabled but not delegate all - this node requests Big Brother for central thinking
-  const useBigBrother = bigBrotherEnabled && !bigBrotherDelegateAll;
+  // If Big Brother is enabled, request Big Brother for central thinking
+  const useBigBrother = bigBrotherEnabled;
 
   // Named inputs from graph edges:
   // - goal: from orchestrator_llm (node 24)

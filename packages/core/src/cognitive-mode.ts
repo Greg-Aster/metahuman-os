@@ -170,7 +170,7 @@ export function getModeDefinition(mode: CognitiveModeId): CognitiveModeDefinitio
 }
 
 export function loadCognitiveMode(): CognitiveModeConfig {
-  console.log(`${LOG_PREFIX} loadCognitiveMode() called`);
+  // console.log(`${LOG_PREFIX} loadCognitiveMode() called`);
   return ensureConfig();
 }
 

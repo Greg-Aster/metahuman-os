@@ -70,10 +70,12 @@ export default defineConfig({
         '@metahuman/core',
         /^@metahuman\//,
       ],
-      // Node.js built-ins should be external in SSR builds
+      // Node.js built-ins and CommonJS packages should be external in SSR builds
+      // ws is CommonJS and must be external to preserve correct import semantics
       external: [
         /^node:/,
         'async_hooks',
+        'ws',
       ],
       // Target Node.js for SSR
       target: 'node',

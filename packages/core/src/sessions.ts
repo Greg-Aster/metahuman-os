@@ -13,6 +13,8 @@ import { audit } from './audit.js';
 import { getUser } from './users.js';
 import type { SafeUser } from './users.js';
 
+const LOG_PREFIX = '[sessions]';
+
 /**
  * Session object
  *
@@ -35,7 +37,7 @@ export interface Session {
     userAgent?: string;
     ip?: string;
     activeProfile?: string; // Selected profile for guest users
-    [key: string]: any;
+    [key: string]: unknown; // Allow additional metadata fields with unknown type for safety
   };
 }
 
@@ -84,7 +86,7 @@ function loadSessions(): SessionStore {
     const raw = fs.readFileSync(getSessionsFilePath(), 'utf-8');
     return JSON.parse(raw) as SessionStore;
   } catch (error) {
-    console.error('[sessions] Failed to load sessions:', error);
+    console.error(`${LOG_PREFIX} Failed to load sessions:`, error);
     return { sessions: [], version: 1 };
   }
 }
@@ -102,7 +104,7 @@ function saveSessions(store: SessionStore): void {
 
     fs.writeFileSync(getSessionsFilePath(), JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
-    console.error('[sessions] Failed to save sessions:', error);
+    console.error(`${LOG_PREFIX} Failed to save sessions:`, error);
     throw error;
   }
 }
@@ -115,6 +117,16 @@ export function createSession(
   role: 'owner' | 'standard' | 'guest',
   metadata?: { userAgent?: string; ip?: string }
 ): Session {
+
+  
+  // Input validation
+  if (!userId || typeof userId !== 'string') {
+    throw new Error('createSession: userId must be a non-empty string');
+  }
+  if (!role || !['owner', 'standard', 'guest'].includes(role)) {
+    throw new Error('createSession: role must be owner, standard, or guest');
+  }
+  
   const store = loadSessions();
 
   // Determine expiration based on role
@@ -165,6 +177,14 @@ export function createSession(
  * Get session by ID (without validation)
  */
 export function getSession(sessionId: string): Session | null {
+
+  
+  // Input validation
+  if (!sessionId || typeof sessionId !== 'string') {
+    console.error(`${LOG_PREFIX} Invalid sessionId: ${sessionId}`);
+    return null;
+  }
+  
   const store = loadSessions();
   return store.sessions.find((s) => s.id === sessionId) || null;
 }
@@ -173,6 +193,14 @@ export function getSession(sessionId: string): Session | null {
  * Validate session (check expiration and max age, update activity)
  */
 export function validateSession(sessionId: string): Session | null {
+
+  
+  // Input validation
+  if (!sessionId || typeof sessionId !== 'string') {
+    console.error(`${LOG_PREFIX} Invalid sessionId provided for validation: ${sessionId}`);
+    return null;
+  }
+  
   const store = loadSessions();
   const session = store.sessions.find((s) => s.id === sessionId);
 
@@ -227,6 +255,14 @@ export function validateSession(sessionId: string): Session | null {
  * Delete session (logout)
  */
 export function deleteSession(sessionId: string): boolean {
+
+  
+  // Input validation
+  if (!sessionId || typeof sessionId !== 'string') {
+    console.error(`${LOG_PREFIX} Invalid sessionId provided for deletion: ${sessionId}`);
+    return false;
+  }
+  
   const store = loadSessions();
   const session = store.sessions.find((s) => s.id === sessionId);
 
@@ -252,6 +288,14 @@ export function deleteSession(sessionId: string): boolean {
  * Delete all sessions for a user
  */
 export function deleteUserSessions(userId: string): number {
+
+  
+  // Input validation
+  if (!userId || typeof userId !== 'string') {
+    console.error(`${LOG_PREFIX} Invalid userId provided for session deletion: ${userId}`);
+    return 0;
+  }
+  
   const store = loadSessions();
   const userSessions = store.sessions.filter((s) => s.userId === userId);
   const count = userSessions.length;
@@ -376,6 +420,14 @@ export function updateSession(session: Session): void {
  * Extend session expiration (refresh)
  */
 export function refreshSession(sessionId: string): Session | null {
+
+  
+  // Input validation
+  if (!sessionId || typeof sessionId !== 'string') {
+    console.error(`${LOG_PREFIX} Invalid sessionId provided for refresh: ${sessionId}`);
+    return null;
+  }
+  
   const store = loadSessions();
   const session = store.sessions.find((s) => s.id === sessionId);
 

@@ -337,6 +337,9 @@ export async function executeWithCodexCLI(
     if (!args.includes('--output-last-message')) {
       args.push('--output-last-message', lastMessagePath);
     }
+    if (config.dangerouslySkipPermissions && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
+      args.push('--dangerously-bypass-approvals-and-sandbox');
+    }
 
     audit({
       level: 'info',

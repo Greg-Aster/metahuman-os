@@ -67,14 +67,19 @@ export const ResponseActionRouterNode: NodeDefinition = defineNode({
 
   execute: async (inputs, context) => {
     const slot0 = inputs[0] as ActionRouterInput | undefined;
+    const structuredInput = slot0 && typeof slot0 === 'object' && (
+      'cardType' in slot0 ||
+      'suggestedAction' in slot0 ||
+      'actionData' in slot0
+    ) ? slot0 : undefined;
 
-    const cardType = slot0?.cardType || context.cardType || 'unknown';
-    const suggestedAction = slot0?.suggestedAction || 'acknowledge';
-    const actionData = slot0?.actionData || {};
-    let desire = slot0?.desire;
-    const userId = slot0?.userId || context.userId || 'anonymous';
-    const responseBuffer = slot0?.responseBuffer;
-    const response = slot0?.response || '';
+    const cardType = structuredInput?.cardType || (inputs[0] as string | undefined) || context.cardType || 'unknown';
+    const suggestedAction = structuredInput?.suggestedAction || (inputs[1] as string | undefined) || 'acknowledge';
+    const actionData = structuredInput?.actionData || (inputs[2] as Record<string, unknown> | undefined) || {};
+    let desire = structuredInput?.desire || (inputs[3] as Desire | undefined);
+    const userId = structuredInput?.userId || (inputs[4] as string | undefined) || context.userId || 'anonymous';
+    const responseBuffer = structuredInput?.responseBuffer || (inputs[5] as ResponseBuffer | undefined);
+    const response = structuredInput?.response || (inputs[6] as string | undefined) || '';
 
     console.log(`[response-action-router] Processing action: ${suggestedAction} for ${cardType}`);
 

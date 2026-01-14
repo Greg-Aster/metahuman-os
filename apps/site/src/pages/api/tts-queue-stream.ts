@@ -53,6 +53,8 @@ export const GET: APIRoute = ({ request, cookies }) => {
       let isClosed = false;
       let watcher: fs.FSWatcher | null = null;
       let debounceTimer: NodeJS.Timeout | null = null;
+      const connectionStartedAt = Date.now();
+      const staleThresholdMs = 10000;
 
       const sendEvent = (type: string, data: object) => {
         if (isClosed) return;
@@ -69,8 +71,18 @@ export const GET: APIRoute = ({ request, cookies }) => {
           // Pop items from queue (returns and removes them)
           const items = popTTSQueue(username);
           if (items.length > 0) {
-            sendEvent('tts', { items });
-            console.log(`[tts-queue-stream] Sending ${items.length} TTS items to ${username}`);
+            const freshItems = items.filter(item => {
+              if (!item?.timestamp) return true;
+              return item.timestamp >= (connectionStartedAt - staleThresholdMs);
+            });
+            const dropped = items.length - freshItems.length;
+            if (dropped > 0) {
+              console.log(`[tts-queue-stream] Dropped ${dropped} stale TTS items for ${username}`);
+            }
+            if (freshItems.length > 0) {
+              sendEvent('tts', { items: freshItems });
+              console.log(`[tts-queue-stream] Sending ${freshItems.length} TTS items to ${username}`);
+            }
           }
         } catch (error) {
           console.error('[tts-queue-stream] Error checking queue:', error);

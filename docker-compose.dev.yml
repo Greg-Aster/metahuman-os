@@ -1,0 +1,60 @@
+# MetaHuman OS Docker Compose - Development Overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # Event Bus - Use source code with hot reload
+  event-bus:
+    build:
+      context: .
+      dockerfile: docker/event-bus.Dockerfile
+    volumes:
+      - ./packages/core/src:/app/packages/core/src
+      - ./logs/events:/app/logs/events
+    command: ["npx", "tsx", "watch", "packages/core/src/infrastructure/event-bus/server.ts"]
+
+  # Core Backend - Mount source for development
+  core:
+    volumes:
+      - ./packages/core/src:/app/packages/core/src
+      - ./packages/cli/src:/app/packages/cli/src
+      - ./profiles:/app/profiles
+      - ./etc:/app/etc
+      - ./persona:/app/persona
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=development
+    command: ["npx", "tsx", "watch", "packages/core/src/server.ts"]
+
+  # Web UI - Development server with HMR
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      target: builder  # Use the builder stage for dev
+    volumes:
+      - ./apps/site/src:/app/apps/site/src
+      - ./packages/core/src:/app/packages/core/src
+    environment:
+      - NODE_ENV=development
+    command: ["pnpm", "--filter", "@metahuman/site", "dev", "--host", "0.0.0.0"]
+
+  # Agents - Mount source for development
+  agents:
+    volumes:
+      - ./packages/core/src:/app/packages/core/src
+      - ./brain:/app/brain
+      - ./etc:/app/etc
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=development
+    command: ["npx", "tsx", "watch", "packages/core/src/agent-scheduler.ts"]
+
+  # Big Brother - Mount source for development
+  big-brother:
+    volumes:
+      - ./packages/core/src:/app/packages/core/src
+      - ./etc:/app/etc
+      - ./logs:/app/logs
+      - ~/.config/claude:/root/.config/claude:ro
+    environment:
+      - NODE_ENV=development

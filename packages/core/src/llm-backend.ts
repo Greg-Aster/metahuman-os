@@ -17,6 +17,8 @@ import { ollama, isRunning as isOllamaRunning, stopOllamaService, startOllamaSer
 import { vllm, isVLLMRunning } from './vllm.js';
 import { isLocalModelServiceRunning, getLocalModelStatus } from './providers/local-models.js';
 
+const LOG_PREFIX = '[llm-backend]';
+
 /**
  * Get the Python executable path for vLLM venv
  */

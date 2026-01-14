@@ -67,7 +67,9 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    * Ensure audit stream is connected
    */
   function ensureAuditStream(): void {
-    // Close any existing connection first to prevent duplicates
+    if (auditStream && auditStream.readyState !== EventSource.CLOSED) {
+      return;
+    }
     if (auditStream) {
       auditStream.close();
       auditStream = null;
@@ -84,6 +86,8 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     };
     auditStream.onerror = (err) => {
       console.warn('[thinking-trace] Audit stream disconnected', err);
+      auditStream?.close();
+      auditStream = null;
     };
   }
 
