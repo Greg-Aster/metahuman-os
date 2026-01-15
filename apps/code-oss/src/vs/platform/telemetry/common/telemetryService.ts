@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { DisposableStore } from '../../../base/common/lifecycle.js';
+import { mixin } from '../../../base/common/objects.js';
 import { isWeb } from '../../../base/common/platform.js';
 import { PolicyCategory } from '../../../base/common/policy.js';
 import { escapeRegExpCharacters } from '../../../base/common/strings.js';
@@ -15,7 +16,7 @@ import { IProductService } from '../../product/common/productService.js';
 import { Registry } from '../../registry/common/platform.js';
 import { ClassifiedEvent, IGDPRProperty, OmitMetadata, StrictPropertyCheck } from './gdprTypings.js';
 import { ITelemetryData, ITelemetryService, TelemetryConfiguration, TelemetryLevel, TELEMETRY_CRASH_REPORTER_SETTING_ID, TELEMETRY_OLD_SETTING_ID, TELEMETRY_SECTION_ID, TELEMETRY_SETTING_ID, ICommonProperties } from './telemetry.js';
-import { getTelemetryLevel, ITelemetryAppender } from './telemetryUtils.js';
+import { cleanData, getTelemetryLevel, ITelemetryAppender } from './telemetryUtils.js';
 
 export interface ITelemetryServiceConfig {
 	appenders: ITelemetryAppender[];
@@ -41,6 +42,7 @@ export class TelemetryService implements ITelemetryService {
 	static readonly IDLE_STOP_EVENT_NAME = 'UserIdleStop';
 
 	private static readonly BUFFER_FLUSH_TIMEOUT = 10000; // 10 seconds
+	private static readonly MAX_BUFFER_SIZE = 1000;
 
 	declare readonly _serviceBrand: undefined;
 
@@ -51,6 +53,7 @@ export class TelemetryService implements ITelemetryService {
 	readonly firstSessionDate: string;
 	readonly msftInternal: boolean | undefined;
 
+	private _appenders: ITelemetryAppender[];
 	private _commonProperties: ICommonProperties;
 	private _experimentProperties: { [name: string]: string } = {};
 	private _piiPaths: string[];
@@ -69,7 +72,7 @@ export class TelemetryService implements ITelemetryService {
 		@IConfigurationService private _configurationService: IConfigurationService,
 		@IProductService private _productService: IProductService
 	) {
-		// METAHUMAN STUDIO: Telemetry disabled - appenders not used
+		this._appenders = config.appenders;
 		this._commonProperties = config.commonProperties ?? Object.create(null);
 
 		this.sessionId = this._commonProperties['sessionID'] as string;
@@ -171,14 +174,35 @@ export class TelemetryService implements ITelemetryService {
 		this._disposables.dispose();
 	}
 
-	private _log(_eventName: string, _eventLevel: TelemetryLevel, _data?: ITelemetryData) {
-		// METAHUMAN STUDIO: Telemetry disabled - no data collection
-		return;
+	private _log(eventName: string, eventLevel: TelemetryLevel, data?: ITelemetryData) {
+		// don't send events when the user is optout
+		if (this._telemetryLevel < eventLevel) {
+			return;
+		}
+
+		// Buffer events until experiment properties are set (or timeout expires)
+		if (!this._isExperimentPropertySet) {
+			if (this._pendingEvents.length < TelemetryService.MAX_BUFFER_SIZE) {
+				this._pendingEvents.push({ eventName, eventLevel, data });
+			}
+			return;
+		}
+
+		this._doLog(eventName, eventLevel, data);
 	}
 
-	private _doLog(_eventName: string, _eventLevel: TelemetryLevel, _data?: ITelemetryData) {
-		// METAHUMAN STUDIO: Telemetry disabled - no data collection
-		return;
+	private _doLog(eventName: string, eventLevel: TelemetryLevel, data?: ITelemetryData) {
+		// add experiment properties
+		data = mixin(data, this._experimentProperties);
+
+		// remove all PII from data
+		data = cleanData(data, this._cleanupPatterns);
+
+		// add common properties
+		data = mixin(data, this._commonProperties);
+
+		// Log to the appenders of sufficient level
+		this._appenders.forEach(a => a.log(eventName, data ?? {}));
 	}
 
 	publicLog(eventName: string, data?: ITelemetryData) {
@@ -258,7 +282,7 @@ configurationRegistry.registerConfiguration({
 				localize('telemetry.telemetryLevel.off', "Disables all product telemetry.")
 			],
 			'markdownDescription': getTelemetryLevelSettingDescription(),
-			'default': TelemetryConfiguration.OFF,
+			'default': TelemetryConfiguration.ON,
 			'restricted': true,
 			'scope': ConfigurationScope.APPLICATION,
 			'tags': ['usesOnlineServices', 'telemetry'],
@@ -310,7 +334,7 @@ configurationRegistry.registerConfiguration({
 				!product.privacyStatementUrl ?
 					localize('telemetry.enableTelemetry', "Enable diagnostic data to be collected. This helps us to better understand how {0} is performing and where improvements need to be made.", product.nameLong) :
 					localize('telemetry.enableTelemetryMd', "Enable diagnostic data to be collected. This helps us to better understand how {0} is performing and where improvements need to be made. [Read more]({1}) about what we collect and our privacy statement.", product.nameLong, product.privacyStatementUrl),
-			'default': false,
+			'default': true,
 			'restricted': true,
 			'markdownDeprecationMessage': localize('enableTelemetryDeprecated', "If this setting is false, no telemetry will be sent regardless of the new setting's value. Deprecated in favor of the {0} setting.", `\`#${TELEMETRY_SETTING_ID}#\``),
 			'scope': ConfigurationScope.APPLICATION,
