@@ -16,6 +16,16 @@ echo -e "${GREEN}Starting MetaHuman Services...${NC}"
 echo
 
 CLEANUP_IN_PROGRESS=false
+CLEANUP_MODE="full"
+
+mark_disconnect() {
+  CLEANUP_MODE="disconnect"
+  exit 0
+}
+
+mark_full_shutdown() {
+  CLEANUP_MODE="full"
+}
 
 cleanup() {
   # Prevent re-entrant cleanup (multiple Ctrl+C)
@@ -26,24 +36,37 @@ cleanup() {
   CLEANUP_IN_PROGRESS=true
 
   # Disable trap during cleanup to prevent cascading
-  trap '' INT TERM
+  trap '' EXIT INT TERM HUP
 
   echo
-  echo -e "${YELLOW}Shutting down MetaHuman services...${NC}"
+  if [ "$CLEANUP_MODE" = "disconnect" ]; then
+    echo -e "${YELLOW}Terminal disconnected. Stopping agents only...${NC}"
+  else
+    echo -e "${YELLOW}Shutting down MetaHuman services...${NC}"
+  fi
 
   # Stop agents with timeout (5 seconds max)
   timeout 5 "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
 
-  # Stop other services with timeouts
-  timeout 3 "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
-  timeout 3 "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
-  timeout 5 "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
-  timeout 3 "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+  # A terminal disconnect should not tear down shared services that may have
+  # been started elsewhere (for example by start.sh or the web app itself).
+  if [ "$CLEANUP_MODE" = "full" ]; then
+    timeout 3 "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
+    timeout 3 "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
+    timeout 5 "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+    timeout 3 "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+  fi
 
-  echo -e "${GREEN}Services stopped.${NC}"
+  if [ "$CLEANUP_MODE" = "disconnect" ]; then
+    echo -e "${GREEN}Agents stopped. Shared services left running.${NC}"
+  else
+    echo -e "${GREEN}Services stopped.${NC}"
+  fi
 }
 
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'mark_full_shutdown; exit 0' INT
+trap 'mark_disconnect' TERM HUP
 
 # Check headless mode before starting agents
 RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"

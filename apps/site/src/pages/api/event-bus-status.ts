@@ -79,6 +79,7 @@ export const POST: APIRoute = async ({ request }) => {
 
       const repoRoot = getRepoRoot();
       const serverPath = path.join(repoRoot, 'packages', 'core', 'src', 'infrastructure', 'event-bus', 'server.ts');
+      const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
       const logDir = path.join(repoRoot, 'logs', 'run');
       const logFile = path.join(logDir, 'event-bus.log');
       const pidFile = path.join(logDir, 'event-bus.pid');
@@ -100,6 +101,17 @@ export const POST: APIRoute = async ({ request }) => {
         });
       }
 
+      if (!fs.existsSync(tsxPath)) {
+        console.error(`${LOG_PREFIX} ERROR: tsx executable not found at ${tsxPath}`);
+        return new Response(JSON.stringify({
+          success: false,
+          error: `tsx executable not found at ${tsxPath}`,
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // Ensure log directory exists
       fs.mkdirSync(logDir, { recursive: true });
 
@@ -108,7 +120,7 @@ export const POST: APIRoute = async ({ request }) => {
 
       console.log(`${LOG_PREFIX} Starting event bus server...`);
 
-      const child = spawn('npx', ['tsx', serverPath], {
+      const child = spawn(tsxPath, [serverPath], {
         detached: true,
         stdio: ['ignore', logFd, logFd],
         cwd: repoRoot,
@@ -218,6 +230,7 @@ export const POST: APIRoute = async ({ request }) => {
 
       const repoRoot = getRepoRoot();
       const serverPath = path.join(repoRoot, 'packages', 'core', 'src', 'infrastructure', 'event-bus', 'server.ts');
+      const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
       const logDir = path.join(repoRoot, 'logs', 'run');
       const logFile = path.join(logDir, 'event-bus.log');
       const pidFile = path.join(logDir, 'event-bus.pid');
@@ -259,6 +272,17 @@ export const POST: APIRoute = async ({ request }) => {
         });
       }
 
+      if (!fs.existsSync(tsxPath)) {
+        console.error(`${LOG_PREFIX} ERROR: tsx executable not found at ${tsxPath}`);
+        return new Response(JSON.stringify({
+          success: false,
+          error: `tsx executable not found at ${tsxPath}`,
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // Ensure log directory exists
       fs.mkdirSync(logDir, { recursive: true });
 
@@ -267,7 +291,7 @@ export const POST: APIRoute = async ({ request }) => {
 
       console.log(`${LOG_PREFIX} Starting event bus server...`);
 
-      const child = spawn('npx', ['tsx', serverPath], {
+      const child = spawn(tsxPath, [serverPath], {
         detached: true,
         stdio: ['ignore', logFd, logFd],
         cwd: repoRoot,
