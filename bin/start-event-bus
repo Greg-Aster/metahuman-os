@@ -9,6 +9,7 @@ LOG_DIR="$REPO_ROOT/logs/run"
 LOG_FILE="$LOG_DIR/event-bus.log"
 PID_FILE="$LOG_DIR/event-bus.pid"
 SERVER_SCRIPT="$REPO_ROOT/packages/core/src/infrastructure/event-bus/server.ts"
+TSX_BIN="$REPO_ROOT/node_modules/.bin/tsx"
 
 # Colors
 GREEN='\033[0;32m'
@@ -40,6 +41,11 @@ if [ ! -f "$SERVER_SCRIPT" ]; then
   exit 1
 fi
 
+if [ ! -x "$TSX_BIN" ]; then
+  echo -e "${RED}ERROR: tsx executable not found at $TSX_BIN${NC}"
+  exit 1
+fi
+
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
@@ -47,7 +53,7 @@ echo -e "${GREEN}Starting Event Bus server...${NC}"
 
 # Start server in background
 cd "$REPO_ROOT"
-nohup npx tsx "$SERVER_SCRIPT" >> "$LOG_FILE" 2>&1 &
+nohup "$TSX_BIN" "$SERVER_SCRIPT" >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 # Save PID
