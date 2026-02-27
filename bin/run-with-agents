@@ -15,11 +15,19 @@ if [ $# -eq 0 ]; then
 fi
 
 cleanup() {
-  "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
-  "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 8 "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+    timeout 8 "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
+    timeout 8 "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
+    timeout 8 "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+    timeout 8 "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+  else
+    "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
+    "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
+    "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
+    "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
+    "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
+  fi
 }
 
 trap cleanup EXIT INT TERM

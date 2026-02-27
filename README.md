@@ -13,6 +13,10 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 
 **MetaHuman OS is not an assistant--it's a parallel intelligence.** It learns your patterns, mirrors your judgment, and acts autonomously within trusted boundaries. The goal is to create a digital personality extension that feels like a natural extension of your own cognition, saving hours of mental overhead while staying perfectly aligned with your values and preferences.
 
+## Interface Preview
+
+![MetaHuman OS interface](docs/images/metahuman-os-ui.png)
+
 ### Core Principles
 - **Autonomy-first**: Build for autonomous operation with human oversight, not constant approval
 - **Deep sync**: Continuous bi-directional learning between you and your digital personality extension

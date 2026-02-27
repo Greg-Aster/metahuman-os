@@ -110,7 +110,6 @@ cleanup_services() {
 }
 
 trap cleanup_services INT TERM
-trap 'exit 0' EXIT
 
 wait_for_exit() {
     local pattern="$1"
@@ -336,7 +335,17 @@ stop_existing() {
     # Kill any existing mh agents
     if is_running "mh agent"; then
         echo "Stopping existing MetaHuman agents..."
-        ./bin/mh agent stop --all 2>/dev/null || true
+        if command -v timeout >/dev/null 2>&1; then
+            if ! timeout 10 ./bin/mh agent stop --all 2>/dev/null; then
+                print_warning "Agent stop command timed out; forcing cleanup"
+                pkill -f "brain/agents" 2>/dev/null || true
+                pkill -f "scheduler-service" 2>/dev/null || true
+                pkill -f "audio-organizer" 2>/dev/null || true
+                pkill -f "tsx src/mh-new.ts agent stop --all" 2>/dev/null || true
+            fi
+        else
+            ./bin/mh agent stop --all 2>/dev/null || true
+        fi
         sleep 2
     fi
 
@@ -512,17 +521,40 @@ if lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
     exit 1
 fi
 
+SERVER_START_TIME=$(date +%s)
+
+# Run through tee for log visibility, but capture the real node exit code.
+set +e
 node dist/server/entry.mjs 2>&1 | tee "$REPO_ROOT/logs/server.log"
-EXIT_CODE=$?
+PIPE_EXIT_CODES=("${PIPESTATUS[@]}")
+set -e
+
+NODE_EXIT_CODE=${PIPE_EXIT_CODES[0]:-1}
+TEE_EXIT_CODE=${PIPE_EXIT_CODES[1]:-0}
+EXIT_CODE=$NODE_EXIT_CODE
+SERVER_END_TIME=$(date +%s)
+SERVER_UPTIME=$((SERVER_END_TIME - SERVER_START_TIME))
 
 # If server exited, report why
 if [ $EXIT_CODE -ne 0 ]; then
     echo ""
-    print_error "Server exited with code $EXIT_CODE"
+    if [ $EXIT_CODE -ge 128 ]; then
+        SIGNAL=$((EXIT_CODE - 128))
+        print_error "Server terminated by signal $SIGNAL (exit code $EXIT_CODE, uptime ${SERVER_UPTIME}s)"
+    else
+        print_error "Server exited with code $EXIT_CODE (uptime ${SERVER_UPTIME}s)"
+    fi
+    if [ "$TEE_EXIT_CODE" -ne 0 ]; then
+        print_warning "tee exited with code $TEE_EXIT_CODE"
+    fi
     echo "Last 20 lines of log:"
     tail -20 "$REPO_ROOT/logs/server.log"
     exit $EXIT_CODE
 else
     echo ""
-    print_warning "Server exited normally"
+    if [ "$TEE_EXIT_CODE" -ne 0 ]; then
+        print_warning "Server exited with node=0 but tee=$TEE_EXIT_CODE (uptime ${SERVER_UPTIME}s)"
+    else
+        print_warning "Server exited normally (uptime ${SERVER_UPTIME}s)"
+    fi
 fi

@@ -28,7 +28,6 @@ import { IOpenerService } from '../../../../../../platform/opener/common/opener.
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../../platform/telemetry/common/telemetry.js';
 import { editorBackground } from '../../../../../../platform/theme/common/colorRegistry.js';
-import { ChatViewTitleControl } from './chatViewTitleControl.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { IViewPaneOptions, ViewPane } from '../../../../../browser/parts/views/viewPane.js';
 import { Memento } from '../../../../../common/memento.js';
@@ -59,12 +58,14 @@ import { IAgentSessionsService } from '../../agentSessions/agentSessionsService.
 import { HoverPosition } from '../../../../../../base/browser/ui/hover/hoverWidget.js';
 import { IAgentSession } from '../../agentSessions/agentSessionsModel.js';
 import { IChatEntitlementService } from '../../../../../services/chat/common/chatEntitlementService.js';
+import { ChatConversationTabs, ConversationBufferType } from './chatConversationTabs.js';
 
 interface IChatViewPaneState extends Partial<IChatModelInputState> {
 	sessionId?: string;
 
 	sessionsViewerLimited?: boolean;
 	sessionsSidebarWidth?: number;
+	activeConversationTabs?: ConversationBufferType[];
 }
 
 type ChatViewPaneOpenedClassification = {
@@ -259,6 +260,11 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		}
 
 		return this.viewState.sessionId ? LocalChatSessionUri.forSession(this.viewState.sessionId) : undefined;
+	}
+
+	protected override renderHeaderTitle(container: HTMLElement, _title: string): void {
+		// Replace the default title with conversation tabs
+		this.createConversationTabs(container);
 	}
 
 	protected override renderBody(parent: HTMLElement): void {
@@ -553,7 +559,8 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 	private _widget!: ChatWidget;
 	get widget(): ChatWidget { return this._widget; }
 
-	private titleControl: ChatViewTitleControl | undefined;
+	private conversationTabs: ChatConversationTabs | undefined;
+	private activeConversationTabs: Set<ConversationBufferType> = new Set(['conversation']);
 
 	private createChatControl(parent: HTMLElement): ChatWidget {
 		const chatControlsContainer = append(parent, $('.chat-controls-container'));
@@ -562,9 +569,6 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 
 		const editorOverflowWidgetsDomNode = this.layoutService.getContainer(getWindow(chatControlsContainer)).appendChild($('.chat-editor-overflow.monaco-editor'));
 		this._register(toDisposable(() => editorOverflowWidgetsDomNode.remove()));
-
-		// Chat Title
-		this.createChatTitleControl(chatControlsContainer);
 
 		// Chat Widget
 		const scopedInstantiationService = this._register(this.instantiationService.createChild(new ServiceCollection([IContextKeyService, this.scopedContextKeyService])));
@@ -605,19 +609,35 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		return this._widget;
 	}
 
-	private createChatTitleControl(parent: HTMLElement): void {
-		this.titleControl = this._register(this.instantiationService.createInstance(ChatViewTitleControl,
-			parent,
-			{
-				focusChat: () => this._widget.focusInput()
-			}
-		));
+	private createConversationTabs(parent: HTMLElement): void {
+		// Restore active tabs from state
+		const savedTabs = this.viewState.activeConversationTabs;
+		if (savedTabs && savedTabs.length > 0) {
+			this.activeConversationTabs = new Set(savedTabs);
+		}
 
-		this._register(this.titleControl.onDidChangeHeight(() => {
-			if (this.lastDimensions) {
-				this.layoutBody(this.lastDimensions.height, this.lastDimensions.width);
-			}
+		this.conversationTabs = this._register(new ChatConversationTabs(parent, {
+			onTabsChange: (tabs) => this.handleConversationTabsChange(tabs)
 		}));
+
+		// Set initial tabs without firing event
+		this.conversationTabs.setActiveTabs(this.activeConversationTabs, true);
+	}
+
+	private handleConversationTabsChange(tabs: Set<ConversationBufferType>): void {
+		this.activeConversationTabs = tabs;
+		this.viewState.activeConversationTabs = Array.from(tabs);
+
+		// Log tab change for debugging
+		this.logService.trace(`[ChatViewPane] Conversation tabs changed to: ${Array.from(tabs).join(', ')}`);
+
+		// TODO: Switch the chat model/buffer based on the selected tabs
+		// For now, this is a placeholder - the actual buffer switching
+		// will need to integrate with MetaHuman's conversation buffer system
+	}
+
+	getActiveConversationTabs(): Set<ConversationBufferType> {
+		return new Set(this.activeConversationTabs);
 	}
 
 	//#endregion
@@ -696,9 +716,6 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		}
 
 		this._widget.setModel(model);
-
-		// Update title control
-		this.titleControl?.update(model);
 
 		// Update the toolbar context with new sessionId
 		this.updateActions();
@@ -807,9 +824,6 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		const { heightReduction, widthReduction } = this.layoutSessionsControl(remainingHeight, remainingWidth);
 		remainingHeight -= heightReduction;
 		remainingWidth -= widthReduction;
-
-		// Title Control
-		remainingHeight -= this.titleControl?.getHeight() ?? 0;
 
 		// Chat Widget
 		this._widget.layout(remainingHeight, remainingWidth);

@@ -171,7 +171,11 @@ export const POST: APIRoute = async ({ request }) => {
 
       try {
         // Find process using port 3100
-        const result = execSync(`lsof -t -i:${EVENT_BUS_PORT} 2>/dev/null || true`).toString().trim();
+        // Only target the listener on EVENT_BUS_PORT. Using plain `-i:port`
+        // would also match clients (including this web server).
+        const result = execSync(
+          `lsof -n -t -iTCP:${EVENT_BUS_PORT} -sTCP:LISTEN 2>/dev/null || true`
+        ).toString().trim();
         if (result) {
           const pids = result.split('\n').filter(Boolean);
           console.log(`${LOG_PREFIX} Found processes on port ${EVENT_BUS_PORT}: ${pids.join(', ')}`);
@@ -222,7 +226,9 @@ export const POST: APIRoute = async ({ request }) => {
 
       // Stop existing process
       try {
-        const result = execSync(`lsof -t -i:${EVENT_BUS_PORT} 2>/dev/null || true`).toString().trim();
+        const result = execSync(
+          `lsof -n -t -iTCP:${EVENT_BUS_PORT} -sTCP:LISTEN 2>/dev/null || true`
+        ).toString().trim();
         if (result) {
           const pids = result.split('\n').filter(Boolean);
           console.log(`${LOG_PREFIX} Stopping existing processes: ${pids.join(', ')}`);

@@ -25,8 +25,9 @@ if [ -f "$PID_FILE" ]; then
   rm -f "$PID_FILE"
 fi
 
-# Also kill any process on port 3100
-if pids=$(lsof -ti:3100 2>/dev/null); then
+# Also kill any LISTEN process on port 3100.
+# Important: do not kill clients connected to 3100 (e.g., the web server).
+if pids=$(lsof -n -tiTCP:3100 -sTCP:LISTEN 2>/dev/null); then
   for pid in $pids; do
     if [ "$pid" != "" ]; then
       echo "Stopping Event Bus on port 3100 (PID: $pid)..."
