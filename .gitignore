@@ -13,8 +13,9 @@ dist/
 build/
 
 # ============================================
-# METAHUMAN STUDIO (VS CODE) BUILD ARTIFACTS
+# METAHUMAN STUDIO (VS CODE) - IGNORED FOR NOW
 # ============================================
+apps/code-oss/
 apps/code-oss/.build/
 apps/code-oss/out/
 apps/code-oss/.vscode-test/

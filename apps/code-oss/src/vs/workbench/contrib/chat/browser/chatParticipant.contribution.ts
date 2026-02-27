@@ -38,7 +38,7 @@ const chatViewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(Vi
 	id: ChatViewContainerId,
 	title: localize2('chat.viewContainer.label', "Chat"),
 	icon: Codicon.chatSparkle,
-	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [ChatViewContainerId, { mergeViewWithContainerWhenSingleView: true }]),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [ChatViewContainerId, { mergeViewWithContainerWhenSingleView: false }]),
 	storageId: ChatViewContainerId,
 	hideIfEmpty: true,
 	order: 1,

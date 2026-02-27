@@ -28,8 +28,8 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 
-# Also check by port
-if lsof -n -ti:3100 >/dev/null 2>&1; then
+# Also check by LISTEN port (ignore client connections to 3100)
+if lsof -n -tiTCP:3100 -sTCP:LISTEN >/dev/null 2>&1; then
   echo -e "${YELLOW}Event Bus already running on port 3100${NC}"
   exit 0
 fi

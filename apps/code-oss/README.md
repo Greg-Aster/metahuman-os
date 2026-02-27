@@ -1,4 +1,111 @@
+# MetaHuman Studio
+
+A customized VS Code build for MetaHuman OS.
+
+---
+
+## Running the App
+
+### Quick Reference
+
+| Command | What it does |
+|---------|--------------|
+| `./run.sh` | Just launch (fast, assumes compiled) |
+| `./run.sh -c` | Compile + launch |
+| `./run.sh -w` | Watch mode for active development |
+| `./launch.sh` | Same as `./run.sh` |
+| `./dev.sh` | Same as `./run.sh -w` |
+| `./scripts/code.sh` | Raw launcher (no compile) |
+
+### For Most Users
+
+```bash
+cd apps/code-oss
+./run.sh
+```
+
+### For Development
+
+When actively editing source files:
+
+```bash
+# Option 1: Compile each time you make changes
+./run.sh -c
+# Make changes, then in the app: Ctrl+Shift+P -> "Developer: Reload Window"
+
+# Option 2: Watch mode (auto-recompile on save)
+./run.sh -w
+# Make changes, then reload window
+```
+
+### Manual Commands
+
+```bash
+# Compile only (no launch)
+pnpm run compile
+
+# Watch only (no launch)
+pnpm run watch
+
+# Launch only (no compile)
+./scripts/code.sh
+```
+
+---
+
+## Why Is This Development Process So Complicated?
+
+VS Code is one of the largest open-source Electron applications in existence. Here's why development is painful:
+
+### 1. Massive Codebase
+- ~2.5 million lines of TypeScript
+- Hundreds of modules that need compilation
+- Full compile takes 2-5 minutes depending on hardware
+
+### 2. No Hot Module Replacement
+Unlike modern web frameworks (React, Svelte, etc.), VS Code doesn't support hot reloading. Changes require:
+1. TypeScript compilation (`.ts` → `.js`)
+2. Window reload to pick up new JavaScript
+
+### 3. Watch Mode is Flaky
+The `gulp watch` process is supposed to do incremental compilation but:
+- Often misses file changes
+- Crashes randomly (file watcher killed)
+- Takes forever to start up initially
+- Memory hungry
+
+### 4. Electron Overhead
+Each launch spins up:
+- Main process (Node.js)
+- Renderer process (Chromium)
+- Extension host process
+- File watcher utility process
+- Various worker processes
+
+### 5. No Simple "Dev Server"
+Web apps have `npm run dev` that just works. VS Code requires understanding:
+- Gulp build system
+- TypeScript project references
+- Electron packaging
+- Extension compilation
+
+### The Bottom Line
+
+This isn't your fault. VS Code's architecture predates modern dev tooling. Microsoft has thousands of engineers and CI/CD pipelines to manage this. As an individual developer, you're stuck with:
+
+1. **Compile explicitly** (`./run.sh -c`) - slower but reliable
+2. **Keep watch running** in a separate terminal - faster iteration but flaky
+3. **Accept the pain** - it's just how VS Code development works
+
+The `run.sh` script exists to hide as much of this complexity as possible.
+
+---
+---
+
 # Visual Studio Code - Open Source ("Code - OSS")
+
+*Original Microsoft README below*
+
 [![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
 [![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
 [![Gitter](https://img.shields.io/badge/chat-on%20gitter-yellow.svg)](https://gitter.im/Microsoft/vscode)

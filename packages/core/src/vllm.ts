@@ -136,7 +136,6 @@ export class VLLMClient {
       });
       return response.ok;
     } catch (error) {
-      console.warn(`${LOG_PREFIX} Health check failed, trying models endpoint:`, error);
       // Try the models endpoint as fallback (some vLLM versions)
       try {
         const response = await fetch(`${this.endpoint}/v1/models`, {
@@ -144,8 +143,8 @@ export class VLLMClient {
           signal: AbortSignal.timeout(3000),
         });
         return response.ok;
-      } catch (error) {
-        console.warn(`${LOG_PREFIX} Both health and models endpoints failed:`, error);
+      } catch {
+        // Connection refused or timeout is expected when vLLM isn't running - no need to log
         return false;
       }
     }
@@ -626,24 +625,87 @@ export class VLLMClient {
    * Wait for server to become ready
    */
   private async waitForReady(endpoint: string, timeoutMs: number): Promise<void> {
+    const normalizedEndpoint = endpoint.replace(/\/$/, '');
     const start = Date.now();
+    let lastError: unknown = null;
+    let lastStatus: { health?: number; models?: number } = {};
+    let lastLogAt = 0;
 
     while (Date.now() - start < timeoutMs) {
+      // If process died during startup, fail fast with actionable context.
+      if (this.serverProcess && this.serverProcess.exitCode !== null) {
+        throw new Error(
+          `vLLM process exited during startup (code ${this.serverProcess.exitCode}). Check logs/run/vllm-server.log`
+        );
+      }
+
       try {
-        const response = await fetch(`${endpoint}/v1/models`, {
+        const health = await fetch(`${normalizedEndpoint}/health`, {
           signal: AbortSignal.timeout(2000),
         });
-        if (response.ok) {
+        lastStatus.health = health.status;
+
+        if (health.ok) {
           return;
         }
+
+        const models = await fetch(`${normalizedEndpoint}/v1/models`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        lastStatus.models = models.status;
+
+        if (models.ok) {
+          return;
+        }
+
+        lastError = new Error(`health=${health.status}, models=${models.status}`);
       } catch (error) {
-        // Not ready yet - this is expected during startup
-        console.debug(`${LOG_PREFIX} Server not ready yet:`, error);
+        // Not ready yet - expected during startup.
+        lastError = error;
       }
+
+      const now = Date.now();
+      if (now - lastLogAt >= 10000) {
+        const elapsedSec = Math.floor((now - start) / 1000);
+        const timeoutSec = Math.floor(timeoutMs / 1000);
+        let reason = 'starting';
+
+        if (lastError instanceof Error) {
+          reason = lastError.message;
+          const cause = (lastError as Error & {
+            cause?: { code?: string; address?: string; port?: number };
+          }).cause;
+          if (cause?.code && cause?.address && cause?.port) {
+            reason = `${cause.code} ${cause.address}:${cause.port}`;
+          }
+        } else if (lastStatus.health || lastStatus.models) {
+          reason = `health=${lastStatus.health ?? 'n/a'}, models=${lastStatus.models ?? 'n/a'}`;
+        }
+
+        console.log(`${LOG_PREFIX} Waiting for server (${elapsedSec}s/${timeoutSec}s): ${reason}`);
+        lastLogAt = now;
+      }
+
       await new Promise(r => setTimeout(r, 2000));
     }
 
-    throw new Error('vLLM server failed to start within timeout');
+    const timeoutSec = Math.floor(timeoutMs / 1000);
+    let detail = 'unknown startup error';
+    if (lastError instanceof Error) {
+      detail = lastError.message;
+      const cause = (lastError as Error & {
+        cause?: { code?: string; address?: string; port?: number };
+      }).cause;
+      if (cause?.code && cause?.address && cause?.port) {
+        detail = `${cause.code} ${cause.address}:${cause.port}`;
+      }
+    } else if (lastStatus.health || lastStatus.models) {
+      detail = `health=${lastStatus.health ?? 'n/a'}, models=${lastStatus.models ?? 'n/a'}`;
+    }
+
+    throw new Error(
+      `vLLM server failed to start within ${timeoutSec}s (${detail}). Check logs/run/vllm-server.log`
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
