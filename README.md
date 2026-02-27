@@ -15,7 +15,7 @@ MetaHuman OS is a local-first digital personality extension that acts as a paral
 
 ## Interface Preview
 
-![MetaHuman OS interface](docs/images/metahuman-os-ui.png)
+![MetaHuman OS interface](docs/images/metahuman-os-ui-2026-02-27.png)
 
 ### Core Principles
 - **Autonomy-first**: Build for autonomous operation with human oversight, not constant approval
