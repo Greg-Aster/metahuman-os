@@ -1,3 +1,18 @@
+DEPRECATED HISTORICAL PROMPT
+============================
+
+Do not copy this prompt into current agent sessions.
+
+Current audit authority:
+- docs/technical/AUDIT_PROTOCOL.md
+- docs/technical/MAINTAINED_SURFACE.md
+- docs/technical/REFACTOR_BLUEPRINT.md
+- docs/audits/consolidation-progress.md
+
+The old prompt asked agents to fix every file, update local scratchpad state, and commit repeatedly. Current cleanup work must audit first, preserve app/interface vs core-engine vs brain-agent boundaries, and avoid personal/runtime data in tracked outputs.
+
+----------------------------------------------------------------
+
 ════════════════════════════════════════════════════════════════════════════════
 COPY-PASTE THIS INTO EACH CLAUDE CODE TERMINAL
 ════════════════════════════════════════════════════════════════════════════════

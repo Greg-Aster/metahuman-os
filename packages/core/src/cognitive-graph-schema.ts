@@ -50,7 +50,7 @@ export interface CognitiveGraphMetadata {
   version: string;
   name: string;
   description: string;
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   author?: string;
   created?: string;
   last_modified?: string;
@@ -62,7 +62,7 @@ export interface CognitiveGraph {
   version: string;
   name: string;
   description: string;
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   author?: string;
   created?: string;
   last_modified?: string;
@@ -125,7 +125,7 @@ export interface SvelteFlowGraph {
   format: 'svelte-flow';
   name: string;
   description?: string;
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   last_modified?: string;
   nodes: SvelteFlowNode[];
   edges: SvelteFlowEdge[];
@@ -271,8 +271,8 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
   }
 
   // Validate cognitive mode if provided
-  if (graph.cognitiveMode && !['dual', 'agent', 'emulation'].includes(graph.cognitiveMode)) {
-    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, or omit the field entirely for cross-mode graphs.`);
+  if (graph.cognitiveMode && !['dual', 'agent', 'emulation', 'environment'].includes(graph.cognitiveMode)) {
+    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, environment, or omit the field entirely for cross-mode graphs.`);
   }
 
   // Required structure - nodes
@@ -415,8 +415,8 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
   }
 
   // Validate cognitive mode if provided
-  if (graph.cognitiveMode && !['dual', 'agent', 'emulation'].includes(graph.cognitiveMode)) {
-    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, or omit the field entirely for cross-mode graphs.`);
+  if (graph.cognitiveMode && !['dual', 'agent', 'emulation', 'environment'].includes(graph.cognitiveMode)) {
+    errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, environment, or omit the field entirely for cross-mode graphs.`);
   }
 
   // Required structure
@@ -552,7 +552,7 @@ export function graphNameToFilename(name: string): string {
  * Check if a graph is a built-in template
  */
 export function isBuiltInTemplate(name: string): boolean {
-  return ['dual-mode', 'agent-mode', 'emulation-mode'].includes(name);
+  return ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode'].includes(name);
 }
 
 /**

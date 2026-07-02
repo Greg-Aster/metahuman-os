@@ -18,7 +18,7 @@ import {
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
   type SvelteFlowGraph,
@@ -107,7 +107,7 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
     };
 
     console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
-    const graphResult = await executeGraph(graph, graphContext);
+    const graphResult = await runGraph({ graph, context: graphContext });
 
     // Extract results from graph execution (node IDs are strings in Svelte Flow format)
     const activityCheckNode = graphResult.nodes.get('1');

@@ -27,7 +27,7 @@ import { audit } from '../audit.js';
 import { getUsers, type SafeUser } from '../users.js';
 import { gatherSystemState } from './system-state.js';
 // Graph executor imports for Lizard Brain graph
-import { executeGraph } from '../graph-executor.js';
+import { runGraph } from '../graph-runtime.js';
 import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../cognitive-graph-schema.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -163,14 +163,14 @@ async function executeLizardBrainGraph(username: string): Promise<{
   try {
     console.log(`${LOG_PREFIX} Executing Lizard Brain graph for ${username}`);
 
-    const graphState = await executeGraph(graph, context, (event) => {
+    const graphState = await runGraph({ graph, context, eventHandler: (event) => {
       // Log graph execution events
       if (event.type === 'node_start') {
         console.log(`${LOG_PREFIX} [Graph] Node started: ${event.nodeId}`);
       } else if (event.type === 'node_error') {
         console.error(`${LOG_PREFIX} [Graph] Node error: ${event.nodeId}`, event.data);
       }
-    });
+    } });
 
     if (graphState.status === 'failed') {
       console.error(`${LOG_PREFIX} Lizard Brain graph execution failed`);

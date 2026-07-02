@@ -14,7 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { audit } from '../../packages/core/src/audit.js';
+import { audit } from '@metahuman/core/audit';
 
 export type CognitiveMode = 'dual' | 'emulation' | 'agent';
 

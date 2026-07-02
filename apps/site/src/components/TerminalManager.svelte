@@ -514,14 +514,16 @@
   <div class="flex-1 relative overflow-hidden">
     {#each tabs as tab (tab.id)}
       <div class="terminal-pane absolute inset-0 hidden" class:active={tab.id === activeTabId}>
-        {#if tab.isEventBus}
-          <DebugDashboard />
-        {:else}
-          <iframe
-            src={tab.url}
-            title={tab.title}
-            class="w-full h-full border-0 bg-black"
-          ></iframe>
+        {#if tab.id === activeTabId}
+          {#if tab.isEventBus}
+            <DebugDashboard />
+          {:else}
+            <iframe
+              src={tab.url}
+              title={tab.title}
+              class="w-full h-full border-0 bg-black"
+            ></iframe>
+          {/if}
         {/if}
       </div>
     {/each}

@@ -1,4 +1,9 @@
 #!/usr/bin/env tsx
+console.error(
+  'Deprecated audit workflow. Use docs/technical/AUDIT_PROTOCOL.md, pnpm audit:inventory, and pnpm check:architecture instead.',
+);
+process.exit(1);
+
 /**
  * Manual file assignment helper
  * Generates file lists that can be manually assigned to specific agents

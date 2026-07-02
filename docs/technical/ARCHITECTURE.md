@@ -7,6 +7,20 @@ MetaHuman OS is a local-first digital companion that mirrors a person's identity
 - **Composable runtime surfaces** — A CLI, long-running agents, and an Astro/Svelte UI share the same core library.
 - **Auditability and safety** — Every meaningful action is logged, policy-checked, and tied to an explicit trust level.
 
+## Monorepo Boundary Contract
+
+This repository is a pnpm workspace monorepo. The intended architecture is layered:
+
+- `apps/*` are interface and platform shells. They render UI, expose transport routes, and call public engine/agent interfaces.
+- `packages/core` is the behind-the-scenes engine. It owns domain behavior, profile and memory access, auth, policy, model routing, graph execution, and shared API handlers.
+- `brain/*` contains autonomous workers, services, and training pipelines that sit above the engine and call public core exports.
+- `packages/agent-runtime` owns agent execution abstractions for web, mobile, and process execution.
+- `packages/cli` is a command surface. It parses arguments and delegates to core or agent APIs.
+
+Dependency direction matters. Core must not import apps, UI framework code, or brain workers. Interface packages and agents may depend on public core exports, but should not deep-import `packages/core/src/...`. Runtime data, personal profiles, logs, model files, generated output, local agent instructions, and third-party bulk are not maintained source.
+
+See `docs/technical/REFACTOR_BLUEPRINT.md` for the active cleanup contract, and `docs/technical/MAINTAINED_SURFACE.md` for source/include rules.
+
 ## High-Level Runtime
 ```
 ┌────────────────────────────┐

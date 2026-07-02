@@ -1,5 +1,7 @@
 # Next Steps - Mobile Standalone Mode
 
+> Archive notice: This 2025 mobile standalone plan is historical status material for the deprecated `apps/mobile` flow. It is not current architecture authority. Use `docs/technical/MAINTAINED_SURFACE.md`, `docs/technical/REFACTOR_BLUEPRINT.md`, and `docs/audits/consolidation-progress.md` for maintained refactor work. The maintained mobile shell is `apps/react-native`.
+
 **Last Updated**: 2025-12-04
 
 This document outlines the remaining work to complete the mobile three-tier architecture.

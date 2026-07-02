@@ -7,9 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { ROOT, audit, getActiveBackend } from '../../packages/core/src/index.js';
-import { withUserContext } from '../../packages/core/src/context.js';
-import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
+import { ROOT, audit, getActiveBackend } from '@metahuman/core';
+import { withUserContext } from '@metahuman/core/context';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { storage } from '../services/storage-router.js';
 
 interface MergeConfig {

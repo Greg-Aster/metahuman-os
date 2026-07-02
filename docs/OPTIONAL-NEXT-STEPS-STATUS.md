@@ -1,5 +1,7 @@
 # Optional Next Steps - Status Report
 
+> Archive notice: This document is a historical 2025 authentication-migration status report. It is not current refactor authority, and its audit-log examples reference local runtime data. Use `docs/technical/REFACTOR_BLUEPRINT.md`, `docs/technical/AUDIT_PROTOCOL.md`, and `docs/audits/consolidation-progress.md` for active audit and refactor tickets.
+
 **Generated**: 2025-11-20
 **Migration Status**: ✅ Complete
 

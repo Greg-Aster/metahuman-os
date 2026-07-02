@@ -5,13 +5,15 @@
  * Single source of truth - used by both API endpoints and agents.
  */
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict } from './types.js';
 import type { SvelteFlowGraph } from '../cognitive-graph-schema.js';
-import { executeGraph, type ExecutionEventHandler } from '../graph-executor.js';
-import { validateSvelteFlowGraph } from '../cognitive-graph-schema.js';
-import { systemPaths } from '../paths.js';
+import type { ExecutionEventHandler } from '../graph-executor.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  runGraph,
+  type CachedGraphEntry,
+} from '../graph-runtime.js';
 
 // ============================================================================
 // Progress Callback Types
@@ -35,57 +37,47 @@ const LOG_PREFIX = '[agency:executor]';
 // Graph Caching
 // ============================================================================
 
-let cachedExecutorGraph: SvelteFlowGraph | null = null;
-let cachedReviewerGraph: SvelteFlowGraph | null = null;
+const graphCache: Record<string, CachedGraphEntry | null> = {};
 
 /**
  * Load the desire-executor cognitive graph
  */
 export async function loadDesireExecutorGraph(): Promise<SvelteFlowGraph> {
-  if (cachedExecutorGraph) {
-    return cachedExecutorGraph;
+  const loaded = await loadGraphFile(cognitiveGraphPath('desire-executor.json'), {
+    cache: graphCache,
+    cacheKey: 'desire-executor',
+    logPrefix: LOG_PREFIX,
+  });
+
+  if (!loaded) {
+    throw new Error('Could not load desire-executor graph');
   }
 
-  const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'desire-executor.json');
-  try {
-    const raw = await fs.readFile(graphPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    cachedExecutorGraph = validateSvelteFlowGraph(parsed);
-    console.log(`${LOG_PREFIX} Loaded desire-executor graph`);
-    return cachedExecutorGraph;
-  } catch (error) {
-    console.warn(`${LOG_PREFIX} Could not load executor graph:`, (error as Error).message);
-    throw error;
-  }
+  return loaded.graph;
 }
 
 /**
  * Load the outcome-reviewer cognitive graph
  */
 export async function loadOutcomeReviewerGraph(): Promise<SvelteFlowGraph> {
-  if (cachedReviewerGraph) {
-    return cachedReviewerGraph;
+  const loaded = await loadGraphFile(cognitiveGraphPath('outcome-reviewer.json'), {
+    cache: graphCache,
+    cacheKey: 'outcome-reviewer',
+    logPrefix: LOG_PREFIX,
+  });
+
+  if (!loaded) {
+    throw new Error('Could not load outcome-reviewer graph');
   }
 
-  const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'outcome-reviewer.json');
-  try {
-    const raw = await fs.readFile(graphPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    cachedReviewerGraph = validateSvelteFlowGraph(parsed);
-    console.log(`${LOG_PREFIX} Loaded outcome-reviewer graph`);
-    return cachedReviewerGraph;
-  } catch (error) {
-    console.warn(`${LOG_PREFIX} Could not load reviewer graph:`, (error as Error).message);
-    throw error;
-  }
+  return loaded.graph;
 }
 
 /**
  * Clear cached graphs (useful for testing or hot-reloading)
  */
 export function clearGraphCache(): void {
-  cachedExecutorGraph = null;
-  cachedReviewerGraph = null;
+  Object.keys(graphCache).forEach(key => delete graphCache[key]);
 }
 
 // ============================================================================
@@ -151,7 +143,7 @@ export async function executeDesireViaGraph(
     };
 
     console.log(`${LOG_PREFIX} Executing via graph pipeline for: ${desire.title}`);
-    const graphResult = await executeGraph(graph, graphContext, eventHandler);
+    const graphResult = await runGraph({ graph, context: graphContext, eventHandler });
 
     // Extract results from the desire_executor node (node 3 in our graph)
     const executorNode = graphResult.nodes.get('3');
@@ -239,7 +231,7 @@ export async function reviewOutcomeViaGraph(
     };
 
     console.log(`${LOG_PREFIX} Reviewing outcome via graph pipeline for: ${desire.title}`);
-    const graphResult = await executeGraph(graph, graphContext);
+    const graphResult = await runGraph({ graph, context: graphContext });
 
     // Extract results from the outcome_reviewer node (node 2 in outcome-reviewer.json)
     const reviewerNode = graphResult.nodes.get('2');

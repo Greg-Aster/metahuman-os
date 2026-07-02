@@ -37,8 +37,8 @@
       const res = await apiFetch('/api/cognitive-graphs?includeBackups=true');
       if (res.ok) {
         const data = await res.json();
-        // Show all graphs (builtin + custom), exclude the 3 main modes already hardcoded
-        const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode'];
+        // Show all graphs (builtin + custom), exclude the main modes already hardcoded
+        const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode'];
         savedGraphs = data.graphs?.filter((g: any) => !excludeHardcoded.includes(g.name)) || [];
         backupGraphs = data.backups || [];
       }
@@ -426,8 +426,11 @@
             <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('agent-mode')}>
               Agent Mode
             </button>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadTemplate('emulation-mode')}>
+            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('emulation-mode')}>
               Emulation Mode
+            </button>
+            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadTemplate('environment-mode')}>
+              Environment Mode
             </button>
 
             {#if savedGraphs.length > 0}
@@ -568,4 +571,3 @@
     </div>
   {/if}
 </div>
-

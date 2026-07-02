@@ -8,21 +8,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
-
-// Dynamic import for graph executor
-let executeGraph: any;
-let getGraphOutput: any;
-
-async function ensureGraphExecutor(): Promise<boolean> {
-  try {
-    const mod = await import('../../graph-executor.js');
-    executeGraph = mod.executeGraph;
-    getGraphOutput = mod.getGraphOutput;
-    return !!executeGraph;
-  } catch {
-    return false;
-  }
-}
+import { collectNodeOutputs, extractGraphOutput, listExecutedNodes, runGraph } from '../../graph-runtime.js';
 
 /**
  * POST /api/execute-graph - Execute a cognitive graph
@@ -31,11 +17,6 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
   const startTime = Date.now();
 
   try {
-    const available = await ensureGraphExecutor();
-    if (!available) {
-      return { status: 501, error: 'Graph executor not available' };
-    }
-
     const { body } = req;
     const { graph, sessionId, userMessage } = body || {};
 
@@ -65,28 +46,23 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
     });
 
     // Execute the graph with real node implementations
-    const graphState = await executeGraph(graph, {
+    const graphState = await runGraph({ graph, context: {
       sessionId,
       userMessage,
       environment: 'server', // Force server-side execution
-    });
+    } });
 
     const durationMs = Date.now() - startTime;
 
     // Extract the final output from the graph execution
-    const output = getGraphOutput(graphState);
+    const output = extractGraphOutput(graphState);
     const response = output?.response || output?.output || null;
 
     // Build node outputs map for debugging
-    const nodeOutputs: Record<string, any> = {};
-    graphState.nodes.forEach((nodeState: any, nodeId: string) => {
-      if (nodeState.outputs) {
-        nodeOutputs[nodeId] = nodeState.outputs;
-      }
-    });
+    const nodeOutputs = collectNodeOutputs(graphState);
 
     // Get list of executed nodes
-    const executedNodes = Array.from(graphState.nodes.keys());
+    const executedNodes = listExecutedNodes(graphState);
 
     // Audit successful completion
     await audit({

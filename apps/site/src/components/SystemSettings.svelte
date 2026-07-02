@@ -670,9 +670,9 @@
         {#if nodePipelineLocked}
           Node pipeline controlled by server environment. Contact an administrator to change it.
         {:else if nodePipelineEnabled}
-          Graph executor is active. Chats will use the node-based cognitive pipeline.
+          Node pipeline preference is enabled. Current chat flow uses cognitive graphs.
         {:else}
-          Legacy pipeline is active. Enable to route chats through the node graph.
+          Node pipeline preference is disabled. Current chat flow still uses cognitive graphs.
         {/if}
       </p>
     </div>

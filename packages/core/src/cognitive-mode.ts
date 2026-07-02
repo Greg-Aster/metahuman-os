@@ -5,7 +5,7 @@ import { audit } from './audit.js';
 
 const LOG_PREFIX = '[cognitive-mode]';
 
-export type CognitiveModeId = 'dual' | 'agent' | 'emulation';
+export type CognitiveModeId = 'dual' | 'agent' | 'emulation' | 'environment';
 
 export interface CognitiveModeDefinition {
   id: CognitiveModeId;
@@ -91,6 +91,22 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
       proactiveAgents: false,
       trainingPipeline: 'disabled',
       memoryWriteLevel: 'read_only',
+    },
+  },
+  environment: {
+    id: 'environment',
+    label: 'Environment Mode',
+    description: 'Embodied interface mode for external environments, simulators, games, and robots.',
+    guidance: [
+      'Read environment observations before responding.',
+      'Prefer bounded semantic actions over raw device or keyboard commands.',
+      'Queue environment actions through the environment bridge adapter.'
+    ],
+    defaults: {
+      recordingEnabled: false,
+      proactiveAgents: false,
+      trainingPipeline: 'disabled',
+      memoryWriteLevel: 'command_only',
     },
   },
 };
@@ -301,6 +317,7 @@ export function canUseOperator(
     mode = input.id;
   }
 
-  // Emulation mode never uses operator (chat-only)
-  return mode !== 'emulation';
+  // Emulation is chat-only. Environment mode has its own action bridge and
+  // should not route through the active operator by default.
+  return mode !== 'emulation' && mode !== 'environment';
 }

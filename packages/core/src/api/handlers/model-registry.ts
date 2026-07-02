@@ -11,7 +11,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras } from '../../index.js';
+import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras, listLocalModelArtifacts } from '../../index.js';
 import { invalidateModelCache } from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
@@ -260,8 +260,8 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       level: 'info',
       action: 'model_registry_view',
       actor: user.username,
-      context: {
-        userId: user.id,
+      details: {
+        userId: user.id ?? user.userId,
         activeBackend
       }
     });
@@ -276,6 +276,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       activeBackend,
       resolvedBackend,
       localModel,
+      sharedArtifacts: listLocalModelArtifacts(),
       modelCategories
     });
   } catch (error) {
@@ -505,8 +506,8 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
       level: 'info',
       action: 'model_global_settings_updated',
       actor: user.username,
-      context: {
-        userId: user.id,
+      details: {
+        userId: user.id ?? user.userId,
         settings: globalSettings,
         profilePath: resolveModelsPath(user.username)
       }

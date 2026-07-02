@@ -1,4 +1,19 @@
-# Audit Quickstart - 3 Steps to Start
+# Deprecated Audit Quickstart
+
+This workflow is retained for historical context only. Do not use it for current refactor work.
+
+Current audit authority:
+
+- `docs/technical/AUDIT_PROTOCOL.md`
+- `docs/technical/MAINTAINED_SURFACE.md`
+- `docs/technical/REFACTOR_BLUEPRINT.md`
+- `docs/audits/consolidation-progress.md`
+
+The old workflow asked agents to mutate every file, write local scratchpad state, and commit per file. That crosses the current architecture and remote-safety rules. Current audit work must inventory and report first, then create scoped refactor tickets.
+
+---
+
+# Historical Audit Quickstart - 3 Steps to Start
 
 ## Step 1: Initialize (30 seconds)
 

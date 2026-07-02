@@ -14,12 +14,18 @@
  * - Saves as 'card_response' memory type for LoRA training
  */
 
-import { executeGraph, getGraphOutput } from '../../graph-executor.js';
-import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../../cognitive-graph-schema.js';
-import { ROOT } from '../../path-builder.js';
-import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import path from 'node:path';
+import type { UnifiedRequest, UnifiedResponse } from '../types.js';
+import {
+  cognitiveGraphPath,
+  extractGraphOutput,
+  getFirstFailedNode,
+  listFailedNodes,
+  loadGraphFile,
+  runGraph,
+  sseData,
+  type CachedGraphEntry,
+} from '../../graph-runtime.js';
+import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
 
 // ============================================================================
 // Types
@@ -52,6 +58,10 @@ export interface ResponsePipelineResult {
   pipelineTriggered?: boolean;
   nextStatus?: string;
   error?: string;
+  errorDetails?: string;
+  suggestion?: string;
+  failedNode?: string | null;
+  failedNodes?: Array<{ nodeId: string; error: string }>;
   executionTimeMs?: number;
 }
 
@@ -59,48 +69,18 @@ export interface ResponsePipelineResult {
 // Graph Loading
 // ============================================================================
 
-interface GraphCacheEntry {
-  source: string;
-  mtimeMs: number;
-  graph: SvelteFlowGraph;
-}
-
-let graphCache: GraphCacheEntry | null = null;
+const graphCache: Record<string, CachedGraphEntry | null> = {};
 
 /**
  * Load the response pipeline graph with caching
  */
 async function loadResponsePipelineGraph(): Promise<SvelteFlowGraph | null> {
-  const filePath = path.join(ROOT, 'etc', 'cognitive-graphs', 'response-pipeline.json');
-
-  try {
-    if (!existsSync(filePath)) {
-      console.error('[response-pipeline] Graph file not found:', filePath);
-      return null;
-    }
-
-    const stats = await stat(filePath);
-
-    // Use cache if valid
-    if (graphCache && graphCache.source === filePath && graphCache.mtimeMs === stats.mtimeMs) {
-      console.log('[response-pipeline] Using cached graph');
-      return graphCache.graph;
-    }
-
-    // Load fresh
-    console.log('[response-pipeline] Loading graph from:', filePath);
-    const raw = await readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const validated = validateSvelteFlowGraph(parsed);
-
-    graphCache = { source: filePath, mtimeMs: stats.mtimeMs, graph: validated };
-    console.log('[response-pipeline] Graph loaded:', validated.name);
-
-    return validated;
-  } catch (error) {
-    console.error('[response-pipeline] Failed to load graph:', error);
-    return null;
-  }
+  const loaded = await loadGraphFile(cognitiveGraphPath('response-pipeline.json'), {
+    cache: graphCache,
+    cacheKey: 'response-pipeline',
+    logPrefix: '[response-pipeline]',
+  });
+  return loaded?.graph ?? null;
 }
 
 // ============================================================================
@@ -242,7 +222,7 @@ export async function handleResponsePipeline(
     // Step 5: Execute the graph
     logStep(5, 'Starting graph execution');
     let nodeExecutionCount = 0;
-    const graphState = await executeGraph(graph, executionContext, (event) => {
+    const graphState = await runGraph({ graph, context: executionContext, eventHandler: (event) => {
       // Log ALL events for comprehensive debugging
       if (event.type === 'node_start') {
         nodeExecutionCount++;
@@ -254,7 +234,7 @@ export async function handleResponsePipeline(
       } else {
         console.log(`${LOG}   [event] ${event.type}:`, event.nodeId);
       }
-    });
+    } });
 
     const executionTimeMs = Date.now() - startTime;
     logStep(5, 'Graph execution complete', { nodeExecutionCount, executionTimeMs });
@@ -266,22 +246,10 @@ export async function handleResponsePipeline(
       console.error(`${LOG} FAILED: Graph execution failed`);
 
       // Find which node(s) failed and collect error details
-      let failedNode: string | null = null;
-      let failedNodeError: string | null = null;
-      const failedNodes: Array<{ nodeId: string; error: string }> = [];
-
-      graphState.nodes.forEach((nodeState, nodeId) => {
-        if (nodeState.status === 'failed') {
-          const errorMsg = nodeState.error?.message || 'Unknown error';
-          failedNodes.push({ nodeId, error: errorMsg });
-
-          // Use first failed node for primary error
-          if (!failedNode) {
-            failedNode = nodeId;
-            failedNodeError = errorMsg;
-          }
-        }
-      });
+      const failedNodes = listFailedNodes(graphState);
+      const firstFailedNode = getFirstFailedNode(graphState);
+      const failedNode = firstFailedNode?.nodeId ?? null;
+      const failedNodeError = firstFailedNode?.error ?? null;
 
       logStep(5.5, 'Graph failed - nodes with errors', { failedNodes });
 
@@ -298,7 +266,7 @@ export async function handleResponsePipeline(
 
     // Step 6: Extract output
     logStep(6, 'Extracting output from graph state');
-    const output = getGraphOutput(graphState);
+    const output = extractGraphOutput(graphState);
 
     if (!output) {
       console.error(`${LOG} FAILED: Graph produced no output`);
@@ -391,7 +359,7 @@ export function streamResponsePipeline(
       const push = (type: string, data: any) => {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, data })}\n\n`));
+          controller.enqueue(encoder.encode(sseData(type, data)));
         } catch (err) {
           console.error('[response-pipeline-stream] Push error:', err);
           closed = true;
@@ -446,9 +414,9 @@ export function streamResponsePipeline(
         };
 
         // Execute
-        const graphState = await executeGraph(graph, executionContext, eventHandler);
+        const graphState = await runGraph({ graph, context: executionContext, eventHandler });
         const duration = Date.now() - startedAt;
-        const output = getGraphOutput(graphState);
+        const output = extractGraphOutput(graphState);
 
         if (!output) {
           push('error', { message: 'Pipeline produced no output' });
@@ -489,4 +457,100 @@ export function streamResponsePipeline(
       Connection: 'keep-alive',
     },
   });
+}
+
+async function* responseToChunks(response: Response): AsyncIterable<string> {
+  if (!response.body) {
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield decoder.decode(value, { stream: true });
+    }
+
+    const tail = decoder.decode();
+    if (tail) {
+      yield tail;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * POST /api/response-pipeline
+ */
+export async function handleResponsePipelineApi(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) {
+    return {
+      status: 401,
+      data: { error: 'Authentication required.' },
+    };
+  }
+
+  const body = req.body as (ResponsePipelineRequest & { streaming?: boolean }) | undefined;
+  const { message, cardType, cardData, responseBufferId, streaming } = body || {};
+
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    return {
+      status: 400,
+      data: { error: 'Message is required' },
+    };
+  }
+
+  if (!cardType || typeof cardType !== 'string') {
+    return {
+      status: 400,
+      data: { error: 'Card type is required' },
+    };
+  }
+
+  if (!cardData || typeof cardData !== 'object') {
+    return {
+      status: 400,
+      data: { error: 'Card data is required' },
+    };
+  }
+
+  try {
+    const pipelineRequest = { message, cardType, cardData, responseBufferId };
+
+    if (streaming) {
+      const response = streamResponsePipeline(pipelineRequest, req.user.username);
+      return {
+        status: response.status,
+        stream: responseToChunks(response),
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      };
+    }
+
+    const result = await handleResponsePipeline(pipelineRequest, req.user.username);
+
+    if (!result.success) {
+      return {
+        status: 500,
+        data: { error: result.error },
+      };
+    }
+
+    return {
+      status: 200,
+      data: result,
+    };
+  } catch (error) {
+    return {
+      status: 500,
+      data: { error: error instanceof Error ? error.message : 'Unknown error' },
+    };
+  }
 }

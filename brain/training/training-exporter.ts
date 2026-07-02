@@ -13,9 +13,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { audit } from '../../packages/core/src/audit.js';
-import { validateJSONLDataset, validateModeContamination } from '../../packages/core/src/mode-validator.js';
-import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/src/schema-manager.js';
+import { audit } from '@metahuman/core/audit';
+import { validateJSONLDataset, validateModeContamination } from '@metahuman/core/mode-validator';
+import type { FormattedSample, SchemaAppliedSample } from '@metahuman/core/schema-manager';
 
 interface TrainingRecord {
   input: string;

@@ -13,9 +13,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT } from '../../packages/core/src/index.js';
-import { resolveProfileRoot } from '../../packages/core/src/path-builder.js';
-import { callLLM } from '../../packages/core/src/model-router.js';
+import { ROOT } from '@metahuman/core';
+import { resolveProfileRoot } from '@metahuman/core/path-builder';
+import { callLLM } from '@metahuman/core/model-router';
 import { mkdirpSync } from 'mkdirp';
 
 interface DatasetSample {

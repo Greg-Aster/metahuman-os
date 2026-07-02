@@ -1,8 +1,0 @@
-{
-  "enabled": true,
-  "model": "nomic-embed-text",
-  "provider": "ollama",
-  "preloadAtStartup": true,
-  "cpuOnly": true,
-  "description": "Embedding model for semantic memory search (CPU-only to avoid GPU conflicts with vLLM)"
-}

@@ -6,9 +6,11 @@
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
+import { audit } from '../../audit.js';
 import { 
   getEncryptionCapabilities,
-  getEncryptionStatus
+  getEncryptionStatus,
+  setupEncryption,
 } from '../../encryption-manager.js';
 
 /**
@@ -37,6 +39,99 @@ export async function handleGetEncryption(req: UnifiedRequest): Promise<UnifiedR
     return {
       status: 500,
       error: (error as Error).message,
+    };
+  }
+}
+
+export async function handleSetupEncryption(req: UnifiedRequest): Promise<UnifiedResponse> {
+  try {
+    const { type, password, volumePath, volumeSizeMB, useLoginPassword } = req.body ?? {};
+
+    if (!type || !['aes256', 'luks', 'veracrypt'].includes(type)) {
+      return {
+        status: 400,
+        data: {
+          success: false,
+          error: 'Invalid encryption type. Must be: aes256, luks, or veracrypt',
+        },
+      };
+    }
+
+    if (!password || password.length < 6) {
+      return {
+        status: 400,
+        data: {
+          success: false,
+          error: 'Password must be at least 6 characters',
+        },
+      };
+    }
+
+    const capabilities = getEncryptionCapabilities();
+
+    if (type === 'luks' && !capabilities.luks.available) {
+      return {
+        status: 400,
+        data: {
+          success: false,
+          error: 'LUKS not available. Install cryptsetup: sudo apt install cryptsetup',
+        },
+      };
+    }
+
+    if (type === 'veracrypt' && !capabilities.veracrypt.available) {
+      return {
+        status: 400,
+        data: {
+          success: false,
+          error: 'VeraCrypt not installed. Visit: https://veracrypt.fr',
+        },
+      };
+    }
+
+    if ((type === 'luks' || type === 'veracrypt') && !volumePath) {
+      return {
+        status: 400,
+        data: {
+          success: false,
+          error: 'volumePath required for volume encryption',
+        },
+      };
+    }
+
+    const userId = req.user.id || req.user.userId;
+    const result = await setupEncryption(userId, type, password, {
+      volumePath,
+      volumeSizeMB: volumeSizeMB || 2048,
+      useLoginPassword,
+    });
+
+    if (result.success) {
+      audit({
+        level: 'info',
+        category: 'security',
+        event: 'encryption_setup_api',
+        details: {
+          userId,
+          username: req.user.username,
+          type,
+          volumePath: volumePath || null,
+        },
+        actor: userId,
+      });
+    }
+
+    return {
+      status: result.success ? 200 : 400,
+      data: result,
+    };
+  } catch (error) {
+    return {
+      status: 500,
+      data: {
+        success: false,
+        error: (error as Error).message,
+      },
     };
   }
 }

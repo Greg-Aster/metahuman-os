@@ -10,7 +10,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { SvelteFlowGraph } from './cognitive-graph-schema.js';
-import { executeGraph, type GraphExecutionState, type ExecutionEventHandler } from './graph-executor.js';
+import type { GraphExecutionState, ExecutionEventHandler } from './graph-executor.js';
+import { runGraph } from './graph-runtime.js';
 import { audit } from './audit.js';
 
 const LOG_PREFIX = '[agent-graph-executor]';
@@ -193,7 +194,7 @@ export async function executeAgentTemplate(
     const graph = templateToGraph(template);
 
     // Execute the graph
-    const result = await executeGraph(graph, context, eventHandler);
+    const result = await runGraph({ graph, context, eventHandler });
 
     const duration = Date.now() - startTime;
 

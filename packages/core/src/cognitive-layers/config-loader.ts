@@ -332,7 +332,8 @@ export function getConfigSummary(): {
     };
   }
 
-  const modes: CognitiveModeId[] = ['dual', 'agent', 'emulation'];
+  const modes = (['dual', 'agent', 'emulation', 'environment'] as CognitiveModeId[])
+    .filter(mode => Boolean(configCache?.[mode]));
   const modeSummaries = modes.map(mode => {
     const config = configCache![mode];
     const enabled = config.layers.filter(l => l.enabled);

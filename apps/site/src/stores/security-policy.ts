@@ -17,7 +17,7 @@ export interface SecurityPolicy {
   canAccessTraining: boolean;
   canFactoryReset: boolean;
   role: 'owner' | 'guest' | 'anonymous';
-  mode: 'dual' | 'agent' | 'emulation';
+  mode: 'dual' | 'agent' | 'emulation' | 'environment';
   sessionId?: string;
 }
 

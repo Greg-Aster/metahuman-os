@@ -94,6 +94,7 @@ export function buildUnifiedRequest(params: {
   query?: Record<string, string>;
   headers?: Record<string, string>;
   cookieHeader?: string | null;
+  signal?: AbortSignal;
 }): UnifiedRequest {
   const cookies = parseCookies(params.cookieHeader);
   const sessionToken = cookies['mh_session'];
@@ -126,6 +127,7 @@ export function buildUnifiedRequest(params: {
     sessionId: sessionToken,
     // Include session token in metadata for handlers that need it (e.g., logout)
     metadata: sessionToken ? { sessionToken } : undefined,
+    signal: params.signal,
   };
 }
 
@@ -188,6 +190,7 @@ export async function handleHttpRequest(params: {
   query?: Record<string, string>;
   headers?: Record<string, string>;
   cookieHeader?: string | null;
+  signal?: AbortSignal;
 }): Promise<HttpResponse> {
   // Build unified request - may throw HttpAuthRequiredError
   let request: UnifiedRequest;

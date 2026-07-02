@@ -26,7 +26,7 @@ import {
   getTargetUser,
   withUserContext,
   captureEvent,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
   callLLMText,
@@ -45,7 +45,7 @@ import {
 import {
   needsClarifyingQuestions,
   generateQuestions,
-} from '../../../packages/core/src/nodes/agency/desire-question-generator.node.js';
+} from '@metahuman/core';
 
 const LOCK_NAME = 'desire-planner';
 const LOG_PREFIX = '[AGENCY:planner]';
@@ -512,7 +512,7 @@ async function processDesire(
     };
 
     console.log(`${LOG_PREFIX}     Executing planner graph...`);
-    const planResult = await executeGraph(plannerGraph, planContext);
+    const planResult = await runGraph({ graph: plannerGraph, context: planContext });
 
     if (planResult.status !== 'completed') {
       console.error(`${LOG_PREFIX}     Planner graph failed: ${planResult.status}`);
@@ -552,7 +552,7 @@ async function processDesire(
     };
 
     console.log(`${LOG_PREFIX}     Executing reviewer graph...`);
-    const reviewResult = await executeGraph(reviewerGraph, reviewContext);
+    const reviewResult = await runGraph({ graph: reviewerGraph, context: reviewContext });
 
     if (reviewResult.status !== 'completed') {
       console.warn(`${LOG_PREFIX}     Reviewer graph ended with status: ${reviewResult.status}`);

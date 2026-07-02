@@ -1,5 +1,7 @@
 # Mobile Standalone Mode - Implementation Complete
 
+> Archive notice: This document records historical implementation status for the deprecated `apps/mobile` / Capacitor-era flow. It is not current architecture authority. Use `docs/technical/MAINTAINED_SURFACE.md`, `docs/technical/REFACTOR_BLUEPRINT.md`, and `docs/audits/consolidation-progress.md` for maintained refactor work. The maintained mobile shell is `apps/react-native`.
+
 **Date**: 2025-12-04
 **Status**: Client-side framework complete, native integration pending
 

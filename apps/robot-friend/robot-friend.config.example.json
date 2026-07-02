@@ -1,0 +1,29 @@
+{
+  "server": {
+    "url": "http://127.0.0.1:4321",
+    "username": "owner",
+    "password": "change-me",
+    "requestTimeoutMs": 30000
+  },
+  "app": {
+    "host": "0.0.0.0",
+    "port": 4377,
+    "autoListen": true,
+    "showDebugUi": false,
+    "https": {
+      "enabled": false,
+      "keyPath": null,
+      "certPath": null
+    }
+  },
+  "voice": {
+    "language": "en-US",
+    "vadThreshold": 12,
+    "silenceMs": 1400,
+    "minSpeechMs": 500,
+    "ttsEnabled": true
+  },
+  "robot": {
+    "motionEnabled": false
+  }
+}

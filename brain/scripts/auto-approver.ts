@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { storageClient, systemPaths, ROOT, audit } from '../../packages/core/src/index.js';
+import { storageClient, systemPaths, ROOT, audit } from '@metahuman/core';
 
 const DATASET_DATE = process.argv[2];
 

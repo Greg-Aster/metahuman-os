@@ -1,4 +1,9 @@
 #!/usr/bin/env tsx
+console.error(
+  'Deprecated audit workflow. Use docs/technical/AUDIT_PROTOCOL.md, pnpm audit:inventory, and pnpm check:architecture instead.',
+);
+process.exit(1);
+
 /**
  * Initialize audit-state.json with all files in the codebase
  * Run this ONCE before starting the audit

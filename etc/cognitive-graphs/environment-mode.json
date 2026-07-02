@@ -1,0 +1,282 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Environment Mode",
+  "description": "Rudimentary environment bridge chat graph. Reads the latest environment observation, builds an environment prompt, generates a response, streams it to chat, and queues parsed environment actions.",
+  "cognitiveMode": "environment",
+  "last_modified": "2026-07-02",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": {
+        "x": 80,
+        "y": 170
+      },
+      "data": {
+        "label": "User Input",
+        "nodeType": "user_input",
+        "properties": {
+          "prioritizeChatInterface": true
+        }
+      },
+      "width": 200,
+      "height": 90
+    },
+    {
+      "id": "2",
+      "type": "environmentNode",
+      "position": {
+        "x": 80,
+        "y": 20
+      },
+      "data": {
+        "label": "Environment Observation",
+        "nodeType": "environment_observation",
+        "properties": {}
+      },
+      "width": 240,
+      "height": 120
+    },
+    {
+      "id": "3",
+      "type": "environmentNode",
+      "position": {
+        "x": 370,
+        "y": 80
+      },
+      "data": {
+        "label": "Build Environment Context",
+        "nodeType": "environment_context_builder",
+        "properties": {
+          "systemPrompt": ""
+        }
+      },
+      "width": 280,
+      "height": 140
+    },
+    {
+      "id": "4",
+      "type": "modelNode",
+      "position": {
+        "x": 720,
+        "y": 90
+      },
+      "data": {
+        "label": "Environment LLM",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "persona",
+          "temperature": 0.55,
+          "maxTokens": 1024
+        }
+      },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "5",
+      "type": "outputNode",
+      "position": {
+        "x": 1010,
+        "y": 90
+      },
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 110
+    },
+    {
+      "id": "6",
+      "type": "environmentNode",
+      "position": {
+        "x": 1300,
+        "y": 10
+      },
+      "data": {
+        "label": "Parse Environment Action",
+        "nodeType": "environment_action_parser",
+        "properties": {
+          "textFallback": true
+        }
+      },
+      "width": 240,
+      "height": 120
+    },
+    {
+      "id": "7",
+      "type": "outputNode",
+      "position": {
+        "x": 1300,
+        "y": 190
+      },
+      "data": {
+        "label": "Stream Chat Response",
+        "nodeType": "stream_writer",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 90
+    },
+    {
+      "id": "8",
+      "type": "environmentNode",
+      "position": {
+        "x": 1600,
+        "y": 20
+      },
+      "data": {
+        "label": "Queue Environment Action",
+        "nodeType": "environment_send_action",
+        "properties": {}
+      },
+      "width": 240,
+      "height": 110
+    },
+    {
+      "id": "9",
+      "type": "environmentNode",
+      "position": {
+        "x": 370,
+        "y": 250
+      },
+      "data": {
+        "label": "Optional Map Context",
+        "nodeType": "environment_map_input",
+        "properties": {
+          "mapJson": "",
+          "locationJson": "",
+          "coordinateSystem": ""
+        }
+      },
+      "width": 260,
+      "height": 130
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-2-observation-3-observation",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "data": {
+        "type": "object",
+        "comment": "Latest environment observation"
+      }
+    },
+    {
+      "id": "e-1-message-3-instruction",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "message",
+      "targetHandle": "instruction",
+      "data": {
+        "type": "string",
+        "comment": "User instruction for the environment"
+      }
+    },
+    {
+      "id": "e-9-map-3-map",
+      "source": "9",
+      "target": "3",
+      "sourceHandle": "map",
+      "targetHandle": "map",
+      "data": {
+        "type": "object",
+        "comment": "Optional authored or generated map context"
+      }
+    },
+    {
+      "id": "e-9-location-3-location",
+      "source": "9",
+      "target": "3",
+      "sourceHandle": "location",
+      "targetHandle": "location",
+      "data": {
+        "type": "object",
+        "comment": "Optional authored or generated location context"
+      }
+    },
+    {
+      "id": "e-3-messages-4-messages",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "data": {
+        "type": "array",
+        "comment": "Prompt-ready model messages"
+      }
+    },
+    {
+      "id": "e-4-response-5-response",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "llm_response",
+        "comment": "LLM response with possible thinking blocks"
+      }
+    },
+    {
+      "id": "e-5-response-6-response",
+      "source": "5",
+      "target": "6",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Parse response into environment actions"
+      }
+    },
+    {
+      "id": "e-2-sessionId-6-sessionId",
+      "source": "2",
+      "target": "6",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Default environment session"
+      }
+    },
+    {
+      "id": "e-5-response-7-response",
+      "source": "5",
+      "target": "7",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "data": {
+        "type": "string",
+        "comment": "Display response in main chat"
+      }
+    },
+    {
+      "id": "e-6-actions-8-actions",
+      "source": "6",
+      "target": "8",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "data": {
+        "type": "array",
+        "comment": "Queue parsed actions for adapter"
+      }
+    },
+    {
+      "id": "e-2-sessionId-8-sessionId",
+      "source": "2",
+      "target": "8",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string",
+        "comment": "Target active environment session"
+      }
+    }
+  ]
+}

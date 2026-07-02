@@ -1,5 +1,7 @@
 # Remaining Work - Authentication Migration
 
+> Archive notice: This document is a historical 2025 authentication-migration follow-up list. It is not current refactor authority, and its file/line references may be stale. Use `docs/technical/REFACTOR_BLUEPRINT.md`, `docs/technical/AUDIT_PROTOCOL.md`, and `docs/audits/consolidation-progress.md` for active audit and refactor tickets.
+
 **Status**: Migration Complete - Optional Improvements Available
 **Date**: 2025-11-20
 

@@ -66,6 +66,7 @@ export * from './vllm-lora';
 export * from './llm-backend';
 export * from './local-model-service-manager';
 export * from './model-resolver';
+export * from './model-artifacts';
 export * from './model-router';
 export * from './specialist-broker';
 export * from './agent-monitor';
@@ -159,6 +160,7 @@ export * from './stt';
 export * from './voice-training';
 export * from './audio-manager';
 export * from './autonomy';
+export * from './environment-interface';
 // Cognitive mode - primary source for canWriteMemory
 export type {
   CognitiveModeId,
@@ -461,6 +463,7 @@ export * from './backends/codex-backend';
 // Node Editor - Graph Execution
 export * from './cognitive-graph-schema';
 export * from './graph-executor';
+export * from './graph-runtime';
 export * from './graph-streaming';
 
 // Unified Node System (schemas + executors colocated)

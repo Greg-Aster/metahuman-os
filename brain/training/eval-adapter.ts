@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { storageClient, ROOT, audit, ollama } from '../../packages/core/src/index.js';
+import { storageClient, ROOT, audit, ollama } from '@metahuman/core';
 
 const DATASET_DATE = process.argv[2];
 

@@ -30,16 +30,24 @@ apps/code-oss/**/*.log
 # PERSONAL DATA - DO NOT COMMIT
 # ============================================
 
+# Browser/runtime caches
+/data/user-data/
+/data/argv.json
+
+# Credentials and local tooling state
+/credentials.txt
+/.obsidian/
+/.claude/
+/tmp/
+/backups/**/*.tar.gz
+/apps/site/logs/
+
 # MULTI-USER PROFILES - All user data is private
 /profiles/**
 !/profiles/README.md
 !/profiles/.gitkeep
-!/profiles/Friendly-Robot-Will-Not-Kill-You/
-!/profiles/Friendly-Robot-Will-Not-Kill-You/**
-!/profiles/mutant-super-intelligence/
-!/profiles/mutant-super-intelligence/**
 
-# Exclude personal/runtime data from ALL profiles (including whitelisted demos)
+# Exclude personal/runtime data from ALL profiles
 profiles/*/memory/
 profiles/*/state/
 profiles/*/training-data/
@@ -60,7 +68,7 @@ profiles/*/etc/*.pem
 /*_plan.md
 
 # Legacy root-level personal data (for backward compatibility)
-# Personal persona configuration (keep templates only)
+/persona/
 /persona/users.json
 /persona/core.json
 /persona/relationships.json
@@ -70,8 +78,6 @@ profiles/*/etc/*.pem
 /persona/policy.md
 /persona/overrides/**
 /persona/capabilities/**
-!/persona/*.template
-!/persona/README.md
 
 # Personal memories - ALL types
 /memory/*
@@ -84,6 +90,15 @@ profiles/*/etc/*.pem
 # Personal generated content and outputs
 /out/**
 !/out/README.md
+
+# Local audit coordination and generated reports
+/audit-state.json
+/audit-state.json.bak
+/docs/audit-scratchpad.md
+/report.json
+/*.log
+/strace*.log
+/isolate-*-v8.log
 
 # ============================================
 # CONFIGURATION - PERSONAL SETTINGS
@@ -131,6 +146,7 @@ apps/site/public/downloads/*.apk
 
 # React Native build artifacts
 apps/react-native/node_modules/
+apps/react-native/android/app/debug.keystore
 apps/react-native/android/app/build/
 apps/react-native/android/app/src/main/assets/index.android.bundle
 apps/react-native/android/app/src/main/assets/nodejs-project/
@@ -160,6 +176,9 @@ apps/mobile/
 .env.test.local
 .env.production.local
 .start-config
+apps/robot-friend/robot-friend.config.json
+apps/robot-friend/certs/
+apps/robot-friend/dist-server/
 *.key
 *.pem
 *.cert
@@ -226,6 +245,7 @@ GEMINI.md
 # ============================================
 # vendor/ subdirectories are tracked as git submodules
 # Only ignore non-submodule vendor contents
+external/
 vendor/cmake*/
 vendor/*.tar.gz
 vendor/qwen*/

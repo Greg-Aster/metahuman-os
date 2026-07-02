@@ -190,7 +190,7 @@ export interface EpisodicEventMetadata {
   decision?: 'approved' | 'rejected';  // Approval decision
 
   // Cognitive context
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';  // Active cognitive mode
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';  // Active cognitive mode
   usedOperator?: boolean;        // Whether operator pipeline was used
   trustLevel?: string;           // Trust level at time of event
   facet?: string;                // Active persona facet

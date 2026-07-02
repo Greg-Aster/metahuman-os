@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Graph vs Legacy Regression Harness
+ * Graph Conversation Regression Harness
  *
  * Usage:
  *   node scripts/graph-regression.mjs [prompts.json]
@@ -74,13 +74,12 @@ async function readSseAnswer(response) {
   return finalAnswer;
 }
 
-async function sendPrompt(prompt, useGraph) {
+async function sendPrompt(prompt) {
   const start = Date.now();
   const payload = {
     message: prompt,
     mode: 'conversation',
     newSession: true,
-    graphPipelineOverride: useGraph,
   };
 
   const res = await fetch(API_URL, {
@@ -114,31 +113,18 @@ async function run() {
 
   for (const prompt of prompts) {
     console.log(`\n[graph-regression] Prompt: "${prompt}"`);
-    let legacy;
     try {
-      legacy = await sendPrompt(prompt, false);
-    } catch (error) {
-      console.error(`[graph-regression] Legacy pipeline failed: ${error.message}`);
-      throw error;
-    }
-
-    let graph;
-    try {
-      graph = await sendPrompt(prompt, true);
+      const graph = await sendPrompt(prompt);
+      results.push({
+        prompt,
+        graphResponse: graph.response,
+        graphDurationMs: graph.duration,
+      });
+      console.log(`  Graph ${graph.duration}ms | Response length: ${graph.response.length}`);
     } catch (error) {
       console.error(`[graph-regression] Graph pipeline failed: ${error.message}`);
       throw error;
     }
-    const match = legacy.response.trim() === graph.response.trim();
-    results.push({
-      prompt,
-      legacyResponse: legacy.response,
-      graphResponse: graph.response,
-      match,
-      legacyDurationMs: legacy.duration,
-      graphDurationMs: graph.duration,
-    });
-    console.log(`  Legacy ${legacy.duration}ms | Graph ${graph.duration}ms | Match: ${match ? 'YES' : 'NO'}`);
   }
 
   const report = {
@@ -147,8 +133,7 @@ async function run() {
     promptFile: PROMPTS_PATH,
     summary: {
       total: results.length,
-      matches: results.filter(r => r.match).length,
-      mismatches: results.filter(r => !r.match).length,
+      completed: results.length,
     },
     results,
   };

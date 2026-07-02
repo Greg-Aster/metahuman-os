@@ -98,6 +98,74 @@ kill_port() {
     fi
 }
 
+run_with_timeout() {
+    local seconds="$1"
+    shift
+
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$seconds" "$@"
+    else
+        "$@"
+    fi
+}
+
+stop_vllm() {
+    local api_pattern="vllm.entrypoints.openai.api_server"
+    local engine_pattern="VLLM::EngineCore"
+
+    kill_vllm_pattern() {
+        local pattern="$1"
+        local name="$2"
+        local timeout="${3:-10}"
+        local pids=""
+
+        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        if [ -z "$pids" ]; then
+            print_status "$name not running"
+            return 0
+        fi
+
+        echo "Stopping $name (PIDs: $pids)..."
+        echo "$pids" | xargs -r kill 2>/dev/null || true
+
+        for i in $(seq 1 "$timeout"); do
+            pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+            if [ -z "$pids" ]; then
+                print_status "$name stopped"
+                return 0
+            fi
+            sleep 1
+        done
+
+        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            print_warning "$name didn't stop gracefully, forcing..."
+            echo "$pids" | xargs -r kill -9 2>/dev/null || true
+            sleep 1
+        fi
+
+        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            print_error "Failed to stop $name (PIDs: $pids)"
+            return 1
+        fi
+
+        print_status "$name stopped (forced)"
+        return 0
+    }
+
+    echo "Stopping vLLM server..."
+    if [ -x "$REPO_ROOT/bin/mh" ]; then
+        run_with_timeout 20 "$REPO_ROOT/bin/mh" vllm stop 2>/dev/null || print_warning "vLLM CLI stop did not exit cleanly; continuing with process cleanup"
+    else
+        print_warning "mh CLI not found, stopping vLLM manually..."
+    fi
+
+    kill_vllm_pattern "$api_pattern" "vLLM API Server" 10
+    kill_vllm_pattern "$engine_pattern" "vLLM EngineCore" 10
+    kill_port 8000 "vLLM Server"
+}
+
 # Stop PM2 processes if PM2 is installed
 if command -v pm2 &> /dev/null; then
     if pm2 list 2>/dev/null | grep -q "metahuman-web"; then
@@ -111,7 +179,7 @@ fi
 # Stop all MetaHuman agents via CLI
 echo "Stopping MetaHuman agents..."
 if [ -x "$REPO_ROOT/bin/mh" ]; then
-    "$REPO_ROOT/bin/mh" agent stop --all 2>/dev/null || print_warning "Failed to stop agents via CLI"
+    run_with_timeout 15 "$REPO_ROOT/bin/mh" agent stop --all 2>/dev/null || print_warning "Agent CLI stop did not exit cleanly; continuing with process cleanup"
 else
     print_warning "mh CLI not found, stopping agents manually..."
 fi
@@ -130,7 +198,8 @@ echo "Stopping terminal server..."
 if [ -x "$REPO_ROOT/bin/stop-terminal" ]; then
     "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
 fi
-kill_process_pattern "terminal-server" "Terminal Server"
+kill_port 3001 "Terminal Server"
+print_status "Skipped broad terminal-server process match"
 
 # Stop Big Brother terminal (port 3099)
 echo "Stopping Big Brother terminal..."
@@ -139,6 +208,9 @@ BB_PID_FILE="$REPO_ROOT/logs/run/big-brother-terminal.pid"
 if [ -f "$BB_PID_FILE" ]; then
     rm -f "$BB_PID_FILE"
 fi
+
+# Stop vLLM before voice/web cleanup so GPU memory is released promptly.
+stop_vllm
 
 # Stop voice servers
 kill_process_pattern "sovits" "SoVits Server"
@@ -154,6 +226,12 @@ echo "Stopping web servers..."
 kill_port 4321 "Astro Production Server"
 kill_process_pattern "astro dev" "Astro Dev Server"
 kill_process_pattern "node dist/server/entry.mjs" "Production Server"
+
+# Stop launcher wrappers that can remain after their child services exit.
+kill_process_pattern "bash ./start.sh" "Startup Wrapper"
+kill_process_pattern "bin/start-services --background" "Background Services Launcher"
+kill_process_pattern "bash ./bin/start-services" "Terminal Services Launcher"
+kill_process_pattern "mh start --no-restart" "MetaHuman Start Command"
 
 # Clean up stale PID files
 echo "Cleaning up stale PID files..."

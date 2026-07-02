@@ -60,10 +60,15 @@ interface ExplorationResult {
   questions: ClarifyingQuestion[];
 }
 
-interface ExplorerStats {
+export interface ExplorerStats {
   explored: number;
   questionsSent: number;
   errors: number;
+}
+
+export interface DesireExplorerOptions {
+  singleUser?: boolean;
+  username?: string;
 }
 
 // ============================================================================
@@ -382,7 +387,7 @@ async function processUserDesires(username: string): Promise<ExplorerStats> {
 // ============================================================================
 
 export async function runDesireExplorer(
-  options: { singleUser?: boolean; username?: string } = {}
+  options: DesireExplorerOptions = {}
 ): Promise<{ success: boolean; stats: ExplorerStats; errors: string[] }> {
   initGlobalLogger();
 

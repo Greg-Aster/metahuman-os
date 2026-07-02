@@ -16,7 +16,7 @@ async function lockProfile(userId: string): Promise<{ success: boolean; error?: 
   }
   // Try to load real implementation
   try {
-    const enc = await import('../../encryption.js');
+    const enc = await import('../../encryption-manager.js');
     return enc.lockProfile?.(userId) || { success: false, error: 'Lock function not available' };
   } catch {
     return { success: false, error: 'Encryption module not available' };
@@ -30,7 +30,7 @@ async function unlockProfile(userId: string, password: string): Promise<{ succes
   }
   // Try to load real implementation
   try {
-    const enc = await import('../../encryption.js');
+    const enc = await import('../../encryption-manager.js');
     return enc.unlockProfile?.(userId, password) || { success: false, error: 'Unlock function not available' };
   } catch {
     return { success: false, error: 'Encryption module not available' };

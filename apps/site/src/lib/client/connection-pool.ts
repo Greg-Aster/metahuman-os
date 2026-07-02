@@ -85,7 +85,9 @@ export class ConnectionHandle {
 }
 
 class ConnectionPoolManager {
-  private maxConnections = 8; // Keep headroom for chat + buffers + TTS + proposals
+  // Browsers commonly cap HTTP/1.1 to 6 same-origin connections. Keep the
+  // pool below that so normal fetches and unpooled chat streams can start.
+  private maxConnections = 4;
   private activeConnections = new Map<string, PooledConnection>();
   private queuedRequests = new Map<string, ConnectionRequest>();
   private listeners = new Set<(status: PoolStatus) => void>();

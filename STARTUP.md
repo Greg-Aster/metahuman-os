@@ -1,5 +1,9 @@
 # How to Run MetaHuman OS
 
+## Current Authority
+
+For maintained architecture and refactor work, use [docs/technical/REFACTOR_BLUEPRINT.md](docs/technical/REFACTOR_BLUEPRINT.md) and [docs/technical/MAINTAINED_SURFACE.md](docs/technical/MAINTAINED_SURFACE.md). This startup guide covers the current web/CLI shell only. Historical Capacitor-era `apps/mobile` APK notes are archived and are not part of the maintained startup path.
+
 ## Quick Start (Pick ONE)
 
 | Use Case | Command | Notes |
@@ -7,7 +11,6 @@
 | **Production** | `./start.sh` | Recommended. Runs in foreground, Ctrl+C to stop |
 | **Development** | `cd apps/site && pnpm dev` | Hot reload, fast refresh |
 | **Background/Server** | `./bin/start-pm2` | Runs detached, survives terminal close |
-| **Mobile APK** | `cd apps/mobile && pnpm build:mobile` | Bundles UI into Android APK |
 
 ## Detailed Comparison
 
@@ -80,63 +83,13 @@ pm2 monit          # Dashboard
 ./stop.sh   # Cleans up stale files automatically
 ```
 
-## Mobile App (Android)
+## Mobile App
 
-The mobile app bundles the entire web UI into the APK for offline capability. The UI loads instantly from local assets while API calls go to the remote server.
-
-### Build APK (Bundled UI)
-```bash
-cd apps/mobile && pnpm build:mobile
-```
-This creates a self-contained APK at `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`
-
-**What happens:**
-1. Builds Astro with static output (no server required)
-2. Copies built assets to Capacitor's `www/` folder
-3. Syncs with Android project
-4. Builds debug APK with Gradle
-
-### Development (Live Reload)
-```bash
-cd apps/mobile && pnpm dev
-```
-- Connects to your local dev server for live updates
-- Requires the web dev server running (`cd apps/site && pnpm dev`)
-- Device must be on same network as your computer
-
-### Install APK
-```bash
-# Via ADB (USB connected)
-adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
-
-# Or serve for download
-cd apps/mobile/android/app/build/outputs/apk/debug && python3 -m http.server 8888
-```
-
-### Architecture
-```
-┌─────────────────┐   file://    ┌──────────────────┐
-│ Android WebView │ ───────────→ │ Bundled UI       │
-│                 │              │ (www/ folder)    │
-└─────────────────┘              └──────────────────┘
-        │
-        │ https://mh.dndiy.org/api/*
-        ▼
-┌──────────────────┐
-│ Remote API       │
-└──────────────────┘
-```
-
-**Benefits:**
-- Instant UI loading (no server fetch)
-- Works offline (UI only, API calls need connection)
-- Single codebase: build web → automatically updates mobile
+The maintained mobile shell is `apps/react-native`. The older `apps/mobile` Capacitor APK flow is deprecated legacy material and is intentionally excluded from normal architecture refactor work. See [docs/technical/MAINTAINED_SURFACE.md](docs/technical/MAINTAINED_SURFACE.md) for the maintained-source boundary.
 
 ## Summary
 
 - **Just want to run it?** → `./start.sh`
 - **Developing/coding?** → `pnpm dev`
 - **Server/24-7?** → `./bin/start-pm2`
-- **Build mobile APK?** → `cd apps/mobile && pnpm build:mobile`
-
-ifhehe
+- **Mobile work?** → start from `apps/react-native` and the maintained-source docs

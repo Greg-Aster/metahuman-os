@@ -16,6 +16,11 @@ import { audit } from './audit.js';
 import { ollama, isRunning as isOllamaRunning, stopOllamaService, startOllamaService } from './ollama.js';
 import { vllm, isVLLMRunning } from './vllm.js';
 import { isLocalModelServiceRunning, getLocalModelStatus } from './providers/local-models.js';
+import {
+  listLocalModelArtifacts,
+  resolveLocalModelArtifact,
+  type LocalModelArtifact,
+} from './model-artifacts.js';
 
 const LOG_PREFIX = '[llm-backend]';
 
@@ -68,6 +73,16 @@ export interface VLLMBackendConfig {
   endpoint: string;
   autoStart: boolean;
   model: string;
+  /** Optional explicit model path for file-backed artifacts such as GGUF. */
+  modelPath?: string;
+  /** vLLM load format (for example: auto, gguf). */
+  loadFormat?: string;
+  /** Optional tokenizer repo or local tokenizer path. Useful for GGUF files. */
+  tokenizer?: string;
+  /** Public model name exposed by vLLM when modelPath points to a file. */
+  servedModelName?: string;
+  /** How long to wait for vLLM startup before reporting failure. */
+  startupTimeoutMs?: number;
   gpuMemoryUtilization: number;
   maxModelLen?: number;
   /** Maximum output tokens per response (default: 2048). Increase when thinking is enabled. */
@@ -146,6 +161,8 @@ export interface BackendStatus {
   remoteProvider?: RemoteProviderType;
   running: boolean;
   model?: string;
+  artifact?: LocalModelArtifact;
+  artifactError?: string;
   endpoint?: string;
   health: 'healthy' | 'starting' | 'degraded' | 'offline';
   /** Why this backend was selected (for 'auto' mode) */
@@ -157,6 +174,7 @@ export interface AvailableBackends {
   vllm: { installed: boolean; running: boolean; model?: string };
   localModels: { installed: boolean; running: boolean; embeddingModel?: string; llmModel?: string };
   remote: { configured: boolean; provider?: RemoteProviderType; hasCredentials: boolean };
+  sharedArtifacts?: LocalModelArtifact[];
 }
 
 // ============================================================================
@@ -190,6 +208,8 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       endpoint: 'http://localhost:8000',
       autoStart: false,
       model: 'Qwen/Qwen2.5-14B-Instruct',
+      loadFormat: 'auto',
+      tokenizer: undefined,
       gpuMemoryUtilization: 0.7,
       maxModelLen: 4096,
       tensorParallelSize: 1,
@@ -197,6 +217,7 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       quantization: null,
       enforceEager: true, // Disable CUDA graphs to save GPU memory (recommended for 16GB GPUs)
       autoUtilization: false, // Set true to auto-detect optimal GPU allocation
+      startupTimeoutMs: 120000,
     },
     localModels: {
       enabled: true,
@@ -238,6 +259,56 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
   return cachedConfig!;
 }
 
+export function buildVLLMStartConfig(
+  config: BackendConfig = loadBackendConfig(),
+  overrideModel?: string,
+  overrideGpuMemoryUtilization?: number
+): {
+  endpoint: string;
+  model: string;
+  modelPath?: string;
+  loadFormat?: string;
+  tokenizer?: string;
+  servedModelName?: string;
+  startupTimeoutMs?: number;
+  gpuMemoryUtilization: number;
+  maxModelLen?: number;
+  tensorParallelSize?: number;
+  dtype?: string;
+  quantization?: string | null;
+  enforceEager?: boolean;
+  autoUtilization?: boolean;
+  enableThinking?: boolean;
+  artifact?: LocalModelArtifact;
+  artifactError?: string;
+} {
+  const requestedModel = overrideModel || config.vllm.model;
+  const artifactResolution = resolveLocalModelArtifact(requestedModel, 'vllm');
+  const artifact = artifactResolution.artifact && !artifactResolution.error
+    ? artifactResolution.artifact
+    : undefined;
+
+  return {
+    endpoint: config.vllm.endpoint,
+    model: artifact?.path || config.vllm.modelPath || requestedModel,
+    modelPath: artifact?.path || config.vllm.modelPath,
+    loadFormat: artifact ? 'gguf' : config.vllm.loadFormat,
+    tokenizer: config.vllm.tokenizer,
+    servedModelName: artifact?.displayName || config.vllm.servedModelName,
+    startupTimeoutMs: config.vllm.startupTimeoutMs ?? (artifact ? 240000 : undefined),
+    gpuMemoryUtilization: overrideGpuMemoryUtilization ?? config.vllm.gpuMemoryUtilization,
+    maxModelLen: config.vllm.maxModelLen,
+    tensorParallelSize: config.vllm.tensorParallelSize,
+    dtype: config.vllm.dtype,
+    quantization: artifact ? null : config.vllm.quantization,
+    enforceEager: config.vllm.enforceEager,
+    autoUtilization: config.vllm.autoUtilization,
+    enableThinking: config.vllm.enableThinking,
+    artifact,
+    artifactError: artifactResolution.error,
+  };
+}
+
 /**
  * Save backend configuration
  */
@@ -257,6 +328,17 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
   }
   if (updates.localModels) {
     newConfig.localModels = { ...config.localModels, ...updates.localModels };
+  }
+
+  // Only one GPU chat backend may own boot-time startup. Without this, a UI
+  // switch to Ollama can leave vLLM.autoStart enabled and boot both services.
+  if (newConfig.activeBackend === 'ollama') {
+    newConfig.vllm = { ...newConfig.vllm, autoStart: false };
+  } else if (newConfig.activeBackend === 'vllm') {
+    newConfig.ollama = { ...newConfig.ollama, autoStart: false };
+  } else if (newConfig.activeBackend === 'remote' || newConfig.activeBackend === 'local-models') {
+    newConfig.ollama = { ...newConfig.ollama, autoStart: false };
+    newConfig.vllm = { ...newConfig.vllm, autoStart: false };
   }
 
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(newConfig, null, 2));
@@ -305,6 +387,7 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   if (backend === 'ollama') {
     const running = await isOllamaRunning();
     let model: string | undefined;
+    const artifactResolution = resolveLocalModelArtifact(config.ollama.defaultModel, 'ollama');
 
     if (running) {
       try {
@@ -318,7 +401,9 @@ export async function getBackendStatus(): Promise<BackendStatus> {
       // If not running, resolve to 'offline' so UI shows correct status
       resolvedBackend: running ? 'ollama' : 'offline',
       running,
-      model,
+      model: model || config.ollama.defaultModel,
+      artifact: artifactResolution.artifact,
+      artifactError: artifactResolution.error,
       endpoint: config.ollama.endpoint,
       health: running ? 'healthy' : 'offline',
       // Provide helpful reason when backend is unavailable
@@ -354,6 +439,7 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   // vLLM (default if not ollama, remote, auto, or local-models)
   const running = await isVLLMRunning();
   let model: string | undefined;
+  const startConfig = buildVLLMStartConfig(config);
 
   if (running) {
     model = await vllm.getLoadedModel() || undefined;
@@ -364,11 +450,13 @@ export async function getBackendStatus(): Promise<BackendStatus> {
     // If not running, resolve to 'offline' so UI shows correct status
     resolvedBackend: running ? 'vllm' : 'offline',
     running,
-    model,
+    model: model || startConfig.servedModelName || config.vllm.model,
+    artifact: startConfig.artifact,
+    artifactError: startConfig.artifactError,
     endpoint: config.vllm.endpoint,
     health: running ? 'healthy' : 'offline',
     // Provide helpful reason when backend is unavailable
-    reason: running ? undefined : 'vLLM server is not running. Configure a different LLM backend in Settings.',
+    reason: running ? undefined : (startConfig.artifactError || 'vLLM server is not running. Configure a different LLM backend in Settings.'),
   };
 }
 
@@ -555,6 +643,7 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
     vllm: { installed: vllmInstalled, running: vllmRunning, model: vllmModel },
     localModels: { installed: localModelsInstalled, running: localModelsRunning, embeddingModel: localModelsEmbedding, llmModel: localModelsLLM },
     remote: { configured: remoteConfigured, provider: config.remote?.provider, hasCredentials },
+    sharedArtifacts: listLocalModelArtifacts(),
   };
 }
 
@@ -617,18 +706,7 @@ export async function switchBackend(
     if (options?.startNew !== false) {
       if (to === 'vllm') {
         console.log('[llm-backend] Starting vLLM...');
-        const result = await vllm.startServer({
-          endpoint: config.vllm.endpoint,
-          model: config.vllm.model,
-          gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
-          maxModelLen: config.vllm.maxModelLen,
-          tensorParallelSize: config.vllm.tensorParallelSize,
-          dtype: config.vllm.dtype,
-          quantization: config.vllm.quantization,
-          enforceEager: config.vllm.enforceEager,
-          autoUtilization: config.vllm.autoUtilization,
-          enableThinking: config.vllm.enableThinking,
-        });
+        const result = await vllm.startServer(buildVLLMStartConfig(config));
 
         if (!result.success) {
           return { success: false, error: result.error };
@@ -702,9 +780,63 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
   const config = loadBackendConfig();
   const backend = config.activeBackend;
 
+  async function startConfiguredBackend(target: 'ollama' | 'vllm'): Promise<{ running: boolean; error?: string }> {
+    if (target === 'ollama') {
+      const result = await startOllamaService();
+      return result.success ? { running: true } : { running: false, error: result.error };
+    }
+
+    const result = await vllm.startServer(buildVLLMStartConfig(config));
+    return result.success ? { running: true } : { running: false, error: result.error };
+  }
+
+  if (backend === 'auto') {
+    const status = await resolveAutoBackend(config);
+    if (status.running) {
+      return { running: true };
+    }
+
+    const preferred = config.preferredLocalBackend || 'ollama';
+    if (preferred === 'ollama' && config.ollama.autoStart) {
+      return startConfiguredBackend('ollama');
+    }
+    if (preferred === 'vllm' && config.vllm.autoStart) {
+      return startConfiguredBackend('vllm');
+    }
+    if (preferred !== 'ollama' && config.ollama.autoStart) {
+      return startConfiguredBackend('ollama');
+    }
+    if (preferred !== 'vllm' && config.vllm.autoStart) {
+      return startConfiguredBackend('vllm');
+    }
+
+    return {
+      running: false,
+      error: status.reason || 'No local LLM running and no auto-start backend is enabled.',
+    };
+  }
+
+  if (backend === 'remote') {
+    return config.remote?.provider
+      ? { running: true }
+      : { running: false, error: 'Remote backend is not configured.' };
+  }
+
+  if (backend === 'local-models') {
+    const endpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324';
+    const running = await isLocalModelServiceRunning(endpoint);
+    return running
+      ? { running: true }
+      : { running: false, error: 'Local model service is not running.' };
+  }
+
   if (backend === 'ollama') {
     const running = await isOllamaRunning();
     if (!running) {
+      if (config.ollama.autoStart) {
+        return startConfiguredBackend('ollama');
+      }
+
       return {
         running: false,
         error: 'Ollama is not running. Start it with: ollama serve',
@@ -716,23 +848,7 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
   // vLLM
   const running = await isVLLMRunning();
   if (!running && config.vllm.autoStart) {
-    const result = await vllm.startServer({
-      endpoint: config.vllm.endpoint,
-      model: config.vllm.model,
-      gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
-      maxModelLen: config.vllm.maxModelLen,
-      tensorParallelSize: config.vllm.tensorParallelSize,
-      dtype: config.vllm.dtype,
-      quantization: config.vllm.quantization,
-      enforceEager: config.vllm.enforceEager,
-      autoUtilization: config.vllm.autoUtilization,
-      enableThinking: config.vllm.enableThinking,
-    });
-
-    if (!result.success) {
-      return { running: false, error: result.error };
-    }
-    return { running: true };
+    return startConfiguredBackend('vllm');
   }
 
   if (!running) {

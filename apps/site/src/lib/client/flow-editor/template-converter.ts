@@ -4,12 +4,12 @@
  * Enriches Svelte Flow templates with schema data.
  * All templates are now in Svelte Flow format (migrated from LiteGraph).
  *
- * Schemas are loaded STATICALLY at module load time for instant availability.
+ * Schemas are loaded through the API-backed core schema owner and cached here.
  */
 
 import type { Node, Edge } from '@xyflow/svelte';
 import type { NodeSchema, NodeCategory } from '@metahuman/core/nodes/types';
-import { nodeSchemas } from '@metahuman/core/nodes/schemas';
+import { apiFetch } from '../api-config';
 import { getNodeComponentType } from './node-component-map';
 
 // Svelte Flow format
@@ -17,30 +17,50 @@ export interface SvelteFlowGraph {
   version: string;
   name: string;
   description: string;
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   nodes: Node[];
   edges: Edge[];
   viewport?: { x: number; y: number; zoom: number };
 }
 
-// Node schema cache - populated SYNCHRONOUSLY at module load
 const schemaCache: Map<string, NodeSchema> = new Map();
+let schemaLoadPromise: Promise<void> | null = null;
 
-// Populate cache immediately (no async, no API call)
-for (const schema of nodeSchemas) {
-  schemaCache.set(schema.id, schema);
-  // Also map with cognitive/ prefix for backwards compatibility
-  schemaCache.set(`cognitive/${schema.id}`, schema);
+function cacheSchemas(schemas: NodeSchema[]): void {
+  schemaCache.clear();
+  for (const schema of schemas) {
+    schemaCache.set(schema.id, schema);
+    // Also map with cognitive/ prefix for backwards compatibility
+    schemaCache.set(`cognitive/${schema.id}`, schema);
+  }
 }
-console.log(`[template-converter] Loaded ${nodeSchemas.length} schemas (static)`);
 
 /**
- * Load node schemas - NO-OP for backwards compatibility
- * Schemas are now loaded statically at module initialization
+ * Load node schemas from the API-backed core schema owner.
  */
 export async function loadSchemas(): Promise<void> {
-  // No-op - schemas loaded statically at module load
-  // This function kept for backwards compatibility with callers
+  if (schemaCache.size > 0) return;
+  if (schemaLoadPromise) return schemaLoadPromise;
+
+  schemaLoadPromise = (async () => {
+    const response = await apiFetch('/api/node-schemas');
+    if (!response.ok) {
+      throw new Error(`Failed to load node schemas: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const schemas = Array.isArray(data) ? data : data.schemas;
+    if (!Array.isArray(schemas)) {
+      throw new Error('Invalid node schema response');
+    }
+
+    cacheSchemas(schemas as NodeSchema[]);
+    console.log(`[template-converter] Loaded ${schemas.length} schemas`);
+  })().finally(() => {
+    schemaLoadPromise = null;
+  });
+
+  return schemaLoadPromise;
 }
 
 /**

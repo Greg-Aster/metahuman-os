@@ -13,15 +13,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { systemPaths, audit, setActiveAdapter } from '../../packages/core/src/index.js';
-import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
-import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
+import { systemPaths, audit, setActiveAdapter } from '@metahuman/core';
+import { withUserContext, getUserContext } from '@metahuman/core/context';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 import dotenv from 'dotenv';
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 import { randomBytes } from 'node:crypto';
-import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
-import { applySchemaBatch } from '../../packages/core/src/schema-manager.js';
-import type { FormattedSample, SchemaAppliedSample } from '../../packages/core/src/schema-manager.js';
+import type { ActiveAdapterInfo } from '@metahuman/core/adapters';
+import { applySchemaBatch } from '@metahuman/core/schema-manager';
+import type { FormattedSample, SchemaAppliedSample } from '@metahuman/core/schema-manager';
 
 // Load environment variables
 dotenv.config({ path: path.join(systemPaths.root, '.env') });

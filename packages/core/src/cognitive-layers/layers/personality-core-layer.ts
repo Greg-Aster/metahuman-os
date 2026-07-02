@@ -305,6 +305,12 @@ export class PersonalityCoreLayer implements CognitiveLayer<PersonalityInput, Pe
         loraMode: 'snapshot',
         trackVoiceConsistency: false,
         modelRole: 'persona'
+      },
+      environment: {
+        useLoRA: true,
+        loraMode: 'latest',
+        trackVoiceConsistency: false,
+        modelRole: 'persona'
       }
     };
 

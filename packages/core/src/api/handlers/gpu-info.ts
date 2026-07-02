@@ -99,8 +99,10 @@ export async function handleGetGpuInfo(req: UnifiedRequest): Promise<UnifiedResp
     );
 
     // Also check if there's an active adapter
+    const activeAdapter = registry.globalSettings?.activeAdapter;
     const hasActiveAdapter = !!(registry.globalSettings?.useAdapter &&
-                            registry.globalSettings?.activeAdapter?.status === 'loaded');
+                            typeof activeAdapter === 'object' &&
+                            (activeAdapter as { status?: string } | null)?.status === 'loaded');
 
     info.hasPreviousModel = hasFinetuned || hasActiveAdapter;
   } catch {

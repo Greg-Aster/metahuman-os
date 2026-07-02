@@ -25,7 +25,7 @@ import {
   scheduler,
   getTargetUser,
   withUserContext,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
   type SvelteFlowGraph,
@@ -153,7 +153,7 @@ export async function generateUserDreams(
     };
 
     console.log(`[dreamer] Executing dreamer workflow for user: ${username}`);
-    const graphResult = await executeGraph(graph, graphContext);
+    const graphResult = await runGraph({ graph, context: graphContext });
 
     // Extract results from graph execution (node IDs are strings in Svelte Flow format)
     // Node 1: Memory Curator

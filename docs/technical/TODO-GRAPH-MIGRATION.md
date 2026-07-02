@@ -1,5 +1,10 @@
 # Graph Migration TODO - Continue Tomorrow
 
+> Archived historical TODO. Current graph/conversation flow refactor truth lives in
+> `docs/audits/conversation-graph-flow-refactor.md`. Do not use this document as
+> active implementation guidance; it refers to older handler paths and legacy-toggle
+> assumptions that are no longer the current source of truth.
+
 **Created**: 2025-11-20
 **Goal**: Remove all legacy code from persona_chat.ts handler and force graph-only mode
 

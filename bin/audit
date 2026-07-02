@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
-set -x
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE="$ROOT/logs/audit/baseline.txt"
+
+tracked_files() {
+  git -C "$ROOT" ls-files \
+    ':!:apps/code-oss/**' \
+    ':!:vendor/**' \
+    ':!:external/**' \
+    ':!:node_modules/**' \
+    ':!:logs/**' \
+    ':!:out/**' \
+    ':!:memory/**' \
+    ':!:data/user-data/**' \
+    ':!:metahuman-runs/**'
+}
 
 hash_cmd() {
   if command -v sha1sum >/dev/null 2>&1; then echo sha1sum; return; fi
@@ -12,11 +25,15 @@ hash_cmd() {
 
 snapshot() {
   mkdir -p "$ROOT/logs/audit"
-  local hasher; hasher="$(hash_cmd)"
-  # Exclude .git and node_modules
-  (cd "$ROOT" && find . -path './.git' -prune -o -path '*/node_modules' -prune -o -type f -print0 \
-    | sort -z \
-    | xargs -0 -I{} sh -c "${hasher} \"{}\" | sed 's# \./##'" ) > "$BASELINE"
+  local hasher
+  hasher="$(hash_cmd)"
+  (
+    cd "$ROOT"
+    tracked_files | sort | while read -r file; do
+      [ -f "$file" ] || continue
+      "$hasher" "$file" | sed 's# \./# #'
+    done
+  ) > "$BASELINE"
   echo "Wrote baseline: $BASELINE"
 }
 
@@ -25,13 +42,20 @@ diff_tree() {
     echo "No baseline found. Run: $0 snapshot" >&2
     return 2
   fi
-  local hasher; hasher="$(hash_cmd)"
-  local current; current="$(mktemp)"; trap 'rm -f "$current"' EXIT
-  (cd "$ROOT" && find . -path './.git' -prune -o -path '*/node_modules' -prune -o -type f -print0 \
-    | sort -z \
-    | xargs -0 -I{} sh -c "${hasher} \"{}\" | sed 's# \./##'" ) > "$current"
 
-  # Extract just filenames from baseline and current
+  local hasher current
+  hasher="$(hash_cmd)"
+  current="$(mktemp)"
+  trap 'rm -f "$current" "$current.flist" "$current.glist"' EXIT
+
+  (
+    cd "$ROOT"
+    tracked_files | sort | while read -r file; do
+      [ -f "$file" ] || continue
+      "$hasher" "$file" | sed 's# \./# #'
+    done
+  ) > "$current"
+
   cut -d ' ' -f2- "$BASELINE" | sort > "$current.flist"
   cut -d ' ' -f2- "$current" | sort > "$current.glist"
 
@@ -43,8 +67,9 @@ diff_tree() {
   echo
   echo "## Modified"
   comm -12 "$current.flist" "$current.glist" | while read -r file; do
-    baseline_hash=$(grep "$file" "$BASELINE" | cut -d ' ' -f1)
-    current_hash=$(grep "$file" "$current" | cut -d ' ' -f1)
+    local baseline_hash current_hash
+    baseline_hash="$(grep " $file$" "$BASELINE" | cut -d ' ' -f1 || true)"
+    current_hash="$(grep " $file$" "$current" | cut -d ' ' -f1 || true)"
     if [ "$baseline_hash" != "$current_hash" ]; then
       echo "$file"
     fi
@@ -52,78 +77,50 @@ diff_tree() {
 }
 
 check_policy() {
-  echo "## Policy Checks"
-  # Structure
-  for d in persona memory logs; do
-    [ -e "$ROOT/$d" ] || echo "WARN: Missing required directory: $d"
-  done
-  [ -f "$ROOT/persona/profile.md" ] || echo "WARN: Missing persona/profile.md"
-  [ -f "$ROOT/persona/policy.md" ] || echo "WARN: Missing persona/policy.md"
+  echo "## Architecture Guardrail"
+  (
+    cd "$ROOT"
+    pnpm -s exec tsx scripts/check-architecture.ts \
+      --baseline "${ARCHITECTURE_BASELINE:-docs/technical/architecture-guardrail-baseline.json}"
+  )
 
-  # Memory formats
-  if [ -d "$ROOT/memory" ]; then
-    # Allow common placeholder keep files and ignore inbox directory (ingestion drop zone)
-    find "$ROOT/memory" -maxdepth 2 -type f \
-      ! -path "$ROOT/memory/inbox/*" \
-      ! -name '*.md' ! -name '*.json' \
-      ! -name '.gitkeep' ! -name '.keep' \
-      | while read -r f; do
-        echo "WARN: Unexpected file extension in memory/: ${f#$ROOT/}"
-      done || true
-  fi
+  echo
+  echo "## Tracked Large Files"
+  (
+    cd "$ROOT"
+    tracked_files | while read -r file; do
+      [ -f "$file" ] || continue
+      size="$(wc -c < "$file")"
+      if [ "$size" -gt 5242880 ]; then
+        echo "WARN: Large tracked file: $file"
+      fi
+    done
+  )
 
-  # Large files > 5MB
-  find "$ROOT" -path '*/.git' -prune -o -path '*/node_modules' -prune -o -type f -size +5M -print | sed "s#^$ROOT/##" | awk '{print "WARN: Large file:", $0}' || true
-
-  # Network usage (warn outside allowlist)
-  if command -v rg >/dev/null 2>&1; then
-    rg -n "(https?://|\bcurl\b|\bfetch\()" "$ROOT" -g '!**/.git/**' -g '!**/node_modules/**' 2>/dev/null \
-      | grep -vE "bin/mh:|apps/site/|packages/cli/" || true
-  else
-    grep -RIn "http://\|https://\|curl\|fetch\(" "$ROOT" --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null \
-      | grep -vE "bin/mh:|apps/site/|packages/cli/" || true
-  fi
-
-  # Potential secrets
-  if command -v rg >/dev/null 2>&1; then
-    rg -n "(API[_-]?KEY|SECRET|TOKEN|BEGIN RSA PRIVATE KEY)" "$ROOT" -g '!**/.git/**' -g '!**/node_modules/**' 2>/dev/null || true
-  else
-    grep -RIn "API[_-]*KEY\|SECRET\|TOKEN\|BEGIN RSA PRIVATE KEY" "$ROOT" --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null || true
-  fi
-
-  # Package manifest changes (list manifests)
-  find "$ROOT" -name package.json -not -path '*/node_modules/*' -print | sed "s#^$ROOT/##" | awk '{print "NOTE: Package manifest:", $0}'
+  echo
+  echo "## Tracked Package Manifests"
+  tracked_files | grep 'package\.json$' | sed 's#^#NOTE: Package manifest: #' || true
 }
 
 all() {
   mkdir -p "$ROOT/logs/audit"
-  local ts; ts="$(date +%F-%H%M%S)"
-  local report="$ROOT/logs/audit/${ts}.md"
+  local ts report
+  ts="$(date +%F-%H%M%S)"
+  report="$ROOT/logs/audit/${ts}.md"
   {
-    echo "# Audit Report — ${ts}"
+    echo "# Audit Report - ${ts}"
     echo
     diff_tree || true
     echo
     check_policy || true
   } > "$report"
   echo "Wrote audit report: $report"
-
-  # Append a short note to today’s progress if it exists
-  local progress="$ROOT/out/progress/$(date +%F).md"
-  if [ -f "$progress" ]; then
-    {
-      echo
-      echo "## Audit (${ts})"
-      echo "- See logs/audit/${ts}.md for full details."
-    } >> "$progress" || true
-    echo "Appended summary to: $progress"
-  fi
 }
 
 case "${1:-help}" in
   snapshot) snapshot ;;
-  diff)     diff_tree ;;
-  check)    check_policy ;;
-  all)      all ;;
+  diff) diff_tree ;;
+  check) check_policy ;;
+  all) all ;;
   *) echo "Usage: audit {snapshot|diff|check|all}" ;;
 esac

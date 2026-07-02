@@ -21,7 +21,7 @@
   }
 
   interface LLMBackendInfo {
-    activeBackend: 'ollama' | 'vllm';
+    activeBackend: 'auto' | 'ollama' | 'vllm' | 'remote' | 'local-models';
     ollama: {
       installed: boolean;
       running: boolean;
@@ -95,6 +95,9 @@
   let actionInProgress: string | null = null;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
   let isPageVisible = true;
+  let statusFetchInProgress = false;
+
+  const STATUS_FETCH_TIMEOUT_MS = 5000;
 
   const serverConfigs = [
     { name: 'whisper', displayName: 'Whisper STT', endpoint: '/api/whisper-server', port: 9883 },
@@ -103,188 +106,200 @@
     { name: 'sovits', displayName: 'GPT-SoVITS', endpoint: '/api/sovits-server', port: 9880 },
   ];
 
+  async function fetchStatusEndpoint(endpoint: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STATUS_FETCH_TIMEOUT_MS);
+
+    try {
+      return await apiFetch(endpoint, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function fetchServerStatus() {
+    if (statusFetchInProgress) {
+      console.log('[ServerStatus] Skipping refresh; previous refresh still running');
+      return;
+    }
+
+    statusFetchInProgress = true;
+    loading = servers.length === 0 && astroServers.length === 0;
     const newServers: ServerInfo[] = [];
 
     try {
-      const llmResponse = await apiFetch('/api/llm-backend/status');
-      if (llmResponse.ok) {
-        const data = await llmResponse.json();
-        llmBackend = {
-          activeBackend: data.config.activeBackend,
-          ollama: {
-            installed: data.available.ollama.installed,
-            running: data.available.ollama.running,
-            model: data.available.ollama.model,
-            endpoint: data.config.ollama.endpoint,
-          },
-          vllm: {
-            installed: data.available.vllm.installed,
-            running: data.available.vllm.running,
-            model: data.available.vllm.model || data.config.vllm.model,
-            endpoint: data.config.vllm.endpoint,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Failed to fetch LLM backend status:', error);
-    }
-
-    try {
-      const localModelsResponse = await apiFetch('/api/local-models/status');
-      if (localModelsResponse.ok) {
-        const data = await localModelsResponse.json();
-        const loaded = data.loadedModels;
-        localModels = {
-          running: data.running,
-          endpoint: data.endpoint || 'http://127.0.0.1:4324',
-          embedder: {
-            model: loaded?.embedder?.model || data.config?.embeddings?.model || null,
-            loaded: loaded?.embedder?.loaded || false,
-            dimensions: loaded?.embedder?.dimensions,
-          },
-          generator: {
-            model: loaded?.generator?.model || data.config?.llm?.model || null,
-            loaded: loaded?.generator?.loaded || false,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Failed to fetch local-models status:', error);
-      localModels = null;
-    }
-
-    try {
-      const interpreterResponse = await apiFetch('/api/interpreter-status');
-      if (interpreterResponse.ok) {
-        const data = await interpreterResponse.json();
-        interpreter = {
-          running: data.running ?? false,
-          healthy: data.healthy ?? false,
-          available: data.available ?? false,
-          enabled: data.enabled ?? false,
-          endpoint: data.config?.endpoint || 'http://localhost:4325',
-          config: data.config,
-        };
-      }
-    } catch (error) {
-      console.error('Failed to fetch interpreter status:', error);
-      interpreter = null;
-    }
-
-    try {
-      const bigBrotherResponse = await apiFetch('/api/big-brother-status');
-      if (bigBrotherResponse.ok) {
-        const data = await bigBrotherResponse.json();
-        bigBrother = {
-          running: data.running ?? false,
-          healthy: data.healthy ?? false,
-          port: data.port ?? 3099,
-          pid: data.pid ?? null,
-          claudeReady: data.claudeReady ?? false,
-          endpoint: data.endpoint || 'http://localhost:3099',
-        };
-      }
-    } catch (error) {
-      console.error('Failed to fetch Big Brother status:', error);
-      bigBrother = null;
-    }
-
-    try {
-      const eventBusResponse = await apiFetch('/api/event-bus-status');
-      if (eventBusResponse.ok) {
-        const data = await eventBusResponse.json();
-        eventBus = {
-          running: data.running ?? false,
-          healthy: data.healthy ?? false,
-          port: data.port ?? 3100,
-          endpoint: data.endpoint || 'http://localhost:3100',
-          uptime: data.uptime,
-          eventCount: data.eventCount,
-          subscribers: data.subscribers,
-        };
-      }
-    } catch (error) {
-      console.error('Failed to fetch Event Bus status:', error);
-      eventBus = null;
-    }
-
-    for (const config of serverConfigs) {
       try {
-        const response = await apiFetch(config.endpoint);
-        if (response.ok) {
-          const data = await response.json();
-          newServers.push({
-            name: config.name,
-            displayName: config.displayName,
-            endpoint: config.endpoint,
-            port: config.port,
-            status: data.running ? 'running' : 'stopped',
-            healthy: data.healthy ?? data.running,
-            installed: data.installed ?? true,
-            details: data,
-          });
-        } else {
-          newServers.push({
-            name: config.name,
-            displayName: config.displayName,
-            endpoint: config.endpoint,
-            port: config.port,
-            status: 'unknown',
-            healthy: false,
-            installed: false,
-          });
+        const llmResponse = await fetchStatusEndpoint('/api/llm-backend/status');
+        if (llmResponse.ok) {
+          const data = await llmResponse.json();
+          llmBackend = {
+            activeBackend: data.config.activeBackend,
+            ollama: {
+              installed: data.available.ollama.installed,
+              running: data.available.ollama.running,
+              model: data.available.ollama.model,
+              endpoint: data.config.ollama.endpoint,
+            },
+            vllm: {
+              installed: data.available.vllm.installed,
+              running: data.available.vllm.running,
+              model: data.available.vllm.model || data.config.vllm.model,
+              endpoint: data.config.vllm.endpoint,
+            },
+          };
         }
       } catch (error) {
-        newServers.push({
-          name: config.name,
-          displayName: config.displayName,
-          endpoint: config.endpoint,
-          port: config.port,
-          status: 'unknown',
-          healthy: false,
-          installed: false,
-        });
+        console.error('Failed to fetch LLM backend status:', error);
       }
-    }
 
-    try {
-      const astroResponse = await apiFetch('/api/astro-servers');
-      if (astroResponse.ok) {
-        const astroData = await astroResponse.json();
-        astroServers = astroData.servers || [];
+      try {
+        const localModelsResponse = await fetchStatusEndpoint('/api/local-models/status');
+        if (localModelsResponse.ok) {
+          const data = await localModelsResponse.json();
+          const loaded = data.loadedModels;
+          localModels = {
+            running: data.running,
+            endpoint: data.endpoint || 'http://127.0.0.1:4324',
+            embedder: {
+              model: loaded?.embedder?.model || data.config?.embeddings?.model || null,
+              loaded: loaded?.embedder?.loaded || false,
+              dimensions: loaded?.embedder?.dimensions,
+            },
+            generator: {
+              model: loaded?.generator?.model || data.config?.llm?.model || null,
+              loaded: loaded?.generator?.loaded || false,
+            },
+          };
+        }
+      } catch (error) {
+        console.error('Failed to fetch local-models status:', error);
+        localModels = null;
       }
-    } catch (error) {
-      console.error('Failed to fetch Astro servers:', error);
-      astroServers = [];
-    }
 
-    servers = newServers;
-    loading = false;
+      try {
+        const interpreterResponse = await fetchStatusEndpoint('/api/interpreter-status');
+        if (interpreterResponse.ok) {
+          const data = await interpreterResponse.json();
+          interpreter = {
+            running: data.running ?? false,
+            healthy: data.healthy ?? false,
+            available: data.available ?? false,
+            enabled: data.enabled ?? false,
+            endpoint: data.config?.endpoint || 'http://localhost:4325',
+            config: data.config,
+          };
+        }
+      } catch (error) {
+        console.error('Failed to fetch interpreter status:', error);
+        interpreter = null;
+      }
+
+      try {
+        const bigBrotherResponse = await fetchStatusEndpoint('/api/big-brother-status');
+        if (bigBrotherResponse.ok) {
+          const data = await bigBrotherResponse.json();
+          bigBrother = {
+            running: data.running ?? false,
+            healthy: data.healthy ?? false,
+            port: data.port ?? 3099,
+            pid: data.pid ?? null,
+            claudeReady: data.claudeReady ?? false,
+            endpoint: data.endpoint || 'http://localhost:3099',
+          };
+        }
+      } catch (error) {
+        console.error('Failed to fetch Big Brother status:', error);
+        bigBrother = null;
+      }
+
+      try {
+        const eventBusResponse = await fetchStatusEndpoint('/api/event-bus-status');
+        if (eventBusResponse.ok) {
+          const data = await eventBusResponse.json();
+          eventBus = {
+            running: data.running ?? false,
+            healthy: data.healthy ?? false,
+            port: data.port ?? 3100,
+            endpoint: data.endpoint || 'http://localhost:3100',
+            uptime: data.uptime,
+            eventCount: data.eventCount,
+            subscribers: data.subscribers,
+          };
+        }
+      } catch (error) {
+        console.error('Failed to fetch Event Bus status:', error);
+        eventBus = null;
+      }
+
+      try {
+        for (const config of serverConfigs) {
+          try {
+            const response = await fetchStatusEndpoint(config.endpoint);
+            if (response.ok) {
+              const data = await response.json();
+              newServers.push({
+                name: config.name,
+                displayName: config.displayName,
+                endpoint: config.endpoint,
+                port: config.port,
+                status: data.running ? 'running' : 'stopped',
+                healthy: data.healthy ?? data.running,
+                installed: data.installed ?? true,
+                details: data,
+              });
+            } else {
+              newServers.push({
+                name: config.name,
+                displayName: config.displayName,
+                endpoint: config.endpoint,
+                port: config.port,
+                status: 'unknown',
+                healthy: false,
+                installed: false,
+              });
+            }
+          } catch (error) {
+            console.error(`Failed to fetch ${config.displayName} status:`, error);
+            newServers.push({
+              name: config.name,
+              displayName: config.displayName,
+              endpoint: config.endpoint,
+              port: config.port,
+              status: 'unknown',
+              healthy: false,
+              installed: false,
+            });
+          }
+        }
+      } finally {
+        servers = newServers;
+      }
+
+      try {
+        const astroResponse = await fetchStatusEndpoint('/api/astro-servers');
+        if (astroResponse.ok) {
+          const astroData = await astroResponse.json();
+          astroServers = astroData.servers || [];
+        }
+      } catch (error) {
+        console.error('Failed to fetch Astro servers:', error);
+        astroServers = [];
+      }
+    } finally {
+      if (newServers.length > 0 || servers.length === 0) {
+        servers = newServers;
+      }
+      loading = false;
+      statusFetchInProgress = false;
+    }
   }
 
   function isBackendActive(backend: 'ollama' | 'vllm'): boolean {
     return llmBackend?.activeBackend === backend;
   }
 
-  async function controlLocalModels(action: 'start' | 'stop') {
-    actionInProgress = `localModels-${action}`;
-    try {
-      const response = await apiFetch(`/api/local-models/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        alert(`Failed to ${action} local-models: ${data.error || 'Unknown error'}`);
-      } else {
-        setTimeout(fetchServerStatus, 2000);
-      }
-    } catch (error) {
-      alert(`Error ${action}ing local-models: ${(error as Error).message}`);
-    } finally {
-      actionInProgress = null;
-    }
+  function openBackendSettings() {
+    window.dispatchEvent(new CustomEvent('mh-open-system-tab', { detail: { tab: 'backend' } }));
   }
 
   async function controlInterpreter(action: 'start' | 'stop' | 'restart') {
@@ -345,28 +360,6 @@
       }
     } catch (error) {
       alert(`Error ${action}ing Event Bus: ${(error as Error).message}`);
-    } finally {
-      actionInProgress = null;
-    }
-  }
-
-  async function controlLLMBackend(backend: 'ollama' | 'vllm', action: 'start' | 'stop' | 'restart') {
-    actionInProgress = `${backend}-${action}`;
-    try {
-      const endpoint = backend === 'ollama' ? '/api/llm-backend/ollama' : '/api/llm-backend/vllm';
-      const response = await apiFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        alert(`Failed to ${action} ${backend}: ${data.error || 'Unknown error'}`);
-      } else {
-        setTimeout(fetchServerStatus, 2000);
-      }
-    } catch (error) {
-      alert(`Error ${action}ing ${backend}: ${(error as Error).message}`);
     } finally {
       actionInProgress = null;
     }
@@ -530,17 +523,9 @@
             </div>
           </div>
           {#if llmBackend.ollama.installed}
-            <div class="flex gap-2">
-              {#if llmBackend.ollama.running}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLLMBackend('ollama', 'stop')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'ollama-stop' ? '...' : 'Stop'}
-                </button>
-              {:else}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLLMBackend('ollama', 'start')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'ollama-start' ? '...' : 'Start'}
-                </button>
-              {/if}
-            </div>
+            <button class="w-full py-1.5 px-3 border border-blue-500/30 dark:border-blue-400/30 rounded-md text-xs font-semibold cursor-pointer transition-all bg-blue-500/10 dark:bg-blue-400/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/15 dark:hover:bg-blue-400/15" on:click={openBackendSettings}>
+              Configure in Backend
+            </button>
           {:else}
             <div class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center bg-black/5 dark:bg-white/5 rounded-md">Not installed</div>
           {/if}
@@ -572,26 +557,15 @@
             </div>
           </div>
           {#if llmBackend.vllm.installed}
-            <div class="flex gap-2">
-              {#if llmBackend.vllm.running}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLLMBackend('vllm', 'stop')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'vllm-stop' ? '...' : 'Stop'}
-                </button>
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLLMBackend('vllm', 'restart')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'vllm-restart' ? '...' : 'Restart'}
-                </button>
-              {:else}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLLMBackend('vllm', 'start')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'vllm-start' ? '...' : 'Start'}
-                </button>
-              {/if}
-            </div>
+            <button class="w-full py-1.5 px-3 border border-blue-500/30 dark:border-blue-400/30 rounded-md text-xs font-semibold cursor-pointer transition-all bg-blue-500/10 dark:bg-blue-400/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/15 dark:hover:bg-blue-400/15" on:click={openBackendSettings}>
+              Configure in Backend
+            </button>
           {:else}
             <div class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center bg-black/5 dark:bg-white/5 rounded-md">Not installed - requires Python vLLM package</div>
           {/if}
         </div>
 
-        <!-- Local Models (llama.cpp) -->
+        <!-- Local Models -->
         <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {localModels?.running ? 'border-2 border-orange-500/40 dark:border-orange-400/40 bg-orange-500/[0.02] dark:bg-orange-400/[0.03]' : 'border-orange-500/20 dark:border-orange-400/20'}">
           <div class="mb-3">
             <div class="flex items-start gap-3">
@@ -602,8 +576,8 @@
               </span>
               <div class="flex-1 min-w-0">
                 <div class="font-semibold text-sm text-gray-900 dark:text-gray-100 mb-1">
-                  llama.cpp
-                  <span class="inline-block px-1.5 py-0.5 ml-2 bg-orange-500/15 dark:bg-orange-400/20 text-orange-600 dark:text-orange-400 rounded text-[0.6rem] font-bold tracking-tight">Semantic Search</span>
+                  Local Models
+                  <span class="inline-block px-1.5 py-0.5 ml-2 bg-orange-500/15 dark:bg-orange-400/20 text-orange-600 dark:text-orange-400 rounded text-[0.6rem] font-bold tracking-tight">Utility</span>
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                   {localModels?.endpoint || 'http://127.0.0.1:4324'}
@@ -614,17 +588,9 @@
               </div>
             </div>
           </div>
-          <div class="flex gap-2">
-            {#if localModels?.running}
-              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLocalModels('stop')} disabled={actionInProgress !== null}>
-                {actionInProgress === 'localModels-stop' ? '...' : 'Stop'}
-              </button>
-            {:else}
-              <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlLocalModels('start')} disabled={actionInProgress !== null}>
-                {actionInProgress === 'localModels-start' ? '...' : 'Start'}
-              </button>
-            {/if}
-          </div>
+          <button class="w-full py-1.5 px-3 border border-orange-500/30 dark:border-orange-400/30 rounded-md text-xs font-semibold cursor-pointer transition-all bg-orange-500/10 dark:bg-orange-400/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/15 dark:hover:bg-orange-400/15" on:click={openBackendSettings}>
+            Configure in Backend
+          </button>
           {#if localModels?.running}
             <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/10 dark:border-white/10">
               {#if localModels.embedder.loaded}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { activeView } from '../stores/navigation';
+  import { onDestroy, onMount } from 'svelte';
   import type { SvelteComponent } from 'svelte';
   import { apiFetch, isMobileApp } from '../lib/client/api-config';
   
@@ -28,6 +29,22 @@
   // Cache for loaded components to avoid re-importing
   const componentCache = new Map<string, typeof SvelteComponent>();
 
+  function handleComponentLoadError(name: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[CenterContent] Failed to load ${name}:`, error);
+
+    if (typeof window === 'undefined') return;
+    if (!/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)) {
+      return;
+    }
+
+    const reloadKey = `mh-component-reload-${name}`;
+    if (window.sessionStorage.getItem(reloadKey) === '1') return;
+
+    window.sessionStorage.setItem(reloadKey, '1');
+    window.location.reload();
+  }
+
   // Dynamic component loader
   async function loadComponent(name: string): Promise<typeof SvelteComponent> {
     if (componentCache.has(name)) {
@@ -35,115 +52,123 @@
     }
 
     let module;
-    switch (name) {
-      case 'Dashboard':
-        module = await import('./Dashboard.svelte');
-        break;
-      case 'TaskManager':
-        module = await import('./TaskManager.svelte');
-        break;
-      case 'ProjectDashboard':
-        module = await import('./ProjectDashboard.svelte');
-        break;
-      case 'ApprovalQueue':
-        module = await import('./ApprovalQueue.svelte');
-        break;
-      case 'MemoryControls':
-        module = await import('./MemoryControls.svelte');
-        break;
-      case 'AudioUpload':
-        module = await import('./AudioUpload.svelte');
-        break;
-      case 'AudioRecorder':
-        module = await import('./AudioRecorder.svelte');
-        break;
-      case 'VoiceTrainingWidget':
-        module = await import('./VoiceTrainingWidget.svelte');
-        break;
-      case 'VoiceSettings':
-        module = await import('./VoiceSettings.svelte');
-        break;
-      case 'AdapterDashboard':
-        module = await import('./AdapterDashboard.svelte');
-        break;
-      case 'TrainingMonitor':
-        module = await import('./TrainingMonitor.svelte');
-        break;
-      case 'OnboardingWizard':
-        module = await import('./OnboardingWizard.svelte');
-        break;
-      case 'TrainingWizard':
-        module = await import('./TrainingWizard.svelte');
-        break;
-      case 'TrainingHistory':
-        module = await import('./TrainingHistory.svelte');
-        break;
-      case 'DatasetManagement':
-        module = await import('./DatasetManagement.svelte');
-        break;
-      case 'SystemControls':
-        module = await import('./SystemControls.svelte');
-        break;
-      case 'Lifeline':
-        module = await import('./Lifeline.svelte');
-        break;
-      case 'OvernightLearnings':
-        module = await import('./OvernightLearnings.svelte');
-        break;
-      case 'SystemSettings':
-        module = await import('./SystemSettings.svelte');
-        break;
-      case 'BackendSettings':
-        module = await import('./BackendSettings.svelte');
-        break;
-      case 'SecuritySettings':
-        module = await import('./SecuritySettings.svelte');
-        break;
-      case 'NetworkServerSettings':
-        module = await import('./NetworkServerSettings.svelte');
-        break;
-      case 'ChatSettings':
-        module = await import('./ChatSettings.svelte');
-        break;
-      case 'MemoryEditor':
-        module = await import('./MemoryEditor.svelte');
-        break;
-      case 'PersonaGenerator':
-        module = await import('./PersonaGenerator.svelte');
-        break;
-      case 'PersonaEditor':
-        module = await import('./PersonaEditor.svelte');
-        break;
-      case 'AddonsManager':
-        module = await import('./AddonsManager.svelte');
-        break;
-      case 'SchedulerSettings':
-        module = await import('./SchedulerSettings.svelte');
-        break;
-      case 'ProfileLocation':
-        module = await import('./ProfileLocation.svelte');
-        break;
-      case 'TerminalManager':
-        module = await import('./TerminalManager.svelte');
-        break;
-      case 'AgencyDashboard':
-        module = await import('./AgencyDashboard.svelte');
-        break;
-      case 'ActiveOperatorDashboard':
-        module = await import('./ActiveOperatorDashboard.svelte');
-        break;
-      case 'UnifiedQueueDashboard':
-        module = await import('./UnifiedQueueDashboard.svelte');
-        break;
-      case 'SystemCoderDashboard':
-        module = await import('./SystemCoderDashboard.svelte');
-        break;
-      default:
-        throw new Error(`Unknown component: ${name}`);
+    try {
+      switch (name) {
+        case 'Dashboard':
+          module = await import('./Dashboard.svelte');
+          break;
+        case 'TaskManager':
+          module = await import('./TaskManager.svelte');
+          break;
+        case 'ProjectDashboard':
+          module = await import('./ProjectDashboard.svelte');
+          break;
+        case 'ApprovalQueue':
+          module = await import('./ApprovalQueue.svelte');
+          break;
+        case 'MemoryControls':
+          module = await import('./MemoryControls.svelte');
+          break;
+        case 'AudioUpload':
+          module = await import('./AudioUpload.svelte');
+          break;
+        case 'AudioRecorder':
+          module = await import('./AudioRecorder.svelte');
+          break;
+        case 'VoiceTrainingWidget':
+          module = await import('./VoiceTrainingWidget.svelte');
+          break;
+        case 'VoiceSettings':
+          module = await import('./VoiceSettings.svelte');
+          break;
+        case 'AdapterDashboard':
+          module = await import('./AdapterDashboard.svelte');
+          break;
+        case 'TrainingMonitor':
+          module = await import('./TrainingMonitor.svelte');
+          break;
+        case 'OnboardingWizard':
+          module = await import('./OnboardingWizard.svelte');
+          break;
+        case 'TrainingWizard':
+          module = await import('./TrainingWizard.svelte');
+          break;
+        case 'TrainingHistory':
+          module = await import('./TrainingHistory.svelte');
+          break;
+        case 'DatasetManagement':
+          module = await import('./DatasetManagement.svelte');
+          break;
+        case 'SystemControls':
+          module = await import('./SystemControls.svelte');
+          break;
+        case 'Lifeline':
+          module = await import('./Lifeline.svelte');
+          break;
+        case 'OvernightLearnings':
+          module = await import('./OvernightLearnings.svelte');
+          break;
+        case 'SystemSettings':
+          module = await import('./SystemSettings.svelte');
+          break;
+        case 'BackendSettings':
+          module = await import('./BackendSettings.svelte');
+          break;
+        case 'SecuritySettings':
+          module = await import('./SecuritySettings.svelte');
+          break;
+        case 'NetworkServerSettings':
+          module = await import('./NetworkServerSettings.svelte');
+          break;
+        case 'ChatSettings':
+          module = await import('./ChatSettings.svelte');
+          break;
+        case 'MemoryEditor':
+          module = await import('./MemoryEditor.svelte');
+          break;
+        case 'PersonaGenerator':
+          module = await import('./PersonaGenerator.svelte');
+          break;
+        case 'PersonaEditor':
+          module = await import('./PersonaEditor.svelte');
+          break;
+        case 'AddonsManager':
+          module = await import('./AddonsManager.svelte');
+          break;
+        case 'SchedulerSettings':
+          module = await import('./SchedulerSettings.svelte');
+          break;
+        case 'ProfileLocation':
+          module = await import('./ProfileLocation.svelte');
+          break;
+        case 'TerminalManager':
+          module = await import('./TerminalManager.svelte');
+          break;
+        case 'AgencyDashboard':
+          module = await import('./AgencyDashboard.svelte');
+          break;
+        case 'ActiveOperatorDashboard':
+          module = await import('./ActiveOperatorDashboard.svelte');
+          break;
+        case 'UnifiedQueueDashboard':
+          module = await import('./UnifiedQueueDashboard.svelte');
+          break;
+        case 'SystemCoderDashboard':
+          module = await import('./SystemCoderDashboard.svelte');
+          break;
+        default:
+          throw new Error(`Unknown component: ${name}`);
+      }
+    } catch (error) {
+      handleComponentLoadError(name, error);
+      throw error;
     }
 
     const component = module.default;
     componentCache.set(name, component);
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(`mh-component-reload-${name}`);
+    }
     return component;
   }
 
@@ -191,7 +216,7 @@ let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'pruned' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
-let systemTab: 'chat' | 'lifeline' | 'settings' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' = 'settings'
+let systemTab: 'chat' | 'lifeline' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' | 'terminal' = 'settings'
 let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' | 'queue' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
@@ -219,6 +244,22 @@ async function loadVoiceProvider() {
     console.error('[CenterContent] Error loading voice provider:', e);
   }
 }
+
+function handleOpenSystemTab(event: Event) {
+  const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab;
+  activeView.set('system');
+  if (tab === 'backend') {
+    systemTab = 'backend';
+  }
+}
+
+onMount(() => {
+  window.addEventListener('mh-open-system-tab', handleOpenSystemTab as EventListener);
+});
+
+onDestroy(() => {
+  window.removeEventListener('mh-open-system-tab', handleOpenSystemTab as EventListener);
+});
 
 
 async function loadEvents() {

@@ -7,7 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { loadCognitiveMode } from '../../cognitive-mode.js';
+import { loadCognitiveMode, type CognitiveModeId } from '../../cognitive-mode.js';
 
 /**
  * GET /api/security/policy - Get current security policy for the UI
@@ -19,10 +19,10 @@ export async function handleGetSecurityPolicy(req: UnifiedRequest): Promise<Unif
 
   try {
     // Get cognitive mode for write permission check  
-    let cognitiveMode: 'dual' | 'agent' | 'emulation' = 'dual';
+    let cognitiveMode: CognitiveModeId = 'dual';
     try {
       const mode = await loadCognitiveMode();
-      cognitiveMode = mode.mode as 'dual' | 'agent' | 'emulation';
+      cognitiveMode = mode.currentMode;
     } catch {
       // Use default
     }
@@ -36,7 +36,7 @@ export async function handleGetSecurityPolicy(req: UnifiedRequest): Promise<Unif
 
     // Write permissions based on auth status and cognitive mode
     const canWriteMemory = isAuthenticated && cognitiveMode !== 'emulation';
-    const canUseOperator = isAuthenticated && cognitiveMode !== 'emulation' && isOwner;
+    const canUseOperator = isAuthenticated && cognitiveMode !== 'emulation' && cognitiveMode !== 'environment' && isOwner;
     const canModifyPersona = isAuthenticated && isOwner;
     const canAccessSettings = isAuthenticated;
     const canManageUsers = isAuthenticated && isOwner;

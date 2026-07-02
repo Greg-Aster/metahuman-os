@@ -13,7 +13,7 @@ import { readAuditLog, securityCheck } from '../../audit.js';
  * GET /api/audit - Read audit log for a date or run security check
  */
 export async function handleGetAudit(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { query } = req;
+  const query = req.query ?? {};
 
   try {
     const date = query.date || new Date().toISOString().slice(0, 10);

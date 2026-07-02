@@ -1376,6 +1376,51 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     }
   }
 
+  function clearWhisperCaptureResources(): void {
+    if (micSilenceTimer) {
+      clearTimeout(micSilenceTimer);
+      micSilenceTimer = null;
+    }
+
+    if (micRecorder && micRecorder.state !== 'inactive') {
+      try {
+        micRecorder.onstop = null;
+        micRecorder.stop();
+      } catch {}
+    }
+    micRecorder = null;
+    micChunks = [];
+    micStartedAt = null;
+    micSpeaking = false;
+    micSilenceTimerStarted = false;
+    isRecording.set(false);
+
+    try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+    micStream = null;
+    try { micAudioCtx?.close(); } catch {}
+    micAudioCtx = null;
+    micAnalyser = null;
+  }
+
+  function suspendContinuousForTTS(): void {
+    if (!get(isContinuousMode)) return;
+
+    console.log('[useMicrophone] Suspending continuous listening while TTS plays');
+    clearWhisperCaptureResources();
+  }
+
+  function resumeContinuousAfterTTS(): void {
+    if (!get(isContinuousMode) || !isComponentMounted() || getTTSPlaying()) return;
+    if (micStream || micAnalyser || get(isRecording)) return;
+
+    console.log('[useMicrophone] Resuming continuous listening after TTS');
+    setTimeout(() => {
+      if (get(isContinuousMode) && isComponentMounted() && !getTTSPlaying() && !micStream && !get(isRecording)) {
+        void startMic(true);
+      }
+    }, 800);
+  }
+
   /**
    * Start microphone recording (Whisper backend)
    */
@@ -1387,6 +1432,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       const supported = typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia;
       if (!supported) {
         console.warn('[useMicrophone] getUserMedia unavailable (insecure context or unsupported browser)');
+        onSystemMessage('🎤 Microphone is unavailable in this browser context. Open the app from localhost or HTTPS and allow microphone access.');
         return;
       }
 
@@ -1421,12 +1467,23 @@ export function useMicrophone(options: UseMicrophoneOptions) {
         micRecorder.start();
         isRecording.set(true);
         micStartedAt = Date.now();
+        onSystemMessage('🎤 Listening... click the microphone again when you are done speaking.');
         signalMicActivity(); // Signal activity to prevent background agents
       }
 
       runMicVAD();
     } catch (e) {
       console.error('[useMicrophone] Failed to start mic:', e);
+      const errorName = e instanceof DOMException ? e.name : '';
+      if (errorName === 'NotAllowedError' || errorName === 'SecurityError') {
+        onSystemMessage('🎤 Microphone permission was denied. Allow microphone access in the browser, then try again.');
+      } else if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+        onSystemMessage('🎤 No microphone input device was found.');
+      } else if (errorName === 'NotReadableError' || errorName === 'TrackStartError') {
+        onSystemMessage('🎤 The microphone is already in use by another app or browser tab.');
+      } else {
+        onSystemMessage('🎤 Failed to start microphone. Check browser permissions and input device settings.');
+      }
     }
   }
 
@@ -1493,6 +1550,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
           }
         } else {
           console.log('[useMicrophone] No transcript detected (empty or null response)');
+          onSystemMessage('🎤 No speech was detected. Try again and speak a little longer.');
         }
       } else {
         // Check if it's a "still loading" error
@@ -1682,11 +1740,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       if (get(isRecording)) stopMic();
 
       // Clean up Whisper resources
-      try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
-      micStream = null;
-      try { micAudioCtx?.close(); } catch {}
-      micAudioCtx = null;
-      micAnalyser = null;
+      clearWhisperCaptureResources();
     } else {
       // Start continuous mode
       isContinuousMode.set(true);
@@ -1888,6 +1942,8 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     stopMic,
     toggleContinuousMode, // Right-click for continuous VAD
     toggleConversationMode, // Long-press for conversation mode
+    suspendContinuousForTTS,
+    resumeContinuousAfterTTS,
     cleanup,
 
     // Media Session (hardware button capture)

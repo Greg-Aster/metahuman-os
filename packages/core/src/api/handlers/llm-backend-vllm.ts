@@ -17,6 +17,7 @@ let vllm: any;
 let loadBackendConfig: any;
 let cleanupVLLMProcesses: any;
 let checkVLLMGPUMemory: any;
+let buildVLLMStartConfig: any;
 let getProfilePaths: any;
 let getAdaptersToLoad: any;
 let getVllmLoraConfig: any;
@@ -28,6 +29,7 @@ async function ensureVllmFunctions(): Promise<boolean> {
     loadBackendConfig = core.loadBackendConfig;
     cleanupVLLMProcesses = core.cleanupVLLMProcesses;
     checkVLLMGPUMemory = core.checkVLLMGPUMemory;
+    buildVLLMStartConfig = core.buildVLLMStartConfig;
     getProfilePaths = core.getProfilePaths;
     getAdaptersToLoad = core.getAdaptersToLoad;
     getVllmLoraConfig = core.getVllmLoraConfig;
@@ -83,16 +85,7 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
         }
 
         const result = await vllm.startServer({
-          endpoint: config.vllm.endpoint,
-          model: body?.model || config.vllm.model,
-          gpuMemoryUtilization: body?.gpuMemoryUtilization || config.vllm.gpuMemoryUtilization,
-          maxModelLen: config.vllm.maxModelLen,
-          tensorParallelSize: config.vllm.tensorParallelSize,
-          dtype: config.vllm.dtype,
-          quantization: config.vllm.quantization,
-          enforceEager: config.vllm.enforceEager,
-          autoUtilization: config.vllm.autoUtilization,
-          enableThinking: config.vllm.enableThinking,
+          ...buildVLLMStartConfig(config, body?.model, body?.gpuMemoryUtilization),
           loraModules,
           maxLoraRank,
         });
@@ -131,16 +124,7 @@ export async function handleVllmControl(req: UnifiedRequest): Promise<UnifiedRes
         }
 
         const result = await vllm.startServer({
-          endpoint: config.vllm.endpoint,
-          model: body?.model || config.vllm.model,
-          gpuMemoryUtilization: body?.gpuMemoryUtilization || config.vllm.gpuMemoryUtilization,
-          maxModelLen: config.vllm.maxModelLen,
-          tensorParallelSize: config.vllm.tensorParallelSize,
-          dtype: config.vllm.dtype,
-          quantization: config.vllm.quantization,
-          enforceEager: config.vllm.enforceEager,
-          autoUtilization: config.vllm.autoUtilization,
-          enableThinking: config.vllm.enableThinking,
+          ...buildVLLMStartConfig(config, body?.model, body?.gpuMemoryUtilization),
           loraModules,
           maxLoraRank,
         });

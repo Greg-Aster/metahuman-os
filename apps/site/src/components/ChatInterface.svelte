@@ -20,6 +20,13 @@
   import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
   import { apiEventSource, apiFetch, isMobileApp } from '../lib/client/api-config';
+  import {
+    buildConversationParams,
+    buildResponsePipelineRequestBody,
+    closeEventSourceConnections,
+    parseConversationStreamEvent,
+    readLlmOptions,
+  } from '../lib/client/conversation-transport';
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
 
@@ -97,6 +104,7 @@
   // Initialize TTS composable
   const ttsApi = useTTS();
   const { isPlaying: ttsIsPlaying, isLoading: ttsIsLoading } = ttsApi;
+  let lastAutoSpoken: { text: string; at: number } | null = null;
 
   // Initialize Messages composable
   // Terminal mode doesn't use messages, default to 'conversation' for the messages API
@@ -173,6 +181,16 @@
     isWakeWordListening: micIsWakeWordListening,
     isConversationMode: micIsConversationMode,
   } = mic;
+  let lastTTSPlayingForMic = false;
+
+  $: if ($ttsIsPlaying !== lastTTSPlayingForMic) {
+    if ($ttsIsPlaying) {
+      mic.suspendContinuousForTTS();
+    } else {
+      mic.resumeContinuousAfterTTS();
+    }
+    lastTTSPlayingForMic = $ttsIsPlaying;
+  }
 
   // Initialize Thinking Trace composable
   const thinkingTraceApi = useThinkingTrace({
@@ -188,9 +206,6 @@
     steps: thinkingSteps,
     showIndicator: showThinkingIndicator
   } = thinkingTraceApi;
-
-  // Debug logging for thinking indicator
-  $: console.log('[ThinkingIndicator] showIndicator:', $showThinkingIndicator, 'active:', $thinkingActive, 'trace.length:', $thinkingTrace.length, 'reasoningStages.length:', reasoningStages.length, 'steps:', $thinkingSteps.substring(0, 100));
 
   // Subscribe to shared YOLO mode store
   const unsubscribeYolo = yoloModeStore.subscribe(value => {
@@ -239,6 +254,18 @@
       };
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
+  }
+
+  function assistantSpeechEnabled(): boolean {
+    return ttsEnabled || get(mic.isConversationMode) || get(mic.isContinuousMode);
+  }
+
+  function enableAssistantSpeech(source: string): void {
+    if (ttsEnabled) return;
+    ttsEnabled = true;
+    saveChatPrefs();
+    ttsApi.prefetchVoiceResources();
+    console.log(`[chat-tts] Enabled assistant speech from ${source}`);
   }
 
   // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
@@ -537,6 +564,7 @@
   // Concurrency guard for buffer fetches - prevents overlapping requests
   let fetchInProgress = false;
   let fetchNeededAfterCurrent = false;
+  let suppressTTSQueueCloseNotice = false;
 
   /**
    * Fetch and merge messages from all selected buffers
@@ -631,9 +659,7 @@
       return;
     }
     if (ttsQueueHandle) {
-      ttsQueueHandle.close();
-      ttsQueueHandle = null;
-      ttsQueueStream = null;
+      disconnectTTSQueueStream();
     }
 
     console.log('[chat-tts] Requesting TTS queue stream from connection pool...');
@@ -642,9 +668,9 @@
       id: 'tts-queue',
       name: 'TTS Queue Stream',
       url: '/api/tts-queue-stream',
-      priority: ConnectionPriority.HIGH,
+      priority: ConnectionPriority.MEDIUM,
       viewDependency: 'chat',
-      defer: false,
+      defer: true,
       onOpen: (source) => {
         console.log('[chat-tts] TTS queue stream opened via pool');
         ttsQueueStream = source;
@@ -652,7 +678,10 @@
       onClose: () => {
         console.log('[chat-tts] TTS queue stream closed via pool');
         ttsQueueStream = null;
-        messagesApi.pushMessage('system', '⚠️ **TTS Stream Disconnected**\n\nSpeech playback is unavailable until the connection is restored. Refresh the page or re-open the chat tab to reconnect.');
+        if (!suppressTTSQueueCloseNotice) {
+          messagesApi.pushMessage('system', '⚠️ **TTS Stream Disconnected**\n\nSpeech playback is unavailable until the connection is restored. Refresh the page or re-open the chat tab to reconnect.');
+        }
+        suppressTTSQueueCloseNotice = false;
       },
       onMessage: (event) => {
         try {
@@ -686,22 +715,56 @@
   function disconnectTTSQueueStream() {
     if (ttsQueueHandle) {
       console.log('[chat-tts] Disconnecting TTS queue stream');
+      suppressTTSQueueCloseNotice = true;
       ttsQueueHandle.close();
       ttsQueueHandle = null;
       ttsQueueStream = null;
     }
   }
 
+  async function speakAssistantResponse(text: string | undefined | null, source: string) {
+    const speechText = text?.trim();
+    const speechEnabled = assistantSpeechEnabled();
+    if (!speechEnabled || !speechText) {
+      console.log(`[chat-tts] Skipping auto TTS from ${source} (speechEnabled=${speechEnabled}, ttsEnabled=${ttsEnabled}, conversationMode=${get(mic.isConversationMode)}, continuousMode=${get(mic.isContinuousMode)})`);
+      return;
+    }
+
+    const now = Date.now();
+    if (lastAutoSpoken?.text === speechText && now - lastAutoSpoken.at < 10000) {
+      console.log(`[chat-tts] Skipping duplicate auto TTS from ${source}`);
+      return;
+    }
+
+    const autoSpokenMarker = { text: speechText, at: now };
+    lastAutoSpoken = autoSpokenMarker;
+
+    try {
+      console.log(`[chat-tts] Auto-speaking ${source} (${speechText.length} chars)`);
+      await ttsApi.ensureAudioUnlocked();
+      await ttsApi.speak(speechText);
+    } catch (err) {
+      if (lastAutoSpoken === autoSpokenMarker) {
+        lastAutoSpoken = null;
+      }
+      console.warn(`[chat-tts] Auto TTS failed from ${source}:`, err);
+    }
+  }
+
+  function restorePassiveChatStreams() {
+    if (!isComponentMounted || (typeof document !== 'undefined' && document.hidden)) {
+      return;
+    }
+
+    connectMultipleBufferStreams();
+    connectTTSQueueStream();
+  }
+
   function handleTTSItems(items: Array<{ text?: string; mode?: string; source?: string }>) {
     for (const item of items) {
       console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
-      if (ttsEnabled && item.text) {
-        console.log(`[chat-tts] SPEAKING ${item.mode} TTS from queue`);
-        void ttsApi.speak(item.text);
-      } else {
-        console.log(`[chat-tts] Skipping TTS (ttsEnabled=${ttsEnabled})`);
-      }
+      void speakAssistantResponse(item.text, `queue:${item.source || item.mode || 'unknown'}`);
     }
   }
 
@@ -782,8 +845,7 @@
         meta: { tier: result.tier, model: result.model },
       });
 
-      // LEGACY TTS REMOVED - TTS handled via unified TTS queue stream from cognitive graph nodes
-      // Note: Offline mode may need TTS node integration in the future if offline graphs are added
+      void speakAssistantResponse(result.response, 'offline');
 
       thinkingTraceApi.stop();
     } catch (err) {
@@ -864,27 +926,22 @@
       console.log('[response-pipeline] Reason: Browser connection limit (6 per origin)');
       console.log('[response-pipeline] Closing all EventSource connections to free slots...');
 
-      let closedCount = 0;
-      if (chatResponseStream) {
-        console.log('[response-pipeline] → Closing chatResponseStream');
-        try {
-          chatResponseStream.close();
-          chatResponseStream = null;
-          closedCount++;
-        } catch (e) {
-          console.error('[response-pipeline] ❌ Error closing chatResponseStream:', e);
-        }
-      }
-      if (innerDialogueStream) {
-        console.log('[response-pipeline] → Closing innerDialogueStream');
-        try {
-          innerDialogueStream.close();
-          innerDialogueStream = null;
-          closedCount++;
-        } catch (e) {
-          console.error('[response-pipeline] ❌ Error closing innerDialogueStream:', e);
-        }
-      }
+      let closedCount = closeEventSourceConnections('[response-pipeline]', [
+        {
+          name: 'chatResponseStream',
+          source: chatResponseStream,
+          clear: () => {
+            chatResponseStream = null;
+          },
+        },
+        {
+          name: 'innerDialogueStream',
+          source: innerDialogueStream,
+          clear: () => {
+            innerDialogueStream = null;
+          },
+        },
+      ]);
 
       try {
         disconnectAllBufferStreams();
@@ -894,7 +951,13 @@
         console.error('[response-pipeline] ❌ Error closing buffer streams:', e);
       }
 
-      // Keep TTS queue stream open so queued audio can play after the response.
+      try {
+        disconnectTTSQueueStream();
+        console.log('[response-pipeline] → Closed TTS queue stream');
+        closedCount++;
+      } catch (e) {
+        console.error('[response-pipeline] ❌ Error closing TTS queue stream:', e);
+      }
 
       console.log(`[response-pipeline] ✅ Closed ${closedCount} connections`);
       console.log('[response-pipeline] ========== CONNECTION CLEANUP COMPLETE ==========');
@@ -1034,12 +1097,7 @@
       thinkingTraceApi.appendTrace(`[${timestamp()}] `, 5);
       thinkingTraceApi.appendTrace(`[${timestamp()}] Step 1: Preparing request...`, 10);
 
-      const requestBody = {
-        message: message.trim(),
-        cardType,
-        cardData,
-        responseBufferId: responseBufferId || undefined,
-      };
+      const requestBody = buildResponsePipelineRequestBody(message, cardType, cardData, responseBufferId);
 
       // Step 2: Send request (no automatic timeout - user has cancel button)
       console.log('[response-pipeline] Step 2: Sending POST to /api/response-pipeline');
@@ -1167,6 +1225,7 @@
           pipelineTriggered: result.pipelineTriggered,
           dialogueSource: 'response-pipeline',
         });
+        void speakAssistantResponse(result.response, 'response-pipeline');
       } else {
         console.warn('[response-pipeline] No response text in result');
         thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ No response text returned`, 10);
@@ -1225,6 +1284,7 @@
       responsePipelineAbortController = null;
 
       loading = false;
+      restorePassiveChatStreams();
     }
   }
 
@@ -1351,51 +1411,41 @@
       console.log('[sendMessage] Step 2: Entered try block');
       thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Preparing request...`, 15);
 
-      let llm_opts = {};
-      try {
-        const raw = localStorage.getItem('llmOptions');
-        if (raw) llm_opts = JSON.parse(raw);
-      } catch {}
+      const llm_opts = readLlmOptions();
       console.log('[sendMessage] Step 3: Got llm_opts');
 
-      const params = new URLSearchParams({
+      const params = buildConversationParams({
         message: userMessage,
         mode,
-        reason: String(reasoningDepth > 0),
-        reasoningDepth: String(reasoningDepth),
-        llm: JSON.stringify(llm_opts),
         sessionId: $conversationSessionId,
-        // forceOperator removed - no longer used
+        reasoningDepth,
+        yoloMode,
+        llmOptions: llm_opts,
+        replyTo: {
+          questionId: replyToQuestionId,
+          content: replyToContent,
+          desireId: replyToDesireId,
+          desireTitle: replyToDesireTitle,
+        },
       });
       console.log('[sendMessage] Step 4: Created URLSearchParams');
       thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Request params built`, 15);
-      params.set('yolo', String(yoloMode));
       // audience removed - focus selector obsolete with ReAct operator
 
       // Add replyTo metadata if replying to any message (curiosity, desire, or regular)
       if (replyToQuestionId) {
-        params.set('replyToQuestionId', replyToQuestionId);
         console.log('[reply-to] Replying to curiosity question:', replyToQuestionId);
       }
       if (replyToDesireId) {
-        params.set('replyToDesireId', replyToDesireId);
-        if (replyToDesireTitle) {
-          params.set('replyToDesireTitle', replyToDesireTitle);
-        }
         console.log('[reply-to] Replying to desire/goal:', replyToDesireId, replyToDesireTitle);
       }
       if (replyToContent) {
-        // Truncate to 500 chars to avoid URL length issues
-        params.set('replyToContent', replyToContent.substring(0, 500));
         console.log('[reply-to] Replying to message:', replyToContent.substring(0, 100));
       }
 
       console.log('[sendMessage] Step 5: Setting up chat request');
       console.log('[sendMessage] URL:', `/api/persona_chat?${params.toString()}`);
       thinkingTraceApi.appendTrace(`[${timestamp()}] 🌐 Opening connection to /api/persona_chat`, 15);
-
-      // Force graph pipeline; some runtime toggles can disable it after settings load
-      params.set('graph', 'true');
 
       // CRITICAL: Close ALL EventSource connections FIRST to free browser connection slots
       // Browsers limit concurrent connections per-origin (typically 6 for HTTP/1.1)
@@ -1405,27 +1455,22 @@
       console.log('[sendMessage] Reason: Prevent browser connection limit exhaustion');
       console.log('[sendMessage] Closing all EventSource connections to free slots...');
 
-      let closedCount = 0;
-      if (chatResponseStream) {
-        console.log('[sendMessage] → Closing chatResponseStream');
-        try {
-          chatResponseStream.close();
-          chatResponseStream = null;
-          closedCount++;
-        } catch (e) {
-          console.error('[sendMessage] ❌ Error closing chatResponseStream:', e);
-        }
-      }
-      if (innerDialogueStream) {
-        console.log('[sendMessage] → Closing innerDialogueStream');
-        try {
-          innerDialogueStream.close();
-          innerDialogueStream = null;
-          closedCount++;
-        } catch (e) {
-          console.error('[sendMessage] ❌ Error closing innerDialogueStream:', e);
-        }
-      }
+      let closedCount = closeEventSourceConnections('[sendMessage]', [
+        {
+          name: 'chatResponseStream',
+          source: chatResponseStream,
+          clear: () => {
+            chatResponseStream = null;
+          },
+        },
+        {
+          name: 'innerDialogueStream',
+          source: innerDialogueStream,
+          clear: () => {
+            innerDialogueStream = null;
+          },
+        },
+      ]);
 
       try {
         disconnectAllBufferStreams();
@@ -1435,7 +1480,13 @@
         console.error('[sendMessage] ❌ Error closing buffer streams:', e);
       }
 
-      // Keep TTS queue stream open so queued audio can play after the response.
+      try {
+        disconnectTTSQueueStream();
+        console.log('[sendMessage] → Closed TTS queue stream');
+        closedCount++;
+      } catch (e) {
+        console.error('[sendMessage] ❌ Error closing TTS queue stream:', e);
+      }
 
       console.log(`[sendMessage] ✅ Closed ${closedCount} connections`);
       console.log('[sendMessage] ========== CONNECTION CLEANUP COMPLETE ==========');
@@ -1612,7 +1663,7 @@
         console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
         thinkingTraceApi.appendTrace(`[${timestamp()}] 📥 Received server event`, 15);
         try {
-          const { type, data } = JSON.parse(event.data);
+          const { type, data } = parseConversationStreamEvent(event.data);
           console.log('[EventSource] Parsed type:', type, 'data keys:', Object.keys(data));
 
           if (type === 'progress') {
@@ -1716,12 +1767,15 @@
               reasoningStages = [];
             }
             messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
-
-            // LEGACY TTS REMOVED - TTS now handled via unified TTS queue stream from cognitive graph nodes
-            // Conversation responses are queued by TTS nodes in dual-mode, agent-mode, emulation-mode graphs
+            const answerSpeechText = data?.tts?.text || data.response;
+            const answerSpeechSource = data?.tts?.itemId
+              ? `conversation-answer:${data.tts.itemId}`
+              : 'conversation-answer';
+            void speakAssistantResponse(answerSpeechText, answerSpeechSource);
 
             loading = false;
             chatResponseStream?.close();
+            restorePassiveChatStreams();
           } else if (type === 'system_message') {
             // System status message (e.g., summarization progress)
             if (data.content) {
@@ -1748,6 +1802,7 @@
             loading = false;
             reasoningStages = [];
             chatResponseStream?.close();
+            restorePassiveChatStreams();
             return; // Don't throw, we handled it
           }
           // Note: Big Brother output is streamed to System Terminal's Big Brother tab via WebSocket
@@ -1758,6 +1813,7 @@
           loading = false;
           reasoningStages = [];
           chatResponseStream?.close();
+          restorePassiveChatStreams();
         }
       };
 
@@ -1790,6 +1846,7 @@
         thinkingTraceApi.stop();
         loading = false;
         reasoningStages = [];
+        restorePassiveChatStreams();
       };
 
     } catch (err) {
@@ -1799,6 +1856,7 @@
       loading = false;
       sendInProgress = false; // Safety net: ensure guard is reset on error
       reasoningStages = [];
+      restorePassiveChatStreams();
     }
   }
 
@@ -2552,7 +2610,7 @@
             on:validateMessage={(e) => handleValidate(e.detail.relPath, e.detail.status)}
             on:speakMessage={(e) => {
               if (ttsEnabled) {
-                ttsApi.speak(e.detail.content);
+                void ttsApi.speak(e.detail.content);
               }
             }}
           />
@@ -2601,16 +2659,30 @@
           return;
         }
         // Normal single recording
-        $micIsRecording ? mic.stopMic() : mic.startMic();
+        if ($micIsRecording) {
+          mic.stopMic();
+        } else {
+          enableAssistantSpeech('mic-click');
+          messagesApi.pushMessage('system', '🎤 Starting microphone...');
+          mic.startMic();
+        }
       }}
       on:micLongPress={() => {
         // Long-press: toggle conversation mode on ALL devices
         console.log('[chat-mic] Long press detected, toggling conversation mode');
+        if (!$micIsConversationMode) {
+          enableAssistantSpeech('mic-long-press');
+          messagesApi.pushMessage('system', '🎤 Conversation listening mode enabled. Speak when ready.');
+        }
         mic.toggleConversationMode();
       }}
       on:micContextMenu={() => {
         // Right-click: toggle conversation mode on ALL devices
         console.log('[chat-mic] Right-click detected, toggling conversation mode');
+        if (!$micIsConversationMode) {
+          enableAssistantSpeech('mic-context-menu');
+          messagesApi.pushMessage('system', '🎤 Conversation listening mode enabled. Speak when ready.');
+        }
         mic.toggleConversationMode();
       }}
       on:ttsStop={() => {
@@ -2625,6 +2697,7 @@
         // If in conversation mode, VAD will auto-restart
         // If not, enter conversation mode
         if (!$micIsConversationMode) {
+          enableAssistantSpeech('tap-to-interrupt');
           mic.toggleConversationMode();
         }
       }}

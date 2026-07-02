@@ -10,7 +10,7 @@ import { successResponse } from '../types.js';
 
 // Dynamic import for optional agency functions
 let loadMetrics: ((username: string) => Promise<any>) | null = null;
-let listDesiresByStatus: ((status: string, username: string) => Promise<any[]>) | null = null;
+let listDesiresByStatus: ((status: DesireStatus, username?: string) => Promise<any[]>) | null = null;
 
 async function ensureAgencyFunctions(): Promise<boolean> {
   try {

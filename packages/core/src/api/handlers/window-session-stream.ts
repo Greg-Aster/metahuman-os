@@ -6,13 +6,40 @@
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { listUserWindows, hasMultipleWindows } from '../../window-session.js';
+import { listUserWindows } from '../../window-session.js';
 import fs from 'fs';
 import path from 'path';
 import { systemPaths } from '../../path-builder.js';
 
 // Track active SSE connections per user
 const activeConnections = new Map<string, Set<(data: string) => void>>();
+
+function listCurrentUserWindows(user: UnifiedRequest['user']) {
+  const windows = new Map<string, ReturnType<typeof listUserWindows>[number]>();
+  for (const window of listUserWindows(user.userId)) {
+    windows.set(window.windowId, window);
+  }
+  for (const window of listUserWindows(user.username)) {
+    windows.set(window.windowId, window);
+  }
+  return [...windows.values()];
+}
+
+function windowUpdateEvent(user: UnifiedRequest['user'], type: string): string {
+  const windows = listCurrentUserWindows(user);
+  return `data: ${JSON.stringify({
+    type,
+    windows: windows.map(w => ({
+      windowId: w.windowId,
+      isActive: w.isActive,
+      lastActivity: w.lastActivity,
+      title: w.title,
+    })),
+    windowCount: windows.length,
+    multiWindow: windows.length > 1,
+    timestamp: new Date().toISOString(),
+  })}\n\n`;
+}
 
 /**
  * Broadcast window update to all connected clients for a user
@@ -58,23 +85,6 @@ export async function handleWindowSessionStream(req: UnifiedRequest): Promise<Un
 
   // Create SSE stream
   async function* generateStream(): AsyncIterable<string> {
-    // Send initial state
-    const windows = listUserWindows(username);
-    const initialData = JSON.stringify({
-      type: 'initial',
-      windows: windows.map(w => ({
-        windowId: w.windowId,
-        isActive: w.isActive,
-        lastActivity: w.lastActivity,
-        title: w.title,
-      })),
-      windowCount: windows.length,
-      multiWindow: windows.length > 1,
-      timestamp: new Date().toISOString(),
-    });
-    yield `data: ${initialData}\n\n`;
-
-    // Set up connection tracking
     let isConnected = true;
     const sendQueue: string[] = [];
 
@@ -90,6 +100,10 @@ export async function handleWindowSessionStream(req: UnifiedRequest): Promise<Un
     }
     activeConnections.get(username)!.add(sendFn);
 
+    // Send initial state using the same event sequence as the Astro route.
+    yield `data: ${JSON.stringify({ type: 'connected' })}\n\n`;
+    yield windowUpdateEvent(user, 'initial');
+
     // Also watch the windows.json file for changes from other processes
     const windowsFile = path.join(systemPaths.run, 'windows.json');
     let watcher: fs.FSWatcher | null = null;
@@ -104,21 +118,7 @@ export async function handleWindowSessionStream(req: UnifiedRequest): Promise<Un
       // Watch for file changes (from other windows registering/closing)
       watcher = fs.watch(dir, (eventType, filename) => {
         if (filename === 'windows.json' && isConnected) {
-          // File changed, broadcast update
-          const windows = listUserWindows(username);
-          const data = JSON.stringify({
-            type: 'file-change',
-            windows: windows.map(w => ({
-              windowId: w.windowId,
-              isActive: w.isActive,
-              lastActivity: w.lastActivity,
-              title: w.title,
-            })),
-            windowCount: windows.length,
-            multiWindow: windows.length > 1,
-            timestamp: new Date().toISOString(),
-          });
-          sendQueue.push(`data: ${data}\n\n`);
+          sendQueue.push(windowUpdateEvent(user, 'file-change'));
         }
       });
     } catch {
@@ -126,15 +126,25 @@ export async function handleWindowSessionStream(req: UnifiedRequest): Promise<Un
     }
 
     try {
+      let lastHeartbeat = Date.now();
+
       // Keep connection alive and yield queued messages
       while (isConnected) {
-        // Send heartbeat every 30s to keep connection alive
-        yield `: heartbeat\n\n`;
-
         // Yield any queued messages
         while (sendQueue.length > 0) {
           const msg = sendQueue.shift()!;
           yield msg;
+        }
+
+        // Send heartbeat every 30s to keep connection alive
+        if (Date.now() - lastHeartbeat >= 30000) {
+          yield `: heartbeat\n\n`;
+          lastHeartbeat = Date.now();
+        }
+
+        if (req.signal?.aborted) {
+          isConnected = false;
+          break;
         }
 
         // Wait before next check (non-blocking)

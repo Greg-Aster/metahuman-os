@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths } from '../../packages/core/src/index.js';
+import { systemPaths } from '@metahuman/core';
 import { runRemoteTraining } from './lora-trainer.js';
 
 export interface RunFineTuneOptions {

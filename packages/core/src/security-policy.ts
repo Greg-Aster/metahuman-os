@@ -4,7 +4,7 @@ import {
   type CognitiveModeId,
 } from './cognitive-mode.js';
 import { validateSession } from './sessions.js';
-import { getUser } from './users.js';
+import { getUser, getUserByUsername } from './users.js';
 import { getUserContext } from './context.js';
 
 const LOG_PREFIX = '[security-policy]';
@@ -17,6 +17,10 @@ export interface RequestContext {
   cookies?: {
     get(name: string): { value: string } | undefined;
   };
+  username?: string;
+  userId?: string;
+  role?: UserRole;
+  sessionId?: string;
 }
 
 /**
@@ -417,6 +421,21 @@ function computeSecurityPolicy(
  */
 function extractSession(context?: RequestContext): SessionInfo | null {
   console.log(`${LOG_PREFIX} extractSession called`);
+
+  if (context?.username) {
+    const user = getUserByUsername(context.username);
+    const role = context.role ?? user?.role ?? 'guest';
+    const username = user?.username ?? context.username;
+    const isAdmin = isAdministrator(username, role);
+
+    return {
+      role,
+      id: context.userId ?? user?.id ?? context.sessionId,
+      email: user?.metadata?.email,
+      username,
+      isAdmin,
+    };
+  }
   
   // Try to get session cookie from Astro context
   const sessionCookie = context?.cookies?.get('mh_session');

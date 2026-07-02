@@ -13,7 +13,7 @@ import { join, basename } from 'node:path';
 import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../packages/core/src/cognitive-graph-schema.js';
 
 const GRAPHS_DIR = 'etc/cognitive-graphs';
-const VALID_MODES = ['dual', 'agent', 'emulation'];
+const VALID_MODES = ['dual', 'agent', 'emulation', 'environment'];
 
 console.log('🔍 Validating cognitive graphs...\n');
 

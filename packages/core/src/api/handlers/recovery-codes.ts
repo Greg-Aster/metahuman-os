@@ -55,8 +55,9 @@ export async function handleRegenerateRecoveryCodes(req: UnifiedRequest): Promis
 
     // Audit the regeneration
     auditSecurity({
-      actor: user.username,
-      event: 'recovery_codes_regenerated',
+      type: 'recovery_codes_regenerated',
+      severity: 'medium',
+      description: 'Recovery codes regenerated',
       details: { userId: user.id || user.username },
     });
 

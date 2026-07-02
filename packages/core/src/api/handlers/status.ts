@@ -287,7 +287,8 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       const registry = loadModelRegistry(false, username);
       const globalSettings = registry.globalSettings || {};
 
-      const fallbackId = registry.defaults?.fallback || 'default.fallback';
+      const defaults = registry.defaults as Record<string, string> | undefined;
+      const fallbackId = defaults?.fallback || 'default.fallback';
       const fallbackModel = registry.models?.[fallbackId];
       currentModel = fallbackModel?.model || null;
       baseModel = fallbackModel?.baseModel || currentModel;
@@ -299,8 +300,9 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
         if (typeof globalSettings.activeAdapter === 'string') {
           adapterModelName = globalSettings.activeAdapter;
         } else {
-          adapterModelName = globalSettings.activeAdapter.modelName;
-          adapterMetaCfg = globalSettings.activeAdapter;
+          const activeAdapter = globalSettings.activeAdapter as { modelName?: string };
+          adapterModelName = activeAdapter.modelName ?? null;
+          adapterMetaCfg = activeAdapter;
         }
       }
     } catch {}
@@ -680,8 +682,9 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     // Curiosity stats (simplified)
     let curiosityConfig: any = { maxOpenQuestions: 0, researchMode: 'off' };
     try {
-      const username = isAuthenticated ? user.username : undefined;
-      curiosityConfig = loadCuriosityConfig(username);
+      if (isAuthenticated) {
+        curiosityConfig = loadCuriosityConfig(user.username);
+      }
     } catch {}
 
     // Runtime mode

@@ -35,7 +35,7 @@ const storageClient = {
  * Serves voice training sample audio files
  */
 export async function handleGetVoiceSample(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { sampleId } = req.params;
+  const sampleId = req.params?.sampleId;
 
   if (!sampleId) {
     return {

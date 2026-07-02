@@ -17,7 +17,7 @@ import {
  * GET /api/functions - List functions with filtering and sorting
  */
 export async function handleListFunctions(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { query } = req;
+  const query = req.query ?? {};
 
   try {
     // Parse query parameters
