@@ -24,7 +24,7 @@ import {
   audit,
   getTargetUser,
   withUserContext,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   systemPaths,
   getProfilePaths,
@@ -231,7 +231,7 @@ export async function executeTrainOfThoughtForUser(username: string): Promise<Us
 
       console.log('[train-of-thought] Executing cognitive graph...');
 
-      const result = await executeGraph(graph, context);
+      const result = await runGraph({ graph, context });
 
       // Extract results from graph execution (node IDs are strings in Svelte Flow format)
       const aggregatorState = result.nodes.get('8'); // Node 8 is thought_aggregator

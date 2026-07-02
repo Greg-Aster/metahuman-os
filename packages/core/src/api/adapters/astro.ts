@@ -43,8 +43,39 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     const contentType = request.headers.get('content-type') || '';
 
-    // Handle binary bodies (audio, images, etc.) - pass as rawBody
-    if (contentType.startsWith('audio/') ||
+    if (contentType.startsWith('multipart/form-data')) {
+      try {
+        const formData = await request.formData();
+        const fields: Record<string, unknown> = {};
+
+        for (const [key, value] of formData.entries()) {
+          if (typeof value === 'string') {
+            fields[key] = value;
+            continue;
+          }
+
+          if (value && typeof value === 'object' && 'arrayBuffer' in value) {
+            const file = value as unknown as {
+              name?: string;
+              type?: string;
+              size?: number;
+              arrayBuffer: () => Promise<ArrayBuffer>;
+            };
+
+            fields[key] = {
+              name: file.name || key,
+              type: file.type || 'application/octet-stream',
+              size: file.size || 0,
+              buffer: Buffer.from(await file.arrayBuffer()),
+            };
+          }
+        }
+
+        body = fields;
+      } catch {
+        body = undefined;
+      }
+    } else if (contentType.startsWith('audio/') ||
         contentType.startsWith('image/') ||
         contentType === 'application/octet-stream') {
       try {
@@ -85,6 +116,7 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     query,
     headers,
     cookieHeader: request.headers.get('cookie'),
+    signal: request.signal,
   });
 
   // Handle streaming responses (SSE)

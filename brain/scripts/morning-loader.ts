@@ -11,8 +11,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { storageClient, ROOT, audit, acquireLock, isLocked, setActiveAdapter, getActiveAdapter } from '../../packages/core/src/index.js';
-import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
+import { storageClient, ROOT, audit, acquireLock, isLocked, setActiveAdapter, getActiveAdapter } from '@metahuman/core';
+import type { ActiveAdapterInfo } from '@metahuman/core/adapters';
 
 interface PersonaCore {
   name: string;

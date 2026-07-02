@@ -13,13 +13,18 @@ import {
   getPersonaContext,
   getActiveFacet,
   loadPersonaWithFacet,
-  executeGraph,
-  getGraphOutput,
   withUserContext,
   loadGraphForMode,
   checkCancellation,
   clearCancellation,
 } from '../../index.js';
+import {
+  AsyncEventQueue,
+  extractGraphOutput,
+  extractQueuedTTSOutput,
+  runGraph,
+  sseData,
+} from '../../graph-runtime.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { scheduler } from '../../agent-scheduler.js';
 import { isActiveOperatorEnabled } from '../../active-operator/index.js';
@@ -134,7 +139,8 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
 
       const personaCache = getPersonaContext();
 
-      const communicationStyle = persona.personality?.communicationStyle ?? {};
+      const communicationStyle =
+        (persona.personality?.communicationStyle as { tone?: string | string[] } | undefined) ?? {};
       const tone = communicationStyle.tone;
       const toneText = Array.isArray(tone) ? tone.join(', ') : tone || 'adaptive';
 
@@ -180,59 +186,6 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 }
 
 // ============================================================================
-// Real-time Event Queue for SSE Streaming
-// ============================================================================
-
-/**
- * Simple async queue that allows pushing events and iterating over them in real-time.
- * Events can be pushed from callbacks while the generator yields them to the stream.
- */
-class AsyncEventQueue {
-  private queue: string[] = [];
-  private resolvers: Array<(value: IteratorResult<string>) => void> = [];
-  private done = false;
-
-  push(event: string): void {
-    if (this.done) return;
-
-    if (this.resolvers.length > 0) {
-      // A consumer is waiting - resolve immediately
-      const resolver = this.resolvers.shift()!;
-      resolver({ value: event, done: false });
-    } else {
-      // No consumer waiting - queue the event
-      this.queue.push(event);
-    }
-  }
-
-  finish(): void {
-    this.done = true;
-    // Resolve any waiting consumers with done=true
-    while (this.resolvers.length > 0) {
-      const resolver = this.resolvers.shift()!;
-      resolver({ value: undefined as any, done: true });
-    }
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<string> {
-    while (true) {
-      if (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      } else if (this.done) {
-        return;
-      } else {
-        // Wait for next event
-        const event = await new Promise<IteratorResult<string>>(resolve => {
-          this.resolvers.push(resolve);
-        });
-        if (event.done) return;
-        yield event.value;
-      }
-    }
-  }
-}
-
-// ============================================================================
 // Graph Execution with SSE Streaming
 // ============================================================================
 
@@ -240,7 +193,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
   const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext } = params;
 
   const push = (type: string, data: any) => {
-    return `data: ${JSON.stringify({ type, data })}\n\n`;
+    return sseData(type, data);
   };
 
   // Create real-time event queue for streaming
@@ -360,7 +313,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
 
         if (event.type === 'node_start') {
           const node = loaded.graph.nodes.find((n: any) => n.id === event.nodeId);
-          const nodeName = node?.title || node?.type || `Node ${event.nodeId}`;
+          const nodeName = (node as { title?: string; type?: string } | undefined)?.title || node?.type || `Node ${event.nodeId}`;
           const nodeType = node?.type || '';
 
           let friendlyMessage = nodeName;
@@ -428,7 +381,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
         role: (userContext?.role || 'anonymous') as any,
       },
       async () => {
-        return executeGraph(loaded.graph, contextData, eventHandler);
+        return runGraph({ graph: loaded.graph, context: contextData, eventHandler });
       }
     ).then(state => {
       graphState = state;
@@ -464,9 +417,10 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     yield push('progress', { step: 'graph_complete', message: `✅ Graph complete in ${graphDuration}ms` });
 
     const duration = Date.now() - startedAt;
-    const output = getGraphOutput(graphState);
+    const output = extractGraphOutput(graphState);
     const responseText = output?.output || output?.response;
     const outputError = output?.error;
+    const ttsOutput = extractQueuedTTSOutput(graphState);
 
     if (outputError) {
       yield push('error', { message: outputError });
@@ -492,7 +446,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
 
     // Send final answer
     const facet = getActiveFacet();
-    yield push('answer', { response: responseText, facet, saved: null, executionTime: duration });
+    yield push('answer', { response: responseText, facet, saved: null, executionTime: duration, tts: ttsOutput });
 
   } catch (error) {
     if ((error as Error).message === 'CANCELLATION_REQUESTED') {
@@ -555,7 +509,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   const loadedMode = cognitiveConfig.currentMode;
   const cognitiveMode = isAuthenticated ? loadedMode : 'emulation';
   const allowMemoryWrites = isAuthenticated ? modeAllowsMemoryWrites(loadedMode) : false;
-  const useOperator = isAuthenticated && cognitiveMode !== 'emulation' && user.role === 'owner';
+  const useOperator = isAuthenticated && cognitiveMode !== 'emulation' && cognitiveMode !== 'environment' && user.role === 'owner';
 
   console.log(`[persona-chat] mode=${mode}, cognitiveMode=${cognitiveMode}, user=${user.username}`);
 
@@ -740,6 +694,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     let finalResponse = '';
     let finalFacet = null;
     let executionTime = 0;
+    let finalTTS = null;
     let errorMessage = null;
 
     for await (const chunk of streamGen) {
@@ -755,6 +710,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
             finalResponse = parsed.data.response || '';
             finalFacet = parsed.data.facet || null;
             executionTime = parsed.data.executionTime || 0;
+            finalTTS = parsed.data.tts || null;
           }
           if (parsed.type === 'error' && parsed.data) {
             errorMessage = parsed.data.message || 'Unknown error';
@@ -775,6 +731,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
         response: finalResponse,
         facet: finalFacet,
         executionTime,
+        tts: finalTTS,
         events, // Include all events for debugging/progress if needed
       },
     };
@@ -814,4 +771,38 @@ export async function handleCancelPersonaChat(req: UnifiedRequest): Promise<Unif
   requestCancellation(sessionId, 'User requested cancellation');
 
   return { status: 200, data: { cancelled: true } };
+}
+
+/**
+ * POST /api/cancel-chat - Legacy cancellation endpoint
+ */
+export async function handleCancelChatAlias(req: UnifiedRequest): Promise<UnifiedResponse> {
+  try {
+    const { sessionId, reason } = req.body || {};
+
+    if (!sessionId) {
+      return {
+        status: 400,
+        data: { error: 'sessionId is required' },
+      };
+    }
+
+    const { requestCancellation } = await import('../../graph-streaming.js');
+    requestCancellation(sessionId, reason || 'User requested stop');
+
+    return {
+      status: 200,
+      data: {
+        success: true,
+        message: `Cancellation requested for session ${sessionId}`,
+      },
+    };
+  } catch (error) {
+    return {
+      status: 500,
+      data: {
+        error: `Failed to cancel request: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      },
+    };
+  }
 }

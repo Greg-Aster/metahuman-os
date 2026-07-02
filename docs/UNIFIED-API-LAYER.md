@@ -1,5 +1,7 @@
 # Unified API Layer
 
+> Archive notice: This document describes a historical unified API migration, including nodejs-mobile/mobile adapter details that are not current authority. For active architecture work, use `docs/technical/REFACTOR_BLUEPRINT.md`: `apps/site/src/pages/api` should be thin transport, business logic belongs in `packages/core/src/api/handlers`, and `brain/*` should call public `@metahuman/core` exports.
+
 ## Overview
 
 The Unified API Layer provides a single, framework-agnostic API that works for both the web app (Astro) and mobile app (nodejs-mobile). This eliminates code duplication and ensures consistent behavior across platforms.

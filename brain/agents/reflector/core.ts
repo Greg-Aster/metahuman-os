@@ -22,7 +22,7 @@ import {
   listActiveTasks,
   getTargetUser,
   withUserContext,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
   type SvelteFlowGraph,
@@ -568,7 +568,7 @@ What am I noticing? What thoughts or feelings are emerging?
       chainIsLong,
     };
 
-    const graphResult = await executeGraph(graph, graphContext);
+    const graphResult = await runGraph({ graph, context: graphContext });
 
     const reflectionNode = graphResult.nodes.get('1');
     const reflection = (reflectionNode?.outputs?.response || '').trim();

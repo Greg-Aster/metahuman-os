@@ -14,6 +14,7 @@ import { successResponse } from '../types.js';
 let getBackendStatus: any;
 let detectAvailableBackends: any;
 let loadBackendConfig: any;
+let listLocalModelArtifacts: any;
 
 async function ensureBackendFunctions(): Promise<boolean> {
   try {
@@ -21,6 +22,7 @@ async function ensureBackendFunctions(): Promise<boolean> {
     getBackendStatus = core.getBackendStatus;
     detectAvailableBackends = core.detectAvailableBackends;
     loadBackendConfig = core.loadBackendConfig;
+    listLocalModelArtifacts = core.listLocalModelArtifacts;
     return !!(getBackendStatus && detectAvailableBackends && loadBackendConfig);
   } catch {
     return false;
@@ -51,16 +53,27 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
         preferredLocalBackend: config.preferredLocalBackend || 'ollama',
         ollama: {
           endpoint: config.ollama.endpoint,
+          autoStart: config.ollama.autoStart,
           defaultModel: config.ollama.defaultModel,
         },
         vllm: {
           endpoint: config.vllm.endpoint,
+          autoStart: config.vllm.autoStart,
           model: config.vllm.model,
+          modelPath: config.vllm.modelPath,
+          loadFormat: config.vllm.loadFormat,
+          tokenizer: config.vllm.tokenizer,
+          servedModelName: config.vllm.servedModelName,
+          startupTimeoutMs: config.vllm.startupTimeoutMs,
           gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
           maxModelLen: config.vllm.maxModelLen,
+          maxTokens: config.vllm.maxTokens,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
           enableThinking: config.vllm.enableThinking,
+          frequencyPenalty: config.vllm.frequencyPenalty,
+          presencePenalty: config.vllm.presencePenalty,
+          repetitionPenalty: config.vllm.repetitionPenalty,
         },
         remote: config.remote ? {
           provider: config.remote.provider,
@@ -68,6 +81,7 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
           model: config.remote.model,
         } : null,
       },
+      sharedArtifacts: listLocalModelArtifacts ? listLocalModelArtifacts() : [],
     });
   } catch (error) {
     console.error('[llm-backend-status] GET failed:', error);

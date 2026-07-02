@@ -23,11 +23,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { storageClient, systemPaths, ROOT, audit, setActiveAdapter, recordSystemActivity } from '../../packages/core/src/index.js';
+import { storageClient, systemPaths, ROOT, audit, setActiveAdapter, recordSystemActivity } from '@metahuman/core';
 
 // Resolve tsx path (installed in node_modules/.bin)
 const TSX_PATH = path.join(ROOT, 'node_modules', '.bin', 'tsx');
-import type { ActiveAdapterInfo } from '../../packages/core/src/adapters.js';
+import type { ActiveAdapterInfo } from '@metahuman/core/adapters';
 
 export interface SleepConfig {
   enabled: boolean;

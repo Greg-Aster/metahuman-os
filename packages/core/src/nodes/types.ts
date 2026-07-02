@@ -15,6 +15,7 @@ export type NodeCategory =
   | 'input'
   | 'router'
   | 'context'
+  | 'environment'
   | 'operator'
   | 'chat'
   | 'model'
@@ -112,7 +113,7 @@ export interface NodeExecutionContext {
   sessionId?: string;
   userId?: string;
   userMessage?: string;
-  cognitiveMode?: 'dual' | 'agent' | 'emulation';
+  cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   conversationHistory?: any[];
   contextPackage?: any;
   contextInfo?: string;
@@ -200,6 +201,7 @@ export const categoryColors: Record<NodeCategory, { color: string; bgColor: stri
   input: { color: '#4ade80', bgColor: '#166534' },      // Green
   router: { color: '#fbbf24', bgColor: '#92400e' },     // Amber
   context: { color: '#60a5fa', bgColor: '#1e3a8a' },    // Blue
+  environment: { color: '#2dd4bf', bgColor: '#115e59' }, // Teal
   operator: { color: '#a78bfa', bgColor: '#5b21b6' },   // Purple
   chat: { color: '#f472b6', bgColor: '#9f1239' },       // Pink
   model: { color: '#fb923c', bgColor: '#9a3412' },      // Orange

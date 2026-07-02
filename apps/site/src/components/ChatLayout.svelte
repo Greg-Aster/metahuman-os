@@ -33,7 +33,7 @@
   $: leftSidebarStore.set(leftSidebarOpen);
 
   interface ModeDefinition {
-    id: 'dual' | 'agent' | 'emulation';
+    id: 'dual' | 'agent' | 'emulation' | 'environment';
     label: string;
     description: string;
     guidance: string[];
@@ -111,6 +111,12 @@
           icon: '🪄',
           color: '#fbbf24',
           glow: 'rgba(251, 191, 36, 0.55)',
+        };
+      case 'environment':
+        return {
+          icon: '🌐',
+          color: '#2dd4bf',
+          glow: 'rgba(45, 212, 191, 0.55)',
         };
       default:
         return defaultVisual;

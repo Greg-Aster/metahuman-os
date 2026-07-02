@@ -7,9 +7,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse } from '../types.js';
+import { successResponse, streamResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
+import { stopServer } from '../../tts/server-manager.js';
 
 /**
  * Check if an addon is actually installed
@@ -88,10 +90,10 @@ export async function handleToggleAddon(req: UnifiedRequest): Promise<UnifiedRes
   const { body } = req;
   const { addonId, enabled } = (body || {}) as { addonId?: string; enabled?: boolean };
 
-  if (!addonId) {
+  if (!addonId || typeof enabled !== 'boolean') {
     return {
       status: 400,
-      error: 'addonId is required',
+      error: 'Missing addonId or enabled',
     };
   }
 
@@ -114,16 +116,21 @@ export async function handleToggleAddon(req: UnifiedRequest): Promise<UnifiedRes
       };
     }
 
-    // Toggle or set enabled status
-    const newEnabled = enabled !== undefined ? enabled : !config.addons[addonId].enabled;
-    config.addons[addonId].enabled = newEnabled;
+    if (!config.addons[addonId].installed) {
+      return {
+        status: 400,
+        error: 'Addon not installed',
+      };
+    }
 
+    config.addons[addonId].enabled = enabled;
     fs.writeFileSync(addonsConfigPath, JSON.stringify(config, null, 2));
+    await toggleAddonConfiguration(addonId, enabled);
 
     return successResponse({
       success: true,
       addonId,
-      enabled: newEnabled,
+      enabled,
     });
   } catch (error) {
     console.error('[addons-handler] Toggle error:', error);
@@ -131,6 +138,261 @@ export async function handleToggleAddon(req: UnifiedRequest): Promise<UnifiedRes
       status: 500,
       error: String(error),
     };
+  }
+}
+
+async function toggleAddonConfiguration(addonId: string, enabled: boolean): Promise<void> {
+  const voiceConfigPath = path.join(systemPaths.etc, 'voice.json');
+  const ttsProviders = ['gpt-sovits', 'rvc', 'kokoro'];
+
+  if (!ttsProviders.includes(addonId) || !fs.existsSync(voiceConfigPath)) {
+    return;
+  }
+
+  const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
+  const providerMap: Record<string, string> = {
+    'gpt-sovits': 'sovits',
+    rvc: 'rvc',
+    kokoro: 'kokoro',
+  };
+
+  if (!enabled && voiceConfig.tts?.provider === providerMap[addonId]) {
+    voiceConfig.tts.provider = 'piper';
+    const tempVoicePath = `${voiceConfigPath}.tmp`;
+    fs.writeFileSync(tempVoicePath, JSON.stringify(voiceConfig, null, 2));
+    fs.renameSync(tempVoicePath, voiceConfigPath);
+
+    if (addonId === 'gpt-sovits') {
+      try {
+        await stopServer('gpt-sovits');
+      } catch (error) {
+        console.error('[addons-handler] Failed to stop SoVITS server:', error);
+      }
+    } else if (addonId === 'kokoro') {
+      try {
+        await stopServer('kokoro');
+      } catch (error) {
+        console.error('[addons-handler] Failed to stop Kokoro server:', error);
+      }
+    }
+  }
+}
+
+/**
+ * POST /api/addons/install - Install an addon and mark it installed on success
+ */
+export async function handleInstallAddon(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const { addonId } = (req.body || {}) as { addonId?: string };
+
+  if (!addonId) {
+    return { status: 400, error: 'Missing addonId' };
+  }
+
+  try {
+    const addonsConfigPath = path.join(systemPaths.etc, 'addons.json');
+    const config = JSON.parse(fs.readFileSync(addonsConfigPath, 'utf-8'));
+    const addon = config.addons[addonId];
+
+    if (!addon) {
+      return { status: 404, error: 'Addon not found' };
+    }
+
+    const result = await installAddon(addonId, addon);
+    if (!result.success) {
+      return { status: 500, error: result.error };
+    }
+
+    addon.installed = true;
+    fs.writeFileSync(addonsConfigPath, JSON.stringify(config, null, 2));
+
+    return successResponse({ success: true, message: result.message });
+  } catch (error) {
+    console.error('[addons-handler] Install error:', error);
+    return { status: 500, error: String(error) };
+  }
+}
+
+async function installAddon(addonId: string, addon: any): Promise<{ success: boolean; error?: string; message?: string }> {
+  const install = async (scriptName: string, args: string[], message: string) => {
+    const scriptPath = path.join(systemPaths.root, 'bin', scriptName);
+    if (!fs.existsSync(scriptPath)) {
+      return { success: false, error: scriptName.includes('rvc') ? 'RVC installation script not found' : 'Installation script not found' };
+    }
+    await runScriptWithArgs(scriptPath, args);
+    return { success: true, message };
+  };
+
+  try {
+    switch (addonId) {
+      case 'gpt-sovits': {
+        const result = await install('install-sovits.sh', [], 'GPT-SoVITS installed successfully');
+        if (!result.success) return result;
+        const pipPackages = addon.dependencies?.pip || [];
+        if (pipPackages.length > 0) {
+          await installPipPackages(pipPackages);
+        }
+        return result;
+      }
+      case 'rvc':
+        return await install('install-rvc.sh', [], 'RVC installed successfully');
+      case 'kokoro':
+        return await install('install-kokoro.sh', ['--yes'], 'Kokoro TTS installed successfully');
+      default:
+        return { success: false, error: 'Addon installation not implemented' };
+    }
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+function runScriptWithArgs(scriptPath: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('bash', [scriptPath, ...args], {
+      cwd: systemPaths.root,
+      stdio: 'pipe',
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', (data) => {
+      stdout += data.toString();
+      console.log('[Install Script]', data.toString().trim());
+    });
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+      console.error('[Install Script Error]', data.toString().trim());
+    });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Script failed with code ${code}: ${stderr || stdout}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+function installPipPackages(packages: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let pythonCmd = 'python3';
+    for (const cmd of ['python3', 'python']) {
+      const result = spawnSync(cmd, ['--version'], { stdio: 'ignore' });
+      if (result.status === 0) {
+        pythonCmd = cmd;
+        break;
+      }
+    }
+
+    const proc = spawn(pythonCmd, ['-m', 'pip', 'install', ...packages], {
+      cwd: systemPaths.root,
+      stdio: 'pipe',
+    });
+
+    let stderr = '';
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`pip install failed with code ${code}: ${stderr}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+/**
+ * GET /api/addons/install-stream?addonId=kokoro - Stream installer output
+ */
+export async function handleInstallAddonStream(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const addonId = req.query?.addonId;
+
+  if (!addonId) {
+    return { status: 400, error: 'Missing addonId parameter' };
+  }
+
+  const installer = getInstallScript(addonId);
+  if (!installer) {
+    return { status: 400, error: `Unsupported addon: ${addonId}` };
+  }
+
+  return streamResponse(streamInstaller(addonId, installer.scriptPath, installer.args));
+}
+
+function getInstallScript(addonId: string): { scriptPath: string; args: string[] } | null {
+  switch (addonId) {
+    case 'kokoro':
+      return { scriptPath: path.join(systemPaths.root, 'bin', 'install-kokoro.sh'), args: ['--yes'] };
+    case 'gpt-sovits':
+      return { scriptPath: path.join(systemPaths.root, 'bin', 'install-sovits.sh'), args: [] };
+    case 'rvc':
+      return { scriptPath: path.join(systemPaths.root, 'bin', 'install-rvc.sh'), args: [] };
+    default:
+      return null;
+  }
+}
+
+async function* streamInstaller(addonId: string, scriptPath: string, args: string[]): AsyncGenerator<string> {
+  const event = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+  yield event('start', { addonId, message: 'Installation started' });
+
+  const proc = spawn('bash', [scriptPath, ...args], {
+    cwd: systemPaths.root,
+    stdio: 'pipe',
+  });
+
+  const queue: string[] = [];
+  let done = false;
+  let wake: (() => void) | null = null;
+
+  const push = (chunk: string) => {
+    queue.push(chunk);
+    wake?.();
+    wake = null;
+  };
+
+  const pushLines = (level: 'info' | 'error', data: Buffer) => {
+    for (const line of data.toString().split('\n').filter((value) => value.trim())) {
+      if (level === 'info') {
+        console.log('[Install Stream]', line);
+      } else {
+        console.error('[Install Stream Error]', line);
+      }
+      push(event('log', { level, message: line }));
+    }
+  };
+
+  proc.stdout?.on('data', (data) => pushLines('info', data));
+  proc.stderr?.on('data', (data) => pushLines('error', data));
+  proc.on('close', (code) => {
+    if (code === 0) {
+      push(event('complete', { success: true, message: 'Installation completed successfully' }));
+    } else {
+      push(event('complete', { success: false, error: `Installation failed with exit code ${code}` }));
+    }
+    done = true;
+    wake?.();
+    wake = null;
+  });
+  proc.on('error', (error) => {
+    push(event('error', { message: error.message }));
+    done = true;
+    wake?.();
+    wake = null;
+  });
+
+  while (!done || queue.length > 0) {
+    if (queue.length === 0) {
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      continue;
+    }
+    yield queue.shift()!;
   }
 }
 

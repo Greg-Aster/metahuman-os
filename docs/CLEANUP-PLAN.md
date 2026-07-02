@@ -1,3 +1,16 @@
+# Deprecated Architecture Cleanup Plan
+
+This file describes an older cleanup pass and is retained for historical context only.
+
+The active cleanup contract is now:
+
+- `docs/technical/REFACTOR_BLUEPRINT.md`
+- `docs/technical/MAINTAINED_SURFACE.md`
+- `docs/technical/AUDIT_PROTOCOL.md`
+- `scripts/check-architecture.ts`
+
+---
+
 # MetaHuman OS Architecture Cleanup Plan
 
 **Created**: 2025-11-26

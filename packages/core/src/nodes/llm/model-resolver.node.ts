@@ -31,7 +31,8 @@ export const ModelResolverNode: NodeDefinition = defineNode({
 
       const registry = loadModelRegistry();
 
-      const fallbackId = registry.defaults?.fallback || 'default.fallback';
+      const defaults = registry.defaults as Record<string, string> | undefined;
+      const fallbackId = defaults?.fallback || 'default.fallback';
       const fallbackModel = registry.models?.[fallbackId];
 
       if (!fallbackModel?.model) {
@@ -55,7 +56,7 @@ export const ModelResolverNode: NodeDefinition = defineNode({
       if (globalSettings.useAdapter && globalSettings.activeAdapter) {
         const adapterInfo = typeof globalSettings.activeAdapter === 'string'
           ? globalSettings.activeAdapter
-          : globalSettings.activeAdapter.modelName;
+          : (globalSettings.activeAdapter as { modelName?: string }).modelName ?? fallbackModel.model;
         model = adapterInfo;
         usingLora = true;
       } else {

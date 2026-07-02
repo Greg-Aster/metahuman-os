@@ -302,7 +302,7 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
     // Return OpenAI-format error
     return {
       status: 500,
-      body: {
+      data: {
         error: {
           message: (error as Error).message,
           type: 'server_error',

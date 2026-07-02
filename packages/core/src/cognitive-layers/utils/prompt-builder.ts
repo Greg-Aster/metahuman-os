@@ -317,6 +317,13 @@ You are running in emulation mode with a frozen personality snapshot.
 Respond authentically but be aware this is a read-only session.
 No new memories will be formed from this interaction.`;
 
+    case 'environment':
+      return `# Mode: Environment
+
+You are connected to an external environment through the environment bridge.
+Use observations as embodied context. Prefer bounded semantic actions and
+plain-language responses that can be safely routed through an adapter.`;
+
     default:
       return null;
   }

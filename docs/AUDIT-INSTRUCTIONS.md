@@ -1,3 +1,13 @@
+# Deprecated Audit Instructions
+
+This file is retained for historical context only. Do not use it for new cleanup work.
+
+The active audit protocol is `docs/technical/AUDIT_PROTOCOL.md`. The active architecture contract is `docs/technical/REFACTOR_BLUEPRINT.md`.
+
+The older workflow below instructed agents to edit every file while auditing, add blanket logging, and commit per file. That is no longer the desired process. New audits must record findings first and convert them into scoped refactor tickets.
+
+---
+
 # INSTRUCTIONS FOR CLAUDE CODE: COMPREHENSIVE CODEBASE AUDIT
 
 **YOU ARE**: Claude Code, conducting a line-by-line audit of the MetaHuman OS codebase.

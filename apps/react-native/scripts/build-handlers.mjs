@@ -22,6 +22,7 @@ const RN_DIR = path.dirname(__dirname);
 // apps/react-native/ -> apps/ -> metahuman/ (two levels up, not three)
 const ROOT = path.resolve(RN_DIR, '../..');
 const CORE_DIR = path.join(ROOT, 'packages/core');
+const BRAIN_DIR = path.join(ROOT, 'brain');
 const OUTPUT_DIR = path.join(RN_DIR, 'nodejs-assets/nodejs-project/dist');
 
 // Ensure output directory exists
@@ -29,7 +30,7 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 console.log('[build-handlers] Building mobile handlers bundle for React Native...');
 console.log('[build-handlers] Target: Node.js 18 (native fetch, AbortController, fs/promises)');
-console.log('[build-handlers] Entry:', path.join(CORE_DIR, 'src/mobile-handlers/index.ts'));
+console.log('[build-handlers] Entry:', path.join(BRAIN_DIR, 'mobile-handlers.ts'));
 console.log('[build-handlers] Output:', path.join(OUTPUT_DIR, 'handlers.js'));
 
 /**
@@ -66,7 +67,7 @@ const importMetaUrlPlugin = {
 
 try {
   const result = await esbuild.build({
-    entryPoints: [path.join(CORE_DIR, 'src/mobile-handlers/index.ts')],
+    entryPoints: [path.join(BRAIN_DIR, 'mobile-handlers.ts')],
     bundle: true,
     platform: 'node',
     target: 'node18', // nodejs-mobile-react-native uses Node.js 18!

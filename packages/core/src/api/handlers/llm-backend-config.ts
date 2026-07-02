@@ -77,6 +77,7 @@ export async function handleSetLlmBackendConfig(req: UnifiedRequest): Promise<Un
     }
 
     saveBackendConfig(updates);
+
     const newConfig = loadBackendConfig(true);
 
     return successResponse({

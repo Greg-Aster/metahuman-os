@@ -18,12 +18,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { systemPaths, audit } from '../../packages/core/src/index.js';
-import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
-import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
-import { applySchemaBatch } from '../../packages/core/src/schema-manager.js';
-import type { FormattedSample } from '../../packages/core/src/schema-manager.js';
-import { getCurrentBaseModel, registerTrainingRun } from '../../packages/core/src/model-registry.js';
+import { systemPaths, audit } from '@metahuman/core';
+import { withUserContext, getUserContext } from '@metahuman/core/context';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
+import { applySchemaBatch } from '@metahuman/core/schema-manager';
+import type { FormattedSample } from '@metahuman/core/schema-manager';
+import { getCurrentBaseModel, registerTrainingRun } from '@metahuman/core/model-registry';
 import { storage } from '../services/storage-router.js';
 
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });

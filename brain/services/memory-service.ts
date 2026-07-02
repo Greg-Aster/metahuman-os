@@ -22,9 +22,9 @@ import {
   ENCRYPTED_EXTENSION,
   CHUNKED_EXTENSION,
   type EncryptedData,
-} from '../../packages/core/src/encryption.js';
-import { getProfileStorageConfig, type ProfileStorageConfig } from '../../packages/core/src/users.js';
-import { generateId, timestamp } from '../../packages/core/src/paths.js';
+} from '@metahuman/core/encryption';
+import { getProfileStorageConfig, type ProfileStorageConfig } from '@metahuman/core/users';
+import { generateId, timestamp } from '@metahuman/core/paths';
 
 /**
  * Memory operation request
@@ -252,7 +252,7 @@ async function readMemory(
   if (isEncrypted && encryptionKey) {
     if (filePath.endsWith(CHUNKED_EXTENSION)) {
       // Handle chunked encrypted files (large files)
-      const { decryptChunkedFile } = await import('../../packages/core/src/encryption.js');
+      const { decryptChunkedFile } = await import('@metahuman/core/encryption');
       const decryptedBuffer = await decryptChunkedFile(filePath, encryptionKey);
       content = decryptedBuffer.toString('utf8');
     } else {

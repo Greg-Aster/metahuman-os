@@ -11,10 +11,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { withUserContext, getUserContext } from '../../packages/core/src/context.js';
-import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
-import { audit } from '../../packages/core/src/audit.js';
-import { systemPaths } from '../../packages/core/src/paths.js';
+import { withUserContext, getUserContext } from '@metahuman/core/context';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
+import { audit } from '@metahuman/core/audit';
+import { systemPaths } from '@metahuman/core/paths';
 
 interface TrainingDataConfig {
   memoryTypes: {

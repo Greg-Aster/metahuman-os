@@ -23,10 +23,15 @@
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 export interface UnifiedUser {
+  /** Canonical user id. */
   userId: string;
+  /** Compatibility alias used by older core handlers during API consolidation. */
+  id?: string;
   username: string;
   role: 'owner' | 'standard' | 'guest';
   isAuthenticated: boolean;
+  /** Session id alias for handlers that need to echo policy context. */
+  sessionId?: string;
 }
 
 /**

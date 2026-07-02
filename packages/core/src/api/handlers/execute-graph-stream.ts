@@ -6,27 +6,13 @@
  */
 
 import type { ExecutionEvent } from '../../graph-executor.js';
-
-// Dynamic import for graph executor
-let executeGraph: any;
-let getGraphOutput: any;
-
-async function ensureGraphExecutor(): Promise<boolean> {
-  try {
-    const mod = await import('../../graph-executor.js');
-    executeGraph = mod.executeGraph;
-    getGraphOutput = mod.getGraphOutput;
-    return !!executeGraph;
-  } catch {
-    return false;
-  }
-}
+import { collectNodeOutputs, extractGraphOutput, namedSse, runGraph } from '../../graph-runtime.js';
 
 /**
  * Format SSE message
  */
 function formatSSE(event: string, data: any): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  return namedSse(event, data);
 }
 
 /**
@@ -49,12 +35,6 @@ export async function handleExecuteGraphStream(
   const startTime = Date.now();
 
   try {
-    const available = await ensureGraphExecutor();
-    if (!available) {
-      onEvent(formatSSE('error', { error: 'Graph executor not available' }));
-      return;
-    }
-
     if (!graph || !graph.nodes || !graph.edges) {
       onEvent(formatSSE('error', { error: 'Invalid graph structure' }));
       return;
@@ -106,27 +86,22 @@ export async function handleExecuteGraphStream(
     };
 
     // Execute the graph with streaming events - include username/userId for auth and memory access
-    const graphState = await executeGraph(graph, {
+    const graphState = await runGraph({ graph, context: {
       sessionId,
       userMessage,
       username,
       userId: username, // auth_check node expects userId
       environment: 'server',
-    }, eventHandler);
+    }, eventHandler });
 
     const durationMs = Date.now() - startTime;
 
     // Extract the final output
-    const output = getGraphOutput(graphState);
+    const output = extractGraphOutput(graphState);
     const response = output?.response || output?.output || null;
 
     // Build node outputs map for display nodes (output_viewer, etc.)
-    const nodeOutputs: Record<string, any> = {};
-    graphState.nodes.forEach((nodeState: any, nodeId: string) => {
-      if (nodeState.outputs) {
-        nodeOutputs[nodeId] = nodeState.outputs;
-      }
-    });
+    const nodeOutputs = collectNodeOutputs(graphState);
 
     // Send final completion event with response and node outputs
     onEvent(formatSSE('graph_complete', {

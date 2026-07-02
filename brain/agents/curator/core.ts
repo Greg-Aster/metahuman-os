@@ -20,7 +20,7 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   withUserContext,
-  executeGraph,
+  runGraph,
   validateSvelteFlowGraph,
   captureEvent,
   audit,
@@ -102,7 +102,7 @@ export async function runCuratorForUser(username: string): Promise<UserCuratorSt
       };
 
       console.log(`${LOG_PREFIX} Executing curator workflow graph...`);
-      const graphResult = await executeGraph(graph, graphContext);
+      const graphResult = await runGraph({ graph, context: graphContext });
 
       // Extract results from graph execution (node IDs are strings in Svelte Flow format)
       const curatorLLMNode = graphResult.nodes.get('4');

@@ -1,5 +1,10 @@
 # Migration Plan: persona_chat.ts Refactoring
 
+> Archived historical plan. Current graph/conversation flow refactor truth lives in
+> `docs/audits/conversation-graph-flow-refactor.md`. Do not use this document as
+> active implementation guidance; several names and legacy-toggle assumptions below
+> predate the current unified API/core graph runtime structure.
+
 **Status**: Phases 1-4 Complete
 **Created**: 2025-11-26
 **Updated**: 2025-11-27 (Implementation complete)

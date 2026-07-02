@@ -38,11 +38,13 @@ export function loadTrustCoupling(): TrustCouplingConfig {
         dual: 'supervised_auto',
         agent: 'suggest',
         emulation: 'observe',
+        environment: 'suggest',
       },
       description_text: {
         dual: 'Full cognitive mirroring with supervised autonomy',
         agent: 'Assistant mode with suggestion-based trust',
         emulation: 'Read-only demonstration mode with observe-only trust',
+        environment: 'Environment bridge mode with bounded semantic actions',
       },
     };
     fs.writeFileSync(COUPLING_CONFIG_PATH, JSON.stringify(fallback, null, 2), 'utf-8');
@@ -62,11 +64,13 @@ export function loadTrustCoupling(): TrustCouplingConfig {
         dual: 'supervised_auto',
         agent: 'suggest',
         emulation: 'observe',
+        environment: 'suggest',
       },
       description_text: {
         dual: 'Full cognitive mirroring with supervised autonomy',
         agent: 'Assistant mode with suggestion-based trust',
         emulation: 'Read-only demonstration mode with observe-only trust',
+        environment: 'Environment bridge mode with bounded semantic actions',
       },
     };
     fs.writeFileSync(COUPLING_CONFIG_PATH, JSON.stringify(fallback, null, 2), 'utf-8');
@@ -127,7 +131,7 @@ export function toggleCoupling(actor: string = 'system'): boolean {
  */
 export function getMappedTrustLevel(mode: CognitiveModeId): TrustLevel {
   const config = loadTrustCoupling();
-  return config.mappings[mode];
+  return config.mappings[mode] ?? 'suggest';
 }
 
 /**

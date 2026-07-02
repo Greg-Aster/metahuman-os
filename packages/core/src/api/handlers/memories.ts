@@ -115,7 +115,7 @@ export async function handleListMemories(req: UnifiedRequest): Promise<UnifiedRe
     }
   );
 
-  if (idsOnly && 'ids' in result) {
+  if (idsOnly && 'ids' in result && Array.isArray(result.ids)) {
     return successResponse({
       success: true,
       ids: result.ids,

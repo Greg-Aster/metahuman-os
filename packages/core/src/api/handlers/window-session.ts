@@ -9,14 +9,69 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import {
   createWindowSession,
-  validateWindowSession,
+  getWindowSession,
   sendWindowHeartbeat,
   closeWindowSession,
   listUserWindows,
-  hasMultipleWindows,
   getWindowStats,
   cleanupExpiredWindows,
 } from '../../window-session.js';
+
+function windowSummary(window: ReturnType<typeof listUserWindows>[number]) {
+  return {
+    windowId: window.windowId,
+    isActive: window.isActive,
+    lastActivity: window.lastActivity,
+    title: window.title,
+  };
+}
+
+function windowDetail(window: NonNullable<ReturnType<typeof getWindowSession>>) {
+  return {
+    windowId: window.windowId,
+    isActive: window.isActive,
+    lastActivity: window.lastActivity,
+    title: window.title,
+    url: window.metadata?.url,
+    viewState: window.metadata?.viewState,
+  };
+}
+
+function getWindowIdFromRequest(req: UnifiedRequest): string | undefined {
+  if (req.params?.windowId) return req.params.windowId;
+  if (req.params?.id && req.params.id !== 'heartbeat') return req.params.id;
+  if (req.query?.windowId) return req.query.windowId;
+
+  const segments = req.path.split('?')[0].split('/').filter(Boolean);
+  const sessionIndex = segments.indexOf('window-session');
+  if (sessionIndex >= 0) {
+    const windowId = segments[sessionIndex + 1];
+    if (windowId && !['stream', 'list', 'stats'].includes(windowId)) {
+      return decodeURIComponent(windowId);
+    }
+  }
+
+  return undefined;
+}
+
+function listCurrentUserWindows(user: UnifiedRequest['user']) {
+  const windows = new Map<string, ReturnType<typeof listUserWindows>[number]>();
+  for (const window of listUserWindows(user.userId)) {
+    windows.set(window.windowId, window);
+  }
+  for (const window of listUserWindows(user.username)) {
+    windows.set(window.windowId, window);
+  }
+  return [...windows.values()];
+}
+
+function verifyWindowForUser(windowId: string, user: UnifiedRequest['user']) {
+  const session = getWindowSession(windowId);
+  if (!session || (session.userId !== user.userId && session.userId !== user.username)) {
+    return null;
+  }
+  return session;
+}
 
 /**
  * POST /api/window-session - Create a new window session
@@ -40,13 +95,12 @@ export async function handleCreateWindowSession(req: UnifiedRequest): Promise<Un
       return { status: 400, error: 'Failed to create window session - parent session invalid' };
     }
 
-    // Check if user now has multiple windows
-    const multiWindow = hasMultipleWindows(user.username);
-    const windowCount = listUserWindows(user.username).length;
+    const windows = listCurrentUserWindows(user);
+    const multiWindow = windows.length > 1;
+    const windowCount = windows.length;
 
     return successResponse({
       windowId: session.windowId,
-      createdAt: session.createdAt,
       multiWindow,
       windowCount,
     });
@@ -57,41 +111,63 @@ export async function handleCreateWindowSession(req: UnifiedRequest): Promise<Un
 }
 
 /**
- * GET /api/window-session/:windowId - Validate a window session
+ * GET /api/window-session - List windows or validate query windowId
  */
-export async function handleValidateWindowSession(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, params } = req;
+export async function handleGetWindowSessionIndex(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const { user } = req;
 
   if (!user.isAuthenticated) {
     return { status: 401, error: 'Authentication required' };
   }
 
-  const windowId = params?.windowId;
+  try {
+    const windowId = req.query?.windowId;
+    if (windowId) {
+      const session = verifyWindowForUser(windowId, user);
+      if (!session) {
+        return { status: 404, error: 'Window session not found' };
+      }
+
+      return successResponse(windowSummary(session));
+    }
+
+    const windows = listCurrentUserWindows(user);
+    return successResponse({
+      windows: windows.map(windowSummary),
+      windowCount: windows.length,
+      multiWindow: windows.length > 1,
+    });
+  } catch (error) {
+    console.error('[window-session] GET error:', error);
+    return { status: 500, error: (error as Error).message };
+  }
+}
+
+/**
+ * GET /api/window-session/:windowId - Get/validate a window session
+ */
+export async function handleValidateWindowSession(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const { user } = req;
+
+  if (!user.isAuthenticated) {
+    return { status: 401, error: 'Authentication required' };
+  }
+
+  const windowId = getWindowIdFromRequest(req);
   if (!windowId) {
-    return { status: 400, error: 'Window ID required' };
+    return { status: 400, error: 'windowId required' };
   }
 
   try {
-    const session = validateWindowSession(windowId);
-
+    const session = verifyWindowForUser(windowId, user);
     if (!session) {
-      return { status: 404, error: 'Window session not found or expired' };
+      return { status: 404, error: 'Window session not found' };
     }
 
-    // Verify the window belongs to this user
-    if (session.userId !== user.username) {
-      return { status: 403, error: 'Window does not belong to user' };
-    }
-
-    return successResponse({
-      windowId: session.windowId,
-      isActive: session.isActive,
-      lastActivity: session.lastActivity,
-      metadata: session.metadata,
-    });
+    return successResponse(windowDetail(session));
   } catch (error) {
-    console.error('[window-session] Error validating window session:', error);
-    return { status: 500, error: 'Failed to validate window session' };
+    console.error('[window-session] GET error:', error);
+    return { status: 500, error: (error as Error).message };
   }
 }
 
@@ -99,31 +175,38 @@ export async function handleValidateWindowSession(req: UnifiedRequest): Promise<
  * POST /api/window-session/:windowId/heartbeat - Send window heartbeat
  */
 export async function handleWindowHeartbeat(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, params, body } = req;
+  const { user, body } = req;
 
   if (!user.isAuthenticated) {
     return { status: 401, error: 'Authentication required' };
   }
 
-  const windowId = params?.windowId;
+  const windowId = getWindowIdFromRequest(req);
   if (!windowId) {
-    return { status: 400, error: 'Window ID required' };
+    return { status: 400, error: 'windowId required' };
   }
 
   try {
+    const session = verifyWindowForUser(windowId, user);
+    if (!session) {
+      return { status: 404, error: 'Window session not found' };
+    }
+
     const success = sendWindowHeartbeat({
       windowId,
       timestamp: new Date().toISOString(),
       isActive: body?.isActive ?? true,
-      metadata: body?.metadata,
+      metadata: {
+        ...(body?.metadata || {}),
+        ...(body?.viewState !== undefined ? { viewState: body.viewState } : {}),
+      },
     });
 
     if (!success) {
       return { status: 404, error: 'Window session not found' };
     }
 
-    // Return current window state
-    const windows = listUserWindows(user.username);
+    const windows = listCurrentUserWindows(user);
     const multiWindow = windows.length > 1;
 
     return successResponse({
@@ -138,36 +221,49 @@ export async function handleWindowHeartbeat(req: UnifiedRequest): Promise<Unifie
       })),
     });
   } catch (error) {
-    console.error('[window-session] Error sending heartbeat:', error);
-    return { status: 500, error: 'Failed to send heartbeat' };
+    console.error('[window-session] PATCH error:', error);
+    return { status: 500, error: (error as Error).message };
   }
+}
+
+/**
+ * PATCH /api/window-session/:windowId - Update window activity
+ */
+export async function handlePatchWindowSession(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const response = await handleWindowHeartbeat(req);
+  if (response.status >= 400) {
+    return response;
+  }
+  return successResponse({ success: true });
 }
 
 /**
  * DELETE /api/window-session/:windowId - Close a window session
  */
 export async function handleCloseWindowSession(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, params } = req;
+  const { user, body } = req;
 
   if (!user.isAuthenticated) {
     return { status: 401, error: 'Authentication required' };
   }
 
-  const windowId = params?.windowId;
+  const windowId = getWindowIdFromRequest(req) || body?.windowId;
   if (!windowId) {
-    return { status: 400, error: 'Window ID required' };
+    return { status: 400, error: 'windowId required' };
   }
 
   try {
-    const success = closeWindowSession(windowId);
+    const session = verifyWindowForUser(windowId, user);
+    if (!session) {
+      return { status: 404, error: 'Window session not found' };
+    }
 
-    return successResponse({
-      success,
-      message: success ? 'Window session closed' : 'Window session not found',
-    });
+    closeWindowSession(windowId);
+
+    return successResponse({ success: true });
   } catch (error) {
-    console.error('[window-session] Error closing window session:', error);
-    return { status: 500, error: 'Failed to close window session' };
+    console.error('[window-session] DELETE error:', error);
+    return { status: 500, error: (error as Error).message };
   }
 }
 
@@ -182,7 +278,7 @@ export async function handleListWindows(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   try {
-    const windows = listUserWindows(user.username);
+    const windows = listCurrentUserWindows(user);
 
     return successResponse({
       windows: windows.map(w => ({
@@ -195,6 +291,8 @@ export async function handleListWindows(req: UnifiedRequest): Promise<UnifiedRes
       })),
       count: windows.length,
       hasMultiple: windows.length > 1,
+      windowCount: windows.length,
+      multiWindow: windows.length > 1,
     });
   } catch (error) {
     console.error('[window-session] Error listing windows:', error);

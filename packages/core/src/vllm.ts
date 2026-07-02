@@ -11,8 +11,9 @@
  * - Requires CUDA and more VRAM
  */
 
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
@@ -54,6 +55,16 @@ export interface VLLMConfig {
   endpoint: string;
   /** HuggingFace model ID to serve */
   model: string;
+  /** Optional explicit local model file path. */
+  modelPath?: string;
+  /** vLLM load format (auto, gguf, safetensors, etc.). */
+  loadFormat?: string;
+  /** Optional tokenizer repo or local tokenizer path. Useful for GGUF files. */
+  tokenizer?: string;
+  /** Public model name exposed by the OpenAI-compatible API. */
+  servedModelName?: string;
+  /** How long to wait for vLLM to bind before treating startup as failed. */
+  startupTimeoutMs?: number;
   /** GPU memory utilization (0.0-1.0, default: 0.9). Set to 0 or 'auto' for dynamic detection. */
   gpuMemoryUtilization: number;
   /** Maximum model context length */
@@ -106,6 +117,110 @@ export interface VLLMChatResponse {
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+// ============================================================================
+// Hugging Face Cache Checks
+// ============================================================================
+
+function getHuggingFaceHubCache(): string {
+  if (process.env.HF_HUB_CACHE) {
+    return process.env.HF_HUB_CACHE;
+  }
+  if (process.env.HF_HOME) {
+    return path.join(process.env.HF_HOME, 'hub');
+  }
+  return path.join(os.homedir(), '.cache', 'huggingface', 'hub');
+}
+
+function getHuggingFaceModelCacheDir(model: string): string {
+  return path.join(getHuggingFaceHubCache(), `models--${model.replace(/\//g, '--')}`);
+}
+
+function getCachedSafetensorsIndex(model: string): string | null {
+  const modelCacheDir = getHuggingFaceModelCacheDir(model);
+  const refsMain = path.join(modelCacheDir, 'refs', 'main');
+  const snapshotRoot = path.join(modelCacheDir, 'snapshots');
+
+  const candidates: string[] = [];
+  try {
+    if (fs.existsSync(refsMain)) {
+      const revision = fs.readFileSync(refsMain, 'utf-8').trim();
+      if (revision) {
+        candidates.push(path.join(snapshotRoot, revision, 'model.safetensors.index.json'));
+      }
+    }
+
+    if (fs.existsSync(snapshotRoot)) {
+      for (const entry of fs.readdirSync(snapshotRoot)) {
+        candidates.push(path.join(snapshotRoot, entry, 'model.safetensors.index.json'));
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+}
+
+function getFilesystemFileSizeBits(dir: string): number | null {
+  try {
+    const existingDir = fs.existsSync(dir) ? dir : path.dirname(dir);
+    const output = execFileSync('getconf', ['FILESIZEBITS', existingDir], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const bits = Number.parseInt(output, 10);
+    return Number.isFinite(bits) ? bits : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatGB(bytes: number): string {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
+}
+
+function checkModelCacheFileSizeSupport(model: string): string | null {
+  const indexPath = getCachedSafetensorsIndex(model);
+  if (!indexPath) {
+    return null;
+  }
+
+  try {
+    const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8')) as {
+      metadata?: { total_size?: number };
+      weight_map?: Record<string, string>;
+    };
+    const totalSize = index.metadata?.total_size;
+    const shards = new Set(Object.values(index.weight_map ?? {}));
+    if (!totalSize || shards.size === 0) {
+      return null;
+    }
+
+    const fileSizeBits = getFilesystemFileSizeBits(indexPath);
+    if (!fileSizeBits || fileSizeBits > 32) {
+      return null;
+    }
+
+    // FILESIZEBITS=32 is not safe for multi-GB Hugging Face shards. Use signed
+    // 32-bit as the conservative limit; eCryptfs commonly fails around here.
+    const conservativeMaxFileSize = 2 ** (fileSizeBits - 1);
+    const estimatedShardSize = Math.ceil(totalSize / shards.size);
+    if (estimatedShardSize <= conservativeMaxFileSize) {
+      return null;
+    }
+
+    const hubCache = getHuggingFaceHubCache();
+    return [
+      `Hugging Face cache filesystem cannot hold ${model} weight shards.`,
+      `Cache: ${hubCache}`,
+      `Filesystem FILESIZEBITS=${fileSizeBits}; estimated shard size ${formatGB(estimatedShardSize)} across ${shards.size} shard(s).`,
+      'Set HF_HOME or HF_HUB_CACHE to a non-eCryptfs filesystem with enough free space, or use a model whose shards fit this filesystem.',
+    ].join(' ');
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -341,16 +456,25 @@ export class VLLMClient {
    */
   async startServer(config: VLLMConfig): Promise<{ pid: number; success: boolean; error?: string }> {
     console.log(`${LOG_PREFIX} ========== startServer HIT ==========`);
-    console.log(`${LOG_PREFIX} Input: model=${config.model}, endpoint=${config.endpoint}, gpuUtil=${config.gpuMemoryUtilization}`);
+    const effectiveModel = config.modelPath || config.model;
+    const effectiveLoadFormat = config.loadFormat;
+    const servedModelName = config.servedModelName || config.model;
+    console.log(`${LOG_PREFIX} Input: model=${effectiveModel}, endpoint=${config.endpoint}, gpuUtil=${config.gpuMemoryUtilization}`);
     
-    // STEP 1: Clean up any zombie vLLM processes first
-    console.log(`${LOG_PREFIX} Cleaning up any existing processes...`);
-    await this.cleanupZombieProcesses();
+    const cacheError = checkModelCacheFileSizeSupport(effectiveModel);
+    if (cacheError) {
+      return {
+        pid: 0,
+        success: false,
+        error: cacheError,
+      };
+    }
 
-    // STEP 2: Check if already running with same model
+    // STEP 1: Reuse an already healthy server before any cleanup. This avoids
+    // killing a working vLLM instance when duplicate startup paths call start.
     if (await this.isRunning()) {
       const loadedModel = await this.getLoadedModel();
-      if (loadedModel === config.model) {
+      if (loadedModel === servedModelName || loadedModel === effectiveModel) {
         console.log(`${LOG_PREFIX} Server already running with requested model`);
         return { pid: this.serverProcess?.pid || 0, success: true };
       }
@@ -358,6 +482,10 @@ export class VLLMClient {
       console.log(`${LOG_PREFIX} Stopping existing server (different model)...`);
       await this.stopServer();
     }
+
+    // STEP 2: Clean up any zombie vLLM processes before launching a new one.
+    console.log(`${LOG_PREFIX} Cleaning up any existing processes...`);
+    await this.cleanupZombieProcesses();
 
     // STEP 2.5: Auto-detect optimal GPU utilization if enabled
     let effectiveUtilization = config.gpuMemoryUtilization || 0.9;
@@ -384,11 +512,23 @@ export class VLLMClient {
     // Build command arguments
     const args = [
       '-m', 'vllm.entrypoints.openai.api_server',
-      '--model', config.model,
+      '--model', effectiveModel,
       '--host', '0.0.0.0',
       '--port', new URL(config.endpoint).port || '8000',
       '--gpu-memory-utilization', String(effectiveUtilization),
     ];
+
+    if (effectiveLoadFormat) {
+      args.push('--load-format', effectiveLoadFormat);
+    }
+
+    if (config.tokenizer) {
+      args.push('--tokenizer', config.tokenizer);
+    }
+
+    if (config.servedModelName) {
+      args.push('--served-model-name', config.servedModelName);
+    }
 
     if (config.maxModelLen) {
       args.push('--max-model-len', String(config.maxModelLen));
@@ -421,21 +561,26 @@ export class VLLMClient {
 
     // LoRA adapters - load multiple adapters at startup
     // vLLM routes requests to correct adapter based on model parameter
-    if (config.loraModules && config.loraModules.length > 0) {
+    const loraModules = effectiveLoadFormat === 'gguf' ? [] : config.loraModules;
+    if (effectiveLoadFormat === 'gguf' && config.loraModules && config.loraModules.length > 0) {
+      console.warn(`${LOG_PREFIX} Skipping ${config.loraModules.length} LoRA adapter(s): GGUF startup path does not load PEFT adapters`);
+    }
+    if (loraModules && loraModules.length > 0) {
       // --enable-lora is REQUIRED for vLLM to support LoRA at all
       args.push('--enable-lora');
       // Each LoRA module must be a separate argument (vLLM argparse splits on '=')
-      args.push('--lora-modules', ...config.loraModules.map(l => `${l.name}=${l.path}`));
+      args.push('--lora-modules', ...loraModules.map(l => `${l.name}=${l.path}`));
       args.push('--max-lora-rank', String(config.maxLoraRank ?? 64));
-      console.log(`${LOG_PREFIX} Loading ${config.loraModules.length} LoRA adapter(s): ${config.loraModules.map(l => l.name).join(', ')}`);
+      console.log(`${LOG_PREFIX} Loading ${loraModules.length} LoRA adapter(s): ${loraModules.map(l => l.name).join(', ')}`);
     }
 
     // Spawn vLLM server process
     return new Promise((resolve) => {
       try {
         const pythonPath = getVLLMPython();
-        console.log(`${LOG_PREFIX} Starting server with model: ${config.model}`);
-        console.log(`${LOG_PREFIX} Config: maxModelLen=${config.maxModelLen}, enforceEager=${config.enforceEager}, gpuUtil=${effectiveUtilization}`);
+        console.log(`${LOG_PREFIX} Starting server with model: ${effectiveModel}`);
+        const startupTimeoutMs = config.startupTimeoutMs ?? 120000;
+        console.log(`${LOG_PREFIX} Config: maxModelLen=${config.maxModelLen}, enforceEager=${config.enforceEager}, gpuUtil=${effectiveUtilization}, startupTimeoutMs=${startupTimeoutMs}`);
         console.log(`${LOG_PREFIX} Full args: ${args.join(' ')}`);
         console.log(`${LOG_PREFIX} Using Python: ${pythonPath}`);
 
@@ -445,7 +590,7 @@ export class VLLMClient {
         const logFile = path.join(logDir, 'vllm-server.log');
         const logStream = fs.createWriteStream(logFile, { flags: 'w' });
         logStream.write(`=== vLLM Server Log - ${new Date().toISOString()} ===\n`);
-        logStream.write(`Model: ${config.model}\n`);
+        logStream.write(`Model: ${effectiveModel}\n`);
         logStream.write(`Python: ${pythonPath}\n`);
         logStream.write(`Args: ${args.join(' ')}\n`);
         logStream.write(`=== Output ===\n\n`);
@@ -479,7 +624,7 @@ export class VLLMClient {
           }
         });
 
-        this.currentModel = config.model;
+        this.currentModel = servedModelName;
 
         // Save PID for later management
         const pidFile = path.join(ROOT, 'logs', 'run', 'vllm.pid');
@@ -530,28 +675,30 @@ export class VLLMClient {
         });
 
         // Wait for server to be ready
-        this.waitForReady(config.endpoint, 120000)
+        const startupProcess = this.serverProcess;
+        this.waitForReady(config.endpoint, startupTimeoutMs, startupProcess)
           .then(() => {
             audit({
               level: 'info',
               category: 'system',
               event: 'vllm_started',
               actor: 'system',
-              details: { model: config.model, pid: this.serverProcess?.pid },
+              details: { model: servedModelName, pid: this.serverProcess?.pid },
             });
 
             // Publish server started event to event bus
             eventBus.emit('vllm', EventTypes.VLLM_SERVER_STARTED, {
-              model: config.model,
+              model: servedModelName,
               pid: this.serverProcess?.pid,
               gpuMemoryUtilization: effectiveUtilization,
               maxModelLen: config.maxModelLen,
-              loraModules: config.loraModules?.map(l => l.name),
+              loraModules: loraModules?.map(l => l.name),
             });
 
             resolve({ pid: this.serverProcess?.pid || 0, success: true });
           })
-          .catch((error) => {
+          .catch(async (error) => {
+            await this.stopServer();
             resolve({ pid: 0, success: false, error: error.message });
           });
 
@@ -624,7 +771,7 @@ export class VLLMClient {
   /**
    * Wait for server to become ready
    */
-  private async waitForReady(endpoint: string, timeoutMs: number): Promise<void> {
+  private async waitForReady(endpoint: string, timeoutMs: number, startupProcess?: ChildProcess | null): Promise<void> {
     const normalizedEndpoint = endpoint.replace(/\/$/, '');
     const start = Date.now();
     let lastError: unknown = null;
@@ -633,9 +780,15 @@ export class VLLMClient {
 
     while (Date.now() - start < timeoutMs) {
       // If process died during startup, fail fast with actionable context.
-      if (this.serverProcess && this.serverProcess.exitCode !== null) {
+      const observedProcess = startupProcess || this.serverProcess;
+      if (observedProcess?.exitCode !== null && observedProcess?.exitCode !== undefined) {
         throw new Error(
-          `vLLM process exited during startup (code ${this.serverProcess.exitCode}). Check logs/run/vllm-server.log`
+          `vLLM process exited during startup (code ${observedProcess.exitCode}). Check logs/run/vllm-server.log`
+        );
+      }
+      if (observedProcess?.signalCode) {
+        throw new Error(
+          `vLLM process exited during startup (signal ${observedProcess.signalCode}). Check logs/run/vllm-server.log`
         );
       }
 

@@ -70,7 +70,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
       const result: CaptureResult = captureEventWithDetails(content, {
         type: 'conversation',
         metadata: {
-          cognitiveMode: context.cognitiveMode as 'dual' | 'agent' | 'emulation',
+          cognitiveMode: context.cognitiveMode as 'dual' | 'agent' | 'emulation' | 'environment',
           sessionId: context.sessionId,
           userId: context.userId,
         },

@@ -50,8 +50,8 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   description: 'Routes request to appropriate model',
 
   execute: async (inputs, context, properties) => {
-    const messages = inputs[0] || [];
-    const role = inputs[1] || properties?.role || 'persona';
+    const messages = inputs.messages || inputs[0] || [];
+    const role = inputs.role || inputs[1] || properties?.role || 'persona';
     const username = context.userId || context.username;
 
     try {

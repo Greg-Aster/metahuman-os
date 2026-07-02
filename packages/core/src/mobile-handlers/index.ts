@@ -31,8 +31,6 @@ export {
   registerMobileAgents,
   initializeMobileAgents,
   stopMobileAgents,
-  runOrganizer,
-  runIngestor,
 } from './mobile-agents.js';
 
 // Local model service (Transformers.js) lifecycle management

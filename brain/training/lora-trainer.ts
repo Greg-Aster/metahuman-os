@@ -6,8 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { ROOT, audit, ProgressTracker, getProfilePaths } from '../../packages/core/src/index.js';
-import { getActiveBackend } from '../../packages/core/src/llm-backend.js';
+import { ROOT, audit, ProgressTracker, getProfilePaths } from '@metahuman/core';
+import { getActiveBackend } from '@metahuman/core/llm-backend';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
@@ -16,7 +16,7 @@ import {
   uploadDirectoryToS3,
   uploadFileToS3,
   type S3Config,
-} from '../../packages/core/src/s3-upload.js';
+} from '@metahuman/core/s3-upload';
 
 // Load environment variables from .env file
 dotenv.config({ path: path.join(ROOT, '.env') });

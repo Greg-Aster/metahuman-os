@@ -1,3 +1,11 @@
+# Deprecated Audit Runner
+
+This file is retained for historical context only. Do not use it for new cleanup work.
+
+Use `docs/technical/AUDIT_PROTOCOL.md` for the maintained source audit workflow, and `pnpm check:architecture` for fast guardrails.
+
+---
+
 # How to Run Comprehensive Codebase Audit with Claude Code
 
 This system allows you to run multiple Claude Code instances in parallel to audit your entire codebase.

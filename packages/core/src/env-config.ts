@@ -54,7 +54,9 @@ export function getSystemTriggers(): SystemTriggers {
  *
  * Returns array of mode IDs that are currently allowed.
  */
-export function getAllowedCognitiveModes(): ('dual' | 'agent' | 'emulation')[] {
+export type ConfigurableCognitiveMode = 'dual' | 'agent' | 'emulation' | 'environment';
+
+export function getAllowedCognitiveModes(): ConfigurableCognitiveMode[] {
   const triggers = getSystemTriggers();
 
   // High security: only emulation mode
@@ -64,17 +66,17 @@ export function getAllowedCognitiveModes(): ('dual' | 'agent' | 'emulation')[] {
 
   // Wetware deceased: agent and emulation only (no dual consciousness)
   if (triggers.wetwareDeceased) {
-    return ['agent', 'emulation'];
+    return ['agent', 'emulation', 'environment'];
   }
 
   // Normal: all modes available
-  return ['dual', 'agent', 'emulation'];
+  return ['dual', 'agent', 'emulation', 'environment'];
 }
 
 /**
  * Check if a specific cognitive mode is allowed
  */
-export function isModeAllowed(mode: 'dual' | 'agent' | 'emulation'): boolean {
+export function isModeAllowed(mode: ConfigurableCognitiveMode): boolean {
   return getAllowedCognitiveModes().includes(mode);
 }
 
@@ -82,7 +84,7 @@ export function isModeAllowed(mode: 'dual' | 'agent' | 'emulation'): boolean {
  * Get reason why a mode is disabled (for UI tooltips)
  */
 export function getModeDisabledReason(
-  mode: 'dual' | 'agent' | 'emulation'
+  mode: ConfigurableCognitiveMode
 ): string | null {
   if (isModeAllowed(mode)) {
     return null;
@@ -106,16 +108,17 @@ export function getModeDisabledReason(
  */
 export function getSystemStatus(): {
   triggers: SystemTriggers;
-  allowedModes: ('dual' | 'agent' | 'emulation')[];
-  disabledModes: ('dual' | 'agent' | 'emulation')[];
+  allowedModes: ConfigurableCognitiveMode[];
+  disabledModes: ConfigurableCognitiveMode[];
   status: 'normal' | 'wetware_deceased' | 'high_security';
 } {
   const triggers = getSystemTriggers();
   const allowedModes = getAllowedCognitiveModes();
-  const allModes: ('dual' | 'agent' | 'emulation')[] = [
+  const allModes: ConfigurableCognitiveMode[] = [
     'dual',
     'agent',
     'emulation',
+    'environment',
   ];
   const disabledModes = allModes.filter((mode) => !allowedModes.includes(mode));
 

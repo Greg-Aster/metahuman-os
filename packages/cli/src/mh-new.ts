@@ -24,6 +24,7 @@ import {
   ollama,
   vllm,
   loadBackendConfig,
+  buildVLLMStartConfig,
   saveBackendConfig,
   getBackendStatus,
   detectAvailableBackends,
@@ -899,18 +900,7 @@ Examples:
         console.log(`Starting vLLM server with model: ${model}...`);
         console.log(`  GPU memory utilization: ${gpuUtil}`);
 
-        const result = await vllm.startServer({
-          endpoint: config.vllm.endpoint,
-          model,
-          gpuMemoryUtilization: gpuUtil,
-          maxModelLen: config.vllm.maxModelLen,
-          tensorParallelSize: config.vllm.tensorParallelSize,
-          dtype: config.vllm.dtype,
-          quantization: config.vllm.quantization,
-          enforceEager: config.vllm.enforceEager,
-          autoUtilization: config.vllm.autoUtilization,
-          enableThinking: config.vllm.enableThinking,
-        });
+        const result = await vllm.startServer(buildVLLMStartConfig(config, model, gpuUtil));
 
         if (result.success) {
           console.log(`✅ vLLM server started (PID: ${result.pid})`);
@@ -935,18 +925,7 @@ Examples:
         console.log('Restarting vLLM server...');
         await vllm.stopServer();
 
-        const result = await vllm.startServer({
-          endpoint: config.vllm.endpoint,
-          model: config.vllm.model,
-          gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
-          maxModelLen: config.vllm.maxModelLen,
-          tensorParallelSize: config.vllm.tensorParallelSize,
-          dtype: config.vllm.dtype,
-          quantization: config.vllm.quantization,
-          enforceEager: config.vllm.enforceEager,
-          autoUtilization: config.vllm.autoUtilization,
-          enableThinking: config.vllm.enableThinking,
-        });
+        const result = await vllm.startServer(buildVLLMStartConfig(config));
 
         if (result.success) {
           console.log(`✅ vLLM server restarted (PID: ${result.pid})`);

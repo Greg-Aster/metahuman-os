@@ -32,6 +32,9 @@ import * as routingNodes from './routing/index.js';
 // Context nodes
 import * as contextNodes from './context/index.js';
 
+// Environment interface nodes
+import * as environmentNodes from './environment/index.js';
+
 // LLM nodes
 import * as llmNodes from './llm/index.js';
 
@@ -110,6 +113,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   outputNodes,
   routingNodes,
   contextNodes,
+  environmentNodes,
   llmNodes,
   controlFlowNodes,
   operatorNodes,

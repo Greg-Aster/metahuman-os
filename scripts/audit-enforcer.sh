@@ -1,4 +1,7 @@
 #!/bin/bash
+echo "Deprecated audit workflow. Use docs/technical/AUDIT_PROTOCOL.md, pnpm audit:inventory, and pnpm check:architecture instead."
+exit 1
+
 # Audit Enforcer - Checks that Claude agents are following the rules
 # Run this periodically to verify audit quality
 

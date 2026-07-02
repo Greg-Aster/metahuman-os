@@ -314,6 +314,14 @@ export class MetaCognitionLayer implements CognitiveLayer<MetaCognitionInput, Me
         alignmentThreshold: 0.5,
         consistencyThreshold: 0.5,
         safetyThreshold: 0.7
+      },
+      environment: {
+        validationLevel: 'safety-only',
+        refineResponses: false,
+        allowUnsafe: false,
+        alignmentThreshold: 0.6,
+        consistencyThreshold: 0.6,
+        safetyThreshold: 0.85
       }
     };
 

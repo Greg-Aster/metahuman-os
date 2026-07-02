@@ -22,6 +22,73 @@ import {
   loadConfig
 } from './config.js';
 
+function getOllamaModelsDir(): string {
+  return process.env.OLLAMA_MODELS || '/usr/share/ollama/.ollama/models';
+}
+
+function blobPathForDigest(modelsDir: string, digest: string): string {
+  return path.join(modelsDir, 'blobs', digest.replace(':', '-'));
+}
+
+function resolveOllamaGGUFArtifact(modelId: string): { modelPath: string; contextLength: number } | null {
+  const modelsDir = getOllamaModelsDir();
+  const manifestsRoot = path.join(modelsDir, 'manifests');
+  if (!fs.existsSync(manifestsRoot)) {
+    return null;
+  }
+
+  const candidates = new Set([
+    modelId,
+    modelId.includes(':') ? modelId : `${modelId}:latest`,
+  ]);
+  const stack = [manifestsRoot];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+        continue;
+      }
+
+      const relative = path.relative(manifestsRoot, entryPath);
+      const parts = relative.split(path.sep);
+      const libraryIndex = parts.indexOf('library');
+      const nameParts = libraryIndex >= 0 ? parts.slice(libraryIndex + 1) : parts;
+      const tag = nameParts.pop() || 'latest';
+      const name = nameParts.join('/');
+      const displayName = `${name}:${tag}`;
+      if (!candidates.has(displayName) && !candidates.has(name)) {
+        continue;
+      }
+
+      try {
+        const manifest = JSON.parse(fs.readFileSync(entryPath, 'utf-8')) as {
+          layers?: Array<{ mediaType?: string; digest?: string }>;
+        };
+        const modelLayer = manifest.layers?.find(layer => layer.mediaType === 'application/vnd.ollama.image.model');
+        if (!modelLayer?.digest) {
+          return null;
+        }
+        const modelPath = blobPathForDigest(modelsDir, modelLayer.digest);
+        return fs.existsSync(modelPath) ? { modelPath, contextLength: 4096 } : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface DownloadProgress {
   model: string;
   type: 'embeddings' | 'llm';
@@ -398,7 +465,8 @@ export class ModelManager extends EventEmitter {
    */
   async loadGenerator(modelId: string): Promise<void> {
     const config = LLM_MODELS[modelId];
-    if (!config) {
+    const sharedArtifact = config ? null : resolveOllamaGGUFArtifact(modelId);
+    if (!config && !sharedArtifact) {
       throw new Error(`Unknown LLM model: ${modelId}. Available: ${Object.keys(LLM_MODELS).join(', ')}`);
     }
 
@@ -416,13 +484,13 @@ export class ModelManager extends EventEmitter {
     }
 
     this.loading.add(loadKey);
-    const modelPath = getModelPath(this.modelsDir, config.filename);
+    const modelPath = sharedArtifact?.modelPath || getModelPath(this.modelsDir, config!.filename);
 
-    console.log(`[model-manager] Loading LLM model: ${modelId} (${config.filename})`);
+    console.log(`[model-manager] Loading LLM model: ${modelId} (${sharedArtifact ? 'shared Ollama GGUF' : config!.filename})`);
 
     try {
       // Download if not present
-      if (!isModelDownloaded(this.modelsDir, config.filename)) {
+      if (!sharedArtifact && !isModelDownloaded(this.modelsDir, config!.filename)) {
         console.log(`[model-manager] Model not found locally, downloading...`);
         await this.downloadModel(modelId, 'llm');
       }
@@ -451,11 +519,11 @@ export class ModelManager extends EventEmitter {
 
       // Create context for generation
       this.llmContext = await this.llmModel.createContext({
-        contextSize: Math.min(config.contextLength, 4096)  // Limit context for memory
+        contextSize: Math.min(sharedArtifact?.contextLength || config!.contextLength, 4096)  // Limit context for memory
       });
 
       this.currentLLMModel = modelId;
-      console.log(`[model-manager] LLM model loaded: ${modelId} (context: ${config.contextLength})`);
+      console.log(`[model-manager] LLM model loaded: ${modelId} (context: ${sharedArtifact?.contextLength || config!.contextLength})`);
 
       this.emit('model-loaded', { type: 'llm', model: modelId });
     } catch (error) {

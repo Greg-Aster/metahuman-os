@@ -3,19 +3,22 @@
   "ollama": {
     "endpoint": "http://localhost:11434",
     "autoStart": false,
-    "defaultModel": "qwen3:14b"
+    "defaultModel": "greggles-2025-12-04:latest"
   },
   "vllm": {
     "endpoint": "http://localhost:8000",
-    "autoStart": false,
-    "model": "Qwen/Qwen3-14B-AWQ",
-    "gpuMemoryUtilization": 0.85,
+    "autoStart": true,
+    "model": "greggles-2025-12-04:latest",
+    "loadFormat": "gguf",
+    "tokenizer": "/home/greggles/.cache/huggingface/hub/models--Qwen--Qwen3-14B-AWQ/snapshots/31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+    "gpuMemoryUtilization": 0.75,
     "maxModelLen": 4096,
     "tensorParallelSize": 1,
     "dtype": "auto",
-    "quantization": "awq",
+    "quantization": null,
     "enforceEager": true,
     "autoUtilization": false,
+    "startupTimeoutMs": 240000,
     "maxTokens": 2048,
     "enableThinking": false,
     "frequencyPenalty": 0.3,
@@ -36,6 +39,7 @@
       "preloadAtStartup": false
     }
   },
+  "preferredLocalBackend": "vllm",
   "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",
   "description": "LLM backend configuration - controls which local inference engine is used",

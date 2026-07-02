@@ -16,6 +16,7 @@
   import BaseNode from './BaseNode.svelte';
   import NoteNode from './NoteNode.svelte';
   import {
+    loadSchemas,
     convertLiteGraphToSvelteFlow,
     convertSvelteFlowToExecutor,
     type SvelteFlowGraph,
@@ -50,6 +51,7 @@
     outputNode: BaseNode,
     routerNode: BaseNode,
     contextNode: BaseNode,
+    environmentNode: BaseNode,
     operatorNode: BaseNode,
     llmNode: BaseNode,
     skillNode: BaseNode,
@@ -65,7 +67,6 @@
   };
 
   // Load template when cognitive mode changes
-  // Schemas are loaded statically at module import - no async needed
   $effect(() => {
     if (cognitiveMode) {
       loadTemplateForMode(cognitiveMode);
@@ -73,8 +74,6 @@
   });
 
   onMount(() => {
-    // Schemas already loaded statically via template-converter import
-    // Just handle the case where no cognitive mode is set
     if (!cognitiveMode) {
       isLoading = false;
     }
@@ -99,6 +98,8 @@
       if (!data.graph) {
         throw new Error('Invalid template response');
       }
+
+      await loadSchemas();
 
       // Convert from LiteGraph format to Svelte Flow format
       const sfGraph = convertLiteGraphToSvelteFlow(data.graph);
@@ -224,7 +225,7 @@
       version: '1.0',
       name: graphName,
       description: graphDescription,
-      cognitiveMode: cognitiveMode as 'dual' | 'agent' | 'emulation' | undefined,
+      cognitiveMode: cognitiveMode as 'dual' | 'agent' | 'emulation' | 'environment' | undefined,
       nodes,
       edges,
     };

@@ -13,7 +13,8 @@ import { getMemoryMetrics } from '../../memory-metrics-cache.js';
  * GET /api/memory-metrics - Get memory coverage metrics
  */
 export async function handleGetMemoryMetrics(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, query } = req;
+  const { user } = req;
+  const query = req.query ?? {};
 
   if (!user.isAuthenticated) {
     return { status: 401, error: 'Authentication required' };

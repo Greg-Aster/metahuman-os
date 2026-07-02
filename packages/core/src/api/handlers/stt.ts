@@ -9,7 +9,9 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 
 // Dynamic imports
-let transcribeAudio: ((buf: Buffer, format: string) => Promise<string>) | null = null;
+type AudioFormat = 'webm' | 'wav' | 'mp3';
+
+let transcribeAudio: ((buf: Buffer, format: AudioFormat) => Promise<string>) | null = null;
 let saveVoiceSample: ((buf: Buffer, transcript: string, duration: number, quality: number, format: string) => void) | null = null;
 
 async function ensureImports(): Promise<boolean> {
@@ -18,7 +20,7 @@ async function ensureImports(): Promise<boolean> {
   try {
     const sttModule = await import('../../stt.js');
     transcribeAudio = sttModule.transcribeAudio;
-    saveVoiceSample = sttModule.saveVoiceSample;
+    saveVoiceSample = null;
     return true;
   } catch {
     return false;
@@ -37,7 +39,7 @@ export async function handleStt(req: UnifiedRequest): Promise<UnifiedResponse> {
       return { status: 500, error: 'STT module not available' };
     }
 
-    const format = (req.query?.format as 'webm' | 'wav' | 'mp3') || 'webm';
+    const format = (req.query?.format as AudioFormat) || 'webm';
     const collect = req.query?.collect === '1';
     const durMsParam = req.query?.dur;
 
@@ -56,7 +58,7 @@ export async function handleStt(req: UnifiedRequest): Promise<UnifiedResponse> {
           ? Math.max(0.1, parseFloat(durMsParam) / 1000)
           : Math.max(0.1, (buf.length * 8) / (24 * 1024));
         const quality = Math.min(1.0, (buf.length / 50000) * 0.5 + 0.5);
-        saveVoiceSample!(Buffer.from(buf), transcript, durationSec, quality, format);
+        saveVoiceSample?.(Buffer.from(buf), transcript, durationSec, quality, format);
       } catch {
         // Ignore sample collection errors
       }

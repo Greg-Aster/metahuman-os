@@ -19,7 +19,7 @@
 
 import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
 import { vllm, isVLLMRunning } from '../vllm.js';
-import { loadBackendConfig, getBackendStatus } from '../llm-backend.js';
+import { buildVLLMStartConfig, loadBackendConfig, getBackendStatus } from '../llm-backend.js';
 import { generateWithLocalService, isLocalModelServiceRunning } from './local-models.js';
 import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
@@ -270,8 +270,24 @@ export async function callProvider(
     }
 
     case 'vllm': {
-      // Explicit vLLM call
+      // Explicit vLLM model assignments can survive in user registries after
+      // switching the default backend. Respect the active backend here so a
+      // stale role mapping cannot start/use vLLM while Ollama is selected.
       const backendConfig = loadBackendConfig();
+      if (backendConfig.activeBackend !== 'vllm') {
+        const status = await getBackendStatus();
+        if (status.resolvedBackend === 'ollama') {
+          return callOllamaProvider(
+            messages,
+            { ...options, model: backendConfig.ollama.defaultModel },
+            onProgress
+          );
+        }
+        if (status.resolvedBackend === 'remote') {
+          return callRemoteProvider(messages, options, backendConfig, onProgress);
+        }
+        throw new Error(`vLLM provider requested but active backend is ${backendConfig.activeBackend}. Switch the backend to vLLM or update the model role assignment.`);
+      }
       return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
     }
 
@@ -611,7 +627,8 @@ async function callVLLMProvider(
   const backendConfig = loadBackendConfig();
   // Always use the vLLM backend's configured model - vLLM only loads one model at startup
   // and doesn't understand Ollama model names (e.g., qwen3:14b vs Qwen/Qwen3-14B-AWQ)
-  const model = backendConfig.vllm.model || options.model || 'default';
+  const vllmStartConfig = buildVLLMStartConfig(backendConfig);
+  const model = vllmStartConfig.servedModelName || backendConfig.vllm.model || options.model || 'default';
 
   // Log active backend once
   if (!backendLoggedOnce) {
@@ -630,18 +647,7 @@ async function callVLLMProvider(
     console.log('[provider-bridge] vLLM not running, attempting to start...');
 
     // Try to start vLLM
-    const startResult = await vllm.startServer({
-      endpoint: backendConfig.vllm.endpoint,
-      model: backendConfig.vllm.model,
-      gpuMemoryUtilization: backendConfig.vllm.gpuMemoryUtilization,
-      maxModelLen: backendConfig.vllm.maxModelLen,
-      tensorParallelSize: backendConfig.vllm.tensorParallelSize,
-      dtype: backendConfig.vllm.dtype,
-      quantization: backendConfig.vllm.quantization,
-      enforceEager: backendConfig.vllm.enforceEager,
-      autoUtilization: backendConfig.vllm.autoUtilization,
-      enableThinking: backendConfig.vllm.enableThinking,
-    });
+    const startResult = await vllm.startServer(vllmStartConfig);
 
     if (!startResult.success) {
       onProgress?.({

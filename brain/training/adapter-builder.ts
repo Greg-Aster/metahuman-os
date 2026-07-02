@@ -11,23 +11,23 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { audit, callLLM, systemPaths } from '../../packages/core/src/index.js';
-import { getUserContext, withUserContext } from '../../packages/core/src/context.js';
-import { requireUserInfo } from '../../packages/core/src/user-resolver.js';
+import { audit, callLLM, systemPaths } from '@metahuman/core';
+import { getUserContext, withUserContext } from '@metahuman/core/context';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 import {
   collectAllUserData,
   loadPersonaData,
   extractTherapyInsights,
   generateAllVariedPrompts,
   type RawTrainingSample,
-} from '../../packages/core/src/user-data-collector.js';
+} from '@metahuman/core/user-data-collector';
 import {
   CURATOR_SYSTEM_PROMPT,
   buildBatchCurationPrompt,
   buildPersonaSummary,
   type CurationCriteria,
   type CuratedSample,
-} from '../../packages/core/src/curator-prompts.js';
+} from '@metahuman/core/curator-prompts';
 
 /**
  * Training data configuration interface

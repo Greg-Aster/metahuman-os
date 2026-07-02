@@ -24,7 +24,7 @@ import {
  *   - limit: number of logs to return (default: 50)
  */
 export async function handleGetMonitor(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { query } = req;
+  const query = req.query ?? {};
 
   try {
     const view = query.view || 'overview';

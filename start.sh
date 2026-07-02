@@ -1,560 +1,218 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Run this script with the user's active bash environment.
 
-# MetaHuman OS Startup Script
-# This script initializes and starts the MetaHuman OS web interface
+set -euo pipefail
+# Stop on command errors, unset variables, and failed pipeline commands.
 
-set -e  # Exit on any error
-
-# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the absolute directory containing this script.
 REPO_ROOT="$SCRIPT_DIR"
+# Treat the script directory as the MetaHuman repository root.
+SERVER_ENTRY="$REPO_ROOT/apps/site/dist/server/entry.mjs"
+# Point to the prebuilt Astro/Node production server entrypoint.
+LOG_DIR="$REPO_ROOT/logs"
+# Store general runtime logs under logs/.
+RUN_LOG_DIR="$LOG_DIR/run"
+# Store launcher and PID-style runtime logs under logs/run/.
+SERVER_LOG="$LOG_DIR/server.log"
+# Mirror web server output into this file for the in-app service console.
+STARTED=false
+# Track whether this script has started services and should clean them up.
+CLEANING_UP=false
+# Prevent the shutdown handler from running more than once.
 
-# Optional per-user config
-START_CONFIG_FILE="$REPO_ROOT/.start-config"
-if [ -f "$START_CONFIG_FILE" ]; then
-    # shellcheck disable=SC1090
-    source "$START_CONFIG_FILE"
-fi
-
-# Load environment variables from .env file (for production server)
-ENV_FILE="$REPO_ROOT/.env"
-if [ -f "$ENV_FILE" ]; then
-    echo "Loading environment from .env..."
-    set -a  # Auto-export all variables
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-fi
-
-# Optional skips (can be provided via env or .start-config)
-SKIP_DEP_INSTALL=${SKIP_DEP_INSTALL:-0}
-SKIP_PYTHON_DEPS=${SKIP_PYTHON_DEPS:-$SKIP_DEP_INSTALL}
-SKIP_NODE_DEPS=${SKIP_NODE_DEPS:-$SKIP_DEP_INSTALL}
-
-# Colors for output
 RED='\033[0;31m'
+# Terminal color for errors.
 GREEN='\033[0;32m'
+# Terminal color for success/status messages.
 YELLOW='\033[1;33m'
+# Terminal color for warnings.
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Terminal color for the startup banner.
+NC='\033[0m'
+# Reset terminal color.
 
-echo -e "${BLUE}================================${NC}"
-echo -e "${BLUE}  MetaHuman OS Startup Script  ${NC}"
-echo -e "${BLUE}================================${NC}"
-echo
-
-# Function to print status messages
 print_status() {
-    echo -e "${GREEN}✓${NC} $1"
+  # Print a successful status line.
+  echo -e "${GREEN}✓${NC} $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}!${NC} $1"
+  # Print a warning status line.
+  echo -e "${YELLOW}!${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}✗${NC} $1"
+  # Print an error status line.
+  echo -e "${RED}✗${NC} $1"
 }
 
-# Function to check if a command exists
 command_exists() {
-    command -v "$1" >/dev/null 2>&1
+  # Return success when the named executable is available on PATH.
+  command -v "$1" >/dev/null 2>&1
 }
 
-# Function to check if a process is running
-is_running() {
-    pgrep -f "$1" >/dev/null 2>&1
+run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  if command_exists timeout; then
+    timeout "$seconds" "$@" || true
+  else
+    "$@" || true
+  fi
 }
 
-# Track child process for cleanup
-SERVER_PID=""
+kill_pattern_fast() {
+  local pattern="$1"
 
-# Cleanup function for graceful shutdown
-cleanup_services() {
-    echo ""
-    echo "Shutting down MetaHuman services..."
-
-    # Kill the server first if running
-    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-        echo "Stopping web server (PID: $SERVER_PID)..."
-        kill "$SERVER_PID" 2>/dev/null || true
-        # Wait briefly for graceful shutdown
-        for i in 1 2 3; do
-            kill -0 "$SERVER_PID" 2>/dev/null || break
-            sleep 1
-        done
-        # Force kill if still running
-        kill -9 "$SERVER_PID" 2>/dev/null || true
-    fi
-
-    # Stop agents with timeout
-    timeout 5 "$REPO_ROOT/bin/mh" agent stop --all 2>/dev/null || true
-
-    # Stop terminal server
-    "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
-
-    # Stop event bus
-    "$REPO_ROOT/bin/stop-event-bus" 2>/dev/null || true
-
-    # Stop voice and local model servers
-    "$REPO_ROOT/bin/stop-voice-server" 2>/dev/null || true
-    "$REPO_ROOT/bin/stop-local-models" 2>/dev/null || true
-
-    # Force kill any remaining agents
-    pkill -f "brain/agents" 2>/dev/null || true
-    pkill -f "scheduler-service" 2>/dev/null || true
-    pkill -f "audio-organizer" 2>/dev/null || true
-
-    echo "Goodbye!"
-    exit 0
-}
-
-trap cleanup_services INT TERM
-
-wait_for_exit() {
-    local pattern="$1"
-    local attempts="${2:-5}"
-    local delay="${3:-1}"
-
-    for _ in $(seq 1 "$attempts"); do
-        if ! is_running "$pattern"; then
-            return 0
-        fi
-        sleep "$delay"
-    done
-
-    return 1
-}
-
-# Check if we're in the right directory structure
-if [ ! -f "$REPO_ROOT/package.json" ] || [ ! -d "$REPO_ROOT/apps/site" ]; then
-    print_error "This script must be run from the MetaHuman OS root directory"
-    print_error "Current directory: $REPO_ROOT"
-    print_error "Make sure package.json and apps/site/ exist"
-    exit 1
-fi
-
-echo "Repository root: $REPO_ROOT"
-echo
-
-# Check for required tools
-echo "Checking for required tools..."
-REQUIRED_TOOLS=("node" "pnpm" "python3")
-
-MISSING_TOOLS=()
-for tool in "${REQUIRED_TOOLS[@]}"; do
-    if command_exists "$tool"; then
-        VERSION=$($tool --version 2>/dev/null || echo "unknown")
-        print_status "$tool ($VERSION)"
-    else
-        MISSING_TOOLS+=("$tool")
-    fi
-done
-
-if [ ${#MISSING_TOOLS[@]} -ne 0 ]; then
-    echo
-    print_error "Missing required tools: ${MISSING_TOOLS[*]}"
-    print_warning "Please install the following:"
-    for tool in "${MISSING_TOOLS[@]}"; do
-        case "$tool" in
-            "node")
-                echo "  - Node.js (https://nodejs.org/)"
-                ;;
-            "pnpm")
-                echo "  - pnpm (npm install -g pnpm)"
-                ;;
-            "python3")
-                echo "  - Python 3 (https://www.python.org/downloads/)"
-                ;;
-        esac
-    done
-    exit 1
-fi
-
-echo
-
-# Create and setup Python virtual environment if it doesn't exist
-VENV_PATH="$REPO_ROOT/venv"
-if [ ! -d "$VENV_PATH" ]; then
-    echo "Creating Python virtual environment..."
-    python3 -m venv "$VENV_PATH"
-    print_status "Virtual environment created at $VENV_PATH"
-    echo
-fi
-
-# Activate virtual environment
-echo "Activating Python virtual environment..."
-source "$VENV_PATH/bin/activate"
-print_status "Virtual environment activated ($(basename $VIRTUAL_ENV))"
-echo
-
-# Install Python dependencies if requirements.txt exists
-if [ -f "$REPO_ROOT/requirements.txt" ]; then
-    echo "Checking Python dependencies..."
-    if [ "$SKIP_PYTHON_DEPS" = "1" ]; then
-        print_warning "Skipping Python dependency installation (SKIP_PYTHON_DEPS=1)"
-        echo
-    elif [ ! -f "$VENV_PATH/installed_packages" ] || [ "$REPO_ROOT/requirements.txt" -nt "$VENV_PATH/installed_packages" ]; then
-        echo "Installing Python dependencies from requirements.txt..."
-        pip install --upgrade pip setuptools wheel
-        pip install -r "$REPO_ROOT/requirements.txt"
-        touch "$VENV_PATH/installed_packages"
-        print_status "Python dependencies installed"
-        echo
-    else
-        print_status "Python dependencies already installed"
-        echo
-    fi
-else
-    print_warning "requirements.txt not found - skipping Python dependency installation"
-    echo
-fi
-
-# Check LLM backend status (backend-aware)
-echo "Checking LLM backend status..."
-LLM_BACKEND_CONFIG="$REPO_ROOT/etc/llm-backend.json"
-ACTIVE_BACKEND="ollama"  # default
-
-if [ -f "$LLM_BACKEND_CONFIG" ]; then
-    ACTIVE_BACKEND=$(grep -o '"activeBackend"[[:space:]]*:[[:space:]]*"[^"]*"' "$LLM_BACKEND_CONFIG" | grep -o '"[^"]*"$' | tr -d '"' || echo "ollama")
-fi
-
-echo "  Active backend: $ACTIVE_BACKEND"
-
-if [ "$ACTIVE_BACKEND" = "vllm" ]; then
-    # Check if vLLM is running or can be started
-    if curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
-        print_status "vLLM is running"
-    else
-        print_warning "vLLM is not running"
-        print_warning "Starting vLLM server..."
-        # Try to start vLLM via the CLI
-        "$REPO_ROOT/bin/mh" vllm start >/dev/null 2>&1 &
-        VLLM_START_PID=$!
-
-        # Wait up to 60 seconds for vLLM to start
-        echo "  Waiting for vLLM to initialize (this may take a minute)..."
-        for i in $(seq 1 60); do
-            if curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
-                print_status "vLLM server started successfully"
-                break
-            fi
-            sleep 1
-            printf "."
-        done
-        echo
-
-        if ! curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
-            print_warning "vLLM failed to start within timeout"
-            print_warning "Start it manually with: ./bin/mh vllm start"
-            print_warning "Or switch to Ollama with: ./bin/mh backend switch ollama"
-        fi
-    fi
-else
-    # Check if Ollama is running
-    if command_exists "ollama" && ollama list >/dev/null 2>&1; then
-        print_status "Ollama is running"
-    else
-        print_warning "Ollama is not running or not installed"
-        print_warning "The web interface may have limited functionality"
-        print_warning "Install Ollama from: https://ollama.ai"
-    fi
-fi
-echo
-
-# Check if we need to install Node.js dependencies
-echo "Checking for Node.js dependencies..."
-LOCK_FILE="$REPO_ROOT/pnpm-lock.yaml"
-STAMP_FILE="$REPO_ROOT/node_modules/.install-stamp"
-NEED_NODE_INSTALL=false
-
-if [ "$SKIP_NODE_DEPS" = "1" ]; then
-    NEED_NODE_INSTALL=false
-elif [ ! -d "$REPO_ROOT/node_modules" ] || [ ! -d "$REPO_ROOT/apps/site/node_modules" ]; then
-    NEED_NODE_INSTALL=true
-elif [ -f "$LOCK_FILE" ]; then
-    if [ ! -f "$STAMP_FILE" ] || [ "$LOCK_FILE" -nt "$STAMP_FILE" ]; then
-        NEED_NODE_INSTALL=true
-    fi
-fi
-
-if [ "$SKIP_NODE_DEPS" = "1" ]; then
-    print_warning "Skipping Node.js dependency installation (SKIP_NODE_DEPS=1)"
-    echo
-elif [ "$NEED_NODE_INSTALL" = true ]; then
-    echo "Installing Node.js dependencies (pnpm install)..."
-    cd "$REPO_ROOT"
-    pnpm install
-    mkdir -p "$REPO_ROOT/node_modules"
-    touch "$STAMP_FILE"
-    print_status "Dependencies installed"
-    echo
-else
-    print_status "Node.js dependencies already installed"
-    echo
-fi
-
-# Check if MetaHuman is initialized
-echo "Checking MetaHuman initialization..."
-PERSONA_CORE="$REPO_ROOT/persona/core.json"
-if [ ! -f "$PERSONA_CORE" ]; then
-    print_warning "MetaHuman not initialized"
-    echo "Initializing MetaHuman OS..."
-    cd "$REPO_ROOT"
-    ./bin/mh init
-    print_status "MetaHuman initialized"
-    echo
-    print_warning "Remember to customize your persona in persona/core.json"
-else
-    print_status "MetaHuman already initialized"
-    echo
-fi
-
-# Function to stop existing processes
-stop_existing() {
-    echo "Checking for existing processes..."
-
-    # Kill any existing Astro dev servers
-    if is_running "astro dev"; then
-        echo "Stopping existing Astro dev server..."
-        pkill -f "astro dev" 2>/dev/null || true
-        sleep 2
-    fi
-
-    # Kill any existing production servers
-    if is_running "node dist/server/entry.mjs"; then
-        echo "Stopping existing production server..."
-        pkill -f "node dist/server/entry.mjs" 2>/dev/null || true
-        if ! wait_for_exit "node dist/server/entry.mjs" 5 1; then
-            echo "Force killing production server..."
-            pkill -9 -f "node dist/server/entry.mjs" 2>/dev/null || true
-            sleep 1
-        fi
-    fi
-
-    # Kill any existing mh agents
-    if is_running "mh agent"; then
-        echo "Stopping existing MetaHuman agents..."
-        if command -v timeout >/dev/null 2>&1; then
-            if ! timeout 10 ./bin/mh agent stop --all 2>/dev/null; then
-                print_warning "Agent stop command timed out; forcing cleanup"
-                pkill -f "brain/agents" 2>/dev/null || true
-                pkill -f "scheduler-service" 2>/dev/null || true
-                pkill -f "audio-organizer" 2>/dev/null || true
-                pkill -f "tsx src/mh-new.ts agent stop --all" 2>/dev/null || true
-            fi
-        else
-            ./bin/mh agent stop --all 2>/dev/null || true
-        fi
-        sleep 2
-    fi
-
-    # Ensure port 4321 is available before starting
-    PORT_PIDS=$(lsof -n -i :4321 -sTCP:LISTEN -t 2>/dev/null || true)
-    if [ -n "$PORT_PIDS" ]; then
-        echo "Port 4321 in use (PIDs: $PORT_PIDS). Terminating..."
-        echo "$PORT_PIDS" | xargs -r kill 2>/dev/null || true
-        for _ in $(seq 1 5); do
-            if ! lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
-                break
-            fi
-            sleep 1
-        done
-
-        if lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
-            echo "Force killing processes on port 4321..."
-            echo "$PORT_PIDS" | xargs -r kill -9 2>/dev/null || true
-            sleep 1
-        fi
-    fi
-
-    print_status "Existing processes stopped"
-    echo
-}
-
-# Function to check if production build is needed
-needs_rebuild() {
-    DIST_DIR="$REPO_ROOT/apps/site/dist"
-    SRC_DIR="$REPO_ROOT/apps/site/src"
-
-    # If dist doesn't exist, we need to build
-    if [ ! -d "$DIST_DIR" ]; then
-        return 0
-    fi
-
-    # If any source file is newer than dist, we need to rebuild
-    if [ -n "$(find "$SRC_DIR" -newer "$DIST_DIR/server/entry.mjs" 2>/dev/null | head -1)" ]; then
-        return 0
-    fi
-
-    # No rebuild needed
-    return 1
-}
-
-# Stop existing processes
-stop_existing
-
-# Clean up stale PID and lock files before starting
-echo "Cleaning up stale process files..."
-cleanup_stale_files() {
-    # Clean up stale PID files
-    PID_DIR="$REPO_ROOT/logs/run"
-    if [ -d "$PID_DIR" ]; then
-        for pidfile in "$PID_DIR"/*.pid; do
-            [ -f "$pidfile" ] || continue
-            pid=$(cat "$pidfile" 2>/dev/null || echo "")
-            if [ -n "$pid" ]; then
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    rm -f "$pidfile"
-                fi
-            else
-                rm -f "$pidfile"
-            fi
-        done
-    fi
-
-    # Clean up stale lock files
-    LOCK_DIR="$REPO_ROOT/logs/run/locks"
-    if [ -d "$LOCK_DIR" ]; then
-        for lockfile in "$LOCK_DIR"/*.lock; do
-            [ -f "$lockfile" ] || continue
-            pid=$(grep -o '"pid"[[:space:]]*:[[:space:]]*[0-9]*' "$lockfile" 2>/dev/null | grep -o '[0-9]*' || echo "")
-            if [ -n "$pid" ]; then
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    rm -f "$lockfile"
-                fi
-            else
-                rm -f "$lockfile"
-            fi
-        done
-    fi
-
-    # Clean up agent registry
-    REGISTRY_FILE="$REPO_ROOT/logs/agents/running.json"
-    if [ -f "$REGISTRY_FILE" ] && command -v node >/dev/null 2>&1; then
-        node -e "
-const fs = require('fs');
-try {
-    const registry = JSON.parse(fs.readFileSync('$REGISTRY_FILE', 'utf-8'));
-    const clean = {};
-    for (const [name, info] of Object.entries(registry)) {
-        try { process.kill(info.pid, 0); clean[name] = info; } catch (e) {}
-    }
-    fs.writeFileSync('$REGISTRY_FILE', JSON.stringify(clean, null, 2));
-} catch (e) {}
-" 2>/dev/null || true
-    fi
-}
-cleanup_stale_files
-print_status "Stale files cleaned"
-echo
-
-# Start Event Bus (telemetry aggregation)
-echo "Starting Event Bus..."
-"$REPO_ROOT/bin/start-event-bus" 2>/dev/null || print_warning "Event Bus failed to start"
-echo
-
-# Start the web server
-echo "Starting MetaHuman OS web interface..."
-echo
-
-cd "$REPO_ROOT/apps/site"
-
-# Check if we need to build
-if needs_rebuild; then
-    print_status "Building production bundle..."
-    pnpm build
-    if [ $? -ne 0 ]; then
-        print_error "Build failed. Falling back to development server."
-        exec pnpm dev
-    fi
-    print_status "Production build complete"
-    echo
-fi
-
-print_status "Starting production server..."
-print_status "Web interface will be available at: http://localhost:4321"
-print_warning "Services will start when you open the Terminal tab in the app"
-echo
-
-# Display helpful information
-echo "=========================================="
-echo "  MetaHuman OS Web Server                 "
-echo "=========================================="
-echo "URL: http://localhost:4321"
-echo "Press Ctrl+C to stop the server"
-echo
-echo "Open the Terminal tab in the app to start:"
-echo "    - Agents and background services"
-echo "    - Voice server"
-echo "    - Local models"
-echo "=========================================="
-echo
-
-open_browser_when_ready() {
-  local opener="$1"
-  if [ -z "$opener" ]; then
+  if ! pgrep -f "$pattern" >/dev/null 2>&1; then
     return
   fi
-  (
-    until curl -sSf "http://localhost:4321" >/dev/null 2>&1; do
-      sleep 1
-    done
-    "$opener" "http://localhost:4321" >/dev/null 2>&1
-  ) &
+
+  pkill -TERM -f "$pattern" 2>/dev/null || true
+  sleep 1
+  if pgrep -f "$pattern" >/dev/null 2>&1; then
+    pkill -KILL -f "$pattern" 2>/dev/null || true
+  fi
 }
 
-if command -v xdg-open >/dev/null 2>&1; then
-  open_browser_when_ready "xdg-open"
-elif command -v open >/dev/null 2>&1; then
-  open_browser_when_ready "open"
+cleanup() {
+  # Stop child services when this launcher exits after startup began.
+  if [ "$STARTED" != true ] || [ "$CLEANING_UP" = true ]; then
+    # Do nothing before services start or during repeated signal handling.
+    return
+  fi
+
+  CLEANING_UP=true
+  trap '' INT TERM HUP
+  # Mark cleanup active so repeated Ctrl+C/TERM signals do not stack.
+  echo
+  # Separate shutdown output from the running server log.
+  print_warning "Stopping MetaHuman services"
+  # Stop only the services this startup path triggers. Do not call stop.sh here:
+  # stop.sh is the full-system shutdown path and also stops terminal sessions.
+  {
+    echo "[$(date -Is)] startup cleanup begin"
+    kill_pattern_fast "vllm.entrypoints.openai.api_server"
+    kill_pattern_fast "VLLM::EngineCore"
+    rm -f "$RUN_LOG_DIR/vllm.pid" "$RUN_LOG_DIR/vllm.starting"
+    run_with_timeout 5 "$REPO_ROOT/bin/mh" agent stop --all
+    kill_pattern_fast "brain/scripts/_bootstrap.ts"
+    kill_pattern_fast "scheduler-service"
+    kill_pattern_fast "audio-organizer"
+    run_with_timeout 5 "$REPO_ROOT/bin/stop-local-models"
+    run_with_timeout 5 "$REPO_ROOT/bin/stop-voice-server"
+    run_with_timeout 3 "$REPO_ROOT/bin/stop-event-bus"
+    pkill -f "cloudflared" 2>/dev/null || true
+    echo "[$(date -Is)] startup cleanup complete"
+  } >> "$RUN_LOG_DIR/startup-shutdown.log" 2>&1
+  # Report completion even if there was nothing left to stop.
+  print_status "MetaHuman services stopped"
+}
+
+trap cleanup EXIT
+# Run cleanup when the shell exits normally or because the web server exits.
+trap 'cleanup; exit 130' INT
+# Run cleanup on Ctrl+C and exit with the conventional interrupt code.
+trap 'cleanup; exit 143' TERM HUP
+# Run cleanup on termination/hangup and exit with a signal-style code.
+
+echo -e "${BLUE}================================${NC}"
+# Print banner top border.
+echo -e "${BLUE}  MetaHuman OS                  ${NC}"
+# Print banner title.
+echo -e "${BLUE}================================${NC}"
+# Print banner bottom border.
+echo
+# Add a blank line after the banner.
+
+START_CONFIG_FILE="$REPO_ROOT/.start-config"
+# Optional local startup preferences live here.
+if [ -f "$START_CONFIG_FILE" ]; then
+  # Only load the local startup config when it exists.
+  # shellcheck disable=SC1090
+  source "$START_CONFIG_FILE"
+  # Import local shell variables from .start-config.
 fi
 
-# Start the production server (pipe to log file for in-app terminal)
-mkdir -p "$REPO_ROOT/logs"
-
-# Verify port is free before starting
-if lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
-    print_error "Port 4321 is still in use after cleanup!"
-    echo "Please manually kill the process and try again:"
-    lsof -n -i :4321 -sTCP:LISTEN
-    exit 1
+ENV_FILE="$REPO_ROOT/.env"
+# Main environment variables live here.
+if [ -f "$ENV_FILE" ]; then
+  # Only load .env when it exists.
+  set -a
+  # Automatically export sourced variables to child processes.
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  # Import environment variables for the server and services.
+  set +a
+  # Stop auto-exporting newly assigned variables.
 fi
 
-SERVER_START_TIME=$(date +%s)
-
-# Run through tee for log visibility, but capture the real node exit code.
-set +e
-node dist/server/entry.mjs 2>&1 | tee "$REPO_ROOT/logs/server.log"
-PIPE_EXIT_CODES=("${PIPESTATUS[@]}")
-set -e
-
-NODE_EXIT_CODE=${PIPE_EXIT_CODES[0]:-1}
-TEE_EXIT_CODE=${PIPE_EXIT_CODES[1]:-0}
-EXIT_CODE=$NODE_EXIT_CODE
-SERVER_END_TIME=$(date +%s)
-SERVER_UPTIME=$((SERVER_END_TIME - SERVER_START_TIME))
-
-# If server exited, report why
-if [ $EXIT_CODE -ne 0 ]; then
-    echo ""
-    if [ $EXIT_CODE -ge 128 ]; then
-        SIGNAL=$((EXIT_CODE - 128))
-        print_error "Server terminated by signal $SIGNAL (exit code $EXIT_CODE, uptime ${SERVER_UPTIME}s)"
-    else
-        print_error "Server exited with code $EXIT_CODE (uptime ${SERVER_UPTIME}s)"
-    fi
-    if [ "$TEE_EXIT_CODE" -ne 0 ]; then
-        print_warning "tee exited with code $TEE_EXIT_CODE"
-    fi
-    echo "Last 20 lines of log:"
-    tail -20 "$REPO_ROOT/logs/server.log"
-    exit $EXIT_CODE
-else
-    echo ""
-    if [ "$TEE_EXIT_CODE" -ne 0 ]; then
-        print_warning "Server exited with node=0 but tee=$TEE_EXIT_CODE (uptime ${SERVER_UPTIME}s)"
-    else
-        print_warning "Server exited normally (uptime ${SERVER_UPTIME}s)"
-    fi
+if ! command_exists node; then
+  # The production server is a Node process, so Node is mandatory.
+  print_error "Node.js is required to start MetaHuman OS"
+  exit 1
 fi
+
+if ! command_exists python3; then
+  # Python is mandatory because the local voice/model tooling is isolated in venv.
+  print_error "Python 3 is required to create the isolated runtime environment"
+  exit 1
+fi
+
+VENV_PATH="$REPO_ROOT/venv"
+# Use the repository-local virtual environment for Python isolation.
+if [ ! -d "$VENV_PATH" ]; then
+  # Create the venv only if it does not already exist.
+  print_status "Creating isolated Python environment"
+  python3 -m venv "$VENV_PATH"
+  # Build the isolated Python environment without installing packages here.
+fi
+
+# Keep child services isolated without doing dependency installation at startup.
+# Dependency repair belongs to setup/build, not the fast launch path.
+# shellcheck disable=SC1091
+source "$VENV_PATH/bin/activate"
+# Activate the repository-local Python environment for child services.
+print_status "Using Python environment: $VENV_PATH"
+# Show which Python environment is active.
+
+if [ ! -f "$SERVER_ENTRY" ]; then
+  # Do not build during startup; fail fast when the server bundle is absent.
+  print_error "Production server bundle is missing"
+  echo "Run: pnpm --dir apps/site build"
+  exit 1
+fi
+
+mkdir -p "$LOG_DIR" "$RUN_LOG_DIR"
+# Ensure log folders exist before background launchers or cleanup write logs.
+
+if command_exists lsof && lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+  # Refuse to start if another process already owns the web port.
+  print_error "Port 4321 is already in use"
+  lsof -n -i :4321 -sTCP:LISTEN
+  # Show the process currently listening on the web port.
+  exit 1
+fi
+
+print_status "Starting background services"
+# Announce the non-blocking service trigger.
+"$REPO_ROOT/bin/start-services" --background >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1 &
+# Start services through the existing service script and return immediately.
+STARTED=true
+# Mark that cleanup should run when this launcher exits.
+
+print_status "Starting web server"
+# Announce the foreground web server.
+print_status "Web interface: http://localhost:4321"
+# Show the URL without opening a browser automatically.
+print_warning "Use ./stop.sh to stop MetaHuman services"
+# Tell the operator how to stop everything if not using Ctrl+C.
+echo
+# Add a blank line before server output begins.
+
+cd "$REPO_ROOT/apps/site"
+# Run the server from the site package directory.
+node "$SERVER_ENTRY" 2>&1 | tee "$SERVER_LOG"
+# Start the web server in the foreground and mirror output to logs/server.log.

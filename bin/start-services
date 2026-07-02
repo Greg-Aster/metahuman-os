@@ -4,105 +4,97 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SERVER_LOG="$REPO_ROOT/logs/server.log"
+LOG_DIR="$REPO_ROOT/logs/run"
+MODE="${1:-console}"
 
-cd "$REPO_ROOT"
+mkdir -p "$REPO_ROOT/logs" "$LOG_DIR"
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+start_task() {
+  local name="$1"
+  shift
+  local log_file="$LOG_DIR/${name}.launcher.log"
 
-echo -e "${GREEN}Starting MetaHuman Services...${NC}"
-echo
+  {
+    echo "[$(date -Is)] starting $name"
+    set +e
+    "$@"
+    local exit_code=$?
+    set -e
+    echo "[$(date -Is)] $name launcher exited with code $exit_code"
+    exit "$exit_code"
+  } >> "$log_file" 2>&1 &
+}
 
-CLEANUP_IN_PROGRESS=false
-CLEANUP_MODE="full"
+should_start_vllm() {
+  local config_file="$REPO_ROOT/etc/llm-backend.json"
 
-mark_disconnect() {
-  CLEANUP_MODE="disconnect"
+  if [ ! -f "$config_file" ] || ! command -v node >/dev/null 2>&1; then
+    return 1
+  fi
+
+  node -e "
+const fs = require('fs');
+const config = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+process.exit(config.activeBackend === 'vllm' && config.vllm?.autoStart ? 0 : 1);
+" "$config_file"
+}
+
+start_vllm_task() {
+  local log_file="$LOG_DIR/vllm.launcher.log"
+  local marker_file="$LOG_DIR/vllm.starting"
+
+  if curl --max-time 3 -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+    echo "vLLM server already running"
+    return 0
+  fi
+
+  {
+    echo "[$(date -Is)] starting vllm"
+    date -Is > "$marker_file"
+    set +e
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 "$REPO_ROOT/bin/mh" vllm start
+    else
+      "$REPO_ROOT/bin/mh" vllm start
+    fi
+    local exit_code=$?
+    if curl --max-time 3 -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+      exit_code=0
+    fi
+    set -e
+    rm -f "$marker_file"
+    echo "[$(date -Is)] vllm launcher exited with code $exit_code"
+    exit "$exit_code"
+  } >> "$log_file" 2>&1 &
+}
+
+start_background_services() {
+  start_task event-bus "$REPO_ROOT/bin/start-event-bus"
+  if should_start_vllm; then
+    start_vllm_task
+  fi
+  start_task agents "$REPO_ROOT/bin/mh" start --no-restart
+  start_task cloudflare "$REPO_ROOT/bin/start-cloudflare"
+  start_task voice-server "$REPO_ROOT/bin/start-voice-server"
+  start_task local-models "$REPO_ROOT/bin/start-local-models"
+
+  echo "Background service launchers started. Logs: $LOG_DIR"
+}
+
+if [ "$MODE" = "--background" ]; then
+  start_background_services
   exit 0
-}
-
-mark_full_shutdown() {
-  CLEANUP_MODE="full"
-}
-
-cleanup() {
-  # Prevent re-entrant cleanup (multiple Ctrl+C)
-  if [ "$CLEANUP_IN_PROGRESS" = true ]; then
-    echo -e "\n${YELLOW}Cleanup already in progress, please wait...${NC}"
-    return
-  fi
-  CLEANUP_IN_PROGRESS=true
-
-  # Disable trap during cleanup to prevent cascading
-  trap '' EXIT INT TERM HUP
-
-  echo
-  if [ "$CLEANUP_MODE" = "disconnect" ]; then
-    echo -e "${YELLOW}Terminal disconnected. Stopping agents only...${NC}"
-  else
-    echo -e "${YELLOW}Shutting down MetaHuman services...${NC}"
-  fi
-
-  # Stop agents with timeout (5 seconds max)
-  timeout 5 "$REPO_ROOT/bin/mh" agent stop --all >/dev/null 2>&1 || true
-
-  # A terminal disconnect should not tear down shared services that may have
-  # been started elsewhere (for example by start.sh or the web app itself).
-  if [ "$CLEANUP_MODE" = "full" ]; then
-    timeout 3 "$REPO_ROOT/bin/stop-terminal" >/dev/null 2>&1 || true
-    timeout 3 "$REPO_ROOT/bin/stop-local-models" >/dev/null 2>&1 || true
-    timeout 5 "$REPO_ROOT/bin/stop-voice-server" >/dev/null 2>&1 || true
-    timeout 3 "$REPO_ROOT/bin/stop-event-bus" >/dev/null 2>&1 || true
-  fi
-
-  if [ "$CLEANUP_MODE" = "disconnect" ]; then
-    echo -e "${GREEN}Agents stopped. Shared services left running.${NC}"
-  else
-    echo -e "${GREEN}Services stopped.${NC}"
-  fi
-}
-
-trap cleanup EXIT
-trap 'mark_full_shutdown; exit 0' INT
-trap 'mark_disconnect' TERM HUP
-
-# Check headless mode before starting agents
-RUNTIME_CONFIG="$REPO_ROOT/etc/runtime.json"
-if [ -f "$RUNTIME_CONFIG" ]; then
-  HEADLESS=$(grep -o '"headless"[[:space:]]*:[[:space:]]*true' "$RUNTIME_CONFIG" || echo "")
-  if [ -n "$HEADLESS" ]; then
-    echo -e "${YELLOW}Headless mode active - skipping agent startup${NC}"
-  else
-    echo "Starting agents..."
-    "$REPO_ROOT/bin/mh" start --restart 2>&1 || echo -e "${YELLOW}Warning: Failed to start some agents${NC}"
-  fi
-else
-  echo "Starting agents..."
-  "$REPO_ROOT/bin/mh" start --restart 2>&1 || echo -e "${YELLOW}Warning: Failed to start some agents${NC}"
 fi
 
-# Start Event Bus first (other services depend on it for telemetry)
-echo "Starting Event Bus..."
-"$REPO_ROOT/bin/start-event-bus" 2>&1 || echo -e "${YELLOW}Warning: Event Bus failed to start${NC}"
-
-# Auto-start Cloudflare tunnel if enabled
-echo "Starting Cloudflare tunnel..."
-"$REPO_ROOT/bin/start-cloudflare" 2>&1 || true
-
-# Auto-start voice server based on active TTS provider
-echo "Starting voice server..."
-"$REPO_ROOT/bin/start-voice-server" 2>&1 || true
-
-# Auto-start local model service
-echo "Starting local models..."
-"$REPO_ROOT/bin/start-local-models" 2>&1 || true
-
+echo "MetaHuman service console"
 echo
-echo -e "${GREEN}All services started.${NC}"
-echo "Press Ctrl+C to stop all services."
+echo "Background services are started by ./start.sh."
+echo "To trigger them manually, run: ./bin/start-services --background"
+echo "To stop everything, run: ./stop.sh"
+echo
+echo "Tailing server log:"
 echo
 
-# Keep the script running (tail server.log to show activity)
-tail -f "$REPO_ROOT/logs/server.log" 2>/dev/null || while true; do sleep 3600; done
+touch "$SERVER_LOG"
+tail -f "$SERVER_LOG"
