@@ -19,12 +19,48 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, AlignmentReviewOutput } from '../../agency/types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Alignment Review module of MetaHuman OS. Your job is to evaluate whether a planned action aligns with the persona's values, goals, and identity.
 
 Be thoughtful and honest. If there are concerns, raise them. If the plan aligns well, say so.
 
 Respond with valid JSON matching the schema.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `## Plan to Review
+
+**Desire**: {{title}}
+**Description**: {{description}}
+**Reason**: {{reason}}
+
+**Plan Steps**:
+{{planSteps}}
+
+**Operator Goal**: {{operatorGoal}}
+
+## Persona Values
+{{personaValues}}
+
+## Persona Goals
+{{personaGoals}}
+
+## Review Questions
+
+1. Does this plan align with the stated persona values?
+2. Does it serve any of the persona's goals?
+3. Would the persona genuinely want this outcome?
+4. Are there any value conflicts or concerns?
+5. Is the stated reason authentic to the persona?
+
+## Output
+
+Respond with JSON:
+{
+  "alignmentScore": 0.0-1.0,
+  "concerns": ["concern 1", "concern 2"],
+  "approved": true/false,
+  "reasoning": "Brief explanation of the verdict"
+}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
@@ -49,7 +85,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   const personaGoals = (inputs.personaGoals as string) || '';
-  const temperature = (properties?.temperature as number) || 0.2;
+  const temperature = (properties?.temperature as number) ?? 0.2;
+  const role = properties?.role ?? 'persona';
+  const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   if (!desire || !plan) {
     return {
@@ -60,49 +99,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  const userPrompt = `## Plan to Review
-
-**Desire**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason}
-
-**Plan Steps**:
-${plan.steps.map(s => `${s.order}. ${s.action} (${s.skill || 'manual'})`).join('\n')}
-
-**Operator Goal**: ${plan.operatorGoal}
-
-## Persona Values
-${personaValues || 'No values specified'}
-
-## Persona Goals
-${personaGoals || 'No goals specified'}
-
-## Review Questions
-
-1. Does this plan align with the stated persona values?
-2. Does it serve any of the persona's goals?
-3. Would the persona genuinely want this outcome?
-4. Are there any value conflicts or concerns?
-5. Is the stated reason authentic to the persona?
-
-## Output
-
-Respond with JSON:
-{
-  "alignmentScore": 0.0-1.0,
-  "concerns": ["concern 1", "concern 2"],
-  "approved": true/false,
-  "reasoning": "Brief explanation of the verdict"
-}`;
+  const userPrompt = renderPromptTemplate(userPromptTemplate, {
+    title: desire.title,
+    description: desire.description,
+    reason: desire.reason,
+    planSteps: plan.steps.map(s => `${s.order}. ${s.action} (${s.skill || 'manual'})`).join('\n'),
+    operatorGoal: plan.operatorGoal,
+    personaValues: personaValues || 'No values specified',
+    personaGoals: personaGoals || 'No goals specified',
+    desire,
+    plan,
+  });
 
   const messages: RouterMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ];
 
   try {
     const response = await callLLM({
-      role: 'persona',
+      role,
       messages,
       userId: username,
       options: {
@@ -168,6 +184,9 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.2,
+    role: 'persona',
+    systemPrompt: SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -178,6 +197,24 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
       step: 0.1,
       label: 'Temperature',
       description: 'LLM temperature for alignment review',
+    },
+    role: {
+      type: 'string',
+      default: 'persona',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: SYSTEM_PROMPT,
+      label: 'System Prompt',
+      rows: 6,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables include {{title}}, {{description}}, {{planSteps}}, {{personaValues}}, {{personaGoals}}, {{desire}}, {{plan}}.',
+      rows: 24,
     },
   },
   execute,

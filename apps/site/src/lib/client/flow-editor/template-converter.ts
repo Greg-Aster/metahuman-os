@@ -32,7 +32,50 @@ function cacheSchemas(schemas: NodeSchema[]): void {
     schemaCache.set(schema.id, schema);
     // Also map with cognitive/ prefix for backwards compatibility
     schemaCache.set(`cognitive/${schema.id}`, schema);
+    for (const alias of schema.aliases || []) {
+      schemaCache.set(alias, schema);
+      schemaCache.set(`cognitive/${alias}`, schema);
+    }
   }
+}
+
+function clonePropertyValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => clonePropertyValue(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    const cloned: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      cloned[key] = clonePropertyValue(nestedValue);
+    }
+    return cloned as T;
+  }
+
+  return value;
+}
+
+export function materializeSchemaProperties(
+  schema: Pick<NodeSchema, 'properties' | 'propertySchemas'> | undefined,
+  overrides?: Record<string, any>,
+): Record<string, any> {
+  const properties: Record<string, any> = {};
+
+  for (const [key, value] of Object.entries(schema?.properties || {})) {
+    properties[key] = clonePropertyValue(value);
+  }
+
+  for (const [key, propertySchema] of Object.entries(schema?.propertySchemas || {})) {
+    if (!(key in properties) && propertySchema && 'default' in propertySchema) {
+      properties[key] = clonePropertyValue(propertySchema.default);
+    }
+  }
+
+  for (const [key, value] of Object.entries(overrides || {})) {
+    properties[key] = clonePropertyValue(value);
+  }
+
+  return properties;
 }
 
 /**
@@ -124,19 +167,26 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
     const nodeType = sfNode.data?.nodeType || sfNode.type;
     const schema = getSchema(nodeType);
     const category = schema?.category || inferCategoryFromType(nodeType);
+    const existingProperties = sfNode.data?.properties || sfNode.properties || {};
+    const title = sfNode.data?.label || sfNode.data?.title || sfNode.title;
+    const position = sfNode.position || {
+      x: Array.isArray(sfNode.pos) ? sfNode.pos[0] : 0,
+      y: Array.isArray(sfNode.pos) ? sfNode.pos[1] : 0,
+    };
 
     return {
       id: String(sfNode.id),
       type: getNodeComponentType(category, nodeType),
-      position: sfNode.position,
-      width: sfNode.width,
-      height: sfNode.height,
+      position,
+      width: sfNode.width || sfNode.size?.[0],
+      height: sfNode.height || sfNode.size?.[1],
       data: {
         nodeType: nodeType,
         schema: schema || createFallbackSchema(nodeType),
-        properties: sfNode.data?.properties || {},
-        title: sfNode.data?.label || sfNode.data?.title,
+        properties: schema ? materializeSchemaProperties(schema, existingProperties) : existingProperties,
+        title,
         muted: sfNode.data?.muted,
+        comment: sfNode.data?.comment,
         executionState: 'idle' as const,
       },
     };
@@ -160,6 +210,49 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
     nodes,
     edges,
     viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+export function serializeGraphForPersistence(sfGraph: SvelteFlowGraph): SvelteFlowGraph {
+  return {
+    version: sfGraph.version || '1.0',
+    name: sfGraph.name || 'Untitled Graph',
+    description: sfGraph.description || '',
+    cognitiveMode: sfGraph.cognitiveMode,
+    nodes: sfGraph.nodes.map((node) => {
+      const data = node.data as any;
+      const nodeType = data.nodeType || node.type;
+      const schema = getSchema(nodeType) || data.schema;
+      const properties = schema
+        ? materializeSchemaProperties(schema, data.properties || {})
+        : (data.properties || {});
+      const title = data.label || data.title;
+
+      return {
+        id: String(node.id),
+        type: node.type,
+        position: node.position,
+        width: node.width,
+        height: node.height,
+        data: {
+          label: title,
+          nodeType,
+          properties,
+          muted: data.muted,
+          comment: data.comment,
+        },
+      };
+    }),
+    edges: sfGraph.edges.map((edge) => ({
+      id: edge.id,
+      source: String(edge.source),
+      target: String(edge.target),
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle,
+      type: edge.type,
+      data: edge.data || {},
+    })),
+    viewport: sfGraph.viewport,
   };
 }
 
@@ -211,7 +304,7 @@ export function convertToExecutorFormat(sfGraph: SvelteFlowGraph): any {
         id: parseInt(node.id) || 0,
         type: data.nodeType,
         pos: [node.position.x, node.position.y],
-        properties: data.properties,
+        properties: materializeSchemaProperties(data.schema, data.properties),
         muted: data.muted,
       };
     }),

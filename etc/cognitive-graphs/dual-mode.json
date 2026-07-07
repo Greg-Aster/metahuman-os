@@ -17,54 +17,10 @@
       "height": 60,
       "data": {
         "nodeType": "user_input",
-        "schema": {
-          "id": "user_input",
-          "name": "User Input",
-          "category": "input",
-          "inputs": [
-            {
-              "name": "speech",
-              "type": "object",
-              "optional": true,
-              "description": "Transcribed speech input"
-            },
-            {
-              "name": "text",
-              "type": "string",
-              "optional": true,
-              "description": "Direct text input"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "message",
-              "type": "string",
-              "description": "User message"
-            },
-            {
-              "name": "inputSource",
-              "type": "string",
-              "description": "Input source: text, speech, or chat"
-            },
-            {
-              "name": "sessionId",
-              "type": "string",
-              "description": "Session identifier"
-            }
-          ],
-          "properties": {
-            "message": "",
-            "prioritizeChatInterface": true
-          },
-          "description": "Unified input node for text and speech",
-          "color": "#4ade80",
-          "bgColor": "#166534"
-        },
         "properties": {
           "message": ""
         },
         "title": "User Input",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -83,35 +39,8 @@
       "height": 60,
       "data": {
         "nodeType": "session_context",
-        "schema": {
-          "id": "session_context",
-          "name": "Session Context",
-          "category": "context",
-          "inputs": [
-            {
-              "name": "sessionId",
-              "type": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "conversationHistory",
-              "type": "array",
-              "description": "Recent conversation messages"
-            },
-            {
-              "name": "user",
-              "type": "object",
-              "description": "Current user object"
-            }
-          ],
-          "description": "Loads session and conversation history",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {},
         "title": "Session Context",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -130,35 +59,8 @@
       "height": 80,
       "data": {
         "nodeType": "system_settings",
-        "schema": {
-          "id": "system_settings",
-          "name": "System Settings",
-          "category": "context",
-          "inputs": [],
-          "outputs": [
-            {
-              "name": "cognitiveMode",
-              "type": "string",
-              "description": "Current cognitive mode"
-            },
-            {
-              "name": "trustLevel",
-              "type": "string",
-              "description": "Current trust level"
-            },
-            {
-              "name": "settings",
-              "type": "object",
-              "description": "System settings object"
-            }
-          ],
-          "description": "Provides system configuration",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {},
         "title": "System Settings",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -177,118 +79,6 @@
       "height": 100,
       "data": {
         "nodeType": "orchestrator_llm",
-        "schema": {
-          "id": "orchestrator_llm",
-          "name": "Intent Orchestrator",
-          "category": "chat",
-          "inputs": [
-            {
-              "name": "message",
-              "type": "string",
-              "description": "User message to analyze"
-            },
-            {
-              "name": "conversationHistory",
-              "type": "array",
-              "optional": true,
-              "description": "Recent conversation for context awareness"
-            },
-            {
-              "name": "systemSettings",
-              "type": "object",
-              "optional": true,
-              "description": "System settings for permission context"
-            },
-            {
-              "name": "feedbackContext",
-              "type": "object",
-              "optional": true,
-              "description": "Feedback from iterative refinement loop"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "needsMemory",
-              "type": "boolean",
-              "description": "Whether memory search is needed"
-            },
-            {
-              "name": "memoryTier",
-              "type": "string",
-              "description": "Memory tier to search"
-            },
-            {
-              "name": "memoryQuery",
-              "type": "string",
-              "description": "Optimized search query"
-            },
-            {
-              "name": "needsAction",
-              "type": "boolean",
-              "description": "Routes to Big Brother when true"
-            },
-            {
-              "name": "actionType",
-              "type": "string",
-              "description": "LLM-interpreted action type"
-            },
-            {
-              "name": "actionParams",
-              "type": "object",
-              "description": "Parameters for the action"
-            },
-            {
-              "name": "complexity",
-              "type": "number",
-              "description": "Task complexity 0-1"
-            },
-            {
-              "name": "responseStyle",
-              "type": "string",
-              "description": "Suggested response style"
-            },
-            {
-              "name": "responseLength",
-              "type": "string",
-              "description": "brief/medium/detailed"
-            },
-            {
-              "name": "isFollowUp",
-              "type": "boolean",
-              "description": "Is follow-up to previous"
-            },
-            {
-              "name": "emotionalTone",
-              "type": "string",
-              "description": "Detected emotional context"
-            },
-            {
-              "name": "instructions",
-              "type": "string",
-              "description": "Instructions for persona"
-            }
-          ],
-          "properties": {
-            "temperature": 0.2
-          },
-          "propertySchemas": {
-            "temperature": {
-              "type": "slider",
-              "default": 0.2,
-              "label": "Temperature",
-              "min": 0,
-              "max": 1,
-              "step": 0.1
-            }
-          },
-          "size": [
-            260,
-            280
-          ],
-          "description": "Enhanced intent analysis with action detection and conversation awareness (NO HARDCODING - LLM interprets intent)",
-          "color": "#f472b6",
-          "bgColor": "#9f1239"
-        },
         "properties": {
           "model": "orchestrator",
           "temperature": 0.1,
@@ -297,7 +87,6 @@
           "timeout": 300000
         },
         "title": "Intent Orchestrator",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -316,43 +105,11 @@
       "height": 120,
       "data": {
         "nodeType": "smart_router",
-        "schema": {
-          "id": "smart_router",
-          "name": "Smart Router",
-          "category": "router",
-          "inputs": [
-            {
-              "name": "orchestratorAnalysis",
-              "type": "object",
-              "description": "Analysis from orchestrator LLM"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "complexPath",
-              "type": "object",
-              "description": "Output for complex queries"
-            },
-            {
-              "name": "simplePath",
-              "type": "object",
-              "description": "Output for simple queries"
-            }
-          ],
-          "properties": {
-            "routeOnComplexity": true,
-            "simpleThreshold": 0.3
-          },
-          "description": "Routes queries based on complexity analysis",
-          "color": "#fbbf24",
-          "bgColor": "#92400e"
-        },
         "properties": {
           "routeOnComplexity": true,
           "simpleThreshold": 0.3
         },
         "title": "Smart Router",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -371,65 +128,11 @@
       "height": 100,
       "data": {
         "nodeType": "memory_router",
-        "schema": {
-          "id": "memory_router",
-          "name": "Memory Router",
-          "category": "memory",
-          "inputs": [
-            {
-              "name": "orchestratorHints",
-              "type": "object",
-              "description": "Memory routing hints from orchestrator"
-            },
-            {
-              "name": "userMessage",
-              "type": "string",
-              "description": "User message as fallback query"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "memories",
-              "type": "object",
-              "description": "Retrieved memories with searchPerformed flag"
-            }
-          ],
-          "properties": {
-            "topK": 8,
-            "threshold": 0.5
-          },
-          "propertySchemas": {
-            "topK": {
-              "type": "slider",
-              "default": 8,
-              "label": "Top K Results",
-              "min": 1,
-              "max": 20,
-              "step": 1
-            },
-            "threshold": {
-              "type": "slider",
-              "default": 0.5,
-              "label": "Similarity Threshold",
-              "min": 0,
-              "max": 1,
-              "step": 0.05
-            }
-          },
-          "size": [
-            220,
-            100
-          ],
-          "description": "AI-driven memory routing using orchestrator hints",
-          "color": "#c084fc",
-          "bgColor": "#7e22ce"
-        },
         "properties": {
           "topK": 8,
           "threshold": 0.5
         },
         "title": "Memory Router",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -448,42 +151,11 @@
       "height": 80,
       "data": {
         "nodeType": "conversation_history",
-        "schema": {
-          "id": "conversation_history",
-          "name": "Conversation History",
-          "category": "context",
-          "inputs": [
-            {
-              "name": "sessionId",
-              "type": "string"
-            },
-            {
-              "name": "mode",
-              "type": "string",
-              "optional": true
-            }
-          ],
-          "outputs": [
-            {
-              "name": "history",
-              "type": "array",
-              "description": "Conversation messages"
-            }
-          ],
-          "properties": {
-            "mode": "conversation",
-            "maxMessages": 20
-          },
-          "description": "Loads conversation history",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {
           "mode": "conversation",
           "maxMessages": 20
         },
         "title": "Conversation History",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -502,120 +174,12 @@
       "height": 80,
       "data": {
         "nodeType": "context_builder",
-        "schema": {
-          "id": "context_builder",
-          "name": "Context Builder",
-          "category": "context",
-          "inputs": [
-            {
-              "name": "message",
-              "type": "string"
-            },
-            {
-              "name": "cognitiveMode",
-              "type": "string"
-            },
-            {
-              "name": "conversationHistory",
-              "type": "array",
-              "optional": true
-            },
-            {
-              "name": "memories",
-              "type": "array",
-              "optional": true,
-              "description": "Pre-fetched memories from search interpreter"
-            },
-            {
-              "name": "searchInterpretation",
-              "type": "object",
-              "optional": true,
-              "description": "Search interpretation result (unknownSignal, etc.)"
-            },
-            {
-              "name": "persona",
-              "type": "object",
-              "optional": true,
-              "description": "Persona data (identity, personality, values, goals)"
-            },
-            {
-              "name": "feedbackContext",
-              "type": "object",
-              "optional": true,
-              "description": "Feedback from previous iteration (quality issues, suggestions)"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "context",
-              "type": "object",
-              "description": "Complete context package (includes persona)"
-            },
-            {
-              "name": "unknownSignal",
-              "type": "boolean",
-              "description": "Pass-through of unknownSignal from search interpretation"
-            },
-            {
-              "name": "iteration",
-              "type": "number",
-              "description": "Current iteration number"
-            },
-            {
-              "name": "persona",
-              "type": "object",
-              "description": "Passthrough persona for downstream nodes (Quality Scorer)"
-            }
-          ],
-          "properties": {
-            "searchDepth": "normal",
-            "maxMemories": 8,
-            "maxContextChars": 8000
-          },
-          "propertySchemas": {
-            "searchDepth": {
-              "type": "select",
-              "default": "normal",
-              "label": "Search Depth",
-              "options": [
-                "shallow",
-                "normal",
-                "deep",
-                "exhaustive"
-              ]
-            },
-            "maxMemories": {
-              "type": "slider",
-              "default": 8,
-              "label": "Max Memories",
-              "min": 1,
-              "max": 20,
-              "step": 1
-            },
-            "maxContextChars": {
-              "type": "number",
-              "default": 8000,
-              "label": "Max Context Length",
-              "min": 1000,
-              "max": 32000,
-              "step": 1000
-            }
-          },
-          "size": [
-            280,
-            200
-          ],
-          "description": "Builds context package with memories and persona",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {
           "searchDepth": "normal",
           "maxMemories": 8,
           "maxContextChars": 8000
         },
         "title": "Context Builder",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -634,78 +198,11 @@
       "height": 100,
       "data": {
         "nodeType": "response_synthesizer",
-        "schema": {
-          "id": "response_synthesizer",
-          "name": "Response Synthesizer",
-          "category": "operator",
-          "inputs": [
-            {
-              "name": "goal",
-              "type": "string"
-            },
-            {
-              "name": "scratchpad",
-              "type": "array"
-            },
-            {
-              "name": "context",
-              "type": "object"
-            },
-            {
-              "name": "persona",
-              "type": "object",
-              "optional": true,
-              "description": "Raw persona object (values, personality, identity)"
-            },
-            {
-              "name": "personaText",
-              "type": "object",
-              "optional": true,
-              "description": "Formatted persona text for voice synthesis"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Final natural language response"
-            }
-          ],
-          "properties": {
-            "model": "persona",
-            "style": "default"
-          },
-          "propertySchemas": {
-            "model": {
-              "type": "string",
-              "default": "persona",
-              "label": "Model"
-            },
-            "style": {
-              "type": "select",
-              "default": "default",
-              "label": "Response Style",
-              "options": [
-                "default",
-                "strict",
-                "summary"
-              ]
-            }
-          },
-          "size": [
-            260,
-            180
-          ],
-          "description": "Synthesizes final response using persona context",
-          "color": "#a78bfa",
-          "bgColor": "#5b21b6"
-        },
         "properties": {
           "model": "persona",
           "style": "default"
         },
         "title": "Response Synthesizer",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -724,37 +221,9 @@
       "height": 60,
       "data": {
         "nodeType": "cot_stripper",
-        "schema": {
-          "id": "cot_stripper",
-          "name": "Chain-of-Thought Stripper",
-          "category": "safety",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "cleaned",
-              "type": "string",
-              "description": "Response with <think> blocks removed"
-            },
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Alias for cleaned output",
-              "optional": true
-            }
-          ],
-          "description": "Removes internal reasoning blocks",
-          "color": "#fca5a5",
-          "bgColor": "#7f1d1d"
-        },
         "properties": {},
         "title": "CoT Stripper (deprecated)",
         "muted": true,
-        "executionState": "idle",
         "isUnconnected": true
       },
       "measured": {
@@ -773,48 +242,10 @@
       "height": 60,
       "data": {
         "nodeType": "safety_validator",
-        "schema": {
-          "id": "safety_validator",
-          "name": "Safety Validator",
-          "category": "safety",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string"
-            },
-            {
-              "name": "isSafe",
-              "type": "boolean"
-            },
-            {
-              "name": "issues",
-              "type": "array",
-              "optional": true
-            },
-            {
-              "name": "safetyResult",
-              "type": "object",
-              "optional": true
-            }
-          ],
-          "properties": {
-            "threshold": 0.7
-          },
-          "description": "Validates response safety",
-          "color": "#fca5a5",
-          "bgColor": "#7f1d1d"
-        },
         "properties": {
           "threshold": 0.75
         },
         "title": "Safety Validator",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -835,39 +266,8 @@
       "height": 60,
       "data": {
         "nodeType": "response_refiner",
-        "schema": {
-          "id": "response_refiner",
-          "name": "Response Refiner",
-          "category": "safety",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string"
-            },
-            {
-              "name": "safetyResult",
-              "type": "object",
-              "optional": true
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string"
-            },
-            {
-              "name": "refined",
-              "type": "boolean",
-              "optional": true
-            }
-          ],
-          "description": "Refines response to address safety issues",
-          "color": "#fca5a5",
-          "bgColor": "#7f1d1d"
-        },
         "properties": {},
         "title": "Response Refiner",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -888,43 +288,8 @@
       "height": 80,
       "data": {
         "nodeType": "memory_capture",
-        "schema": {
-          "id": "memory_capture",
-          "name": "Memory Capture",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "userMessage",
-              "type": "string"
-            },
-            {
-              "name": "assistantResponse",
-              "type": "string"
-            },
-            {
-              "name": "cognitiveMode",
-              "type": "string"
-            },
-            {
-              "name": "metadata",
-              "type": "object",
-              "optional": true
-            }
-          ],
-          "outputs": [
-            {
-              "name": "eventPath",
-              "type": "string",
-              "description": "Path to saved event file"
-            }
-          ],
-          "description": "Saves conversation to episodic memory",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Memory Capture",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -945,33 +310,8 @@
       "height": 60,
       "data": {
         "nodeType": "audit_logger",
-        "schema": {
-          "id": "audit_logger",
-          "name": "Audit Logger",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "eventType",
-              "type": "string"
-            },
-            {
-              "name": "details",
-              "type": "object"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "logged",
-              "type": "boolean"
-            }
-          ],
-          "description": "Logs to audit trail",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Audit Logger",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -990,30 +330,8 @@
       "height": 60,
       "data": {
         "nodeType": "stream_writer",
-        "schema": {
-          "id": "stream_writer",
-          "name": "Stream Writer",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "output",
-              "type": "string",
-              "description": "Output text"
-            }
-          ],
-          "description": "Streams response to client",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Stream Writer",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1032,40 +350,8 @@
       "height": 60,
       "data": {
         "nodeType": "persona_loader",
-        "schema": {
-          "id": "persona_loader",
-          "name": "Persona Loader",
-          "category": "persona",
-          "inputs": [],
-          "outputs": [
-            {
-              "name": "persona",
-              "type": "object"
-            },
-            {
-              "name": "identity",
-              "type": "object"
-            },
-            {
-              "name": "values",
-              "type": "object"
-            },
-            {
-              "name": "goals",
-              "type": "object"
-            },
-            {
-              "name": "success",
-              "type": "boolean"
-            }
-          ],
-          "description": "Loads persona core configuration",
-          "color": "#e879f9",
-          "bgColor": "#86198f"
-        },
         "properties": {},
         "title": "Persona Loader",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1084,39 +370,12 @@
       "height": 80,
       "data": {
         "nodeType": "persona_formatter",
-        "schema": {
-          "id": "persona_formatter",
-          "name": "Persona Formatter",
-          "category": "persona",
-          "inputs": [
-            {
-              "name": "personaData",
-              "type": "object"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "formatted",
-              "type": "object",
-              "description": "Formatted persona text"
-            }
-          ],
-          "properties": {
-            "includePersonality": true,
-            "includeValues": true,
-            "includeGoals": true
-          },
-          "description": "Formats persona data into system prompt text",
-          "color": "#e879f9",
-          "bgColor": "#86198f"
-        },
         "properties": {
           "includePersonality": true,
           "includeValues": true,
           "includeGoals": true
         },
         "title": "Persona Formatter",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1135,43 +394,8 @@
       "height": 80,
       "data": {
         "nodeType": "buffer_manager",
-        "schema": {
-          "id": "buffer_manager",
-          "name": "Buffer Manager",
-          "category": "emulation",
-          "inputs": [
-            {
-              "name": "conversationHistory",
-              "type": "array",
-              "optional": true
-            },
-            {
-              "name": "response",
-              "type": "any",
-              "optional": true
-            }
-          ],
-          "outputs": [
-            {
-              "name": "persisted",
-              "type": "boolean"
-            },
-            {
-              "name": "messageCount",
-              "type": "number"
-            },
-            {
-              "name": "bufferPath",
-              "type": "string"
-            }
-          ],
-          "description": "Persists conversation buffer to disk",
-          "color": "#a5b4fc",
-          "bgColor": "#3730a3"
-        },
         "properties": {},
         "title": "Buffer Manager",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1190,47 +414,8 @@
       "height": 60,
       "data": {
         "nodeType": "thinking_stripper",
-        "schema": {
-          "id": "thinking_stripper",
-          "name": "Thinking Stripper",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "any",
-              "description": "LLM response that may contain <think> blocks"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Response with thinking stripped (alias for stripped)"
-            },
-            {
-              "name": "stripped",
-              "type": "string",
-              "description": "Response with <think> blocks removed"
-            },
-            {
-              "name": "thinking",
-              "type": "string",
-              "description": "Extracted thinking content (null if none)"
-            },
-            {
-              "name": "hadThinking",
-              "type": "boolean",
-              "description": "Whether response contained thinking"
-            }
-          ],
-          "properties": {},
-          "description": "Extracts <think> blocks for UI display, provides stripped content for memory/TTS",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Thinking Stripper",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1249,108 +434,12 @@
       "height": 100,
       "data": {
         "nodeType": "search_interpreter",
-        "schema": {
-          "id": "search_interpreter",
-          "name": "Search Interpreter",
-          "category": "memory",
-          "inputs": [
-            {
-              "name": "searchResults",
-              "type": "object",
-              "description": "Memory search results from memory_router"
-            },
-            {
-              "name": "userQuery",
-              "type": "string",
-              "description": "Original user query"
-            },
-            {
-              "name": "orchestratorIntent",
-              "type": "object",
-              "optional": true,
-              "description": "Intent hints from orchestrator"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "relevantMemories",
-              "type": "array",
-              "description": "Filtered relevant memories with relevance scores"
-            },
-            {
-              "name": "hasRelevantResults",
-              "type": "boolean",
-              "description": "Whether any relevant results were found"
-            },
-            {
-              "name": "unknownSignal",
-              "type": "boolean",
-              "description": "True if the system should respond \"I don't know\""
-            },
-            {
-              "name": "interpretation",
-              "type": "string",
-              "description": "Summary of what was found or not found"
-            },
-            {
-              "name": "confidence",
-              "type": "number",
-              "description": "Confidence in the interpretation (0-1)"
-            },
-            {
-              "name": "rejectedCount",
-              "type": "number",
-              "description": "Number of memories rejected as irrelevant"
-            },
-            {
-              "name": "fullResult",
-              "type": "object",
-              "description": "Complete result object for Context Builder"
-            }
-          ],
-          "properties": {
-            "relevanceThreshold": 0.6,
-            "maxResults": 5,
-            "strictMode": true
-          },
-          "propertySchemas": {
-            "relevanceThreshold": {
-              "type": "slider",
-              "default": 0.6,
-              "label": "Relevance Threshold",
-              "min": 0.3,
-              "max": 0.9,
-              "step": 0.05
-            },
-            "maxResults": {
-              "type": "slider",
-              "default": 5,
-              "label": "Max Results",
-              "min": 1,
-              "max": 10,
-              "step": 1
-            },
-            "strictMode": {
-              "type": "toggle",
-              "default": true,
-              "label": "Strict Mode"
-            }
-          },
-          "size": [
-            240,
-            180
-          ],
-          "description": "Evaluates search results for relevance and signals \"I don't know\" when appropriate",
-          "color": "#c084fc",
-          "bgColor": "#7e22ce"
-        },
         "properties": {
           "relevanceThreshold": 0.6,
           "maxResults": 5,
           "strictMode": true
         },
         "title": "Search Interpreter",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1369,115 +458,11 @@
       "height": 80,
       "data": {
         "nodeType": "quality_scorer",
-        "schema": {
-          "id": "quality_scorer",
-          "name": "Quality Scorer",
-          "category": "cognitive",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Generated response to evaluate"
-            },
-            {
-              "name": "originalQuery",
-              "type": "string",
-              "description": "Original user query"
-            },
-            {
-              "name": "memories",
-              "type": "array",
-              "optional": true,
-              "description": "Memories (for context, not grounding check)"
-            },
-            {
-              "name": "unknownSignal",
-              "type": "boolean",
-              "optional": true,
-              "description": "Whether search interpreter signaled unknown"
-            },
-            {
-              "name": "persona",
-              "type": "object",
-              "optional": true,
-              "description": "Persona data (values, personality, identity) for alignment check"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Passthrough of the input response"
-            },
-            {
-              "name": "qualityResult",
-              "type": "object",
-              "description": "Full quality evaluation result"
-            },
-            {
-              "name": "qualityScore",
-              "type": "number",
-              "description": "Persona alignment score 0-1"
-            },
-            {
-              "name": "issues",
-              "type": "array",
-              "description": "List of persona alignment issues"
-            },
-            {
-              "name": "passesThreshold",
-              "type": "boolean",
-              "description": "Whether response aligns with persona values"
-            },
-            {
-              "name": "needsRefinement",
-              "type": "boolean",
-              "description": "Whether response needs another pass"
-            },
-            {
-              "name": "suggestions",
-              "type": "array",
-              "description": "How to better align with persona"
-            },
-            {
-              "name": "evaluation",
-              "type": "string",
-              "description": "Summary of persona alignment assessment"
-            }
-          ],
-          "properties": {
-            "qualityThreshold": 0.7,
-            "strictHallucinationCheck": true
-          },
-          "propertySchemas": {
-            "qualityThreshold": {
-              "type": "slider",
-              "default": 0.7,
-              "label": "Alignment Threshold",
-              "min": 0.5,
-              "max": 0.95,
-              "step": 0.05
-            },
-            "strictHallucinationCheck": {
-              "type": "toggle",
-              "default": true,
-              "label": "Check Hallucination (when unknownSignal=true)"
-            }
-          },
-          "size": [
-            240,
-            200
-          ],
-          "description": "Evaluates response against persona VALUES - not generic quality. Checks values alignment, privacy, and character consistency.",
-          "color": "#38bdf8",
-          "bgColor": "#0c4a6e"
-        },
         "properties": {
           "qualityThreshold": 0.7,
           "strictHallucinationCheck": true
         },
         "title": "Quality Scorer",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1496,110 +481,11 @@
       "height": 100,
       "data": {
         "nodeType": "feedback_router",
-        "schema": {
-          "id": "feedback_router",
-          "name": "Feedback Router",
-          "category": "control_flow",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Generated response"
-            },
-            {
-              "name": "qualityResult",
-              "type": "object",
-              "description": "Quality evaluation result"
-            },
-            {
-              "name": "safetyResult",
-              "type": "object",
-              "optional": true,
-              "description": "Safety validation result"
-            },
-            {
-              "name": "currentIteration",
-              "type": "number",
-              "optional": true,
-              "description": "Current loop iteration (default: 1)"
-            },
-            {
-              "name": "previousFeedback",
-              "type": "object",
-              "optional": true,
-              "description": "Feedback from previous iteration"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "routedTo",
-              "type": "string",
-              "description": "\"output\" or \"orchestrator\""
-            },
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Response to output (may be modified on failure)"
-            },
-            {
-              "name": "feedbackContext",
-              "type": "object",
-              "description": "Feedback context for orchestrator (if looping)"
-            },
-            {
-              "name": "exitReason",
-              "type": "string",
-              "description": "Reason for routing decision"
-            },
-            {
-              "name": "shouldContinueLoop",
-              "type": "boolean",
-              "description": "True if routing back to orchestrator"
-            },
-            {
-              "name": "iteration",
-              "type": "number",
-              "description": "Current iteration number"
-            },
-            {
-              "name": "qualityScore",
-              "type": "number",
-              "description": "Quality score of the response"
-            }
-          ],
-          "properties": {
-            "maxIterations": 3,
-            "allowPartialSuccess": true
-          },
-          "propertySchemas": {
-            "maxIterations": {
-              "type": "slider",
-              "default": 3,
-              "label": "Max Iterations",
-              "min": 1,
-              "max": 5,
-              "step": 1
-            },
-            "allowPartialSuccess": {
-              "type": "toggle",
-              "default": true,
-              "label": "Allow Partial Success"
-            }
-          },
-          "size": [
-            240,
-            160
-          ],
-          "description": "Routes responses based on quality/safety, enabling iterative refinement loops",
-          "color": "#818cf8",
-          "bgColor": "#4338ca"
-        },
         "properties": {
           "maxIterations": 3,
           "allowPartialSuccess": true
         },
         "title": "Feedback Router",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1620,63 +506,10 @@
       "height": 80,
       "data": {
         "nodeType": "gateway",
-        "schema": {
-          "id": "gateway",
-          "name": "Gateway",
-          "category": "control_flow",
-          "inputs": [
-            {
-              "name": "data",
-              "type": "any",
-              "description": "Data to pass through when gate is open"
-            },
-            {
-              "name": "open",
-              "type": "boolean",
-              "description": "Gate condition - true opens gate, false closes it"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "output",
-              "type": "any",
-              "description": "Data passed through (null if gate closed)"
-            },
-            {
-              "name": "passed",
-              "type": "boolean",
-              "description": "Whether data passed through the gate"
-            },
-            {
-              "name": "gateState",
-              "type": "string",
-              "description": "\"open\" or \"closed\""
-            }
-          ],
-          "properties": {
-            "invertCondition": false
-          },
-          "propertySchemas": {
-            "invertCondition": {
-              "type": "toggle",
-              "default": false,
-              "label": "Invert Condition",
-              "description": "When true, gate opens when condition is false"
-            }
-          },
-          "size": [
-            180,
-            80
-          ],
-          "description": "Conditional pass-through gate - data only flows when condition is true (like a transistor)",
-          "color": "#818cf8",
-          "bgColor": "#4338ca"
-        },
         "properties": {
           "invertCondition": true
         },
         "title": "Output Gate",
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1695,56 +528,12 @@
       "height": 350,
       "data": {
         "nodeType": "graph_note",
-        "schema": {
-          "id": "graph_note",
-          "name": "Graph Note",
-          "category": "utility",
-          "inputs": [],
-          "outputs": [],
-          "properties": {
-            "title": "Note",
-            "content": "",
-            "style": "info"
-          },
-          "propertySchemas": {
-            "title": {
-              "type": "string",
-              "default": "Note",
-              "label": "Title"
-            },
-            "content": {
-              "type": "text_multiline",
-              "default": "",
-              "label": "Content",
-              "rows": 15
-            },
-            "style": {
-              "type": "select",
-              "default": "info",
-              "label": "Style",
-              "options": [
-                "info",
-                "warning",
-                "success",
-                "error"
-              ]
-            }
-          },
-          "size": [
-            400,
-            200
-          ],
-          "description": "Documentation node for explaining graph workflows",
-          "color": "#94a3b8",
-          "bgColor": "#475569"
-        },
         "properties": {
           "title": "Dual Consciousness Mode v3.0 - Iterative Refinement Graph",
           "content": "PURPOSE: This graph implements iterative refinement with feedback loops to prevent hallucinations and ensure quality responses.\n\nFLOW OVERVIEW:\n1. User Input → Orchestrator LLM (analyzes intent, determines routing)\n2. Memory Router → Search Interpreter (evaluates relevance, signals 'unknownSignal' if no relevant memories)\n3. Context Builder (combines memories + unknownSignal into context package)\n4. Response Synthesizer (generates response using persona + context)\n5. Quality Scorer (evaluates response quality, detects hallucinations)\n6. Safety Validator (checks for policy violations)\n7. Feedback Router (CRITICAL: decides output vs loop back)\n   - If quality/safety PASS → routes to Gateway (gate opens)\n   - If FAIL → routes feedbackContext back to Orchestrator (gate stays closed)\n8. Gateway (OUTPUT GATE) - Acts like a transistor:\n   - Gate OPEN (shouldContinueLoop=false) → data flows to Stream Writer\n   - Gate CLOSED (shouldContinueLoop=true) → data blocked during iteration\n9. Max 3 iterations to prevent infinite loops\n\nKEY INNOVATION: Gateway Node\n- Prevents output nodes from running during loop iterations\n- Only passes data when loop exits (invertCondition=true on shouldContinueLoop)\n- No hidden executor logic - transparent graph-based control flow\n\nBACK-EDGE: Feedback Router → Orchestrator for iterative refinement.\n\nNODE IDS:\n- 1: User Input | 24: Orchestrator | 6: Memory Router | 32: Search Interpreter\n- 8: Context Builder | 17: Response Synthesizer | 33: Quality Scorer\n- 19: Safety Validator | 20: Response Refiner | 34: Feedback Router\n- 35: Gateway (Output Gate) | 23: Stream Writer | 31: Thinking Stripper | 21: Memory Capture",
           "style": "info"
         },
         "title": "Workflow Documentation",
-        "executionState": "idle",
         "isUnconnected": true
       },
       "measured": {
@@ -1761,35 +550,10 @@
       },
       "data": {
         "nodeType": "cognitive/text_input",
-        "schema": {
-          "id": "text_input",
-          "name": "Text Input",
-          "category": "input",
-          "inputs": [],
-          "outputs": [
-            {
-              "name": "text",
-              "type": "string",
-              "description": "Text from chat interface input"
-            },
-            {
-              "name": "hasTextInput",
-              "type": "boolean",
-              "description": "Whether text input is available"
-            }
-          ],
-          "properties": {
-            "placeholder": "Enter text..."
-          },
-          "description": "Gateway to chat interface text input",
-          "color": "#4ade80",
-          "bgColor": "#166534"
-        },
         "properties": {
           "placeholder": "Enter text...",
           "message": "im just running some checks - sorry about the redundancy\nhow are you?"
         },
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1806,36 +570,10 @@
       },
       "data": {
         "nodeType": "cognitive/chat_view",
-        "schema": {
-          "id": "chat_view",
-          "name": "Chat View",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "message",
-              "type": "string",
-              "optional": true
-            },
-            {
-              "name": "trigger",
-              "type": "any",
-              "optional": true
-            }
-          ],
-          "outputs": [],
-          "properties": {
-            "mode": "direct",
-            "maxMessages": 5
-          },
-          "description": "Displays chat messages visually",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {
           "mode": "direct",
           "maxMessages": 5
         },
-        "executionState": "idle",
         "isUnconnected": false
       },
       "measured": {
@@ -1852,55 +590,7 @@
       },
       "data": {
         "nodeType": "cognitive/output_viewer",
-        "schema": {
-          "id": "output_viewer",
-          "name": "Output Viewer",
-          "category": "utility",
-          "inputs": [
-            {
-              "name": "data",
-              "type": "any",
-              "description": "Any data to view/debug"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "data",
-              "type": "any",
-              "description": "Passthrough of input data"
-            },
-            {
-              "name": "currentEntry",
-              "type": "object",
-              "description": "Current iteration entry"
-            },
-            {
-              "name": "history",
-              "type": "array",
-              "description": "All entries across iterations"
-            },
-            {
-              "name": "iteration",
-              "type": "number",
-              "description": "Current iteration number"
-            },
-            {
-              "name": "entryCount",
-              "type": "number",
-              "description": "Total entries recorded"
-            }
-          ],
-          "properties": {},
-          "size": [
-            240,
-            120
-          ],
-          "description": "Debug node that displays raw output data and accumulates history across loop iterations",
-          "color": "#94a3b8",
-          "bgColor": "#475569"
-        },
         "properties": {},
-        "executionState": "idle",
         "isUnconnected": true
       },
       "measured": {

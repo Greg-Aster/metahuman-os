@@ -14,6 +14,25 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { renderPromptTemplate } from '../prompt-template.js';
+
+const DEFAULT_SKILL_DELEGATION_PROMPT_TEMPLATE = `I need you to help me prepare content for a skill execution.
+
+**Skill to Execute:** {{skillName}}
+
+**Skill Inputs:**
+{{skillInputsJson}}
+
+Please provide the content or instructions needed to execute this skill.
+
+Return ONLY a JSON object in this format:
+{
+  "success": true,
+  "content": "the actual content, command, or response text",
+  "explanation": "brief explanation of what this does (optional)"
+}
+
+Do NOT try to execute any tools yourself. Just provide the content.`;
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
   try {
@@ -94,23 +113,14 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 
     console.log(`[BigBrotherExecutor] Using ${backend.name} for skill execution`);
 
-    const prompt = `I need you to help me prepare content for a skill execution.
-
-**Skill to Execute:** ${skillName}
-
-**Skill Inputs:**
-${JSON.stringify(skillInputs, null, 2)}
-
-Please provide the content or instructions needed to execute this skill.
-
-Return ONLY a JSON object in this format:
-{
-  "success": true,
-  "content": "the actual content, command, or response text",
-  "explanation": "brief explanation of what this does (optional)"
-}
-
-Do NOT try to execute any tools yourself. Just provide the content.`;
+    const prompt = renderPromptTemplate(
+      properties?.skillDelegationPromptTemplate ?? DEFAULT_SKILL_DELEGATION_PROMPT_TEMPLATE,
+      {
+        skillName,
+        skillInputs,
+        skillInputsJson: JSON.stringify(skillInputs, null, 2),
+      },
+    );
 
     // Get session ID from context for streaming correlation
     const sessionId = (_context as any)?.sessionId || `bb-${Date.now()}`;
@@ -128,7 +138,7 @@ Do NOT try to execute any tools yourself. Just provide the content.`;
       actor: 'big-brother',
     });
 
-    const timeoutMs = properties?.timeout || 60000;
+    const timeoutMs = properties?.timeout ?? 60000;
 
     // Execute via unified backend abstraction
     const result = await escalate(prompt, {
@@ -249,6 +259,27 @@ export const BigBrotherExecutorNode: NodeDefinition = defineNode({
   properties: {
     timeout: 60000,
     autoStartSession: true,
+    skillDelegationPromptTemplate: DEFAULT_SKILL_DELEGATION_PROMPT_TEMPLATE,
+  },
+  propertySchemas: {
+    timeout: {
+      type: 'number',
+      default: 60000,
+      label: 'Timeout (ms)',
+      description: 'Maximum time to wait for the configured backend',
+    },
+    autoStartSession: {
+      type: 'boolean',
+      default: true,
+      label: 'Auto Start Session',
+    },
+    skillDelegationPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SKILL_DELEGATION_PROMPT_TEMPLATE,
+      label: 'Skill Delegation Prompt Template',
+      description: 'Template variables: {{skillName}}, {{skillInputs}}, {{skillInputsJson}}.',
+      rows: 16,
+    },
   },
   description: 'Executes skills via Big Brother backend - delegates to configured CLI executor',
   execute,

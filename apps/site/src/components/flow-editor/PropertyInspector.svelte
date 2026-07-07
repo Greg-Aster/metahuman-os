@@ -2,14 +2,29 @@
   import type { Node } from '@xyflow/svelte';
 
   interface PropertySchema {
-    type: 'text' | 'number' | 'slider' | 'select' | 'json' | 'color' | 'checkbox';
+    type:
+      | 'string'
+      | 'text'
+      | 'text_multiline'
+      | 'number'
+      | 'slider'
+      | 'select'
+      | 'multiselect'
+      | 'json'
+      | 'color'
+      | 'boolean'
+      | 'toggle'
+      | 'checkbox'
+      | 'tags';
     default?: any;
     label?: string;
     description?: string;
-    options?: string[];
+    options?: Array<string | { value: string; label: string }>;
     min?: number;
     max?: number;
     step?: number;
+    rows?: number;
+    placeholder?: string;
   }
 
   let {
@@ -64,6 +79,21 @@
       return String(value);
     }
   }
+
+  function optionValue(option: string | { value: string; label: string }): string {
+    return typeof option === 'string' ? option : option.value;
+  }
+
+  function optionLabel(option: string | { value: string; label: string }): string {
+    return typeof option === 'string' ? option : option.label;
+  }
+
+  function parseTags(value: string): string[] {
+    return value
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  }
 </script>
 
 <div class="bg-slate-800 border-l border-slate-700 h-full overflow-y-auto text-slate-200 text-[13px]">
@@ -87,20 +117,30 @@
             {schemaTyped.label || key}
           </label>
 
-          {#if schemaTyped.type === 'text'}
+          {#if schemaTyped.type === 'text' || schemaTyped.type === 'string'}
             <input
               id={`prop-${key}`}
               type="text"
               class="property-input"
-              value={currentValue || ''}
+              value={currentValue ?? ''}
+              placeholder={schemaTyped.placeholder || ''}
               oninput={(e) => updateProperty(key, (e.target as HTMLInputElement).value)}
             />
+          {:else if schemaTyped.type === 'text_multiline'}
+            <textarea
+              id={`prop-${key}`}
+              class="property-input resize-y min-h-[96px]"
+              value={currentValue ?? ''}
+              placeholder={schemaTyped.placeholder || ''}
+              oninput={(e) => updateProperty(key, (e.target as HTMLTextAreaElement).value)}
+              rows={schemaTyped.rows || 5}
+            ></textarea>
           {:else if schemaTyped.type === 'number'}
             <input
               id={`prop-${key}`}
               type="number"
               class="property-input"
-              value={currentValue || 0}
+              value={currentValue ?? 0}
               min={schemaTyped.min}
               max={schemaTyped.max}
               step={schemaTyped.step || 1}
@@ -124,11 +164,26 @@
             <select
               id={`prop-${key}`}
               class="property-input"
-              value={currentValue || schemaTyped.options?.[0] || ''}
+              value={currentValue ?? optionValue(schemaTyped.options?.[0] || '')}
               onchange={(e) => updateProperty(key, (e.target as HTMLSelectElement).value)}
             >
               {#each schemaTyped.options || [] as option}
-                <option value={option}>{option}</option>
+                <option value={optionValue(option)}>{optionLabel(option)}</option>
+              {/each}
+            </select>
+          {:else if schemaTyped.type === 'multiselect'}
+            <select
+              id={`prop-${key}`}
+              class="property-input min-h-[96px]"
+              multiple
+              value={Array.isArray(currentValue) ? currentValue : []}
+              onchange={(e) => updateProperty(
+                key,
+                Array.from((e.target as HTMLSelectElement).selectedOptions).map((option) => option.value)
+              )}
+            >
+              {#each schemaTyped.options || [] as option}
+                <option value={optionValue(option)}>{optionLabel(option)}</option>
               {/each}
             </select>
           {:else if schemaTyped.type === 'color'}
@@ -137,24 +192,33 @@
                 id={`prop-${key}`}
                 type="color"
                 class="property-color"
-                value={currentValue || '#808080'}
+                value={currentValue ?? '#808080'}
                 oninput={(e) => updateProperty(key, (e.target as HTMLInputElement).value)}
               />
               <input
                 type="text"
                 class="property-input flex-1"
-                value={currentValue || ''}
+                value={currentValue ?? ''}
                 placeholder="#000000"
                 oninput={(e) => updateProperty(key, (e.target as HTMLInputElement).value)}
               />
             </div>
-          {:else if schemaTyped.type === 'checkbox'}
+          {:else if schemaTyped.type === 'checkbox' || schemaTyped.type === 'boolean' || schemaTyped.type === 'toggle'}
             <input
               id={`prop-${key}`}
               type="checkbox"
               class="w-[18px] h-[18px] cursor-pointer accent-blue-500"
-              checked={currentValue || false}
+              checked={currentValue ?? false}
               onchange={(e) => updateProperty(key, (e.target as HTMLInputElement).checked)}
+            />
+          {:else if schemaTyped.type === 'tags'}
+            <input
+              id={`prop-${key}`}
+              type="text"
+              class="property-input"
+              value={Array.isArray(currentValue) ? currentValue.join(', ') : (currentValue ?? '')}
+              placeholder={schemaTyped.placeholder || 'tag-one, tag-two'}
+              oninput={(e) => updateProperty(key, parseTags((e.target as HTMLInputElement).value))}
             />
           {:else if schemaTyped.type === 'json'}
             <textarea

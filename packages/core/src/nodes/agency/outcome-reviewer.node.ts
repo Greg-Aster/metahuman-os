@@ -18,6 +18,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict, FailureCategory } from '../../agency/types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface OutcomeReviewOutput {
   verdict: OutcomeVerdict;
@@ -108,52 +109,27 @@ Examples of fixable bugs:
 
 Respond with valid JSON matching the schema.`;
 
-async function runOutcomeReview(desire: Desire, execution?: DesireExecution, username?: string): Promise<OutcomeReviewOutput> {
-  const plan = desire.plan;
-  const exec = execution || desire.execution;
+const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
 
-  // Include previous attempt context if this is a retry
-  const previousAttempts = desire.metrics?.executionFailCount || 0;
-  const previousLessons = desire.userCritique || '';
-
-  // Build goal type and milestone context for long-running goals
-  const goalType = desire.goalType || 'one_time';
-  const completionCriteria = desire.completionCriteria;
-  const currentMilestone = desire.milestones?.[desire.goalProgress?.currentMilestone || 0];
-  const totalMilestones = desire.milestones?.length || 0;
-  const completedMilestones = desire.goalProgress?.completedMilestones || 0;
-
-  const userPrompt = `## Desire to Review
-
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason}
-**Original Goal**: ${plan?.operatorGoal || 'Not specified'}
-${previousAttempts > 0 ? `\n**Previous Failed Attempts**: ${previousAttempts}` : ''}
-${previousLessons ? `\n**Previous Lessons/Critique**:\n${previousLessons}` : ''}
+**Title**: {{title}}
+**Description**: {{description}}
+**Reason**: {{reason}}
+**Original Goal**: {{operatorGoal}}{{previousAttemptsSection}}{{previousLessonsSection}}
 
 ## Goal Type & Completion Criteria
-**Goal Type**: ${goalType}
-${completionCriteria ? `**Completion Criteria**: ${completionCriteria}
-⚠️ IMPORTANT: Only mark "completed" if THIS criteria is ACTUALLY MET, not just because steps finished!` : ''}
-${goalType === 'long_running' && totalMilestones > 0 ? `
-**Milestones**: ${completedMilestones}/${totalMilestones} completed
-**Current Milestone**: ${currentMilestone?.title || 'None'} (${currentMilestone?.description || 'No description'})
-**Note**: This plan execution covers the CURRENT MILESTONE only. If milestone succeeded but more milestones remain, use verdict="continue" with milestoneAdvance=true.` : ''}
+**Goal Type**: {{goalType}}
+{{completionCriteriaSection}}
+{{milestoneSection}}
 
 ## Execution Results
 
-**Status**: ${exec?.status || 'unknown'}
-**Steps Completed**: ${exec?.stepsCompleted || 0} / ${plan?.steps?.length || 0}
-**Started**: ${exec?.startedAt || 'unknown'}
-**Completed**: ${exec?.completedAt || 'in progress'}
-${exec?.error ? `\n**Error**: ${exec.error}` : ''}
-${exec?.result ? `\n**Result/Output**: ${typeof exec.result === 'string' ? exec.result : JSON.stringify(exec.result, null, 2)}` : ''}
+**Status**: {{executionStatus}}
+**Steps Completed**: {{stepsCompleted}} / {{totalSteps}}
+**Started**: {{startedAt}}
+**Completed**: {{completedAt}}{{errorSection}}{{resultSection}}
 
 ### Step Results
-${exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknown }, i: number) =>
-  `${i + 1}. ${r.success ? '✅' : '❌'} ${plan?.steps?.[i]?.action || 'Unknown step'}${r.error ? `\n   Error: ${r.error}` : ''}${r.result ? `\n   Output: ${typeof r.result === 'string' ? r.result.substring(0, 200) : JSON.stringify(r.result).substring(0, 200)}` : ''}`
-).join('\n') || 'No step results available'}
+{{stepResults}}
 
 ## Analysis Required
 
@@ -181,17 +157,78 @@ ${exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknow
   "completionCriteriaMet": true/false - for long_running: set true ONLY if the ultimate completion criteria is actually met
 }`;
 
+interface OutcomeReviewOptions {
+  systemPrompt?: string;
+  userPromptTemplate?: string;
+  role?: string;
+  temperature?: number;
+}
+
+async function runOutcomeReview(
+  desire: Desire,
+  execution?: DesireExecution,
+  username?: string,
+  options: OutcomeReviewOptions = {},
+): Promise<OutcomeReviewOutput> {
+  const plan = desire.plan;
+  const exec = execution || desire.execution;
+
+  // Include previous attempt context if this is a retry
+  const previousAttempts = desire.metrics?.executionFailCount || 0;
+  const previousLessons = desire.userCritique || '';
+
+  // Build goal type and milestone context for long-running goals
+  const goalType = desire.goalType || 'one_time';
+  const completionCriteria = desire.completionCriteria;
+  const currentMilestone = desire.milestones?.[desire.goalProgress?.currentMilestone || 0];
+  const totalMilestones = desire.milestones?.length || 0;
+  const completedMilestones = desire.goalProgress?.completedMilestones || 0;
+
+  const stepResults = exec?.stepResults?.map((r: { success: boolean; error?: string; result?: unknown }, i: number) =>
+    `${i + 1}. ${r.success ? 'success' : 'failed'} ${plan?.steps?.[i]?.action || 'Unknown step'}${r.error ? `\n   Error: ${r.error}` : ''}${r.result ? `\n   Output: ${typeof r.result === 'string' ? r.result.substring(0, 200) : JSON.stringify(r.result).substring(0, 200)}` : ''}`
+  ).join('\n') || 'No step results available';
+
+  const userPrompt = renderPromptTemplate(options.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE, {
+    title: desire.title,
+    description: desire.description,
+    reason: desire.reason,
+    operatorGoal: plan?.operatorGoal || 'Not specified',
+    previousAttempts,
+    previousAttemptsSection: previousAttempts > 0 ? `\n**Previous Failed Attempts**: ${previousAttempts}` : '',
+    previousLessons,
+    previousLessonsSection: previousLessons ? `\n**Previous Lessons/Critique**:\n${previousLessons}` : '',
+    goalType,
+    completionCriteria: completionCriteria || '',
+    completionCriteriaSection: completionCriteria
+      ? `**Completion Criteria**: ${completionCriteria}\nIMPORTANT: Only mark "completed" if THIS criteria is ACTUALLY MET, not just because steps finished!`
+      : '',
+    milestoneSection: goalType === 'long_running' && totalMilestones > 0
+      ? `**Milestones**: ${completedMilestones}/${totalMilestones} completed\n**Current Milestone**: ${currentMilestone?.title || 'None'} (${currentMilestone?.description || 'No description'})\n**Note**: This plan execution covers the CURRENT MILESTONE only. If milestone succeeded but more milestones remain, use verdict="continue" with milestoneAdvance=true.`
+      : '',
+    executionStatus: exec?.status || 'unknown',
+    stepsCompleted: exec?.stepsCompleted || 0,
+    totalSteps: plan?.steps?.length || 0,
+    startedAt: exec?.startedAt || 'unknown',
+    completedAt: exec?.completedAt || 'in progress',
+    errorSection: exec?.error ? `\n**Error**: ${exec.error}` : '',
+    resultSection: exec?.result ? `\n**Result/Output**: ${typeof exec.result === 'string' ? exec.result : JSON.stringify(exec.result, null, 2)}` : '',
+    stepResults,
+    desire,
+    execution: exec,
+    plan,
+  });
+
   const messages: RouterMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: options.systemPrompt ?? SYSTEM_PROMPT },
     { role: 'user', content: userPrompt },
   ];
 
   try {
     const response = await callLLM({
-      role: 'persona',
+      role: options.role ?? 'persona',
       messages,
       userId: username,
-      options: { temperature: 0.3, responseFormat: 'json' },
+      options: { temperature: options.temperature ?? 0.3, responseFormat: 'json' },
     });
 
     if (!response.content) {
@@ -297,7 +334,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   console.log(`[outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
 
   try {
-    const reviewResult = await runOutcomeReview(desire, execution, username);
+    const reviewResult = await runOutcomeReview(desire, execution, username, {
+      systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
+      userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
+      role: properties?.role ?? 'persona',
+      temperature: properties?.temperature ?? 0.3,
+    });
 
     const outcomeReview: DesireOutcomeReview = {
       id: `outcome-${desire.id}-${Date.now()}`,
@@ -402,6 +444,9 @@ export const OutcomeReviewerNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.3,
+    role: 'persona',
+    systemPrompt: SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -409,6 +454,24 @@ export const OutcomeReviewerNode: NodeDefinition = defineNode({
       default: 0.3,
       label: 'Temperature',
       description: 'LLM temperature for review (lower = more deterministic)',
+    },
+    role: {
+      type: 'string',
+      default: 'persona',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: SYSTEM_PROMPT,
+      label: 'System Prompt',
+      rows: 28,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables include {{title}}, {{executionStatus}}, {{stepResults}}, {{desire}}, {{execution}}, {{plan}}.',
+      rows: 34,
     },
   },
   execute,

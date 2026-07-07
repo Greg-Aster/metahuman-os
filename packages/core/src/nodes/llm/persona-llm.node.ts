@@ -6,6 +6,13 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `{{personaText}}{{memoryContext}}
+
+Respond naturally as yourself, maintaining your personality and perspective.{{orchestratorSection}}`;
+
+const DEFAULT_FALLBACK_SYSTEM_PROMPT = 'Respond naturally and helpfully.';
 
 export const PersonaLLMNode: NodeDefinition = defineNode({
   id: 'persona_llm',
@@ -23,6 +30,10 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
   properties: {
     temperature: 0.7,
     maxTokens: 2048,
+    repeatPenalty: 1.3,
+    role: 'persona',
+    fallbackSystemPrompt: DEFAULT_FALLBACK_SYSTEM_PROMPT,
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -41,6 +52,29 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       max: 4096,
       step: 256,
     },
+    repeatPenalty: {
+      type: 'number',
+      default: 1.3,
+      label: 'Repeat Penalty',
+    },
+    role: {
+      type: 'string',
+      default: 'persona',
+      label: 'LLM Role',
+    },
+    fallbackSystemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_FALLBACK_SYSTEM_PROMPT,
+      label: 'Fallback System Prompt',
+      rows: 3,
+    },
+    systemPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt Template',
+      description: 'Template variables: {{personaText}}, {{memoryContext}}, {{orchestratorSection}}.',
+      rows: 8,
+    },
   },
   description: 'Generates response using persona with conversation history',
 
@@ -49,11 +83,19 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       return {};
     }
 
-    const personaText = inputs[0]?.formatted || '';
-    const conversationHistory = inputs[1]?.messages || context.conversationHistory || [];
-    const memories = inputs[2] || [];
-    const orchestratorData = inputs[3];
+    const personaInput = inputs.persona || inputs[0] || {};
+    const personaText = personaInput.formatted || personaInput.text || '';
+    const conversationHistoryInput = inputs.conversationHistory || inputs[1] || [];
+    const conversationHistory = conversationHistoryInput.messages || conversationHistoryInput || context.conversationHistory || [];
+    const memoriesInput = inputs.memories || inputs[2] || [];
+    const memories = memoriesInput.memories || memoriesInput;
+    const orchestratorData = inputs.orchestrator || inputs[3];
     const username = context.userId || context.username;
+    const role = properties?.role ?? 'persona';
+    const maxTokens = properties?.maxTokens ?? 2048;
+    const repeatPenalty = properties?.repeatPenalty ?? 1.3;
+    const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+    const fallbackSystemPrompt = properties?.fallbackSystemPrompt ?? DEFAULT_FALLBACK_SYSTEM_PROMPT;
 
     const message = context.userMessage || '';
 
@@ -70,8 +112,8 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       let memorySearchPerformed = false;
       let noMemoriesFound = false;
 
-      if (inputs[2]?.searchPerformed !== undefined) {
-        memorySearchPerformed = inputs[2].searchPerformed;
+      if (memoriesInput?.searchPerformed !== undefined) {
+        memorySearchPerformed = memoriesInput.searchPerformed;
         noMemoriesFound = memorySearchPerformed && (!memories || memories.length === 0);
       }
 
@@ -87,17 +129,12 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
         memoryContext = '\n\n[No relevant memories found for this query.]';
       }
 
-      let systemContent = personaText || 'Respond naturally and helpfully.';
-
-      if (memoryContext) {
-        systemContent += memoryContext;
-      }
-
-      systemContent += '\n\nRespond naturally as yourself, maintaining your personality and perspective.';
-
-      if (orchestratorInstructions) {
-        systemContent += `\n\nInstructions: ${orchestratorInstructions}`;
-      }
+      const orchestratorSection = orchestratorInstructions ? `\n\nInstructions: ${orchestratorInstructions}` : '';
+      const systemContent = renderPromptTemplate(systemPromptTemplate, {
+        personaText: personaText || fallbackSystemPrompt,
+        memoryContext,
+        orchestratorSection,
+      });
 
       const messages = [
         { role: 'system' as const, content: systemContent },
@@ -108,7 +145,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
         { role: 'user' as const, content: message },
       ].filter((msg) => typeof msg.content === 'string' && msg.content.trim().length > 0);
 
-      let baseTemperature = properties?.temperature || 0.7;
+      let baseTemperature = properties?.temperature ?? 0.7;
       if (responseStyle === 'verbose') baseTemperature = 0.8;
       else if (responseStyle === 'concise') baseTemperature = 0.5;
 
@@ -116,13 +153,13 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       const temperature = mode === 'inner' ? baseTemperature - 0.1 : baseTemperature;
 
       const response = await callLLM({
-        role: 'persona',  // Uses persona role - must be configured in cognitiveModeMappings
+        role,
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
-          maxTokens: properties?.maxTokens || 2048,
-          repeatPenalty: 1.3,
+          maxTokens,
+          repeatPenalty,
           temperature,
         },
         onProgress: context.emitProgress,

@@ -10,6 +10,7 @@ import { audit } from '../../audit.js';
 import { getUserContext } from '../../context.js';
 import { loadOperatorConfig } from '../../config.js';
 import { escalate, getActiveBackend, getBackend, ensureBackendsInitialized } from '../../escalation-backend.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 // Task types that can be chosen
 const VALID_TASKS = [
@@ -36,6 +37,65 @@ AVAILABLE TASKS:
 - desire_review: Review completed desire outcomes.
 - idle: Do nothing, wait for conditions to change.
 `;
+
+const DEFAULT_DECISION_PROMPT_TEMPLATE = `You are the Lizard Brain for MetaHuman OS - the autonomous decision maker.
+
+{{taskDescriptions}}
+
+DECISION GUIDELINES:
+1. APPROVED DESIRES (approvedDesires > 0): HIGH PRIORITY - run desire_execute!
+2. PENDING DESIRES READY (pendingDesiresReadyToAdvance > 0): Run desire_advance to progress them.
+3. DON'T repeat tasks that just ran - check RECENT ACTIVITY.
+4. USER ACTIVE (idleMinutes < 15): Prefer curiosity, desire_execute, reflect.
+5. USER INACTIVE (idleMinutes >= 15): Can run memory_curate, training_curate, psychoanalyze.
+6. If nothing productive to do, return "idle".
+
+=== BLOCKED TASKS (awaiting user approval - DO NOT SELECT) ===
+{{blockedTasks}}
+
+=== TRIGGERS FIRED ===
+{{triggerList}}
+
+=== CURRENT QUEUE ===
+{{queueList}}
+
+=== SYSTEM STATE ===
+- Unprocessed memories: {{unprocessedMemories}}
+- Index age: {{indexAgeHours}} hours
+- Hours since reflection: {{hoursSinceReflection}}
+- User active: {{userActive}} (idle {{idleMinutes}} mins)
+
+=== DESIRES ===
+- Pending: {{pendingDesires}}
+- Ready to advance: {{pendingDesiresReadyToAdvance}}
+- Active (evaluating/planning): {{activeDesires}}
+- Awaiting approval: {{awaitingApprovalDesires}}
+- APPROVED (ready to execute): {{approvedDesires}} {{approvedDesiresWarning}}
+
+=== TASKS ===
+- Active: {{activeTasks}}
+- High priority: {{highPriorityTasks}}
+- Overdue: {{overdueTasks}}
+- In progress: {{inProgressTasks}}
+- Blocked: {{blockedTasksCount}}
+
+=== PERSONA GOALS ===
+- Short-term: {{shortTermGoals}}
+- Mid-term: {{midTermGoals}}
+- Long-term: {{longTermGoals}}
+- Active: {{activeGoals}}
+- Proposed: {{proposedGoals}}
+
+=== RECENT ACTIVITY ===
+{{recentActivity}}
+
+Based on all this context, what ONE task should I execute next?
+
+RESPOND WITH JSON ONLY:
+{"task": "<task_type>", "reasoning": "<why this task>"}
+
+If nothing should run:
+{"task": null, "reasoning": "<why waiting>"}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const inputObj = inputs as Record<string, any>;
@@ -88,64 +148,40 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       : '(none - all tasks available)';
 
     // Full prompt with ALL context - no truncation needed for Claude
-    const prompt = `You are the Lizard Brain for MetaHuman OS - the autonomous decision maker.
-
-${TASK_DESCRIPTIONS}
-
-DECISION GUIDELINES:
-1. APPROVED DESIRES (approvedDesires > 0): HIGH PRIORITY - run desire_execute!
-2. PENDING DESIRES READY (pendingDesiresReadyToAdvance > 0): Run desire_advance to progress them.
-3. DON'T repeat tasks that just ran - check RECENT ACTIVITY.
-4. USER ACTIVE (idleMinutes < 15): Prefer curiosity, desire_execute, reflect.
-5. USER INACTIVE (idleMinutes >= 15): Can run memory_curate, training_curate, psychoanalyze.
-6. If nothing productive to do, return "idle".
-
-=== BLOCKED TASKS (awaiting user approval - DO NOT SELECT) ===
-${blockedTasks}
-
-=== TRIGGERS FIRED ===
-${triggerList}
-
-=== CURRENT QUEUE ===
-${queueList}
-
-=== SYSTEM STATE ===
-- Unprocessed memories: ${systemState.unprocessedMemories || 0}
-- Index age: ${systemState.indexAgeHours?.toFixed(1) || 999} hours
-- Hours since reflection: ${systemState.hoursSinceReflection?.toFixed(1) || 'unknown'}
-- User active: ${systemState.userActive ? 'Yes' : 'No'} (idle ${systemState.idleMinutes || 0} mins)
-
-=== DESIRES ===
-- Pending: ${systemState.pendingDesires || 0}
-- Ready to advance: ${systemState.pendingDesiresReadyToAdvance || 0}
-- Active (evaluating/planning): ${systemState.activeDesires || 0}
-- Awaiting approval: ${systemState.awaitingApprovalDesires || 0}
-- APPROVED (ready to execute): ${systemState.approvedDesires || 0} ${systemState.approvedDesires > 0 ? '⚠️ EXECUTE THESE!' : ''}
-
-=== TASKS ===
-- Active: ${systemState.activeTasks || 0}
-- High priority: ${systemState.highPriorityTasks || 0}
-- Overdue: ${systemState.overdueTasks || 0}
-- In progress: ${systemState.inProgressTasks || 0}
-- Blocked: ${systemState.blockedTasks || 0}
-
-=== PERSONA GOALS ===
-- Short-term: ${systemState.shortTermGoals || 0}
-- Mid-term: ${systemState.midTermGoals || 0}
-- Long-term: ${systemState.longTermGoals || 0}
-- Active: ${systemState.activeGoals || 0}
-- Proposed: ${systemState.proposedGoals || 0}
-
-=== RECENT ACTIVITY ===
-${recentActivity}
-
-Based on all this context, what ONE task should I execute next?
-
-RESPOND WITH JSON ONLY:
-{"task": "<task_type>", "reasoning": "<why this task>"}
-
-If nothing should run:
-{"task": null, "reasoning": "<why waiting>"}`;
+    const prompt = renderPromptTemplate(
+      properties?.decisionPromptTemplate ?? DEFAULT_DECISION_PROMPT_TEMPLATE,
+      {
+        taskDescriptions: TASK_DESCRIPTIONS,
+        blockedTasks,
+        triggerList,
+        queueList,
+        unprocessedMemories: systemState.unprocessedMemories || 0,
+        indexAgeHours: systemState.indexAgeHours?.toFixed(1) || 999,
+        hoursSinceReflection: systemState.hoursSinceReflection?.toFixed(1) || 'unknown',
+        userActive: systemState.userActive ? 'Yes' : 'No',
+        idleMinutes: systemState.idleMinutes || 0,
+        pendingDesires: systemState.pendingDesires || 0,
+        pendingDesiresReadyToAdvance: systemState.pendingDesiresReadyToAdvance || 0,
+        activeDesires: systemState.activeDesires || 0,
+        awaitingApprovalDesires: systemState.awaitingApprovalDesires || 0,
+        approvedDesires: systemState.approvedDesires || 0,
+        approvedDesiresWarning: systemState.approvedDesires > 0 ? 'EXECUTE THESE!' : '',
+        activeTasks: systemState.activeTasks || 0,
+        highPriorityTasks: systemState.highPriorityTasks || 0,
+        overdueTasks: systemState.overdueTasks || 0,
+        inProgressTasks: systemState.inProgressTasks || 0,
+        blockedTasksCount: systemState.blockedTasks || 0,
+        shortTermGoals: systemState.shortTermGoals || 0,
+        midTermGoals: systemState.midTermGoals || 0,
+        longTermGoals: systemState.longTermGoals || 0,
+        activeGoals: systemState.activeGoals || 0,
+        proposedGoals: systemState.proposedGoals || 0,
+        recentActivity,
+        systemState,
+        candidates,
+        queuedTasks,
+      },
+    );
 
     audit({
       level: 'info',
@@ -162,7 +198,7 @@ If nothing should run:
 
     // Send to Big Brother - no token limits!
     const result = await escalate(prompt, {
-      timeout: properties?.timeout || 60000,
+      timeout: properties?.timeout ?? 60000,
       sessionId: `lizard-brain-${Date.now()}`,
       preferredBackend,
       username: userContext?.username,
@@ -249,6 +285,22 @@ export const BigBrotherDecisionNode: NodeDefinition = defineNode({
   ],
   properties: {
     timeout: 60000,
+    decisionPromptTemplate: DEFAULT_DECISION_PROMPT_TEMPLATE,
+  },
+  propertySchemas: {
+    timeout: {
+      type: 'number',
+      default: 60000,
+      label: 'Timeout (ms)',
+      description: 'Maximum time to wait for Big Brother decision',
+    },
+    decisionPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_DECISION_PROMPT_TEMPLATE,
+      label: 'Decision Prompt Template',
+      description: 'Template variables include {{taskDescriptions}}, {{blockedTasks}}, {{triggerList}}, {{queueList}}, {{systemState}}, {{recentActivity}}, {{candidates}}, {{queuedTasks}}.',
+      rows: 34,
+    },
   },
   description: 'Delegates decision making to Big Brother (Claude) - unlimited context',
   execute,

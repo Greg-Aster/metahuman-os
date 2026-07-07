@@ -29,6 +29,7 @@ import type { TrustLevel } from '../../skills.js';
 import { generatePlanId, initializeGoalProgress } from '../../agency/types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { loadExecutionAttempts } from '../../agency/storage.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Planning module of MetaHuman OS. Your job is to create concrete, executable plans for desires.
 
@@ -85,6 +86,109 @@ IMPORTANT: Always generate at least 1 step. Never return empty steps. If the des
 
 Respond with valid JSON matching the plan schema.`;
 
+const DEFAULT_REVISION_CONTEXT_TEMPLATE = `## REVISION REQUEST{{retryLabel}}
+{{retryDetails}}
+This is a revision of a previous plan.{{revisionReason}}
+
+### Previous Plan (Version {{previousVersion}})
+{{previousPlanSteps}}
+
+Operator Goal: {{previousOperatorGoal}}
+Estimated Risk: {{previousEstimatedRisk}}
+{{previousSuccessScoreSection}}
+
+### {{feedbackHeading}}
+{{userCritique}}
+{{outcomeReviewSection}}
+{{suggestionsSection}}
+
+### Instructions
+Please create a NEW plan that addresses the feedback. Do not simply repeat the previous plan.
+{{retryInstructions}}`;
+
+const DEFAULT_EXECUTION_CONTEXT_TEMPLATE = `## Previous Accomplishments
+The following work has already been completed for this desire. Build upon these findings:
+
+{{accomplishments}}
+
+IMPORTANT: Use this context to inform the next phase. Do not repeat research that was already done.`;
+
+const DEFAULT_MILESTONE_CONTEXT_TEMPLATE = `## Long-Running Goal Progress
+This is a long-running goal with {{totalMilestones}} milestones.
+- Completed: {{completedMilestoneCount}}/{{totalMilestones}} ({{progressPercent}}%)
+- Completion Criteria: {{completionCriteria}}
+
+### Completed Milestones
+{{completedMilestones}}
+
+### Current Milestone (#{{currentMilestoneNumber}})
+{{currentMilestone}}
+
+IMPORTANT: Generate a plan for the CURRENT MILESTONE only, not the entire goal.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Plan
+
+**Title**: {{title}}
+**Description**: {{description}}
+**Reason**: {{reason}}
+**Source**: {{source}}
+**Risk Level**: {{risk}}
+{{revisionContext}}{{milestoneContext}}{{executionContext}}
+## Available Tools (Optional Reference)
+{{toolCatalogSection}}
+
+## Decision Rules
+{{decisionRules}}
+
+## Relevant Context
+{{relevantMemories}}
+
+## Task
+
+Create an execution plan with 3-10 steps. Each step should be clear enough for an intelligent AI (Claude/Big Brother) to execute.
+
+Requirements:
+1. Determine the goal type (one_time, recurring, or long_running)
+2. Define specific, verifiable completion criteria
+3. For long_running: Create 3-10 milestones AND steps for the FIRST milestone only
+4. Clear, ordered steps describing WHAT to do
+5. Expected outcome for each step
+6. Risk assessment per step (none/low/medium/high/critical)
+7. A single "operatorGoal" summarizing the overall objective
+{{revisionReminder}}
+
+CRITICAL: You MUST generate at least 1 step. Do not return empty steps array.
+
+Output as JSON:
+{
+  "goalType": "one_time | recurring | long_running",
+  "completionCriteria": "Specific, verifiable condition that means this desire is TRULY satisfied",
+  "milestones": [
+    {
+      "order": 1,
+      "title": "Milestone title (3-5 words)",
+      "description": "What this milestone achieves"
+    }
+  ],
+  "steps": [
+    {
+      "order": 1,
+      "action": "Clear description of what this step accomplishes",
+      "skill": "optional_skill_name_or_general",
+      "inputs": { "key": "value" },
+      "expectedOutcome": "What should happen when this step completes",
+      "risk": "low",
+      "requiresApproval": false
+    }
+  ],
+  "estimatedRisk": "low",
+  "operatorGoal": "Single sentence describing what the operator should accomplish",
+  "requiredSkills": []
+}
+
+NOTE: For one_time and recurring desires, milestones can be omitted or empty.
+For long_running desires, milestones are REQUIRED and steps should only cover the FIRST milestone.`;
+
 function determineRequiredTrust(risk: string): TrustLevel {
   switch (risk) {
     case 'none':
@@ -123,7 +227,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const toolCatalog = catalogOutput?.catalog || '';
   const decisionRules = policyOutput?.formatted || '';
   const relevantMemories = JSON.stringify(searchOutput?.memories || [], null, 2);
-  const temperature = (properties?.temperature as number) || 0.3;
+  const temperature = (properties?.temperature as number) ?? 0.3;
+  const role = properties?.role ?? 'orchestrator';
+  const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
+  const revisionContextTemplate = properties?.revisionContextTemplate ?? DEFAULT_REVISION_CONTEXT_TEMPLATE;
+  const executionContextTemplate = properties?.executionContextTemplate ?? DEFAULT_EXECUTION_CONTEXT_TEMPLATE;
+  const milestoneContextTemplate = properties?.milestoneContextTemplate ?? DEFAULT_MILESTONE_CONTEXT_TEMPLATE;
 
   if (!desire) {
     return {
@@ -147,42 +257,50 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     // Determine if this is a retry after failure
     const isRetryAfterFailure = failCount > 0 || (outcomeReview && outcomeReview.verdict === 'retry');
 
-    revisionContext = `
-## REVISION REQUEST${isRetryAfterFailure ? ' (Retry After Failure)' : ''}
-${isRetryAfterFailure ? `
-⚠️ **THIS IS ATTEMPT #${failCount + 1}** - Previous execution(s) failed.
-${outcomeReview?.failureCategory ? `
-**Failure Category**: ${outcomeReview.failureCategory}
-${outcomeReview.failureCategory === 'plan_error' ? '→ The previous approach/strategy was wrong. Need a DIFFERENT plan.' : ''}
-${outcomeReview.failureCategory === 'system_error' ? '→ There was a system/code error. Check if the steps are technically feasible.' : ''}
-${outcomeReview.failureCategory === 'external_error' ? '→ External dependency failed. Consider alternatives or fallbacks.' : ''}
-${outcomeReview.failureCategory === 'timeout' ? '→ Took too long. Consider simpler/faster approaches.' : ''}
-${outcomeReview.failureCategory === 'partial' ? '→ Partially succeeded. Build on what worked.' : ''}` : ''}
-` : ''}
-This is a revision of a previous plan.${isRetryAfterFailure ? ' The previous execution failed and feedback has been provided.' : ' The user has reviewed the plan and provided feedback.'}
+    const failureGuidance = outcomeReview?.failureCategory
+      ? [
+          `**Failure Category**: ${outcomeReview.failureCategory}`,
+          outcomeReview.failureCategory === 'plan_error' ? 'The previous approach/strategy was wrong. Need a DIFFERENT plan.' : '',
+          outcomeReview.failureCategory === 'system_error' ? 'There was a system/code error. Check if the steps are technically feasible.' : '',
+          outcomeReview.failureCategory === 'external_error' ? 'External dependency failed. Consider alternatives or fallbacks.' : '',
+          outcomeReview.failureCategory === 'timeout' ? 'Took too long. Consider simpler/faster approaches.' : '',
+          outcomeReview.failureCategory === 'partial' ? 'Partially succeeded. Build on what worked.' : '',
+        ].filter(Boolean).join('\n')
+      : '';
 
-### Previous Plan (Version ${previousPlan.version || planVersion - 1})
-${previousPlan.steps.map((s, i) => `${i + 1}. ${s.action} (skill: ${s.skill || 'none'}, risk: ${s.risk})`).join('\n')}
-
-Operator Goal: ${previousPlan.operatorGoal}
-Estimated Risk: ${previousPlan.estimatedRisk}
-${outcomeReview?.successScore !== undefined ? `\n**Previous Success Score**: ${(outcomeReview.successScore * 100).toFixed(0)}%` : ''}
-
-### ${isRetryAfterFailure ? 'Failure Analysis & Lessons Learned' : 'User Critique'}
-${userCritique || 'No specific critique provided - please improve the plan.'}
-${outcomeReview?.reasoning ? `\n**Outcome Review**: ${outcomeReview.reasoning}` : ''}
-${outcomeReview?.nextAttemptSuggestions?.length ? `\n**Suggestions**:\n${outcomeReview.nextAttemptSuggestions.map(s => `- ${s}`).join('\n')}` : ''}
-
-### Instructions
-Please create a NEW plan that addresses the feedback. Do not simply repeat the previous plan.
-${isRetryAfterFailure ? `
-**CRITICAL**: This plan MUST be different from the previous one. Simply repeating failed steps will fail again.
+    revisionContext = renderPromptTemplate(revisionContextTemplate, {
+      retryLabel: isRetryAfterFailure ? ' (Retry After Failure)' : '',
+      retryDetails: isRetryAfterFailure
+        ? `**THIS IS ATTEMPT #${failCount + 1}** - Previous execution(s) failed.\n${failureGuidance}`
+        : '',
+      revisionReason: isRetryAfterFailure
+        ? ' The previous execution failed and feedback has been provided.'
+        : ' The user has reviewed the plan and provided feedback.',
+      previousVersion: previousPlan.version || planVersion - 1,
+      previousPlanSteps: previousPlan.steps.map((s, i) => `${i + 1}. ${s.action} (skill: ${s.skill || 'none'}, risk: ${s.risk})`).join('\n'),
+      previousOperatorGoal: previousPlan.operatorGoal,
+      previousEstimatedRisk: previousPlan.estimatedRisk,
+      previousSuccessScoreSection: outcomeReview?.successScore !== undefined
+        ? `\n**Previous Success Score**: ${(outcomeReview.successScore * 100).toFixed(0)}%`
+        : '',
+      feedbackHeading: isRetryAfterFailure ? 'Failure Analysis & Lessons Learned' : 'User Critique',
+      userCritique: userCritique || 'No specific critique provided - please improve the plan.',
+      outcomeReviewSection: outcomeReview?.reasoning ? `\n**Outcome Review**: ${outcomeReview.reasoning}` : '',
+      suggestionsSection: outcomeReview?.nextAttemptSuggestions?.length
+        ? `\n**Suggestions**:\n${outcomeReview.nextAttemptSuggestions.map(s => `- ${s}`).join('\n')}`
+        : '',
+      retryInstructions: isRetryAfterFailure
+        ? `**CRITICAL**: This plan MUST be different from the previous one. Simply repeating failed steps will fail again.
 Consider:
 1. Alternative approaches or tools
 2. Breaking complex steps into smaller ones
 3. Adding validation/verification steps
-4. Graceful error handling` : 'Consider the critique carefully and make meaningful changes to address the concerns.'}
-`;
+4. Graceful error handling`
+        : 'Consider the critique carefully and make meaningful changes to address the concerns.',
+      desire,
+      previousPlan,
+      outcomeReview: outcomeReview || null,
+    });
   }
 
   // Load previous execution results for context (especially for long-running goals)
@@ -203,14 +321,11 @@ Consider:
           });
 
         if (accomplishments.length > 0) {
-          executionContext = `
-## Previous Accomplishments
-The following work has already been completed for this desire. Build upon these findings:
-
-${accomplishments.join('\n\n')}
-
-IMPORTANT: Use this context to inform the next phase. Do not repeat research that was already done.
-`;
+          executionContext = renderPromptTemplate(executionContextTemplate, {
+            accomplishments: accomplishments.join('\n\n'),
+            executions,
+            successfulExecution,
+          });
         }
       }
     }
@@ -225,93 +340,51 @@ IMPORTANT: Use this context to inform the next phase. Do not repeat research tha
     const completedMilestones = desire.milestones.filter(m => m.status === 'completed');
     const currentMilestoneData = desire.milestones[currentMilestone];
 
-    milestoneContext = `
-## Long-Running Goal Progress
-This is a long-running goal with ${desire.milestones.length} milestones.
-- Completed: ${completedMilestones.length}/${desire.milestones.length} (${desire.goalProgress?.progressPercent || 0}%)
-- Completion Criteria: ${desire.completionCriteria || 'Not specified'}
-
-### Completed Milestones
-${completedMilestones.length > 0 ? completedMilestones.map(m => `✅ ${m.order}. ${m.title}: ${m.description || 'No description'}`).join('\n') : 'None yet'}
-
-### Current Milestone (#${currentMilestone + 1})
-${currentMilestoneData ? `**${currentMilestoneData.title}**: ${currentMilestoneData.description || 'No description'}` : 'None active'}
-
-IMPORTANT: Generate a plan for the CURRENT MILESTONE only, not the entire goal.
-`;
+    milestoneContext = renderPromptTemplate(milestoneContextTemplate, {
+      totalMilestones: desire.milestones.length,
+      completedMilestoneCount: completedMilestones.length,
+      progressPercent: desire.goalProgress?.progressPercent || 0,
+      completionCriteria: desire.completionCriteria || 'Not specified',
+      completedMilestones: completedMilestones.length > 0
+        ? completedMilestones.map(m => `${m.order}. ${m.title}: ${m.description || 'No description'}`).join('\n')
+        : 'None yet',
+      currentMilestoneNumber: currentMilestone + 1,
+      currentMilestone: currentMilestoneData
+        ? `**${currentMilestoneData.title}**: ${currentMilestoneData.description || 'No description'}`
+        : 'None active',
+      desire,
+    });
   }
 
-  const userPrompt = `## Desire to Plan
-
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason || 'Not specified'}
-**Source**: ${desire.source || 'user'}
-**Risk Level**: ${desire.risk || 'medium'}
-${revisionContext}${milestoneContext}${executionContext}
-## Available Tools (Optional Reference)
-${toolCatalog ? 'These tools are available but you can also use general actions:\n' + toolCatalog : 'Use general high-level actions - Big Brother will determine specific tools.'}
-
-## Decision Rules
-${decisionRules || 'No specific rules - use good judgment'}
-
-## Relevant Context
-${relevantMemories || 'No additional context'}
-
-## Task
-
-Create an execution plan with 3-10 steps. Each step should be clear enough for an intelligent AI (Claude/Big Brother) to execute.
-
-Requirements:
-1. Determine the goal type (one_time, recurring, or long_running)
-2. Define specific, verifiable completion criteria
-3. For long_running: Create 3-10 milestones AND steps for the FIRST milestone only
-4. Clear, ordered steps describing WHAT to do
-5. Expected outcome for each step
-6. Risk assessment per step (none/low/medium/high/critical)
-7. A single "operatorGoal" summarizing the overall objective
-${isRevision ? '\nIMPORTANT: This is a revision. Address the user critique and improve upon the previous plan.' : ''}
-
-CRITICAL: You MUST generate at least 1 step. Do not return empty steps array.
-
-Output as JSON:
-{
-  "goalType": "one_time | recurring | long_running",
-  "completionCriteria": "Specific, verifiable condition that means this desire is TRULY satisfied",
-  "milestones": [
-    {
-      "order": 1,
-      "title": "Milestone title (3-5 words)",
-      "description": "What this milestone achieves"
-    }
-  ],
-  "steps": [
-    {
-      "order": 1,
-      "action": "Clear description of what this step accomplishes",
-      "skill": "optional_skill_name_or_general",
-      "inputs": { "key": "value" },
-      "expectedOutcome": "What should happen when this step completes",
-      "risk": "low",
-      "requiresApproval": false
-    }
-  ],
-  "estimatedRisk": "low",
-  "operatorGoal": "Single sentence describing what the operator should accomplish",
-  "requiredSkills": []
-}
-
-NOTE: For one_time and recurring desires, milestones can be omitted or empty.
-For long_running desires, milestones are REQUIRED and steps should only cover the FIRST milestone.`;
+  const userPrompt = renderPromptTemplate(userPromptTemplate, {
+    title: desire.title,
+    description: desire.description,
+    reason: desire.reason || 'Not specified',
+    source: desire.source || 'user',
+    risk: desire.risk || 'medium',
+    revisionContext,
+    milestoneContext,
+    executionContext,
+    toolCatalog,
+    toolCatalogSection: toolCatalog
+      ? `These tools are available but you can also use general actions:\n${toolCatalog}`
+      : 'Use general high-level actions - Big Brother will determine specific tools.',
+    decisionRules: decisionRules || 'No specific rules - use good judgment',
+    relevantMemories: relevantMemories || 'No additional context',
+    revisionReminder: isRevision
+      ? '\nIMPORTANT: This is a revision. Address the user critique and improve upon the previous plan.'
+      : '',
+    desire,
+  });
 
   const messages: RouterMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ];
 
   try {
     const response = await callLLM({
-      role: 'orchestrator',
+      role,
       messages,
       userId: username,
       options: {
@@ -460,6 +533,12 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.3,
+    role: 'orchestrator',
+    systemPrompt: SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
+    revisionContextTemplate: DEFAULT_REVISION_CONTEXT_TEMPLATE,
+    executionContextTemplate: DEFAULT_EXECUTION_CONTEXT_TEMPLATE,
+    milestoneContextTemplate: DEFAULT_MILESTONE_CONTEXT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -470,6 +549,45 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
       step: 0.1,
       label: 'Temperature',
       description: 'LLM temperature for plan generation',
+    },
+    role: {
+      type: 'string',
+      default: 'orchestrator',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: SYSTEM_PROMPT,
+      label: 'System Prompt',
+      rows: 34,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Main plan-generation template. Variables include {{title}}, {{revisionContext}}, {{milestoneContext}}, {{executionContext}}, {{toolCatalogSection}}, {{decisionRules}}, {{relevantMemories}}, {{desire}}.',
+      rows: 42,
+    },
+    revisionContextTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_REVISION_CONTEXT_TEMPLATE,
+      label: 'Revision Context Template',
+      description: 'Template used when revising a previous plan.',
+      rows: 22,
+    },
+    executionContextTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_EXECUTION_CONTEXT_TEMPLATE,
+      label: 'Execution Context Template',
+      description: 'Template used for prior successful execution context.',
+      rows: 8,
+    },
+    milestoneContextTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_MILESTONE_CONTEXT_TEMPLATE,
+      label: 'Milestone Context Template',
+      description: 'Template used for long-running goal progress.',
+      rows: 14,
     },
   },
   execute,

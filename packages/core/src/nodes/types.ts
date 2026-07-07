@@ -193,6 +193,53 @@ export interface NodeDefinition {
   tags?: string[];
 }
 
+function clonePropertyValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => clonePropertyValue(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    const cloned: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      cloned[key] = clonePropertyValue(nestedValue);
+    }
+    return cloned as T;
+  }
+
+  return value;
+}
+
+export function materializeProperties(
+  defaults?: Record<string, any>,
+  propertySchemas?: Record<string, PropertySchema>,
+  overrides?: Record<string, any>,
+): Record<string, any> {
+  const properties: Record<string, any> = {};
+
+  for (const [key, value] of Object.entries(defaults || {})) {
+    properties[key] = clonePropertyValue(value);
+  }
+
+  for (const [key, schema] of Object.entries(propertySchemas || {})) {
+    if (!(key in properties) && 'default' in schema) {
+      properties[key] = clonePropertyValue(schema.default);
+    }
+  }
+
+  for (const [key, value] of Object.entries(overrides || {})) {
+    properties[key] = clonePropertyValue(value);
+  }
+
+  return properties;
+}
+
+export function materializeNodeProperties(
+  node: Pick<NodeDefinition, 'properties' | 'propertySchemas'>,
+  overrides?: Record<string, any>,
+): Record<string, any> {
+  return materializeProperties(node.properties, node.propertySchemas, overrides);
+}
+
 // ============================================================================
 // CATEGORY COLORS
 // ============================================================================
@@ -278,6 +325,7 @@ export interface NodeSchema {
   propertySchemas?: Record<string, PropertySchema>;
   description: string;
   size?: [number, number];
+  aliases?: string[];
 }
 
 /**
@@ -292,9 +340,10 @@ export function extractSchema(node: NodeDefinition): NodeSchema {
     bgColor: node.bgColor,
     inputs: node.inputs,
     outputs: node.outputs,
-    properties: node.properties,
+    properties: materializeNodeProperties(node),
     propertySchemas: node.propertySchemas,
     description: node.description,
     size: node.size,
+    aliases: node.aliases,
   };
 }

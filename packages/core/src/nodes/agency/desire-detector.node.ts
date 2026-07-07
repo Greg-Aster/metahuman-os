@@ -20,6 +20,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { generateDesireId } from '../../agency/types.js';
 import { findSimilarDesires, reinforceDesire } from '../../agency/storage.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface DetectionResult {
   isDesire: boolean;
@@ -80,6 +81,17 @@ Respond with JSON:
   "reasoning": "Your analysis of why this is/isn't a desire"
 }`;
 
+const DEFAULT_USER_PROMPT_TEMPLATE = `## User Input
+"{{userInput}}"
+
+{{conversationContextSection}}
+
+## Instructions
+{{explicitInstruction}}
+{{implicitInstruction}}
+
+Analyze whether this input contains a desire that should become an autonomous goal.`;
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract inputs
   const slot0 = inputs[0] as { message?: string; userInput?: string } | string | undefined;
@@ -108,38 +120,39 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  const minConfidence = (properties?.minConfidence as number) || 0.7;
+  const minConfidence = (properties?.minConfidence as number) ?? 0.7;
   const detectExplicit = properties?.detectExplicit !== false;
   const detectImplicit = properties?.detectImplicit !== false;
   const checkSimilar = properties?.checkSimilarDesires !== false;
-  const similarityThreshold = (properties?.similarityThreshold as number) || 0.4;
-  const reinforcementBoost = (properties?.reinforcementBoost as number) || 0.1;
+  const similarityThreshold = (properties?.similarityThreshold as number) ?? 0.4;
+  const reinforcementBoost = (properties?.reinforcementBoost as number) ?? 0.1;
+  const temperature = (properties?.temperature as number) ?? 0.2;
+  const role = properties?.role ?? 'orchestrator';
+  const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   console.log(`[desire-detector] Analyzing: "${userInput.substring(0, 50)}..."`);
 
-  const userPrompt = `## User Input
-"${userInput}"
-
-${conversationContext ? `## Recent Conversation Context\n${conversationContext}\n` : ''}
-
-## Instructions
-${detectExplicit ? '- Look for explicit desires ("I want...", "I need...", "I wish...")' : ''}
-${detectImplicit ? '- Also detect implicit desires (complaints that imply desire for change, repeated mentions)' : ''}
-
-Analyze whether this input contains a desire that should become an autonomous goal.`;
+  const userPrompt = renderPromptTemplate(userPromptTemplate, {
+    userInput,
+    conversationContext,
+    conversationContextSection: conversationContext ? `## Recent Conversation Context\n${conversationContext}` : '',
+    explicitInstruction: detectExplicit ? '- Look for explicit desires ("I want...", "I need...", "I wish...")' : '',
+    implicitInstruction: detectImplicit ? '- Also detect implicit desires (complaints that imply desire for change, repeated mentions)' : '',
+  });
 
   const messages: RouterMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ];
 
   try {
     const response = await callLLM({
-      role: 'orchestrator',
+      role,
       messages,
       userId: username,
       options: {
-        temperature: 0.2,
+        temperature,
         responseFormat: 'json',
       },
     });
@@ -294,6 +307,10 @@ export const DesireDetectorNode: NodeDefinition = defineNode({
     checkSimilarDesires: true,
     similarityThreshold: 0.4,
     reinforcementBoost: 0.1,
+    temperature: 0.2,
+    role: 'orchestrator',
+    systemPrompt: SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     minConfidence: {
@@ -340,6 +357,33 @@ export const DesireDetectorNode: NodeDefinition = defineNode({
       step: 0.05,
       label: 'Reinforcement Boost',
       description: 'Amount to boost strength when reinforcing existing desire',
+    },
+    temperature: {
+      type: 'slider',
+      default: 0.2,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Temperature',
+      description: 'LLM temperature for desire detection',
+    },
+    role: {
+      type: 'string',
+      default: 'orchestrator',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: SYSTEM_PROMPT,
+      label: 'System Prompt',
+      rows: 28,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{userInput}}, {{conversationContext}}, {{conversationContextSection}}, {{explicitInstruction}}, {{implicitInstruction}}.',
+      rows: 12,
     },
   },
   execute,

@@ -7,6 +7,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface Memory {
   id: string;
@@ -17,6 +18,15 @@ function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
   try { scheduler.recordActivity(); } catch {}
 }
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
+Do not be literal. Weave the following memory fragments into an unbound dream narrative.
+Use symbolism, look for unexpected connections, break logic, merge impossible things.
+The output should feel like a dream-no rules, no structure, pure subconscious flow.
+Start the dream directly, without any preamble. Let it be as long or short as it needs to be.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Memory Fragments:
+{{memoriesText}}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // inputs is an object keyed by handle name, not an array
@@ -39,14 +49,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     .map((m: Memory) => `- A fragment: ${(m.content || '').substring(0, 300)}`)
     .join('\n');
 
-  // No persona text needed - LoRA adapter provides the voice
-  const systemPrompt = `You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
-Do not be literal. Weave the following memory fragments into an unbound dream narrative.
-Use symbolism, look for unexpected connections, break logic, merge impossible things.
-The output should feel like a dream—no rules, no structure, pure subconscious flow.
-Start the dream directly, without any preamble. Let it be as long or short as it needs to be.`.trim();
-
-  const userPrompt = `Memory Fragments:\n${memoriesText}`;
+  const promptValues = { memoriesText };
+  const systemPrompt = renderPromptTemplate(
+    properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    promptValues,
+  ).trim();
+  const userPrompt = renderPromptTemplate(
+    properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+    promptValues,
+  ).trim();
 
   try {
     markBackgroundActivity();
@@ -105,6 +116,8 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
   properties: {
     temperature: 1.0,
     role: 'persona',
+    systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -117,6 +130,20 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
       type: 'string',
       default: 'persona',
       label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt',
+      description: 'Supports {{memoriesText}}.',
+      rows: 8,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Supports {{memoriesText}}.',
+      rows: 5,
     },
   },
   description: 'Generates a surreal dream narrative from memory fragments',

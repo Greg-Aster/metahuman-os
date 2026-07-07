@@ -7,7 +7,11 @@
   import { apiFetch } from '../../lib/client/api-config';
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter';
   import type { Node } from '@xyflow/svelte';
-  import { loadSchemas } from '../../lib/client/flow-editor/template-converter';
+  import {
+    loadSchemas,
+    materializeSchemaProperties,
+    serializeGraphForPersistence,
+  } from '../../lib/client/flow-editor/template-converter';
 
   // Props
   let { cognitiveMode = null }: { cognitiveMode?: string | null } = $props();
@@ -129,7 +133,7 @@
     }
 
     try {
-      const graph = flowEditorRef.getCurrentGraph();
+      const graph = serializeGraphForPersistence(flowEditorRef.getCurrentGraph());
 
       const res = await apiFetch('/api/cognitive-graph', {
         method: 'POST',
@@ -190,10 +194,7 @@
   }
 
   async function loadTemplate(templateId: string) {
-    // Templates load via cognitiveMode prop change
-    // For now, just log
-    console.log('[FlowEditorLayout] Load template:', templateId);
-    showLoadMenu = false;
+    await loadGraph(templateId);
   }
 
   async function executeGraph() {
@@ -349,7 +350,7 @@
       data: {
         nodeType: `cognitive/${schema.id}`,
         schema,
-        properties: schema.properties || {},
+        properties: materializeSchemaProperties(schema),
         executionState: 'idle',
       },
     };

@@ -142,22 +142,12 @@
       "data": {
         "label": "Inner Dialogue",
         "nodeType": "inner_dialogue_capture",
-        "schema": {
-          "id": "inner_dialogue_capture",
-          "name": "Inner Dialogue",
-          "category": "output",
-          "inputs": [
-            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
-          ],
-          "outputs": [
-            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
-          ],
-          "description": "Saves dream thoughts as inner dialogue (visible in Inner Dialogue tab)",
-          "color": "#a855f7",
-          "bgColor": "#6b21a8"
-        },
         "properties": {
-          "tags": ["dream", "subconscious", "inner"],
+          "tags": [
+            "dream",
+            "subconscious",
+            "inner"
+          ],
           "displayColor": "#3b82f6",
           "dialogueSource": "dreamer"
         },
@@ -228,44 +218,6 @@
       "data": {
         "label": "Thinking Stripper",
         "nodeType": "thinking_stripper",
-        "schema": {
-          "id": "thinking_stripper",
-          "name": "Thinking Stripper",
-          "category": "output",
-          "inputs": [
-            {
-              "name": "response",
-              "type": "any",
-              "description": "LLM response that may contain <think> blocks"
-            }
-          ],
-          "outputs": [
-            {
-              "name": "response",
-              "type": "string",
-              "description": "Response with thinking stripped (alias for stripped)"
-            },
-            {
-              "name": "stripped",
-              "type": "string",
-              "description": "Response with <think> blocks removed"
-            },
-            {
-              "name": "thinking",
-              "type": "string",
-              "description": "Extracted thinking content (null if none)"
-            },
-            {
-              "name": "hadThinking",
-              "type": "boolean",
-              "description": "Whether response contained thinking"
-            }
-          ],
-          "properties": {},
-          "description": "Extracts <think> blocks for UI display, provides stripped content for memory/TTS",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {}
       },
       "width": 180,

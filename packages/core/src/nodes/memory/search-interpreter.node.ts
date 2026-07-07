@@ -13,6 +13,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface SearchResult {
   content: string;
@@ -44,6 +45,34 @@ interface InterpretationResult {
   rejectedCount: number;
   confidence: number;
 }
+
+const DEFAULT_SYSTEM_PROMPT = `You are a memory interpreter for a personal memory system. These search results are first-person memories captured by the user about their own life, experiences, and preferences.
+
+User's question: "{{userQuery}}"
+
+Assess each memory's relevance: "high", "partial", "low", or "none".
+Write a summary expressing what you found, including any uncertainty.
+Set unknownSignal to true only if none of the memories contain any relevant information.
+
+Output JSON:
+{
+  "evaluations": [
+    {
+      "index": number,
+      "relevance": "high" | "partial" | "low" | "none",
+      "relevanceScore": 0.0-1.0,
+      "reason": "brief explanation",
+      "uncertainty": "what is unknown or unclear (optional)"
+    }
+  ],
+  "summary": "what you found and any uncertainty",
+  "unknownSignal": boolean,
+  "confidence": 0.0-1.0
+}`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Evaluate these search results:
+
+{{memorySummaries}}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract inputs
@@ -80,33 +109,19 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }).join('\n\n');
 
   try {
-    const systemPrompt = `You are a memory interpreter for a personal memory system. These search results are first-person memories captured by the user about their own life, experiences, and preferences.
-
-User's question: "${userQuery}"
-
-Assess each memory's relevance: "high", "partial", "low", or "none".
-Write a summary expressing what you found, including any uncertainty.
-Set unknownSignal to true only if none of the memories contain any relevant information.
-
-Output JSON:
-{
-  "evaluations": [
-    {
-      "index": number,
-      "relevance": "high" | "partial" | "low" | "none",
-      "relevanceScore": 0.0-1.0,
-      "reason": "brief explanation",
-      "uncertainty": "what is unknown or unclear (optional)"
-    }
-  ],
-  "summary": "what you found and any uncertainty",
-  "unknownSignal": boolean,
-  "confidence": 0.0-1.0
-}`;
+    const promptValues = { userQuery, memorySummaries };
+    const systemPrompt = renderPromptTemplate(
+      properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      promptValues,
+    );
+    const userPrompt = renderPromptTemplate(
+      properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+      promptValues,
+    );
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: `Evaluate these search results:\n\n${memorySummaries}` },
+      { role: 'user' as const, content: userPrompt },
     ];
 
     const response = await callLLM({
@@ -263,6 +278,8 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
   properties: {
     relevanceThreshold: 0.6,
     maxResults: 10,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     relevanceThreshold: {
@@ -280,6 +297,20 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
       min: 1,
       max: 10,
       step: 1,
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT,
+      label: 'System Prompt',
+      description: 'Supports {{userQuery}} and {{memorySummaries}}.',
+      rows: 12,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Supports {{userQuery}} and {{memorySummaries}}.',
+      rows: 6,
     },
   },
   description: 'Evaluates search results for relevance and signals "I don\'t know" when appropriate',

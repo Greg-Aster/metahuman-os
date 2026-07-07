@@ -425,16 +425,20 @@ async function executeNodeByType(
 
   // In Node.js (or forced server mode): Import the real node executors
   log.debug(`     Server mode: Using real executor for ${nodeType}`);
-  const { getNodeExecutor } = await import('./nodes/index.js');
+  const { getNode, getNodeExecutor, materializeNodeProperties } = await import('./nodes/index.js');
 
   // Get the executor for this node type
   const executor = getNodeExecutor(nodeType);
+  const nodeDefinition = getNode(nodeType);
+  const effectiveProperties = nodeDefinition
+    ? materializeNodeProperties(nodeDefinition, node.data.properties)
+    : (node.data.properties || {});
 
   if (executor) {
     try {
       // Determine timeout based on node type and config
       // Priority: node property > operator config > defaults
-      let timeoutMs = node.data.properties?.timeout;
+      let timeoutMs = effectiveProperties?.timeout;
 
       if (!timeoutMs) {
         // Try to load operator config for custom timeouts
@@ -465,7 +469,7 @@ async function executeNodeByType(
 
       if (neverTimeout) {
         if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, no timeout (Big Brother)`);
-        const result = await executor(inputs, context, node.data.properties);
+        const result = await executor(inputs, context, effectiveProperties);
         const duration = Date.now() - startTime;
         if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
         return result as Record<string, any>;
@@ -479,7 +483,7 @@ async function executeNodeByType(
         }, timeoutMs);
       });
 
-      const executionPromise = executor(inputs, context, node.data.properties);
+      const executionPromise = executor(inputs, context, effectiveProperties);
 
       const result = await Promise.race([executionPromise, timeoutPromise]);
 

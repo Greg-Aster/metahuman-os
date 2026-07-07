@@ -8,9 +8,51 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
 import { loadFreshOperatorConfig } from '../../config.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 // NOTE: getIdentitySummary import REMOVED (2025-12-18)
 // Persona injection should ONLY come from graph nodes (persona_loader → persona_formatter)
 // Hidden fallbacks bypass the graph editor workflow and cause unexpected behavior
+
+const DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE = `{{personaPrompt}}
+
+You are responding based on information that was gathered or generated. Your task is to deliver this information in your natural voice while:
+1. Maintaining your personality and communication style
+2. Being conversational and natural (not robotic or formal)
+3. Preserving all factual content and technical details
+4. NOT repeating technical output verbatim - translate into your speaking voice`;
+
+const DEFAULT_CONTEXT_FACTS_FIRST_SYSTEM_PROMPT_TEMPLATE = `{{currentQuerySection}}{{desireSection}}{{memoryContext}}
+
+---
+
+## Your Identity
+{{personaSummary}}{{feedbackSection}}`;
+
+const DEFAULT_CONTEXT_PERSONA_FIRST_SYSTEM_PROMPT_TEMPLATE = `{{currentQuerySection}}{{desireSection}}{{unknownInstruction}}{{personaSummary}}{{feedbackSection}}`;
+
+const DEFAULT_LEGACY_GUIDANCE_SYSTEM_PROMPT_TEMPLATE = `{{personaSummary}}{{memoryContext}}`;
+
+const DEFAULT_DELEGATED_WORK_PERSONA_PROMPT_TEMPLATE = `{{personaPrompt}}
+
+You are responding to the user based on work that was completed by your autonomous capabilities. Review what was done and provide a response in your natural voice that:
+1. Acknowledges what was accomplished
+2. Maintains your personality and communication style
+3. Is conversational and natural (not robotic or overly formal)
+
+DO NOT repeat the technical details verbatim - translate them into your natural speaking voice.`;
+
+const DEFAULT_UNKNOWN_RESPONSE_SYSTEM_PROMPT_TEMPLATE = `{{personaPrompt}}
+
+[No relevant memories found for this query]`;
+
+const DEFAULT_SCRATCHPAD_SYSTEM_PROMPT_TEMPLATE = `You are a response synthesizer. Create a natural, conversational response based on the observations gathered during task execution.`;
+
+const DEFAULT_SCRATCHPAD_USER_PROMPT_TEMPLATE = `Original Query: {{userMessage}}
+
+Execution Steps:
+{{scratchpadSteps}}
+
+Based on these execution steps, provide a clear, helpful response to the user's original query:`;
 
 /**
  * Helper: Apply persona voice to a response if persona input is available
@@ -23,7 +65,8 @@ async function applyPersonaVoice(
   cognitiveMode: string,
   metadata: Record<string, any> = {},
   emitProgress?: (event: any) => void,
-  userId?: string
+  userId?: string,
+  properties: Record<string, any> = {}
 ): Promise<{ response: string; personaSynthesized: boolean }> {
   const personaPrompt = personaInput?.formatted || personaInput;
 
@@ -31,13 +74,10 @@ async function applyPersonaVoice(
     return { response: responseText, personaSynthesized: false };
   }
 
-  const systemPrompt = `${personaPrompt}
-
-You are responding based on information that was gathered or generated. Your task is to deliver this information in your natural voice while:
-1. Maintaining your personality and communication style
-2. Being conversational and natural (not robotic or formal)
-3. Preserving all factual content and technical details
-4. NOT repeating technical output verbatim - translate into your speaking voice`;
+  const systemPrompt = renderPromptTemplate(
+    properties.personaVoiceSystemPromptTemplate ?? DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE,
+    { personaPrompt, responseText, userMessage, metadata },
+  );
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },
@@ -56,14 +96,14 @@ You are responding based on information that was gathered or generated. Your tas
 
   try {
     const response = await callLLM({
-      role: 'persona',
+      role: properties.model ?? 'persona',
       messages,
       userId,
       cognitiveMode,
       options: {
-        maxTokens: 2048,
-        repeatPenalty: 1.3,
-        temperature: 0.8,
+        maxTokens: properties.personaVoiceMaxTokens ?? 2048,
+        repeatPenalty: properties.personaVoiceRepeatPenalty ?? 1.3,
+        temperature: properties.personaVoiceTemperature ?? 0.8,
       },
       onProgress: emitProgress,
     });
@@ -75,7 +115,7 @@ You are responding based on information that was gathered or generated. Your tas
   }
 }
 
-const execute: NodeExecutor = async (inputs, context) => {
+const execute: NodeExecutor = async (inputs, context, properties = {}) => {
   // Extract username for LLM calls
   const username = context.username || context.userId;
 
@@ -284,10 +324,32 @@ Respond conversationally to help refine this goal.
     let systemPrompt: string;
     if (hasFactualMemories) {
       // Facts-first prompt: memories come BEFORE persona so facts take priority
-      systemPrompt = `${currentQuerySection}${desireSection}${memoryContext}\n\n---\n\n## Your Identity\n${personaSummary}${feedbackSection}`;
+      systemPrompt = renderPromptTemplate(
+        properties.contextFactsFirstSystemPromptTemplate ?? DEFAULT_CONTEXT_FACTS_FIRST_SYSTEM_PROMPT_TEMPLATE,
+        {
+          currentQuerySection,
+          desireSection,
+          memoryContext,
+          personaSummary,
+          feedbackSection,
+          unknownInstruction,
+          userMessage: userMsgStr,
+        },
+      );
     } else {
       // No memories: persona-first (unknownInstruction already handles "I don't know")
-      systemPrompt = `${currentQuerySection}${desireSection}${unknownInstruction}${personaSummary}${feedbackSection}`;
+      systemPrompt = renderPromptTemplate(
+        properties.contextPersonaFirstSystemPromptTemplate ?? DEFAULT_CONTEXT_PERSONA_FIRST_SYSTEM_PROMPT_TEMPLATE,
+        {
+          currentQuerySection,
+          desireSection,
+          memoryContext,
+          personaSummary,
+          feedbackSection,
+          unknownInstruction,
+          userMessage: userMsgStr,
+        },
+      );
     }
 
     // Limit conversation history to 6 messages (not 10) to reduce context overload
@@ -302,21 +364,23 @@ Respond conversationally to help refine this goal.
 
     const inputChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
     const estimatedInputTokens = Math.ceil(inputChars / 3.5);
-    const contextLimit = 4096;
-    const maxTokens = Math.min(1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
+    const contextLimit = properties.contextLimit ?? 4096;
+    const maxTokens = Math.min(properties.contextMaxTokens ?? 1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
 
     // Lower temperature when we have factual memories to prioritize accuracy over creativity
-    const temperature = hasFactualMemories ? 0.4 : 0.7;
+    const temperature = hasFactualMemories
+      ? properties.contextFactualTemperature ?? 0.4
+      : properties.contextDefaultTemperature ?? 0.7;
 
     try {
       const response = await callLLM({
-        role: 'persona',
+        role: properties.model ?? 'persona',
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens,
-          repeatPenalty: 1.3,
+          repeatPenalty: properties.contextRepeatPenalty ?? 1.3,
           temperature,
           useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
@@ -373,13 +437,16 @@ Respond conversationally to help refine this goal.
 
     // Persona receives identity + memories only - NO orchestrator instructions
     // The LoRA should be trained to naturally use memories in responses
-    const systemPrompt = `${personaSummary}${memoryContext}`;
+    const systemPrompt = renderPromptTemplate(
+      properties.legacyGuidanceSystemPromptTemplate ?? DEFAULT_LEGACY_GUIDANCE_SYSTEM_PROMPT_TEMPLATE,
+      { personaSummary, memoryContext, userMessage, responseStyle: loopResult.responseStyle },
+    );
 
-    let temperature = 0.7;
+    let temperature = properties.legacyDefaultTemperature ?? 0.7;
     if (loopResult.responseStyle === 'verbose') {
-      temperature = 0.8;
+      temperature = properties.legacyVerboseTemperature ?? 0.8;
     } else if (loopResult.responseStyle === 'concise') {
-      temperature = 0.5;
+      temperature = properties.legacyConciseTemperature ?? 0.5;
     }
 
     const messages = [
@@ -398,18 +465,18 @@ Respond conversationally to help refine this goal.
     // Estimate input tokens and dynamically set max_tokens to fit context
     const inputChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
     const estimatedInputTokens = Math.ceil(inputChars / 3.5); // ~3.5 chars per token
-    const contextLimit = 4096;
-    const maxTokens = Math.min(1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
+    const contextLimit = properties.contextLimit ?? 4096;
+    const maxTokens = Math.min(properties.legacyMaxTokens ?? 1024, Math.max(256, contextLimit - estimatedInputTokens - 100));
 
     try {
       const response = await callLLM({
-        role: 'persona',
+        role: properties.model ?? 'persona',
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens,
-          repeatPenalty: 1.3,
+          repeatPenalty: properties.legacyRepeatPenalty ?? 1.3,
           temperature,
           useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
@@ -514,14 +581,10 @@ Respond conversationally to help refine this goal.
           ? userMessageInput
           : (userMessageInput.message || context.userMessage || '');
 
-        const systemPrompt = `${personaPrompt}
-
-You are responding to the user based on work that was completed by your autonomous capabilities. Review what was done and provide a response in your natural voice that:
-1. Acknowledges what was accomplished
-2. Maintains your personality and communication style
-3. Is conversational and natural (not robotic or overly formal)
-
-DO NOT repeat the technical details verbatim - translate them into your natural speaking voice.`;
+        const systemPrompt = renderPromptTemplate(
+          properties.delegatedWorkPersonaPromptTemplate ?? DEFAULT_DELEGATED_WORK_PERSONA_PROMPT_TEMPLATE,
+          { personaPrompt, finalResponse, userMessage: userMsgStr },
+        );
 
         const messages = [
           { role: 'system' as const, content: systemPrompt },
@@ -540,14 +603,14 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
 
         try {
           const response = await callLLM({
-            role: 'persona',
+            role: properties.model ?? 'persona',
             messages,
             userId: username,
             cognitiveMode: context.cognitiveMode,
             options: {
-              maxTokens: 2048,
-              repeatPenalty: 1.3,
-              temperature: 0.8,
+              maxTokens: properties.delegatedWorkMaxTokens ?? 2048,
+              repeatPenalty: properties.delegatedWorkRepeatPenalty ?? 1.3,
+              temperature: properties.delegatedWorkTemperature ?? 0.8,
             },
             onProgress: context.emitProgress,
           });
@@ -596,9 +659,10 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
 
       if (personaPrompt && typeof personaPrompt === 'string' && personaPrompt.trim().length > 0) {
         // Minimal context: persona + fact that no memories were found
-        const systemPrompt = `${personaPrompt}
-
-[No relevant memories found for this query]`;
+        const systemPrompt = renderPromptTemplate(
+          properties.unknownResponseSystemPromptTemplate ?? DEFAULT_UNKNOWN_RESPONSE_SYSTEM_PROMPT_TEMPLATE,
+          { personaPrompt, userMessage: userMsgStr },
+        );
 
         const messages = [
           { role: 'system' as const, content: systemPrompt },
@@ -611,14 +675,14 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
 
         try {
           const response = await callLLM({
-            role: 'persona',
+            role: properties.model ?? 'persona',
             messages,
             userId: username,
             cognitiveMode: context.cognitiveMode,
             options: {
-              maxTokens: 512,
-              repeatPenalty: 1.2,
-              temperature: 0.7,
+              maxTokens: properties.unknownResponseMaxTokens ?? 512,
+              repeatPenalty: properties.unknownResponseRepeatPenalty ?? 1.2,
+              temperature: properties.unknownResponseTemperature ?? 0.7,
               useBigBrother, // Use Big Brother in hybrid mode for central thinking
             },
             onProgress: context.emitProgress,
@@ -662,36 +726,36 @@ DO NOT repeat the technical details verbatim - translate them into your natural 
     // Fast-path failed, continue to LLM synthesis
   }
 
-  const messages = [
-    {
-      role: 'system' as const,
-      content: 'You are a response synthesizer. Create a natural, conversational response based on the observations gathered during task execution.',
-    },
-    {
-      role: 'user' as const,
-      content: `Original Query: ${userMessage}
-
-Execution Steps:
-${scratchpad.map((s: any, i: number) => `Step ${i + 1}:
+  const scratchpadSteps = scratchpad.map((s: any, i: number) => `Step ${i + 1}:
 Thought: ${s.thought || s.plan || 'N/A'}
 Action: ${s.action || 'none'}
 Observation: ${s.observation || 'N/A'}
-`).join('\n')}
+`).join('\n');
 
-Based on these execution steps, provide a clear, helpful response to the user's original query:`,
+  const messages = [
+    {
+      role: 'system' as const,
+      content: properties.scratchpadSystemPromptTemplate ?? DEFAULT_SCRATCHPAD_SYSTEM_PROMPT_TEMPLATE,
+    },
+    {
+      role: 'user' as const,
+      content: renderPromptTemplate(
+        properties.scratchpadUserPromptTemplate ?? DEFAULT_SCRATCHPAD_USER_PROMPT_TEMPLATE,
+        { userMessage, scratchpadSteps, scratchpad },
+      ),
     },
   ];
 
   try {
     const response = await callLLM({
-      role: 'persona',
+      role: properties.model ?? 'persona',
       messages,
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 2048,
-        repeatPenalty: 1.2,
-        temperature: 0.7,
+        maxTokens: properties.scratchpadMaxTokens ?? 2048,
+        repeatPenalty: properties.scratchpadRepeatPenalty ?? 1.2,
+        temperature: properties.scratchpadTemperature ?? 0.7,
         useBigBrother, // Hybrid mode: use Big Brother for central thinking
       },
       onProgress: context.emitProgress,
@@ -722,7 +786,8 @@ Based on these execution steps, provide a clear, helpful response to the user's 
           context.cognitiveMode || 'dual',
           {},
           context.emitProgress,
-          username
+          username,
+          properties
         );
 
         if (synthesized.personaSynthesized) {
@@ -768,7 +833,8 @@ Based on these execution steps, provide a clear, helpful response to the user's 
           context.cognitiveMode || 'dual',
           {},
           context.emitProgress,
-          username
+          username,
+          properties
         );
 
         if (synthesized.personaSynthesized) {
@@ -801,6 +867,36 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
   properties: {
     model: 'persona',
     style: 'default',
+    personaVoiceSystemPromptTemplate: DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE,
+    personaVoiceMaxTokens: 2048,
+    personaVoiceRepeatPenalty: 1.3,
+    personaVoiceTemperature: 0.8,
+    contextFactsFirstSystemPromptTemplate: DEFAULT_CONTEXT_FACTS_FIRST_SYSTEM_PROMPT_TEMPLATE,
+    contextPersonaFirstSystemPromptTemplate: DEFAULT_CONTEXT_PERSONA_FIRST_SYSTEM_PROMPT_TEMPLATE,
+    contextLimit: 4096,
+    contextMaxTokens: 1024,
+    contextRepeatPenalty: 1.3,
+    contextFactualTemperature: 0.4,
+    contextDefaultTemperature: 0.7,
+    legacyGuidanceSystemPromptTemplate: DEFAULT_LEGACY_GUIDANCE_SYSTEM_PROMPT_TEMPLATE,
+    legacyMaxTokens: 1024,
+    legacyRepeatPenalty: 1.3,
+    legacyDefaultTemperature: 0.7,
+    legacyVerboseTemperature: 0.8,
+    legacyConciseTemperature: 0.5,
+    delegatedWorkPersonaPromptTemplate: DEFAULT_DELEGATED_WORK_PERSONA_PROMPT_TEMPLATE,
+    delegatedWorkMaxTokens: 2048,
+    delegatedWorkRepeatPenalty: 1.3,
+    delegatedWorkTemperature: 0.8,
+    unknownResponseSystemPromptTemplate: DEFAULT_UNKNOWN_RESPONSE_SYSTEM_PROMPT_TEMPLATE,
+    unknownResponseMaxTokens: 512,
+    unknownResponseRepeatPenalty: 1.2,
+    unknownResponseTemperature: 0.7,
+    scratchpadSystemPromptTemplate: DEFAULT_SCRATCHPAD_SYSTEM_PROMPT_TEMPLATE,
+    scratchpadUserPromptTemplate: DEFAULT_SCRATCHPAD_USER_PROMPT_TEMPLATE,
+    scratchpadMaxTokens: 2048,
+    scratchpadRepeatPenalty: 1.2,
+    scratchpadTemperature: 0.7,
   },
   propertySchemas: {
     model: {
@@ -815,6 +911,245 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       label: 'Response Style',
       description: 'How to synthesize the response',
       options: ['default', 'strict', 'summary'],
+    },
+    personaVoiceSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Persona Voice Prompt',
+      description: 'System prompt used when re-voicing generated content through the persona',
+    },
+    personaVoiceMaxTokens: {
+      type: 'number',
+      default: 2048,
+      min: 256,
+      max: 4096,
+      label: 'Persona Voice Max Tokens',
+      description: 'Maximum tokens for persona re-voice calls',
+    },
+    personaVoiceRepeatPenalty: {
+      type: 'slider',
+      default: 1.3,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Persona Voice Repeat Penalty',
+      description: 'Repeat penalty for persona re-voice calls',
+    },
+    personaVoiceTemperature: {
+      type: 'slider',
+      default: 0.8,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Persona Voice Temperature',
+      description: 'Temperature for persona re-voice calls',
+    },
+    contextFactsFirstSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_CONTEXT_FACTS_FIRST_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Context Facts-First Prompt',
+      description: 'System prompt used when relevant memories should take priority over persona style',
+    },
+    contextPersonaFirstSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_CONTEXT_PERSONA_FIRST_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Context Persona-First Prompt',
+      description: 'System prompt used when no direct factual memories are available',
+    },
+    contextLimit: {
+      type: 'number',
+      default: 4096,
+      min: 1024,
+      max: 32768,
+      label: 'Context Limit',
+      description: 'Token budget used when estimating context path output allowance',
+    },
+    contextMaxTokens: {
+      type: 'number',
+      default: 1024,
+      min: 256,
+      max: 4096,
+      label: 'Context Max Tokens',
+      description: 'Maximum output tokens for context-based synthesis',
+    },
+    contextRepeatPenalty: {
+      type: 'slider',
+      default: 1.3,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Context Repeat Penalty',
+      description: 'Repeat penalty for context-based synthesis',
+    },
+    contextFactualTemperature: {
+      type: 'slider',
+      default: 0.4,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Context Factual Temperature',
+      description: 'Temperature when direct factual memories are present',
+    },
+    contextDefaultTemperature: {
+      type: 'slider',
+      default: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Context Default Temperature',
+      description: 'Temperature when no direct factual memories are present',
+    },
+    legacyGuidanceSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_LEGACY_GUIDANCE_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Legacy Guidance Prompt',
+      description: 'System prompt for legacy orchestrator guidance responses',
+    },
+    legacyMaxTokens: {
+      type: 'number',
+      default: 1024,
+      min: 256,
+      max: 4096,
+      label: 'Legacy Max Tokens',
+      description: 'Maximum output tokens for legacy guidance responses',
+    },
+    legacyRepeatPenalty: {
+      type: 'slider',
+      default: 1.3,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Legacy Repeat Penalty',
+      description: 'Repeat penalty for legacy guidance responses',
+    },
+    legacyDefaultTemperature: {
+      type: 'slider',
+      default: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Legacy Default Temperature',
+      description: 'Default temperature for legacy guidance responses',
+    },
+    legacyVerboseTemperature: {
+      type: 'slider',
+      default: 0.8,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Legacy Verbose Temperature',
+      description: 'Temperature when legacy response style is verbose',
+    },
+    legacyConciseTemperature: {
+      type: 'slider',
+      default: 0.5,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Legacy Concise Temperature',
+      description: 'Temperature when legacy response style is concise',
+    },
+    delegatedWorkPersonaPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_DELEGATED_WORK_PERSONA_PROMPT_TEMPLATE,
+      label: 'Delegated Work Persona Prompt',
+      description: 'System prompt used when summarizing delegated autonomous work in persona voice',
+    },
+    delegatedWorkMaxTokens: {
+      type: 'number',
+      default: 2048,
+      min: 256,
+      max: 4096,
+      label: 'Delegated Work Max Tokens',
+      description: 'Maximum tokens for delegated work persona synthesis',
+    },
+    delegatedWorkRepeatPenalty: {
+      type: 'slider',
+      default: 1.3,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Delegated Work Repeat Penalty',
+      description: 'Repeat penalty for delegated work persona synthesis',
+    },
+    delegatedWorkTemperature: {
+      type: 'slider',
+      default: 0.8,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Delegated Work Temperature',
+      description: 'Temperature for delegated work persona synthesis',
+    },
+    unknownResponseSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_UNKNOWN_RESPONSE_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Unknown Response Prompt',
+      description: 'System prompt used when no relevant memories are found',
+    },
+    unknownResponseMaxTokens: {
+      type: 'number',
+      default: 512,
+      min: 128,
+      max: 2048,
+      label: 'Unknown Response Max Tokens',
+      description: 'Maximum tokens for unknown-memory responses',
+    },
+    unknownResponseRepeatPenalty: {
+      type: 'slider',
+      default: 1.2,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Unknown Response Repeat Penalty',
+      description: 'Repeat penalty for unknown-memory responses',
+    },
+    unknownResponseTemperature: {
+      type: 'slider',
+      default: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Unknown Response Temperature',
+      description: 'Temperature for unknown-memory responses',
+    },
+    scratchpadSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_SCRATCHPAD_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Scratchpad System Prompt',
+      description: 'System prompt used when synthesizing from task execution observations',
+    },
+    scratchpadUserPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_SCRATCHPAD_USER_PROMPT_TEMPLATE,
+      label: 'Scratchpad User Prompt',
+      description: 'User prompt template used when synthesizing from task execution observations',
+    },
+    scratchpadMaxTokens: {
+      type: 'number',
+      default: 2048,
+      min: 256,
+      max: 4096,
+      label: 'Scratchpad Max Tokens',
+      description: 'Maximum tokens for scratchpad synthesis',
+    },
+    scratchpadRepeatPenalty: {
+      type: 'slider',
+      default: 1.2,
+      min: 1,
+      max: 2,
+      step: 0.05,
+      label: 'Scratchpad Repeat Penalty',
+      description: 'Repeat penalty for scratchpad synthesis',
+    },
+    scratchpadTemperature: {
+      type: 'slider',
+      default: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.1,
+      label: 'Scratchpad Temperature',
+      description: 'Temperature for scratchpad synthesis',
     },
   },
   description: 'Synthesizes final response using persona context',

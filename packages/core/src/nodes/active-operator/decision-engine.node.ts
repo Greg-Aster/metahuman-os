@@ -29,6 +29,7 @@ import {
 } from '../../active-operator/cost-tracker.js';
 import { loadConfig } from '../../active-operator/state-persister.js';
 import type { TaskType, TaskDecision, SystemState } from '../../active-operator/types.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 /**
  * Task descriptions for the LLM prompt.
@@ -61,6 +62,39 @@ function formatTaskOptions(enabledTypes: TaskType[]): string {
     .map((t) => `- ${t}: ${TASK_DESCRIPTIONS[t]}`)
     .join('\n');
 }
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are the Active Operator Decision Engine for MetaHuman OS.
+
+Your role is to continuously decide what cognitive task the system should focus on next.
+You are the "brain's executive function" - choosing what to think about based on current needs.
+
+## Available Tasks:
+{{taskOptions}}
+
+## Guidelines:
+1. Prioritize HIGH urgency recommendations first
+2. Balance maintenance tasks (memory curation, indexing) with creative tasks (dreams, reflections)
+3. If the user was recently active, avoid disruptive tasks
+4. Consider the scratchpad history to avoid repeating the same task too often
+5. If nothing urgent, choose a low-impact background task
+
+## Output Format:
+Respond with a JSON object:
+{
+  "task": "<task_type>",
+  "reasoning": "<why this task now>",
+  "confidence": 0.0-1.0
+}`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `{{stateText}}
+
+## Recommendations (based on metrics):
+{{recommendationsText}}
+
+## Recent Activity:
+{{recentActivity}}
+
+What should I focus on next? Respond with JSON only.`;
 
 /**
  * Parse LLM response to extract task decision.
@@ -98,7 +132,7 @@ function parseDecisionResponse(content: string): TaskDecision | null {
   return null;
 }
 
-const execute: NodeExecutor = async (inputs, context) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   const username = context.username || 'anonymous';
   const config = loadConfig();
 
@@ -147,52 +181,31 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   // Get enabled task types
   const taskOptions = formatTaskOptions(config.enabledTaskTypes);
+  const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   // Build the decision prompt
   const messages = [
     {
       role: 'system' as const,
-      content: `You are the Active Operator Decision Engine for MetaHuman OS.
-
-Your role is to continuously decide what cognitive task the system should focus on next.
-You are the "brain's executive function" - choosing what to think about based on current needs.
-
-## Available Tasks:
-${taskOptions}
-
-## Guidelines:
-1. Prioritize HIGH urgency recommendations first
-2. Balance maintenance tasks (memory curation, indexing) with creative tasks (dreams, reflections)
-3. If the user was recently active, avoid disruptive tasks
-4. Consider the scratchpad history to avoid repeating the same task too often
-5. If nothing urgent, choose a low-impact background task
-
-## Output Format:
-Respond with a JSON object:
-{
-  "task": "<task_type>",
-  "reasoning": "<why this task now>",
-  "confidence": 0.0-1.0
-}`,
+      content: renderPromptTemplate(systemPromptTemplate, { taskOptions, taskDescriptions: TASK_DESCRIPTIONS }),
     },
     {
       role: 'user' as const,
-      content: `${stateText}
-
-## Recommendations (based on metrics):
-${recommendationsText}
-
-## Recent Activity:
-${recentActivity}
-
-What should I focus on next? Respond with JSON only.`,
+      content: renderPromptTemplate(userPromptTemplate, {
+        stateText,
+        recommendationsText,
+        recentActivity,
+        systemState,
+        recommendations,
+      }),
     },
   ];
 
   try {
     // Determine which model to use
     let modelRole: ModelRole;
-    switch (config.decisionModel) {
+    switch (properties?.model ?? config.decisionModel) {
       case 'persona':
         modelRole = 'persona';
         break;
@@ -212,8 +225,8 @@ What should I focus on next? Respond with JSON only.`,
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 256,
-        temperature: 0.3,
+        maxTokens: properties?.maxTokens ?? 256,
+        temperature: properties?.temperature ?? 0.3,
       },
       onProgress: context.emitProgress,
     });
@@ -269,6 +282,9 @@ export const DecisionEngineNode: NodeDefinition = defineNode({
   properties: {
     model: 'orchestrator',
     temperature: 0.3,
+    maxTokens: 256,
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     model: {
@@ -285,6 +301,26 @@ export const DecisionEngineNode: NodeDefinition = defineNode({
       min: 0,
       max: 1,
       step: 0.1,
+    },
+    maxTokens: {
+      type: 'number',
+      default: 256,
+      label: 'Max Tokens',
+      description: 'Maximum response tokens for the decision',
+    },
+    systemPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt Template',
+      description: 'Template variables: {{taskOptions}}, {{taskDescriptions}}.',
+      rows: 18,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{stateText}}, {{recommendationsText}}, {{recentActivity}}, {{systemState}}, {{recommendations}}.',
+      rows: 10,
     },
   },
   description: 'LLM-based decision engine for Active Operator',

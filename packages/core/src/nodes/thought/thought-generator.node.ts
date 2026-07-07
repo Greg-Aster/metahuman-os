@@ -7,20 +7,44 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM } from '../../model-router.js';
 import { loadPersonaCore } from '../../identity.js';
 import { audit } from '../../audit.js';
+import { renderPromptTemplate } from '../prompt-template.js';
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are {{personaName}}, engaging in deep introspection and reasoning.
+
+Your task is to generate a thoughtful reflection based on a memory or observation. Think deeply about connections, implications, and what this might mean.
+{{thoughtHistory}}
+After your thought, provide:
+1. A confidence score (0.0-1.0) for how insightful this thought is
+2. 2-4 keywords or concepts that could lead to related thoughts
+
+Respond in this format:
+THOUGHT: [Your reflection - 1-3 sentences of genuine insight]
+CONFIDENCE: [0.0-1.0]
+KEYWORDS: [comma-separated keywords]`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Reflect on this memory/context:
+
+{{memoryContext}}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const input0 = inputs[0] || {};
+  const input0 = inputs.context || inputs[0] || {};
   const username = context.userId || context.username;
 
   // Get memory context - could be from scratchpad (loop) or direct seed
   const memoryContext = input0?.seedMemory || input0?.text || inputs[1]?.text ||
+                        inputs.seed?.text || inputs.seed ||
                         (typeof input0 === 'string' ? input0 : '') ||
                         context.seedMemory || '';
 
   // Get accumulated thoughts from scratchpad
   const previousThoughts = input0?.thoughts || context.scratchpad?.thoughts || [];
-  const temperature = properties?.temperature || 0.75;
+  const temperature = properties?.temperature ?? 0.75;
+  const maxTokens = properties?.maxTokens ?? 512;
+  const repeatPenalty = properties?.repeatPenalty ?? 1.2;
+  const role = properties?.role ?? 'persona';
   const extractKeywords = properties?.extractKeywords !== false;
+  const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   if (!memoryContext) {
     return {
@@ -38,33 +62,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       ? `\nPrevious thoughts in this chain:\n${previousThoughts.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n')}\n`
       : '';
 
-    const systemPrompt = properties?.systemPrompt || `You are ${persona.identity.name}, engaging in deep introspection and reasoning.
-
-Your task is to generate a thoughtful reflection based on a memory or observation. Think deeply about connections, implications, and what this might mean.
-${thoughtHistory}
-After your thought, provide:
-1. A confidence score (0.0-1.0) for how insightful this thought is
-2. 2-4 keywords or concepts that could lead to related thoughts
-
-Respond in this format:
-THOUGHT: [Your reflection - 1-3 sentences of genuine insight]
-CONFIDENCE: [0.0-1.0]
-KEYWORDS: [comma-separated keywords]`;
+    const systemPrompt = renderPromptTemplate(systemPromptTemplate, {
+      personaName: persona.identity.name,
+      thoughtHistory,
+    });
+    const userPrompt = renderPromptTemplate(userPromptTemplate, { memoryContext });
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: `Reflect on this memory/context:\n\n${memoryContext}` },
+      { role: 'user' as const, content: userPrompt },
     ];
 
     const response = await callLLM({
-      role: 'persona',
+      role,
       messages,
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 512,
+        maxTokens,
         temperature,
-        repeatPenalty: 1.2,
+        repeatPenalty,
       },
       onProgress: context.emitProgress,
     });
@@ -136,6 +153,11 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
   properties: {
     temperature: 0.75,
     extractKeywords: true,
+    maxTokens: 512,
+    repeatPenalty: 1.2,
+    role: 'persona',
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -148,6 +170,35 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
       type: 'boolean',
       default: true,
       label: 'Extract Keywords',
+    },
+    maxTokens: {
+      type: 'number',
+      default: 512,
+      label: 'Max Tokens',
+    },
+    repeatPenalty: {
+      type: 'number',
+      default: 1.2,
+      label: 'Repeat Penalty',
+    },
+    role: {
+      type: 'string',
+      default: 'persona',
+      label: 'LLM Role',
+    },
+    systemPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt Template',
+      description: 'Template variables: {{personaName}}, {{thoughtHistory}}.',
+      rows: 13,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{memoryContext}}.',
+      rows: 5,
     },
   },
   description: 'Generates a single reasoning step from memory context',

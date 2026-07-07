@@ -7,8 +7,67 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { executeSkill, listSkills, type TrustLevel } from '../../skills.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
-const execute: NodeExecutor = async (inputs, context) => {
+const DEFAULT_OWNER_SEARCH_GUIDANCE_TEMPLATE = `YOUR PROFILE CONTEXT:
+- Username: {{username}}
+- Role: {{userRole}}
+- Your profile directory: {{profilePath}}/
+- Your output directory: {{profilePath}}/out/
+
+FILE SEARCH STRATEGY (follow this order):
+1. **First**: Search your profile's out directory: {"pattern": "filename", "cwd": "{{profilePath}}/out"}
+2. **Second**: Search your entire profile: {"pattern": "**/filename", "cwd": "{{profilePath}}"}
+{{ownerSearchLine}}
+
+FILE WRITE STRATEGY:
+- **Default location**: ALWAYS write files to "{{profilePath}}/out/" unless user specifies otherwise
+- Example: To create "notes.md", use path "{{profilePath}}/out/notes.md"
+- If user provides explicit path (e.g., "docs/file.md"), use that path directly
+{{ownerWriteLine}}`;
+
+const DEFAULT_ANONYMOUS_SEARCH_GUIDANCE = `FILE SEARCH PATTERNS:
+- Files are stored in the "out/" directory
+- Use RECURSIVE patterns: "**/filename.md" (searches all subdirectories)
+- Or specify directory: {"pattern": "filename.md", "cwd": "out"}`;
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a ReAct planner. Your job is to plan the next action to take based on the user's query and available skills.
+
+Available Skills:
+{{skillDescriptions}}
+
+IMPORTANT RULES:
+1. Use "Final Answer:" for conversational responses. Only use skills when you need to take an actual action.
+2. Do NOT use conversational_response skill - just use Final Answer directly.
+3. CRITICAL: If you output "Action:", do NOT include "Final Answer:" in the same response.
+4. After an Action, you must WAIT for the Observation before deciding if you can provide a Final Answer.
+5. Never assume an action succeeded - wait for the observation to confirm it.
+6. MEMORY PERSISTENCE: When you find/create/reference files or data, ALWAYS include specific details in your Final Answer.
+7. CONVERSATION CONTEXT: Check the scratchpad for previous actions in THIS turn.
+{{searchStrategyGuidance}}
+
+Output your response in this format:
+
+If you need to use a tool/skill (DO NOT include Final Answer):
+Thought: [your reasoning]
+Action: [skill_id]
+Action Input: {"param": "value"}
+
+If you can answer directly without tools OR after receiving observations:
+Thought: [your reasoning]
+Final Answer: [your response]`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Recent Conversation Context:
+{{historyText}}
+
+Current Query: {{userMessage}}
+
+Scratchpad (current turn only):
+{{scratchpadText}}
+
+What should I do next?`;
+
+const execute: NodeExecutor = async (inputs, context, properties) => {
   if (process.env.DEBUG_GRAPH) console.log(`[ReactPlanner] ENTRY - context.useOperator =`, context.useOperator);
 
   if (context.useOperator === false) {
@@ -64,71 +123,40 @@ const execute: NodeExecutor = async (inputs, context) => {
 
   let searchStrategyGuidance = '';
   if (profilePath) {
-    searchStrategyGuidance = `
-YOUR PROFILE CONTEXT:
-- Username: ${username}
-- Role: ${userRole}
-- Your profile directory: ${profilePath}/
-- Your output directory: ${profilePath}/out/
-
-FILE SEARCH STRATEGY (follow this order):
-1. **First**: Search your profile's out directory: {"pattern": "filename", "cwd": "${profilePath}/out"}
-2. **Second**: Search your entire profile: {"pattern": "**/filename", "cwd": "${profilePath}"}
-${isOwner ? '3. **Third** (owner privilege): Search entire project: {"pattern": "**/filename"}' : ''}
-
-FILE WRITE STRATEGY:
-- **Default location**: ALWAYS write files to "${profilePath}/out/" unless user specifies otherwise
-- Example: To create "notes.md", use path "${profilePath}/out/notes.md"
-- If user provides explicit path (e.g., "docs/file.md"), use that path directly
-${isOwner ? '- As owner, you CAN write to system directories (e.g., "out/", "docs/"), but prefer your profile directory' : ''}`;
+    searchStrategyGuidance = renderPromptTemplate(
+      properties?.ownerSearchGuidanceTemplate ?? DEFAULT_OWNER_SEARCH_GUIDANCE_TEMPLATE,
+      {
+        username,
+        userRole,
+        profilePath,
+        ownerSearchLine: isOwner ? '3. **Third** (owner privilege): Search entire project: {"pattern": "**/filename"}' : '',
+        ownerWriteLine: isOwner ? '- As owner, you CAN write to system directories (e.g., "out/", "docs/"), but prefer your profile directory' : '',
+      },
+    );
   } else {
-    searchStrategyGuidance = `
-FILE SEARCH PATTERNS:
-- Files are stored in the "out/" directory
-- Use RECURSIVE patterns: "**/filename.md" (searches all subdirectories)
-- Or specify directory: {"pattern": "filename.md", "cwd": "out"}`;
+    searchStrategyGuidance = properties?.anonymousSearchGuidance ?? DEFAULT_ANONYMOUS_SEARCH_GUIDANCE;
   }
+  const scratchpadText = scratchpad.map((s: any) => `${s.thought}\n${s.action}\n${s.observation}`).join('\n\n');
+  const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   const messages = [
     {
       role: 'system' as const,
-      content: `You are a ReAct planner. Your job is to plan the next action to take based on the user's query and available skills.
-
-Available Skills:
-${skillDescriptions}
-
-IMPORTANT RULES:
-1. Use "Final Answer:" for conversational responses. Only use skills when you need to take an actual action.
-2. Do NOT use conversational_response skill - just use Final Answer directly.
-3. CRITICAL: If you output "Action:", do NOT include "Final Answer:" in the same response.
-4. After an Action, you must WAIT for the Observation before deciding if you can provide a Final Answer.
-5. Never assume an action succeeded - wait for the observation to confirm it.
-6. MEMORY PERSISTENCE: When you find/create/reference files or data, ALWAYS include specific details in your Final Answer.
-7. CONVERSATION CONTEXT: Check the scratchpad for previous actions in THIS turn.
-${searchStrategyGuidance}
-
-Output your response in this format:
-
-If you need to use a tool/skill (DO NOT include Final Answer):
-Thought: [your reasoning]
-Action: [skill_id]
-Action Input: {"param": "value"}
-
-If you can answer directly without tools OR after receiving observations:
-Thought: [your reasoning]
-Final Answer: [your response]`,
+      content: renderPromptTemplate(systemPromptTemplate, {
+        skillDescriptions,
+        searchStrategyGuidance,
+        skills,
+      }),
     },
     {
       role: 'user' as const,
-      content: `Recent Conversation Context:
-${historyText}
-
-Current Query: ${userMessage}
-
-Scratchpad (current turn only):
-${scratchpad.map((s: any) => `${s.thought}\n${s.action}\n${s.observation}`).join('\n\n')}
-
-What should I do next?`,
+      content: renderPromptTemplate(userPromptTemplate, {
+        historyText,
+        userMessage,
+        scratchpadText,
+        scratchpad,
+      }),
     },
   ];
 
@@ -140,9 +168,9 @@ What should I do next?`,
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
-        maxTokens: 1024,
-        repeatPenalty: 1.15,
-        temperature: 0.5,
+        maxTokens: properties?.maxTokens ?? 1024,
+        repeatPenalty: properties?.repeatPenalty ?? 1.15,
+        temperature: properties?.temperature ?? 0.5,
       },
       onProgress: context.emitProgress,
     });
@@ -176,7 +204,13 @@ export const ReActPlannerNode: NodeDefinition = defineNode({
   ],
   properties: {
     model: 'default.coder',
-    temperature: 0.2,
+    temperature: 0.5,
+    maxTokens: 1024,
+    repeatPenalty: 1.15,
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
+    ownerSearchGuidanceTemplate: DEFAULT_OWNER_SEARCH_GUIDANCE_TEMPLATE,
+    anonymousSearchGuidance: DEFAULT_ANONYMOUS_SEARCH_GUIDANCE,
   },
   propertySchemas: {
     model: {
@@ -187,12 +221,49 @@ export const ReActPlannerNode: NodeDefinition = defineNode({
     },
     temperature: {
       type: 'slider',
-      default: 0.2,
+      default: 0.5,
       label: 'Temperature',
       description: 'Sampling temperature for creativity',
       min: 0,
       max: 1,
       step: 0.1,
+    },
+    maxTokens: {
+      type: 'number',
+      default: 1024,
+      label: 'Max Tokens',
+    },
+    repeatPenalty: {
+      type: 'number',
+      default: 1.15,
+      label: 'Repeat Penalty',
+    },
+    systemPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt Template',
+      description: 'Template variables: {{skillDescriptions}}, {{searchStrategyGuidance}}, {{skills}}.',
+      rows: 28,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{historyText}}, {{userMessage}}, {{scratchpadText}}, {{scratchpad}}.',
+      rows: 10,
+    },
+    ownerSearchGuidanceTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_OWNER_SEARCH_GUIDANCE_TEMPLATE,
+      label: 'Owner Search Guidance Template',
+      description: 'Template variables: {{username}}, {{userRole}}, {{profilePath}}, {{ownerSearchLine}}, {{ownerWriteLine}}.',
+      rows: 18,
+    },
+    anonymousSearchGuidance: {
+      type: 'text_multiline',
+      default: DEFAULT_ANONYMOUS_SEARCH_GUIDANCE,
+      label: 'Anonymous Search Guidance',
+      rows: 6,
     },
   },
   description: 'Plans next action in ReAct loop',

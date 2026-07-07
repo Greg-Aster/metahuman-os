@@ -20,6 +20,7 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 // Action types that can trigger Big Brother
 export type ActionType =
@@ -36,6 +37,41 @@ export type ActionType =
   | 'complex_task'   // Multi-step task requiring Big Brother
   | 'setting_change' // Change system settings
   | 'persona_update'; // Update persona/preferences
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are the Intent Orchestrator. Analyze the user's message and determine routing.
+
+MEMORY SEARCH RULES:
+needsMemory=TRUE when:
+- User asks a QUESTION about past events, history, or stored information
+- User explicitly references memory ("remember when...", "what did I say about...")
+- User asks about preferences, relationships, or past conversations
+
+needsMemory=FALSE when:
+- Casual greetings, social statements, or observations ("hey", "it's late", "I'm bored")
+- User is SHARING new information, not asking about old information
+- Simple conversational exchanges that don't require recall
+- Creative requests or philosophical discussions
+
+Default to FALSE for statements/observations. Only TRUE for actual recall questions.
+
+Output JSON:
+{
+  "needsMemory": boolean,
+  "memoryTier": string,
+  "memoryQuery": string,
+  "needsAction": boolean,
+  "actionType": string,
+  "actionParams": object,
+  "complexity": number,
+  "responseStyle": string,
+  "responseLength": string,
+  "isFollowUp": boolean,
+  "emotionalTone": string
+}
+{{feedbackSection}}
+{{recentConversationSection}}`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Analyze this message: "{{userMessage}}"`;
 
 export const OrchestratorLLMNode: NodeDefinition = defineNode({
   id: 'orchestrator_llm',
@@ -62,7 +98,46 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   ],
   description: 'Enhanced intent analysis with action detection and conversation awareness',
 
-  execute: async (inputs, context) => {
+  properties: {
+    systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
+    temperature: 0.2,
+    maxTokens: 768,
+  },
+  propertySchemas: {
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt',
+      description: 'Supports {{feedbackSection}} and {{recentConversationSection}}.',
+      rows: 16,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Supports {{userMessage}}, {{feedbackSection}}, and {{recentConversationSection}}.',
+      rows: 4,
+    },
+    temperature: {
+      type: 'slider',
+      default: 0.2,
+      label: 'Temperature',
+      min: 0,
+      max: 1,
+      step: 0.1,
+    },
+    maxTokens: {
+      type: 'number',
+      default: 768,
+      label: 'Max Tokens',
+      min: 128,
+      max: 4096,
+      step: 128,
+    },
+  },
+
+  execute: async (inputs, context, properties) => {
     // Named inputs from graph edges with array fallbacks
     const inputData = inputs.message || inputs[0];
     const conversationHistory = inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
@@ -123,42 +198,24 @@ Adjust your routing based on this feedback. If memory search already failed, con
 - Adjusting responseStyle to be more honest about uncertainty`;
       }
 
-      const systemPrompt = `You are the Intent Orchestrator. Analyze the user's message and determine routing.
-
-MEMORY SEARCH RULES:
-needsMemory=TRUE when:
-- User asks a QUESTION about past events, history, or stored information
-- User explicitly references memory ("remember when...", "what did I say about...")
-- User asks about preferences, relationships, or past conversations
-
-needsMemory=FALSE when:
-- Casual greetings, social statements, or observations ("hey", "it's late", "I'm bored")
-- User is SHARING new information, not asking about old information
-- Simple conversational exchanges that don't require recall
-- Creative requests or philosophical discussions
-
-Default to FALSE for statements/observations. Only TRUE for actual recall questions.
-
-Output JSON:
-{
-  "needsMemory": boolean,        // See rules above - default FALSE for statements
-  "memoryTier": string,          // hot|warm|cold|facts|all - memory recency
-  "memoryQuery": string,         // Semantic search keywords (only if needsMemory=true)
-  "needsAction": boolean,        // Does this require an action/skill?
-  "actionType": string,          // none|file_read|file_write|task_create|task_update|task_list|web_search|code_execute|complex_task
-  "actionParams": object,        // Parameters for the action
-  "complexity": number,          // 0.0-1.0 task complexity
-  "responseStyle": string,       // verbose|concise|conversational|technical|empathetic
-  "responseLength": string,      // brief|medium|detailed
-  "isFollowUp": boolean,         // Is this continuing a conversation?
-  "emotionalTone": string        // Detected emotional context
-}
-${feedbackSection}
-${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
+      const promptValues = {
+        userMessage,
+        feedbackSection,
+        recentMessages,
+        recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',
+      };
+      const systemPrompt = renderPromptTemplate(
+        properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+        promptValues,
+      );
+      const userPrompt = renderPromptTemplate(
+        properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+        promptValues,
+      );
 
       const messages = [
         { role: 'system' as const, content: systemPrompt },
-        { role: 'user' as const, content: `Analyze this message: "${userMessage}"` },
+        { role: 'user' as const, content: userPrompt },
       ];
 
       const response = await callLLM({
@@ -166,9 +223,9 @@ ${recentMessages ? `Recent conversation:\n${recentMessages}` : ''}`;
         messages,
         cognitiveMode: context.cognitiveMode,
         options: {
-          maxTokens: 768,
+          maxTokens: properties?.maxTokens || 768,
           repeatPenalty: 1.15,
-          temperature: 0.2,
+          temperature: properties?.temperature ?? 0.2,
         },
         onProgress: context.emitProgress,
       });

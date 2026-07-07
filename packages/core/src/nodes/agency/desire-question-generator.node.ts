@@ -20,9 +20,10 @@
 
 import { randomUUID } from 'crypto';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import type { Desire, ClarifyingQuestion, DesireClarifyingQuestions } from '../../agency/types.js';
+import type { Desire, ClarifyingQuestion } from '../../agency/types.js';
 import { callLLMPrompt } from '../../model-router.js';
 import { audit } from '../../audit.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 /**
  * Determine if a desire needs clarifying questions.
@@ -72,18 +73,14 @@ function needsClarifyingQuestions(desire: Desire): { needs: boolean; reason: str
   return { needs: false, reason: 'Desire is clear and low-risk' };
 }
 
-/**
- * Generate clarifying questions for a desire using LLM.
- */
-async function generateQuestions(desire: Desire): Promise<ClarifyingQuestion[]> {
-  const prompt = `You are helping gather context before creating an execution plan for a goal/desire.
+const DEFAULT_QUESTION_PROMPT_TEMPLATE = `You are helping gather context before creating an execution plan for a goal/desire.
 
 ## Desire Information
-**Title:** ${desire.title}
-**Description:** ${desire.description}
-**Reason:** ${desire.reason || 'Not specified'}
-**Source:** ${desire.source}
-**Risk Level:** ${desire.risk || 'unknown'}
+**Title:** {{title}}
+**Description:** {{description}}
+**Reason:** {{reason}}
+**Source:** {{source}}
+**Risk Level:** {{risk}}
 
 ## Task
 Generate 2-4 clarifying questions to help create a better, more personalized plan.
@@ -110,10 +107,30 @@ Example:
 
 Generate questions now:`;
 
+interface QuestionGenerationOptions {
+  promptTemplate?: string;
+  role?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/**
+ * Generate clarifying questions for a desire using LLM.
+ */
+async function generateQuestions(desire: Desire, options: QuestionGenerationOptions = {}): Promise<ClarifyingQuestion[]> {
+  const prompt = renderPromptTemplate(options.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE, {
+    title: desire.title,
+    description: desire.description,
+    reason: desire.reason || 'Not specified',
+    source: desire.source,
+    risk: desire.risk || 'unknown',
+    desire,
+  });
+
   try {
-    const response = await callLLMPrompt('curator', prompt, {
-      temperature: 0.5,
-      maxTokens: 500,
+    const response = await callLLMPrompt(options.role ?? 'curator', prompt, {
+      temperature: options.temperature ?? 0.5,
+      maxTokens: options.maxTokens ?? 500,
     });
 
     // Parse JSON response
@@ -154,7 +171,7 @@ Generate questions now:`;
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | Desire | undefined;
+  const slot0 = (inputs.desire || inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
 
   // Handle both wrapped and direct desire input
   const desire = (slot0 as any)?.desire || slot0 as Desire;
@@ -195,7 +212,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   console.log(`[desire-question-generator] Generating questions for: ${desire.title}`);
   console.log(`[desire-question-generator] Reason: ${check.reason}`);
 
-  const questions = await generateQuestions(desire);
+  const questions = await generateQuestions(desire, {
+    promptTemplate: properties?.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE,
+    role: properties?.role ?? 'curator',
+    temperature: properties?.temperature ?? 0.5,
+    maxTokens: properties?.maxTokens ?? 500,
+  });
 
   // Update desire with questions
   const now = new Date().toISOString();
@@ -233,18 +255,48 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 };
 
 export const definition: NodeDefinition = defineNode({
-  type: 'desire_question_generator',
-  label: 'Generate Clarifying Questions',
-  description: 'Generates questions to gather context before plan generation',
+  id: 'desire_question_generator',
+  name: 'Generate Clarifying Questions',
   category: 'agency',
+  description: 'Generates questions to gather context before plan generation',
   inputs: [
-    { id: 'desire', label: 'Desire', type: 'object' },
+    { name: 'desire', type: 'object', description: 'Desire needing clarification' },
   ],
   outputs: [
-    { id: 'desire', label: 'Updated Desire', type: 'object' },
-    { id: 'needsQuestions', label: 'Needs Questions', type: 'boolean' },
-    { id: 'questions', label: 'Questions', type: 'array' },
+    { name: 'desire', type: 'object', description: 'Updated desire' },
+    { name: 'needsQuestions', type: 'boolean', description: 'Whether questions were generated' },
+    { name: 'questions', type: 'array', description: 'Generated clarifying questions' },
   ],
+  properties: {
+    promptTemplate: DEFAULT_QUESTION_PROMPT_TEMPLATE,
+    role: 'curator',
+    temperature: 0.5,
+    maxTokens: 500,
+  },
+  propertySchemas: {
+    promptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_QUESTION_PROMPT_TEMPLATE,
+      label: 'Question Prompt Template',
+      description: 'Template variables: {{title}}, {{description}}, {{reason}}, {{source}}, {{risk}}, {{desire}}.',
+      rows: 24,
+    },
+    role: {
+      type: 'string',
+      default: 'curator',
+      label: 'LLM Role',
+    },
+    temperature: {
+      type: 'number',
+      default: 0.5,
+      label: 'Temperature',
+    },
+    maxTokens: {
+      type: 'number',
+      default: 500,
+      label: 'Max Tokens',
+    },
+  },
   execute,
 });
 

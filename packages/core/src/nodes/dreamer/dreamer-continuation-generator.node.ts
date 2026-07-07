@@ -11,21 +11,36 @@ import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
 import { appendDreamToBuffer, appendReasoningToBuffer } from '../../conversation-buffer.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
   try { scheduler.recordActivity(); } catch {}
 }
 
+const DEFAULT_SYSTEM_PROMPT = `You are continuing a surreal dream sequence. You only see the previous dream fragment - use it as inspiration,
+but feel free to drift, fracture, merge, or completely transform. No coherence required.
+Let the symbols mutate, emotions shift unexpectedly, logic dissolve. Dreams don't follow rules.
+Do not summarize; let one dream bleed into another. No length limits.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Previous Dream Fragment:
+{{lastDream}}
+
+Let the dream continue, building on this fragment alone.`;
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // inputs is an object keyed by handle name, not an array
   const previousDreamInput = inputs.previousDream;
   let lastDream = previousDreamInput?.dream || previousDreamInput;
   const username = context.userId || context.username;
-  const temperature = properties?.temperature || 1.0;
-  const continuationChance = properties?.continuationChance || 0.75;
-  const maxContinuations = properties?.maxContinuations || 4;
-  const delaySeconds = properties?.delaySeconds || 60;
+  const temperature = properties?.temperature ?? 1.0;
+  const continuationChance = properties?.continuationChance ?? 0.75;
+  const maxContinuations = properties?.maxContinuations ?? 4;
+  const delaySeconds = properties?.delaySeconds ?? 60;
+  const maxTokens = properties?.maxTokens ?? 800;
+  const role = properties?.role ?? 'persona';
+  const systemPrompt = properties?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   if (!lastDream || typeof lastDream !== 'string') {
     return {
@@ -37,11 +52,6 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const dreams: string[] = [];
   let continuationIndex = 0;
-
-  const systemPrompt = `You are continuing a surreal dream sequence. You only see the previous dream fragment—use it as inspiration,
-but feel free to drift, fracture, merge, or completely transform. No coherence required.
-Let the symbols mutate, emotions shift unexpectedly, logic dissolve. Dreams don't follow rules.
-Do not summarize; let one dream bleed into another. No length limits.`.trim();
 
   try {
     while (continuationIndex < maxContinuations) {
@@ -56,7 +66,7 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
         markBackgroundActivity();
       }
 
-      const userPrompt = `Previous Dream Fragment:\n${lastDream}\n\nLet the dream continue, building on this fragment alone.`;
+      const userPrompt = renderPromptTemplate(userPromptTemplate, { lastDream });
 
       const messages: RouterMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -64,10 +74,10 @@ Do not summarize; let one dream bleed into another. No length limits.`.trim();
       ];
 
       const response = await callLLM({
-        role: 'persona',
+        role,
         messages,
         userId: username,
-        options: { temperature },
+        options: { temperature, maxTokens },
       });
 
       const rawContinuation = response.content.trim();
@@ -149,6 +159,10 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
     continuationChance: 0.75,
     maxContinuations: 4,
     delaySeconds: 60,
+    maxTokens: 800,
+    role: 'persona',
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -171,6 +185,31 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
       type: 'number',
       default: 60,
       label: 'Delay (seconds)',
+    },
+    maxTokens: {
+      type: 'number',
+      default: 800,
+      label: 'Max Tokens',
+      description: 'Maximum tokens for each continuation response',
+    },
+    role: {
+      type: 'string',
+      default: 'persona',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT,
+      label: 'System Prompt',
+      description: 'Instructions for dream continuation.',
+      rows: 8,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{lastDream}}.',
+      rows: 6,
     },
   },
   description: 'Generates continuation dreams that build on previous narrative',

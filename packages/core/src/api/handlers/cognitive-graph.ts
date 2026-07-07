@@ -16,6 +16,7 @@ import { promises as fs } from 'node:fs';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from '../../paths.js';
+import { getNode, materializeNodeProperties } from '../../nodes/index.js';
 
 const GRAPHS_DIR = path.join(systemPaths.etc, 'cognitive-graphs');
 const CUSTOM_DIR = path.join(GRAPHS_DIR, 'custom');
@@ -87,6 +88,58 @@ function sanitizeName(name: string | null | undefined): string | null {
   if (!name) return null;
   if (!NAME_REGEX.test(name)) return null;
   return name;
+}
+
+function sanitizeNodeProperties(nodeType: string, properties: Record<string, any> | undefined): Record<string, any> {
+  const nodeDefinition = getNode(nodeType);
+  return nodeDefinition
+    ? materializeNodeProperties(nodeDefinition, properties)
+    : (properties || {});
+}
+
+function sanitizeGraphForPersistence(graph: any, rawName: string): any {
+  const isSvelteFlow = Array.isArray(graph.nodes) && (
+    graph.format === 'svelte-flow' ||
+    graph.nodes.some((node: any) => node?.position || node?.data?.nodeType)
+  );
+
+  if (!isSvelteFlow) return graph;
+
+  return {
+    version: graph.version || '1.0',
+    format: 'svelte-flow',
+    name: graph.name || rawName,
+    description: graph.description || '',
+    cognitiveMode: graph.cognitiveMode || null,
+    nodes: graph.nodes.map((node: any) => {
+      const nodeType = node.data?.nodeType || node.type;
+      const label = node.data?.label || node.data?.title;
+      return {
+        id: String(node.id),
+        type: node.type,
+        position: node.position,
+        width: node.width,
+        height: node.height,
+        data: {
+          label,
+          nodeType,
+          properties: sanitizeNodeProperties(nodeType, node.data?.properties || node.properties),
+          muted: node.data?.muted,
+          comment: node.data?.comment,
+        },
+      };
+    }),
+    edges: (graph.edges || []).map((edge: any) => ({
+      id: String(edge.id),
+      source: String(edge.source),
+      target: String(edge.target),
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle,
+      type: edge.type,
+      data: edge.data || {},
+    })),
+    viewport: graph.viewport,
+  };
 }
 
 async function resolveGraphPath(
@@ -188,14 +241,15 @@ export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<U
     }
 
     const now = new Date().toISOString();
+    const cleanGraph = sanitizeGraphForPersistence(graph, rawName);
     const graphPayload = {
-      version: graph.version || '1.0',
-      format: 'svelte-flow',
-      name: graph.name || rawName,
-      description: graph.description || '',
-      cognitiveMode: graph.cognitiveMode || null,
+      version: cleanGraph.version || '1.0',
+      format: cleanGraph.format || 'svelte-flow',
+      name: cleanGraph.name || rawName,
+      description: cleanGraph.description || '',
+      cognitiveMode: cleanGraph.cognitiveMode || null,
       last_modified: now,
-      ...graph,
+      ...cleanGraph,
     };
 
     await fs.writeFile(targetPath, JSON.stringify(graphPayload, null, 2), 'utf-8');
