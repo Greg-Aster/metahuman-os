@@ -131,6 +131,65 @@ export const nodeSchemas: NodeSchema[] = [
 
   // ENVIRONMENT INTERFACE NODES
   defineSchema({
+    id: 'environment_connect',
+    name: 'Environment Connect',
+    category: 'environment',
+    inputs: [
+      { name: 'url', type: 'string', optional: true, description: 'Environment URL' },
+      { name: 'roomName', type: 'string', optional: true, description: 'Environment room/session name' },
+    ],
+    outputs: [
+      { name: 'connection', type: 'object', description: 'Stored environment connection configuration' },
+      { name: 'connectionId', type: 'string', description: 'Connection identifier' },
+      { name: 'adapter', type: 'string', description: 'Adapter identifier' },
+      { name: 'url', type: 'string', description: 'Environment URL' },
+      { name: 'roomName', type: 'string', description: 'Room/session name' },
+      { name: 'enabled', type: 'boolean', description: 'Whether this connection is enabled' },
+      { name: 'configured', type: 'boolean', description: 'Whether the minimum connection fields are set' },
+      { name: 'error', type: 'string', description: 'Configuration error, if any' },
+    ],
+    properties: {
+      adapter: '',
+      url: '',
+      roomName: '',
+      graphName: 'environment-mode',
+      enabled: true,
+    },
+    propertySchemas: {
+      adapter: {
+        type: 'text',
+        default: '',
+        label: 'Adapter',
+        description: 'Bridge-agent adapter id, such as an externally registered game or device adapter.',
+      },
+      url: {
+        type: 'text',
+        default: '',
+        label: 'Environment URL',
+        description: 'URL for the environment page or endpoint.',
+      },
+      roomName: {
+        type: 'text',
+        default: '',
+        label: 'Room Name',
+        description: 'Optional multiplayer room/session name.',
+      },
+      graphName: {
+        type: 'text',
+        default: 'environment-mode',
+        label: 'Graph Name',
+        description: 'Graph the bridge agent should run when observations arrive.',
+      },
+      enabled: {
+        type: 'toggle',
+        default: true,
+        label: 'Enabled',
+        description: 'When disabled, the bridge agent ignores this connection.',
+      },
+    },
+    description: 'Stores graph-owned environment connection settings for the optional bridge agent.',
+  }),
+  defineSchema({
     id: 'environment_bridge_status',
     name: 'Environment Bridge Status',
     category: 'environment',
@@ -165,6 +224,24 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'connected', type: 'boolean', description: 'Whether an observation is available' },
     ],
     description: 'Reads the latest observation from an environment bridge session.',
+  }),
+  defineSchema({
+    id: 'megameal_interpreter',
+    name: 'Megameal Interpreter',
+    category: 'environment',
+    inputs: [
+      { name: 'observation', type: 'object', description: 'Raw Megameal environment observation' },
+    ],
+    outputs: [
+      { name: 'observation', type: 'object', description: 'Filtered Megameal observation for Environment Mode' },
+      { name: 'instruction', type: 'string', description: 'Most recent player text to treat as the task instruction' },
+      { name: 'text', type: 'array', description: 'Filtered player text events' },
+      { name: 'state', type: 'object', description: 'Megameal state payload' },
+      { name: 'location', type: 'object', description: 'Megameal location payload' },
+      { name: 'sessionId', type: 'string', description: 'Target Megameal bridge session' },
+      { name: 'valid', type: 'boolean', description: 'Whether this is a Megameal observation with usable input' },
+    ],
+    description: 'Filters Megameal current-player bridge observations before they enter Environment Mode cognition.',
   }),
   defineSchema({
     id: 'environment_feedback',
@@ -301,6 +378,7 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'environment',
     inputs: [
       { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
+      { name: 'instruction', type: 'string', optional: true, description: 'Original environment instruction for fallback action parsing' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
     ],
     outputs: [
@@ -309,13 +387,19 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
       { name: 'error', type: 'string', description: 'Parser error message' },
     ],
-    properties: { textFallback: true },
+    properties: { textFallback: true, naturalMovementFallback: false },
     propertySchemas: {
       textFallback: {
         type: 'toggle',
         default: true,
         label: 'Plain Text Sends Chat',
         description: 'Treat non-JSON text as a sendText action.',
+      },
+      naturalMovementFallback: {
+        type: 'toggle',
+        default: false,
+        label: 'Natural Movement Fallback',
+        description: 'Treat simple movement instructions like "walk forward ten steps" as move actions.',
       },
     },
     description: 'Parses model output into environment actions.',

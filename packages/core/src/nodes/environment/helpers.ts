@@ -9,6 +9,21 @@ const ACTION_TYPES = new Set<EnvironmentActionType>([
   'sendText',
 ]);
 
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+};
+
 export function stringifyEnvironmentObservation(observation: EnvironmentObservation, systemPrompt: string): string {
   const sections: string[] = [];
   if (systemPrompt.trim()) {
@@ -113,7 +128,66 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
   };
 }
 
-export function parseEnvironmentActions(value: unknown, sessionId?: string, textFallback = true): Partial<EnvironmentAction>[] {
+function numberFromInstruction(text: string): number | undefined {
+  const digitMatch = text.match(/\b(\d{1,2})\b/);
+  if (digitMatch) {
+    return Number(digitMatch[1]);
+  }
+
+  for (const [word, value] of Object.entries(NUMBER_WORDS)) {
+    if (new RegExp(`\\b${word}\\b`).test(text)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function parseNaturalMovementInstruction(text: string, sessionId?: string): Partial<EnvironmentAction> | null {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (/\b(?:stop|halt|stand still|freeze)\b/.test(normalized)) {
+    return { type: 'stop', sessionId };
+  }
+
+  const movementVerb = /\b(?:walk|move|go|run|step|head|travel)\b/;
+  if (!movementVerb.test(normalized)) {
+    return null;
+  }
+
+  const direction =
+    /\b(?:forward|forwards|ahead)\b/.test(normalized) ? 'forward'
+      : /\b(?:back|backward|backwards)\b/.test(normalized) ? 'back'
+        : /\bleft\b/.test(normalized) ? 'left'
+          : /\bright\b/.test(normalized) ? 'right'
+            : undefined;
+
+  if (!direction) {
+    return null;
+  }
+
+  const stepCount = numberFromInstruction(normalized) ?? 1;
+  return {
+    type: 'move',
+    sessionId,
+    direction,
+    amount: 1,
+    durationMs: Math.max(250, Math.min(1500, stepCount * 150)),
+    metadata: {
+      source: 'natural-language-fallback',
+      instruction: text.trim(),
+      stepCount,
+    },
+  };
+}
+
+export function parseEnvironmentActions(
+  value: unknown,
+  sessionId?: string,
+  textFallback = true,
+  naturalMovementFallback = false,
+): Partial<EnvironmentAction>[] {
   if (Array.isArray(value)) {
     return value.map(item => normalizeAction(item, sessionId)).filter(action => action !== null);
   }
@@ -121,7 +195,13 @@ export function parseEnvironmentActions(value: unknown, sessionId?: string, text
   if (typeof value === 'string') {
     const parsed = extractJsonObject(value);
     if (parsed) {
-      return parseEnvironmentActions(parsed, sessionId, textFallback);
+      return parseEnvironmentActions(parsed, sessionId, textFallback, naturalMovementFallback);
+    }
+    const movementAction = naturalMovementFallback
+      ? parseNaturalMovementInstruction(value, sessionId)
+      : null;
+    if (movementAction) {
+      return [movementAction];
     }
     return textFallback && value.trim()
       ? [{ type: 'sendText', sessionId, text: value.trim() }]
@@ -134,10 +214,10 @@ export function parseEnvironmentActions(value: unknown, sessionId?: string, text
 
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.actions)) {
-    return parseEnvironmentActions(record.actions, sessionId, textFallback);
+    return parseEnvironmentActions(record.actions, sessionId, textFallback, naturalMovementFallback);
   }
   if (record.action) {
-    return parseEnvironmentActions(record.action, sessionId, textFallback);
+    return parseEnvironmentActions(record.action, sessionId, textFallback, naturalMovementFallback);
   }
 
   const normalized = normalizeAction(record, sessionId);

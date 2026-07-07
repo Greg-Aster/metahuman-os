@@ -7,7 +7,9 @@ import type {
   EnvironmentActionType,
   EnvironmentBridgeState,
   EnvironmentBridgeSummary,
+  EnvironmentConnectionConfig,
   EnvironmentFeedback,
+  EnvironmentTextEvent,
   EnvironmentObservation,
   EnvironmentSessionState,
   QueuedEnvironmentAction,
@@ -15,8 +17,10 @@ import type {
 
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
 const STALE_AFTER_MS = 15_000;
+const FUTURE_CLOCK_SKEW_MS = 5_000;
 const MAX_FEEDBACK = 200;
 const MAX_ACTIONS = 500;
+const MAX_PROCESSED_TEXT_EVENTS = 1000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1500;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
   'move',
@@ -31,10 +35,29 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function sessionLastSeenMs(session: Pick<EnvironmentSessionState, 'lastSeenAt'>): number {
+  const timestamp = Date.parse(session.lastSeenAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function sessionStatus(session: EnvironmentSessionState, now = Date.now()): EnvironmentSessionState['status'] {
+  const lastSeen = sessionLastSeenMs(session);
+  if (!lastSeen || lastSeen - now > FUTURE_CLOCK_SKEW_MS || now - lastSeen > STALE_AFTER_MS) {
+    return 'stale';
+  }
+  return session.status;
+}
+
+function sessionSortMs(session: EnvironmentSessionState, now = Date.now()): number {
+  const lastSeen = sessionLastSeenMs(session);
+  return lastSeen && lastSeen - now <= FUTURE_CLOCK_SKEW_MS ? lastSeen : 0;
+}
+
 function defaultState(): EnvironmentBridgeState {
   return {
     enabled: false,
     updatedAt: nowIso(),
+    connections: {},
     sessions: {},
     queuedActions: [],
     feedback: [],
@@ -50,6 +73,7 @@ function normalizeState(value: Partial<EnvironmentBridgeState> | null | undefine
   return {
     enabled: typeof value?.enabled === 'boolean' ? value.enabled : fallback.enabled,
     updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : fallback.updatedAt,
+    connections: value?.connections && typeof value.connections === 'object' ? value.connections : {},
     sessions: value?.sessions && typeof value.sessions === 'object' ? value.sessions : {},
     queuedActions: Array.isArray(value?.queuedActions) ? value.queuedActions : [],
     feedback: Array.isArray(value?.feedback) ? value.feedback : [],
@@ -82,11 +106,7 @@ export function writeEnvironmentBridgeState(state: EnvironmentBridgeState): Envi
 export function summarizeEnvironmentBridgeState(state = readEnvironmentBridgeState()): EnvironmentBridgeSummary {
   const now = Date.now();
   const sessions = Object.values(state.sessions).map(session => {
-    const lastSeen = Date.parse(session.lastSeenAt);
-    const status = Number.isFinite(lastSeen) && now - lastSeen > STALE_AFTER_MS
-      ? 'stale'
-      : session.status;
-    return { ...session, status };
+    return { ...session, status: sessionStatus(session, now) };
   });
 
   return {
@@ -104,6 +124,40 @@ export function setEnvironmentBridgeEnabled(enabled: boolean): EnvironmentBridge
   return writeEnvironmentBridgeState(state);
 }
 
+export function upsertEnvironmentConnection(
+  connection: Partial<EnvironmentConnectionConfig> & Pick<EnvironmentConnectionConfig, 'adapter' | 'url'>,
+): EnvironmentConnectionConfig {
+  const state = readEnvironmentBridgeState();
+  const id = connection.id?.trim() || `${connection.adapter}:${connection.url}`;
+  const existing = state.connections[id];
+  const timestamp = nowIso();
+  const next: EnvironmentConnectionConfig = {
+    id,
+    adapter: connection.adapter,
+    enabled: connection.enabled !== false,
+    url: connection.url,
+    hostName: connection.hostName?.trim() || undefined,
+    roomName: connection.roomName?.trim() || undefined,
+    graphName: connection.graphName?.trim() || existing?.graphName || 'environment-mode',
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    metadata: connection.metadata ?? existing?.metadata,
+  };
+
+  state.connections[id] = next;
+  writeEnvironmentBridgeState(state);
+  return next;
+}
+
+export function listEnvironmentConnections(options: { enabledOnly?: boolean } = {}): EnvironmentConnectionConfig[] {
+  const connections = Object.values(readEnvironmentBridgeState().connections);
+  return options.enabledOnly ? connections.filter(connection => connection.enabled) : connections;
+}
+
+export function getEnvironmentConnection(id: string): EnvironmentConnectionConfig | undefined {
+  return readEnvironmentBridgeState().connections[id];
+}
+
 export function publishEnvironmentObservation(observation: EnvironmentObservation): EnvironmentBridgeSummary {
   const state = readEnvironmentBridgeState();
   const existing = state.sessions[observation.sessionId];
@@ -116,6 +170,7 @@ export function publishEnvironmentObservation(observation: EnvironmentObservatio
     firstSeenAt: existing?.firstSeenAt ?? observation.timestamp ?? now,
     lastSeenAt: observation.timestamp ?? now,
     latestObservation: observation,
+    processedTextEventIds: existing?.processedTextEventIds ?? [],
   };
 
   state.sessions[observation.sessionId] = session;
@@ -126,14 +181,53 @@ export function publishEnvironmentObservation(observation: EnvironmentObservatio
   return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
 }
 
+export function claimEnvironmentTextEvents(observation: EnvironmentObservation): EnvironmentTextEvent[] {
+  const state = readEnvironmentBridgeState();
+  const session = state.sessions[observation.sessionId];
+  if (!session) {
+    return [];
+  }
+
+  const processed = new Set(session.processedTextEventIds ?? []);
+  const claimed: EnvironmentTextEvent[] = [];
+
+  for (const event of observation.text ?? []) {
+    if (!event.id || !event.text.trim() || processed.has(event.id)) {
+      continue;
+    }
+
+    processed.add(event.id);
+    claimed.push(event);
+  }
+
+  if (claimed.length === 0) {
+    return [];
+  }
+
+  session.processedTextEventIds = Array.from(processed).slice(-MAX_PROCESSED_TEXT_EVENTS);
+  state.sessions[observation.sessionId] = session;
+  writeEnvironmentBridgeState(state);
+  return claimed;
+}
+
 export function getLatestEnvironmentObservation(sessionId?: string): EnvironmentObservation | undefined {
   const state = readEnvironmentBridgeState();
   if (sessionId) {
     return state.sessions[sessionId]?.latestObservation;
   }
 
-  return Object.values(state.sessions)
-    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0]?.latestObservation;
+  const latest = Object.values(state.sessions)
+    .map(session => {
+      const now = Date.now();
+      return { session, status: sessionStatus(session, now), sortMs: sessionSortMs(session, now) };
+    })
+    .sort((a, b) => {
+      if (a.status === 'connected' && b.status !== 'connected') return -1;
+      if (a.status !== 'connected' && b.status === 'connected') return 1;
+      return b.sortMs - a.sortMs;
+    })[0];
+
+  return latest?.status === 'connected' ? latest.session.latestObservation : undefined;
 }
 
 export function getEnvironmentFeedback(options: { actionId?: string; limit?: number } = {}): EnvironmentFeedback[] {

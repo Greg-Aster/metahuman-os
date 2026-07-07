@@ -22,9 +22,35 @@ export const environmentObservationNode = defineNode({
     { name: 'connected', type: 'boolean', description: 'Whether an observation is available' },
   ],
   description: 'Reads the latest observation from an environment bridge session.',
-  async execute(inputs) {
+  async execute(inputs, context) {
+    const sessionId = typeof inputs.sessionId === 'string' && inputs.sessionId
+      ? inputs.sessionId
+      : typeof context.sessionId === 'string'
+        ? context.sessionId
+        : undefined;
+    const contextObservation = context.environmentObservation && typeof context.environmentObservation === 'object'
+      ? context.environmentObservation as ReturnType<typeof getLatestEnvironmentObservation>
+      : undefined;
+    if (
+      contextObservation &&
+      (!sessionId || contextObservation.sessionId === sessionId)
+    ) {
+      return {
+        observation: contextObservation,
+        text: contextObservation.text ?? [],
+        state: contextObservation.state ?? {},
+        location: contextObservation.location ?? null,
+        map: contextObservation.map ?? null,
+        visual: contextObservation.visual ?? null,
+        visuals: contextObservation.visuals ?? [],
+        feedback: contextObservation.feedback ?? [],
+        capabilities: contextObservation.capabilities ?? { actions: [] },
+        sessionId: contextObservation.sessionId ?? '',
+        connected: true,
+      };
+    }
     const observation = getLatestEnvironmentObservation(
-      typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined,
+      sessionId,
     );
 
     return {

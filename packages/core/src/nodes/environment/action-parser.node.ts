@@ -7,6 +7,7 @@ export const environmentActionParserNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
+    { name: 'instruction', type: 'string', optional: true, description: 'Original environment instruction for fallback action parsing' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
   ],
   outputs: [
@@ -15,7 +16,7 @@ export const environmentActionParserNode = defineNode({
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
   ],
-  properties: { textFallback: true },
+  properties: { textFallback: true, naturalMovementFallback: false },
   propertySchemas: {
     textFallback: {
       type: 'toggle',
@@ -23,15 +24,32 @@ export const environmentActionParserNode = defineNode({
       label: 'Plain Text Sends Chat',
       description: 'Treat non-JSON text as a sendText action.',
     },
+    naturalMovementFallback: {
+      type: 'toggle',
+      default: false,
+      label: 'Natural Movement Fallback',
+      description: 'Treat simple movement instructions like "walk forward ten steps" as move actions.',
+    },
   },
   description: 'Parses model output into environment actions.',
   async execute(inputs, _context, properties) {
     try {
-      const actions = parseEnvironmentActions(
+      const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
+      const naturalMovementFallback = properties?.naturalMovementFallback !== false;
+      const hasInstruction = typeof inputs.instruction === 'string' && inputs.instruction.trim().length > 0;
+      const responseActions = parseEnvironmentActions(
         inputs.response,
-        typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined,
+        sessionId,
         properties?.textFallback !== false,
+        naturalMovementFallback && !hasInstruction,
       );
+      const instructionActions = hasInstruction && naturalMovementFallback
+        ? parseEnvironmentActions(inputs.instruction, sessionId, false, true)
+        : [];
+      const responseHasControlAction = responseActions.some(action => action.type !== 'sendText');
+      const actions = responseHasControlAction || instructionActions.length === 0
+        ? responseActions
+        : [...instructionActions, ...responseActions];
 
       return {
         actions,

@@ -127,6 +127,19 @@ export interface EnvironmentObservation {
   feedback?: EnvironmentFeedback[];
 }
 
+export interface EnvironmentConnectionConfig {
+  id: string;
+  adapter: string;
+  enabled: boolean;
+  url: string;
+  hostName?: string;
+  roomName?: string;
+  graphName?: string;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface EnvironmentAction {
   id: string;
   sessionId?: string;
@@ -162,11 +175,13 @@ export interface EnvironmentSessionState {
   firstSeenAt: string;
   lastSeenAt: string;
   latestObservation?: EnvironmentObservation;
+  processedTextEventIds?: string[];
 }
 
 export interface EnvironmentBridgeState {
   enabled: boolean;
   updatedAt: string;
+  connections: Record<string, EnvironmentConnectionConfig>;
   sessions: Record<string, EnvironmentSessionState>;
   queuedActions: QueuedEnvironmentAction[];
   feedback: EnvironmentFeedback[];
