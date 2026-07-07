@@ -1,119 +1,183 @@
 # Environment Interface Bridge Plan
 
-Status: initial implementation in progress; MetaHuman mode/graph entry point wired
-Scope: architecture planning for connecting MetaHuman OS cognitive graphs to external environments such as `apps/game.megameal`.
+Status: architecture reset after separation review
+Scope: connect MetaHuman OS Environment Mode graphs to external environments such as Megameal without baking Megameal behavior into MetaHuman core.
 
 ## Goal
 
-MetaHuman OS should be able to observe an environment, reason over that observation, and send bounded actions back to the environment without hardcoding the cognitive graph to one game or one control scheme.
+MetaHuman OS should be able to observe an environment, reason over that observation through the node graph, and send bounded text or movement actions back through an adapter.
 
-The first target environment is Megameal, but the interface must stay generic enough to support a different game, simulator, robot, desktop surface, or physical device later.
+The first target environment is Megameal, but the interface must remain generic enough to support a different game, simulator, robot, desktop surface, or physical device later.
 
-## Core Design
+## Current Decision
 
-Use a generic environment-interface layer in MetaHuman and environment-specific adapters at the edge.
+The bridge must be split into three separable pieces:
 
 ```text
-Environment adapter
-  -> observations, text, visual frames, status, feedback
-  -> MetaHuman environment interface nodes
-  -> cognitive graph
-  -> action/text outputs
-  -> environment adapter
+Megameal External DEV Bridge
+  -> exposed current-player input/output adapter
+  -> MetaHuman environment-bridge agent
+  -> Environment Mode node graph
+  -> MetaHuman environment-bridge agent
+  -> exposed current-player input/output adapter
 ```
 
-Megameal should be one adapter, not the root abstraction.
+The entry and exit point inside MetaHuman is the node system. The bridge agent is the exchange process between the external adapter and the nodes. The game should not know prompts, graphs, model routing, personas, or cognitive policy.
 
-## Ownership Boundaries
+## Non-Negotiable Boundaries
+
+- Megameal owns the External DEV Bridge, its editor switch, its saved global settings, and the current-player adapter surface.
+- The External DEV Bridge must be optional. If disabled or deleted, normal Megameal gameplay and multiplayer continue.
+- The adapter attaches to the normal Megameal client/player that is already in the multiplayer room. It must not create a special MetaHuman-only game mode or hidden second player.
+- If a human player and AI player should coexist, run two normal Megameal clients in the same room: one human-controlled with bridge disabled, one bridge-controlled with bridge enabled.
+- MetaHuman owns the `environment-bridge` agent.
+- Starting the `environment-bridge` agent connects to the exposed current-player adapter. It does not launch a strange URL session, invent a second browser policy, spawn a player, or create a separate local bridge server.
+- MetaHuman Environment Mode owns the node workflow that prepares prompts, runs model decisions, parses actions, and sends outputs.
+- `packages/core` environment nodes must stay generic. No Megameal map parser, Megameal touch-control IDs, hardcoded Megameal rooms, Megameal URL parameters, or Megameal-only schema defaults belong in core nodes.
+- Megameal-specific translation belongs at the Megameal External DEV Bridge edge or in a clearly isolated adapter folder, not in core cognitive nodes.
+- No polling loop should be used for bridge traffic. Events should flow when relevant data changes or when the adapter receives a command.
+- Any file outside the listed owner surfaces requires explicit permission before implementation.
+
+## Rejected Designs
+
+These approaches are out of scope for the current implementation:
+
+- Playwright-owned or browser-automation-owned avatar.
+- A third local server just for the bridge.
+- MetaHuman launching a dedicated special Megameal URL with `metahumanBridge` or `bridgeEndpoint` parameters.
+- MetaHuman creating a second Megameal player/session on behalf of the game.
+- Megameal hardcoding a MetaHuman URL as its transport policy.
+- Megameal posting observations directly to a hardcoded MetaHuman endpoint as the primary architecture.
+- Megameal-specific nodes or map normalization inside `packages/core`.
+- Polling timers that repeatedly scan game state or bridge state.
+- Broad Agent Monitor, startup script, model config, README, or unrelated UI changes as part of the bridge.
+
+## Ownership
 
 MetaHuman owns:
 
-- The optional environment bridge agent that talks to external environments.
+- `brain/agents/environment-bridge/`: the optional bridge agent process.
 - Generic environment protocol types.
-- Generic bridge storage/queueing for observations, actions, and feedback.
-- Environment interface node implementations.
-- Prompt/data preparation nodes.
-- Connection configuration for environment URL, room, session, and adapter type.
-- Cognitive graph templates that wire observations into reasoning and actions.
-- The node graph entry and exit points for environment interaction.
-- Adapter translation from neutral external controls/snapshots into generic environment observations/actions.
+- Generic bridge storage for observations, actions, feedback, and connection/session state.
+- Generic Environment Mode nodes.
+- Environment Mode graph templates and graph editor canvas integration.
+- Prompt/data preparation inside the graph.
+- Action parsing and validation inside generic send nodes.
 
 Megameal owns:
 
-- Runtime state, gameplay meaning, HUD state, input semantics, and multiplayer session behavior.
-- The smallest neutral control/snapshot surface needed by an external bridge agent.
-- Rejecting neutral control calls when game input is disabled, UI is capturing input, or external control is not manually enabled.
-- No MetaHuman URLs, prompt logic, graph policy, authored map data, cognitive concepts, or environment adapter policy.
+- The External DEV Bridge editor switch and configuration UI.
+- Saving External DEV Bridge settings into the level/global settings file.
+- The adapter surface exposed on the current normal player/client when the External DEV Bridge is enabled.
+- Translating generic semantic actions into local game controls.
+- Publishing game observations from that current player/client.
+- Rejecting commands when bridge support is disabled, game input is blocked, or UI capture makes control unsafe.
 
-The generic MetaHuman environment layer must not import from `apps/game.megameal`. A Megameal adapter may know the neutral Megameal dev-control surface, but that adapter should live in MetaHuman's bridge-agent side or a standalone integration package.
+Shared contract:
 
-Environment Mode must not hardcode environment data, sample room data, player state, or Megameal-specific content. Data enters through an adapter observation and becomes usable by the cognitive system through `environment_observation`. Decisions leave the cognitive system through `environment_send_action` and `environment_send_text`.
+- Observations and actions use a generic protocol.
+- Either side can be removed without leaving orphaned cognitive/game policy in the other.
+- Megameal does not import MetaHuman concepts.
+- MetaHuman core does not import Megameal concepts.
 
-## Recommended Folder Shape
+## Allowed File Surfaces
 
-MetaHuman:
+MetaHuman expected surfaces:
 
 ```text
-packages/core/src/environment-interface/
-  protocol.ts
-  connections.ts
-  prompt-context.ts
-
 brain/agents/environment-bridge/
-  core.ts
-  cli.ts
-  adapters/
-    megameal-local.ts
-
+packages/core/src/environment-interface/
 packages/core/src/nodes/environment/
-  environment-connect.node.ts
-  environment-observation.node.ts
-  environment-context-builder.node.ts
-  environment-action-parser.node.ts
-  environment-send-action.node.ts
-  environment-send-text.node.ts
-
+packages/core/src/nodes/schemas.ts
+etc/cognitive-graphs/environment-mode.json
+apps/site graph/editor files only when needed for Environment Mode canvas support
 docs/implementation-plans/ENVIRONMENT_INTERFACE_BRIDGE.md
 ```
 
-Megameal, only if needed:
+Megameal expected surfaces:
 
 ```text
 apps/game.megameal/src/app/gameDevBridge.ts
+apps/game.megameal/src/app/gameDevBridgeRuntime.ts
+apps/game.megameal/src/levels/global/settings.ts
+apps/game.megameal/src/editor/MasterControlMap.svelte
+apps/game.megameal/src/editor/masterControlGraph.ts
+apps/game.megameal/scripts/editor-dev-api.mjs
 ```
 
-The Megameal side should stay a narrow app/runtime control surface. It should not push MetaHuman concepts into engine core, and it should not contain MetaHuman URLs, prompt logic, map data, graph policy, or environment adapter policy.
+Any additional file requires a short explanation and explicit approval before editing.
 
-## Node Family
+## External DEV Bridge Requirements
 
-Use a dedicated node category such as `environment` or `interface`. This will require updating both runtime node definitions and the browser-safe node schema list.
+The game editor gets an External DEV Bridge section with:
 
-Proposed generic nodes:
+- Enable/disable switch.
+- Configurable exposed settings.
+- Configurable host/room/adapter fields if needed by the game-side adapter.
+- Data category switches for text, location, state, map, snapshots, and later visual frames.
+- Saved values in the game global settings file.
 
-- `environment_connect`: opens or selects an environment session using adapter type, URL, room, and identity.
-- `environment_bridge_status`: reads bridge/session status for graph routing.
-- `environment_observation`: reads the latest observation packet.
-- `environment_feedback`: reads recent adapter/action feedback.
-- `environment_map_input`: supplies optional graph-authored map and coordinate context when an adapter does not publish map data yet.
-- `environment_context_builder`: prepares text, state, visual metadata, and available actions into an LLM-ready context object.
-- `environment_prompt`: optional template node specialized for environment prompts. This can reuse the existing `text_template` idea but should understand multimodal context.
-- `environment_action_parser`: turns model output into typed actions, text responses, or no-op decisions.
-- `environment_send_action`: sends movement/interaction/control commands.
-- `environment_send_text`: sends chat or speech text back to the environment.
+When enabled, the game exposes a current-player adapter surface:
 
-The send nodes are the cognitive egress boundary. They must validate action type, allowed action set, and duration bounds before anything reaches an adapter queue.
+- It uses the current normal player/client already running in the multiplayer session.
+- It does not create a hidden player, second browser tab, or special bridge-only game mode.
+- It exposes input controls for movement, stop, interaction, and chat text.
+- It has exposed output channels for text, location, state, map, feedback, and later visual frames.
+- It emits observations only when relevant events occur.
+- It accepts commands only through the bridge-controlled interface.
 
-Adapter-specific nodes should be thin convenience nodes:
+## MetaHuman Agent Requirements
 
-- `megameal_connect`: presets adapter type and Megameal connection fields.
-- `megameal_observation`: optional convenience wrapper over `environment_observation`.
-- `megameal_send_action`: optional wrapper only if Megameal action affordances need custom UI.
+The `environment-bridge` agent:
 
-Prefer generic nodes first. Add Megameal-specific nodes only where the graph editor benefits from fewer knobs or clearer labels.
+- Starts only when requested.
+- Connects to the exposed current-player adapter.
+- Does not poll.
+- Does not launch Megameal through special URL parameters.
+- Does not create a Megameal player or browser session.
+- Does not create a separate local bridge server.
+- Receives adapter observations and writes them into the generic environment interface store.
+- Triggers or routes data into the Environment Mode graph.
+- Reads node-authored actions and sends them back to the exposed current-player adapter.
+- Can be stopped or deleted without breaking normal MetaHuman OS operation.
 
-## Environment Observation Contract
+The agent may need connection settings, but those settings are generic:
 
-Observation packets should separate channels so graph authors can route them independently.
+- adapter id
+- host or adapter endpoint
+- room/session name
+- graph name
+- enabled state
+
+The settings should not encode Megameal-specific commands in core.
+
+## Environment Mode Node Workflow
+
+The Environment Mode graph is the center of cognition for this feature.
+
+Generic nodes:
+
+- `environment_connect`: stores/selects generic adapter connection information.
+- `environment_bridge_status`: reads bridge/session status.
+- `environment_observation`: reads the latest observation.
+- `environment_feedback`: reads recent action feedback.
+- `environment_map_input`: optional authored map/coordinate context with generic `EnvironmentMapData`.
+- `environment_context_builder`: prepares text, state, location, map, visual metadata, feedback, and capabilities for model input.
+- `environment_prompt`: optional prompt/template node.
+- `environment_action_parser`: turns model output or user movement intent into semantic actions.
+- `environment_send_action`: queues movement/interaction/control commands.
+- `environment_send_text`: queues chat/speech text.
+
+The graph, not hardcoded bridge code, decides:
+
+- what information goes to the model,
+- what instructions frame the model,
+- whether a message is treated as conversation or movement intent,
+- which actions are sent back.
+
+## Observation Contract
+
+Observation packets separate channels so graph authors can route them independently:
 
 ```ts
 type EnvironmentObservation = {
@@ -154,33 +218,17 @@ Visual examples:
 - Screenshot URL or base64 image reference.
 - Frame dimensions.
 - Capture timestamp.
-- Camera pose metadata when available.
+- Camera pose metadata.
 
-Location and map examples:
-
-- Current coordinates and heading.
-- Current room, area, or region label.
-- Coordinate system name.
-- Map bounds, landmarks, regions, paths, or navigation notes.
-- Adapter-provided map data or graph-authored temporary map data.
-
-Map data must be supplied by an adapter observation or by an explicit graph node such as `environment_map_input`. Environment Mode must not ship with a baked map, room list, player location, Megameal content, or other scenario data.
-
-Feedback examples:
-
-- Command accepted or rejected.
-- Action succeeded or failed.
-- Path blocked.
-- Interaction opened a dialogue.
-- Player appears stuck.
+Map data must be supplied by an adapter observation or by an explicit graph node. Environment Mode must not ship with baked Megameal maps, room lists, player locations, or scenario data.
 
 ## Action Contract
 
-Actions should be semantic, not raw keyboard events.
+Actions are semantic, not raw keyboard events:
 
 ```ts
 type EnvironmentAction =
-  | { type: "move"; vector: [number, number, number]; durationMs: number; speed?: "walk" | "run" }
+  | { type: "move"; vector?: [number, number, number]; direction?: string; durationMs?: number; speed?: "walk" | "run" }
   | { type: "look"; delta?: [number, number]; target?: [number, number, number] }
   | { type: "jump" }
   | { type: "interact"; targetId?: string }
@@ -188,199 +236,113 @@ type EnvironmentAction =
   | { type: "sendText"; text: string; channel?: string }
 ```
 
-This keeps the cognitive graph portable. A game adapter can translate `move` into gameplay commands. A robot adapter could translate the same command into a motor-controller request.
+The adapter translates these into its local control surface. A game adapter may turn `move` into touch/keyboard/gamepad values. A robot adapter could turn the same action into a motor command.
 
-## Prompt/Data Preparation
+## Prompt/Data Flow
 
-Do not push all raw game data into `user_input` directly.
+Do not push raw game data directly into a user input node as an unstructured blob.
 
-Recommended flow:
+Preferred graph flow:
 
 ```text
 environment_observation
   -> environment_context_builder
   -> environment_prompt
-  -> user_input or model_router/persona_llm
+  -> model_router/persona_llm
   -> environment_action_parser
   -> environment_send_action / environment_send_text
 ```
 
 The context builder should produce:
 
-- `message`: the user-like prompt text for ordinary LLM nodes.
-- `context`: structured object containing text, state, location, map, visual, feedback, capabilities, and recent history.
-- `images`: optional visual frames for future vision-capable model nodes.
-- `availableActions`: explicit action vocabulary for the parser and model prompt.
+- `message`: model-ready text.
+- `messages`: model-router compatible messages where supported.
+- `context`: structured text, state, location, map, visual, feedback, capabilities, and recent history.
+- `images`: future vision-capable frame references.
+- `availableActions`: explicit action vocabulary.
 
-The first version can use text-only prompts and image metadata. Vision frames can be added once the active model path supports image inputs end to end.
+## First Testable Goal
 
-The workflow itself should be authored in the graph canvas. The mode and node system provide the reusable building blocks; they should not ship with baked-in scenario data.
+The first useful test is:
 
-## Megameal Feasibility Notes
+1. Start Megameal multiplayer server.
+2. Start MetaHuman OS.
+3. In Megameal editor/global settings, configure the External DEV Bridge settings.
+4. Open the Megameal client that should be AI-controlled and join the target multiplayer room normally.
+5. Enable the External DEV Bridge for that client/player.
+6. Start MetaHuman `environment-bridge` agent.
+7. The agent connects to the exposed adapter on that already-open Megameal client.
+8. A human player sends chat in the room, such as "how are you?".
+9. The adapter emits a text observation.
+10. MetaHuman routes that observation into Environment Mode.
+11. The graph/model produces one response.
+12. The response exits through `environment_send_text`.
+13. The agent sends the text action to the adapter.
+14. The bridged Megameal player says the response in the room.
 
-Current Megameal already has useful seams:
+Movement test:
 
-- Multiplayer has room join/host configuration and chat messages.
-- Multiplayer session snapshots expose connected peers, remote players, room name, logs, chat, and local peer id.
-- Runtime HUD state already includes player position, health, movement/input flags, charging, active portal, story-note, NPC, open story-note, and open NPC dialogue.
-- `gameDevBridge` already proves that the browser game can publish runtime snapshots and accept a small command set in dev mode.
-- The first game-side implementation should extend `gameDevBridge` as a neutral dev-control surface, not add a MetaHuman-specific `environmentBridge` to `GameClient.svelte`.
+1. A human player sends "walk forward ten steps".
+2. The observation reaches Environment Mode.
+3. The graph/model or movement parser emits a bounded `move` action.
+4. The send node validates duration and action type.
+5. The agent sends the action to the adapter.
+6. The bridged Megameal player moves in the room.
 
-Current gaps:
+## Implementation Sequence
 
-- The multiplayer wire protocol currently handles pose replication, full-state replication, and chat. It does not accept semantic control commands for the local player.
-- `gameDevBridge` is dev-only and currently supports runtime-scene loading and collision overlay diagnostics. It should expose only a minimal neutral control/snapshot surface needed by an external bridge agent.
-- Visual frames are not yet exposed as an owned API. A screenshot bridge would need an intentional capture path from the game canvas or renderer, but the capture request and routing policy should live in the MetaHuman bridge agent.
-- Megameal currently exposes little neutral state beyond location. Until a visual capture path exists, a temporary authored map can be attached in the MetaHuman graph through `environment_map_input` and combined with coordinates by `environment_context_builder`.
-- MetaHuman nodes currently use a fixed `NodeCategory` union and a separate browser-safe schema list, so a new interface category requires both runtime and schema updates.
+1. Audit and remove rejected bridge code from MetaHuman and Megameal.
+2. Keep Environment Mode canvas and generic environment nodes.
+3. Keep or implement generic environment protocol/store only where needed.
+4. Keep `environment-bridge` agent as a thin event-driven connector.
+5. Implement Megameal External DEV Bridge settings in the editor and global settings file.
+6. Implement the Megameal current-player adapter behind that switch.
+7. Wire the agent to connect to that current-player adapter.
+8. Route observations through the Environment Mode graph.
+9. Route graph actions back to the current-player adapter.
+10. Add visual frames and richer map support later through the same generic observation contract.
 
-## Megameal Bridge Options
+## Current Cleanup Checklist
 
-Option A: Browser local bridge first.
-
-- Use a MetaHuman-owned bridge agent to communicate with an already-open Megameal browser tab through a neutral browser-local control/snapshot surface.
-- Lowest risk for the first prototype.
-- Good for local exploration with a visible browser.
-- Not enough for remote headless operation by itself.
-
-Option B: Extend Megameal multiplayer channels.
-
-- Add environment-agent channel messages alongside multiplayer chat/pose.
-- Lets MetaHuman join by room name and URL.
-- Larger Megameal-side change; defer unless local bridge is insufficient.
-- Better long-term match for multiplayer exploration.
-
-Option C: Dedicated game agent endpoint.
-
-- Megameal exposes a narrow HTTP/WebSocket endpoint for observation and commands.
-- Cleanest external API shape.
-- More game-side implementation than Option A.
-
-Recommended sequence: A for proof. Treat B or C as later transport replacements only if the local bridge proves inadequate.
-
-Implementation boundary update:
-
-- MetaHuman owns the environment bridge agent, store, HTTP endpoints, node category, prompt/data prep, action parsing, adapter configuration, and all environment data routing.
-- Megameal exposes only neutral dev bridge commands such as snapshot, chat, touch action value, touch clear, runtime scene load, diagnostics toggles, and later screenshot capture if needed.
-- A Megameal adapter translates neutral Megameal snapshots/commands into generic `EnvironmentObservation` and `EnvironmentAction` values. That adapter lives on the MetaHuman side or in a standalone integration package, not inside Megameal core.
-- The bridge agent can be stopped or removed without changing the Megameal runtime or the core cognitive graph system.
-- The cognitive interface entry and exit points are the environment nodes. No prompt, map, gameplay interpretation, room data, or action policy should bypass those nodes.
+- Remove MetaHuman-launched special Megameal URL behavior.
+- Remove `metahumanBridge` / `bridgeEndpoint` URL parameter plan.
+- Remove Megameal-specific map normalization from core environment nodes.
+- Remove Megameal-specific adapter defaults from generic node schemas.
+- Remove direct game-to-hardcoded-MetaHuman API as the primary architecture.
+- Remove stale claims about successful live movement tests until retested under this architecture.
+- Keep Environment Mode graph/canvas work.
+- Keep generic observation/action contracts.
+- Keep the bridge agent, but simplify it to a connector between adapter and nodes.
+- Keep start/stop fixes only if they solve stale local agent processes and do not entangle bridge architecture.
 
 ## Safety Requirements
 
-- Manual enable switch on the neutral game control surface before accepting external actions.
+- Manual enable switch before accepting external actions.
 - Adapter-level command allowlist.
+- Node-level action validation.
 - Rate limits and maximum action duration.
-- `stop` command must be always available.
-- Action parser must reject unknown commands by default.
-- Send nodes must reject unknown action types and reject unbounded movement/look actions unless the workflow explicitly sets a default duration.
+- `stop` must always be available.
+- Unknown action types must be rejected by default.
 - Observation packets should avoid private local data and include only environment state.
-- Neutral game control methods should reject commands when gameplay input is disabled or UI is capturing input.
-
-## First Implementation Packet
-
-Build a text/state-only proof without vision.
-
-MetaHuman:
-
-1. Add generic environment protocol types.
-2. Add `environment_context_builder` and `environment_action_parser` nodes.
-3. Add browser-safe schemas for those nodes.
-4. Add a simple Megameal adapter stub that can be pointed at a local bridge URL/session.
-5. Add a sample graph template.
-
-Megameal:
-
-1. Expose only the minimum neutral snapshot and control methods needed by an external bridge agent.
-2. Keep those methods free of MetaHuman URLs, prompt logic, graph policy, map data, and cognitive concepts.
-3. Support `sendText`, `stop`, and short movement control methods first.
-4. Return neutral success/failure results from those methods.
-
-MetaHuman bridge agent:
-
-1. Read neutral Megameal snapshots and publish generic observations into the environment bridge store.
-2. Claim queued node-authored actions and translate them into neutral Megameal control calls.
-3. Write adapter feedback back into the environment bridge store.
-4. Stay optional: when the agent is off or removed, Megameal and the MetaHuman node graph system continue normally.
-
-Validation should prove that MetaHuman can:
-
-- Receive text from a neutral Megameal snapshot through the MetaHuman bridge agent.
-- Build a prompt from state and text.
-- Produce a structured no-op, text response, or movement action.
-- Queue text or bounded movement through environment nodes.
-- Have the MetaHuman bridge agent translate queued actions to Megameal controls.
-
-## MetaHuman Progress - 2026-07-02
-
-Completed as the first cognitive-system entry point:
-
-- Added `environment` as a first-class cognitive mode alongside `dual`, `agent`, and `emulation`.
-- Added `Environment Mode` to the main chat mode list through the existing cognitive-mode API.
-- Added `etc/cognitive-graphs/environment-mode.json` as the initial editable graph template.
-- Added Environment Mode to graph validation and built-in template handling.
-- Added Environment Mode to the flow editor's cognitive mode template list so another agent can open and revise the graph directly.
-- Updated mode-aware TypeScript contracts across cognitive graph schema, node execution context, memory metadata, security policy, environment config, trust coupling, and cognitive layer defaults.
-- Kept the implementation generic: no imports from `apps/game.megameal`, no hardcoded room/player data, and no Megameal-specific graph nodes.
-
-The current Environment Mode graph is intentionally rudimentary:
-
-```text
-user_input
-environment_observation
-environment_map_input
-  -> environment_context_builder
-  -> model_router
-  -> thinking_stripper
-  -> stream_writer
-  -> environment_action_parser
-  -> environment_send_action
-```
-
-Runtime behavior:
-
-- `environment_observation` reads the latest environment observation from the generic bridge store.
-- `environment_map_input` can provide optional graph-authored map or coordinate context without hardcoding environment data into the mode.
-- `environment_context_builder` combines observation state, location, map, visual metadata, and optional user instruction into prompt-ready model messages.
-- `model_router` generates the response using the normal persona model path.
-- `stream_writer` sends the response back to the main chat interface.
-- `environment_action_parser` accepts known semantic action types and treats plain text as `sendText` when fallback is enabled.
-- `environment_send_action` queues parsed actions for the environment adapter.
-
-Supporting compatibility patches:
-
-- `environment_observation` now exposes `sessionId` so downstream parser/send nodes can target the active session.
-- `environment_observation` now exposes `location`, `map`, `visual`, and `visuals` as separately routable outputs.
-- `environment_context_builder` now exposes `messages`, `location`, and `map` so it can feed `model_router` directly while still letting the graph route structured data.
-- `environment_map_input` is available as a blank graph-authored map/location node for temporary navigation context when an adapter does not publish map data yet.
-- Browser-safe node schemas were updated for the environment node outputs.
-- `model_router` now accepts named `messages` and `role` inputs from Svelte Flow graphs.
-
-Validated:
-
-- `git diff --check`
-- `pnpm validate:graphs`
-- `pnpm audit:graph-executors -- --fail-on-missing`
-- `pnpm -s exec tsx scripts/check-architecture.ts --fail-on-stale-baseline`
-- `pnpm --dir apps/site build`
-
-Known remaining hardening:
-
-- `environment_send_action` now enforces action allowlists and maximum/default duration policy before queueing actions; per-session adapter policy is still a later hardening layer.
-- `environment_send_text` is available as a node but is not used directly in the initial graph because plain text currently flows through `environment_action_parser` as a `sendText` action.
-- `environment_connect` is still planned. `environment_bridge_status` and `environment_feedback` exist but are not dependencies of the initial graph.
-- The MetaHuman bridge agent still needs to read neutral Megameal snapshots, publish generic observations, claim queued node-authored actions, call neutral Megameal controls, and write feedback.
+- Commands must be rejected when gameplay input is disabled or UI is capturing input.
 
 ## Open Decisions
 
-- Should the first bridge be same-browser BroadcastChannel or cross-process WebSocket?
-- Should Megameal actions be available only to a connected multiplayer peer, or can MetaHuman control the local browser player directly?
-- What model path will handle images, and what message shape should carry them through the graph?
-- Should environment session configuration live in user profile config, graph node properties, or both?
-- Should the generic category be named `environment`, `interface`, or `embodiment`?
+- Exact transport between MetaHuman agent and exposed current-player adapter.
+- Whether the current-player adapter is controlled through browser-local events, WebSocket, or a multiplayer-native control channel.
+- Where user-editable bridge connection settings live on the MetaHuman side.
+- What model path will handle visual frames.
+- Whether adapter-specific convenience nodes should exist later outside core.
 
 ## Recommendation
 
-Use generic environment interface nodes as the stable layer and make Megameal a replaceable adapter. Do not wire Megameal-specific controls directly into core cognitive nodes.
+Build the smallest event-driven loop that proves the separation:
 
-For the first practical prototype, use a visible local Megameal tab with the smallest neutral control/snapshot surface possible. The MetaHuman bridge agent should read that surface, publish observations to the node system, claim node-authored actions, and call Megameal controls. Once that works, decide whether a room-based or WebSocket transport is worth the extra Megameal-side code, then add visual frames.
+```text
+normal Megameal multiplayer room
+  <-> External DEV Bridge current-player adapter
+  <-> MetaHuman environment-bridge agent
+  <-> Environment Mode graph nodes
+```
+
+Do not add more bridge policy to unrelated UI, startup scripts, README files, model config, or game engine core. Keep the adapter replaceable and keep the cognitive entry/exit inside the node graph.

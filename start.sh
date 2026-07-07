@@ -52,6 +52,73 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+process_command() {
+  local pid="$1"
+
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+  fi
+}
+
+process_cwd() {
+  local pid="$1"
+
+  readlink "/proc/$pid/cwd" 2>/dev/null || true
+}
+
+is_repo_process() {
+  local pid="$1"
+  local cmd=""
+  local cwd=""
+
+  [ "$pid" != "$$" ] || return 1
+
+  cmd="$(process_command "$pid")"
+  cwd="$(process_cwd "$pid")"
+
+  case "$cmd" in
+    *"$REPO_ROOT"*) return 0 ;;
+  esac
+
+  case "$cwd" in
+    "$REPO_ROOT"|"$REPO_ROOT"/*) return 0 ;;
+  esac
+
+  return 1
+}
+
+matching_repo_pids() {
+  local pattern="$1"
+  local pid=""
+
+  pgrep -f -- "$pattern" 2>/dev/null | while read -r pid; do
+    [ -n "$pid" ] || continue
+    if is_repo_process "$pid"; then
+      echo "$pid"
+    fi
+  done
+}
+
+kill_pids() {
+  local pids="$1"
+  local signal="${2:-TERM}"
+
+  [ -n "$pids" ] || return 0
+  echo "$pids" | xargs -r kill "-$signal" 2>/dev/null || true
+}
+
+live_pids() {
+  local pids="$1"
+  local pid=""
+
+  echo "$pids" | while read -r pid; do
+    [ -n "$pid" ] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "$pid"
+    fi
+  done
+}
+
 run_with_timeout() {
   local seconds="$1"
   shift
@@ -65,15 +132,65 @@ run_with_timeout() {
 
 kill_pattern_fast() {
   local pattern="$1"
+  local pids=""
 
-  if ! pgrep -f "$pattern" >/dev/null 2>&1; then
+  pids="$(matching_repo_pids "$pattern")"
+  if [ -z "$pids" ]; then
     return
   fi
 
-  pkill -TERM -f "$pattern" 2>/dev/null || true
+  kill_pids "$pids" TERM
   sleep 1
-  if pgrep -f "$pattern" >/dev/null 2>&1; then
-    pkill -KILL -f "$pattern" 2>/dev/null || true
+  pids="$(live_pids "$pids")"
+  if [ -n "$pids" ]; then
+    kill_pids "$pids" KILL
+  fi
+}
+
+clean_stale_runtime_files() {
+  local pid_dir="$RUN_LOG_DIR"
+  local lock_dir="$RUN_LOG_DIR/locks"
+  local registry_file="$REPO_ROOT/logs/agents/running.json"
+  local pid=""
+  local pidfile=""
+  local lockfile=""
+
+  if [ -d "$pid_dir" ]; then
+    for pidfile in "$pid_dir"/*.pid; do
+      [ -f "$pidfile" ] || continue
+      pid="$(cat "$pidfile" 2>/dev/null || true)"
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pidfile"
+      fi
+    done
+  fi
+
+  if [ -d "$lock_dir" ]; then
+    for lockfile in "$lock_dir"/*.lock; do
+      [ -f "$lockfile" ] || continue
+      pid="$(grep -o '"pid"[[:space:]]*:[[:space:]]*[0-9]*' "$lockfile" 2>/dev/null | grep -o '[0-9]*' || true)"
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$lockfile"
+      fi
+    done
+  fi
+
+  if [ -f "$registry_file" ] && command_exists node; then
+    node -e "
+const fs = require('fs');
+const registryFile = process.argv[1];
+const registry = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
+const clean = {};
+for (const [name, info] of Object.entries(registry)) {
+  try {
+    process.kill(info.pid, 0);
+    clean[name] = info;
+  } catch {
+    // stale entry
+  }
+}
+fs.writeFileSync(registryFile, JSON.stringify(clean, null, 2));
+" "$registry_file" >/dev/null 2>&1 || true
   fi
 }
 
@@ -101,10 +218,16 @@ cleanup() {
     kill_pattern_fast "brain/scripts/_bootstrap.ts"
     kill_pattern_fast "scheduler-service"
     kill_pattern_fast "audio-organizer"
+    kill_pattern_fast "mh start --no-restart"
+    kill_pattern_fast "src/mh-new.ts start --no-restart"
+    kill_pattern_fast "bin/start-services --background"
+    kill_pattern_fast "mh vllm start"
+    kill_pattern_fast "src/mh-new.ts vllm start"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-local-models"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-voice-server"
     run_with_timeout 3 "$REPO_ROOT/bin/stop-event-bus"
-    pkill -f "cloudflared" 2>/dev/null || true
+    kill_pattern_fast "cloudflared"
+    clean_stale_runtime_files
     echo "[$(date -Is)] startup cleanup complete"
   } >> "$RUN_LOG_DIR/startup-shutdown.log" 2>&1
   # Report completion even if there was nothing left to stop.

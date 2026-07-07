@@ -33,68 +33,143 @@ print_error() {
     echo -e "${RED}✗${NC} $1"
 }
 
-# Function to check if a process is running
-is_running() {
-    pgrep -f "$1" >/dev/null 2>&1
+process_command() {
+    local pid="$1"
+
+    if [ -r "/proc/$pid/cmdline" ]; then
+        tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+    fi
 }
 
-# Function to kill process by pattern with timeout
-kill_process_pattern() {
+process_cwd() {
+    local pid="$1"
+
+    readlink "/proc/$pid/cwd" 2>/dev/null || true
+}
+
+is_repo_process() {
+    local pid="$1"
+    local cmd=""
+    local cwd=""
+
+    [ "$pid" != "$$" ] || return 1
+
+    cmd="$(process_command "$pid")"
+    cwd="$(process_cwd "$pid")"
+
+    case "$cmd" in
+        *"$REPO_ROOT"*) return 0 ;;
+    esac
+
+    case "$cwd" in
+        "$REPO_ROOT"|"$REPO_ROOT"/*) return 0 ;;
+    esac
+
+    return 1
+}
+
+matching_repo_pids() {
+    local pattern="$1"
+    local pid=""
+
+    pgrep -f -- "$pattern" 2>/dev/null | while read -r pid; do
+        [ -n "$pid" ] || continue
+        if is_repo_process "$pid"; then
+            echo "$pid"
+        fi
+    done
+}
+
+kill_pids() {
+    local pids="$1"
+    local signal="${2:-TERM}"
+
+    [ -n "$pids" ] || return 0
+    echo "$pids" | xargs -r kill "-$signal" 2>/dev/null || true
+}
+
+live_pids() {
+    local pids="$1"
+    local pid=""
+
+    echo "$pids" | while read -r pid; do
+        [ -n "$pid" ] || continue
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "$pid"
+        fi
+    done
+}
+
+kill_repo_process_pattern() {
     local pattern="$1"
     local name="$2"
     local timeout="${3:-5}"
+    local pids=""
 
-    if is_running "$pattern"; then
-        echo "Stopping $name..."
-        pkill -f "$pattern" 2>/dev/null || true
-
-        # Wait for graceful shutdown
-        for i in $(seq 1 "$timeout"); do
-            if ! is_running "$pattern"; then
-                print_status "$name stopped"
-                return 0
-            fi
-            sleep 1
-        done
-
-        # Force kill if still running
-        if is_running "$pattern"; then
-            print_warning "$name didn't stop gracefully, forcing..."
-            pkill -9 -f "$pattern" 2>/dev/null || true
-            sleep 1
-            if is_running "$pattern"; then
-                print_error "Failed to stop $name"
-                return 1
-            fi
-        fi
-        print_status "$name stopped (forced)"
-    else
+    pids="$(matching_repo_pids "$pattern")"
+    if [ -z "$pids" ]; then
         print_status "$name not running"
+        return 0
     fi
+
+    echo "Stopping $name (PIDs: $pids)..."
+    kill_pids "$pids" TERM
+
+    for i in $(seq 1 "$timeout"); do
+        pids="$(live_pids "$pids")"
+        if [ -z "$pids" ]; then
+            print_status "$name stopped"
+            return 0
+        fi
+        sleep 1
+    done
+
+    pids="$(live_pids "$pids")"
+    if [ -n "$pids" ]; then
+        print_warning "$name didn't stop gracefully, forcing..."
+        kill_pids "$pids" KILL
+        sleep 1
+    fi
+
+    pids="$(live_pids "$pids")"
+    if [ -n "$pids" ]; then
+        print_error "Failed to stop $name (PIDs: $pids)"
+        return 1
+    fi
+
+    print_status "$name stopped (forced)"
     return 0
 }
 
 # Function to kill process on specific port
-kill_port() {
+kill_repo_port() {
     local port="$1"
     local name="$2"
+    local pid=""
+    local pids=""
+    local live=""
 
-    local pids=$(lsof -i ":$port" -sTCP:LISTEN -t 2>/dev/null || true)
+    for pid in $(lsof -i ":$port" -sTCP:LISTEN -t 2>/dev/null || true); do
+        if is_repo_process "$pid"; then
+            pids="${pids}${pids:+
+}$pid"
+        fi
+    done
+
     if [ -n "$pids" ]; then
         echo "Stopping $name on port $port (PIDs: $pids)..."
-        echo "$pids" | xargs -r kill 2>/dev/null || true
+        kill_pids "$pids" TERM
         sleep 2
 
-        # Check if still running
-        pids=$(lsof -i ":$port" -sTCP:LISTEN -t 2>/dev/null || true)
-        if [ -n "$pids" ]; then
-            echo "$pids" | xargs -r kill -9 2>/dev/null || true
+        live="$(live_pids "$pids")"
+        if [ -n "$live" ]; then
+            kill_pids "$live" KILL
             print_status "$name stopped (forced)"
         else
             print_status "$name stopped"
         fi
     else
-        print_status "$name not running on port $port"
+        print_status "$name not running on port $port for this repo"
     fi
 }
 
@@ -119,17 +194,17 @@ stop_vllm() {
         local timeout="${3:-10}"
         local pids=""
 
-        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        pids=$(matching_repo_pids "$pattern")
         if [ -z "$pids" ]; then
             print_status "$name not running"
             return 0
         fi
 
         echo "Stopping $name (PIDs: $pids)..."
-        echo "$pids" | xargs -r kill 2>/dev/null || true
+        kill_pids "$pids" TERM
 
         for i in $(seq 1 "$timeout"); do
-            pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+            pids=$(live_pids "$pids")
             if [ -z "$pids" ]; then
                 print_status "$name stopped"
                 return 0
@@ -137,14 +212,14 @@ stop_vllm() {
             sleep 1
         done
 
-        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        pids=$(live_pids "$pids")
         if [ -n "$pids" ]; then
             print_warning "$name didn't stop gracefully, forcing..."
-            echo "$pids" | xargs -r kill -9 2>/dev/null || true
+            kill_pids "$pids" KILL
             sleep 1
         fi
 
-        pids=$(pgrep -f -- "$pattern" 2>/dev/null || true)
+        pids=$(live_pids "$pids")
         if [ -n "$pids" ]; then
             print_error "Failed to stop $name (PIDs: $pids)"
             return 1
@@ -163,7 +238,7 @@ stop_vllm() {
 
     kill_vllm_pattern "$api_pattern" "vLLM API Server" 10
     kill_vllm_pattern "$engine_pattern" "vLLM EngineCore" 10
-    kill_port 8000 "vLLM Server"
+    kill_repo_port 8000 "vLLM Server"
 }
 
 # Stop PM2 processes if PM2 is installed
@@ -185,25 +260,25 @@ else
 fi
 
 # Stop scheduler-service specifically (main agent coordinator)
-kill_process_pattern "scheduler-service" "Scheduler Service"
+kill_repo_process_pattern "scheduler-service" "Scheduler Service"
 
 # Stop audio-organizer
-kill_process_pattern "audio-organizer" "Audio Organizer"
+kill_repo_process_pattern "audio-organizer" "Audio Organizer"
 
 # Stop any running agents by pattern
-kill_process_pattern "brain/agents" "Background Agents"
+kill_repo_process_pattern "brain/agents" "Background Agents"
 
 # Stop terminal server
 echo "Stopping terminal server..."
 if [ -x "$REPO_ROOT/bin/stop-terminal" ]; then
     "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
 fi
-kill_port 3001 "Terminal Server"
+kill_repo_port 3001 "Terminal Server"
 print_status "Skipped broad terminal-server process match"
 
 # Stop Big Brother terminal (port 3099)
 echo "Stopping Big Brother terminal..."
-kill_port 3099 "Big Brother Terminal"
+kill_repo_port 3099 "Big Brother Terminal"
 BB_PID_FILE="$REPO_ROOT/logs/run/big-brother-terminal.pid"
 if [ -f "$BB_PID_FILE" ]; then
     rm -f "$BB_PID_FILE"
@@ -213,25 +288,28 @@ fi
 stop_vllm
 
 # Stop voice servers
-kill_process_pattern "sovits" "SoVits Server"
-kill_process_pattern "rvc-server" "RVC Server"
-kill_process_pattern "whisper" "Whisper Server"
-kill_process_pattern "kokoro" "Kokoro Server"
+kill_repo_process_pattern "sovits" "SoVits Server"
+kill_repo_process_pattern "rvc-server" "RVC Server"
+kill_repo_process_pattern "whisper" "Whisper Server"
+kill_repo_process_pattern "kokoro" "Kokoro Server"
 
 # Stop Cloudflare tunnel
-kill_process_pattern "cloudflared" "Cloudflare Tunnel"
+kill_repo_process_pattern "cloudflared" "Cloudflare Tunnel"
 
 # Stop web servers
 echo "Stopping web servers..."
-kill_port 4321 "Astro Production Server"
-kill_process_pattern "astro dev" "Astro Dev Server"
-kill_process_pattern "node dist/server/entry.mjs" "Production Server"
+kill_repo_port 4321 "Astro Production Server"
+kill_repo_process_pattern "astro dev" "Astro Dev Server"
+kill_repo_process_pattern "apps/site/dist/server/entry.mjs" "Production Server"
 
 # Stop launcher wrappers that can remain after their child services exit.
-kill_process_pattern "bash ./start.sh" "Startup Wrapper"
-kill_process_pattern "bin/start-services --background" "Background Services Launcher"
-kill_process_pattern "bash ./bin/start-services" "Terminal Services Launcher"
-kill_process_pattern "mh start --no-restart" "MetaHuman Start Command"
+kill_repo_process_pattern "start.sh" "Startup Wrapper"
+kill_repo_process_pattern "bin/start-services --background" "Background Services Launcher"
+kill_repo_process_pattern "bin/start-services" "Terminal Services Launcher"
+kill_repo_process_pattern "mh start --no-restart" "MetaHuman Start Command"
+kill_repo_process_pattern "src/mh-new.ts start --no-restart" "MetaHuman Start Command Launcher"
+kill_repo_process_pattern "mh vllm start" "vLLM Start Command"
+kill_repo_process_pattern "src/mh-new.ts vllm start" "vLLM Start Command Launcher"
 
 # Clean up stale PID files
 echo "Cleaning up stale PID files..."

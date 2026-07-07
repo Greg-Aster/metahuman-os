@@ -1,7 +1,9 @@
+export { environmentConnectNode } from './connect.node.js';
 export { environmentBridgeStatusNode } from './status.node.js';
 export { environmentObservationNode } from './observation.node.js';
 export { environmentFeedbackNode } from './feedback.node.js';
 export { environmentMapInputNode } from './map-input.node.js';
+export { megamealInterpreterNode } from './megameal-interpreter.node.js';
 export { environmentContextBuilderNode } from './context-builder.node.js';
 export { environmentPromptNode } from './prompt.node.js';
 export { environmentActionParserNode } from './action-parser.node.js';
