@@ -5,6 +5,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface EpisodicMemory {
   id: string;
@@ -36,49 +37,13 @@ interface CuratedMemory {
   memoryType?: string;
 }
 
-const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs are keyed by targetHandle name from graph edges, not array index
-  const memoriesInput = inputs.memories || inputs[0];
-  const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || memoriesInput || [];
-  const personaSummary = (inputs.personaSummary || inputs[1]) as string;
-  const temperature = properties?.temperature || 0.3;
-  const username = context.userId || context.username;
-
-  if (!memories || memories.length === 0) {
-    return {
-      success: true,
-      curatedMemories: [],
-      count: 0,
-    };
-  }
-
-  const curatedResults: any[] = [];
-
-  for (const memory of memories) {
-    if (!memory || !memory.content) continue;
-
-    // Skip memories with negative feedback - user explicitly marked these as bad
-    // They should not influence training data
-    if (memory.metadata?.reinforcementSignal === -1) {
-      console.log(`[curator_llm] ⏭️ Skipping memory ${memory.id}: negative user feedback`);
-      continue;
-    }
-
-    // Skip feedback memories themselves - they're meta-data, not training content
-    if (memory.tags?.includes('feedback')) {
-      continue;
-    }
-
-    const cognitiveMode = memory.metadata?.cognitiveMode || 'emulation';
-    const memoryType = memory.type || 'conversation';
-
-    const systemPrompt = `You are a memory curator preparing training data for a personal AI assistant.
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a memory curator preparing training data for a personal AI assistant.
 
 PERSONA CONTEXT:
-${personaSummary}
+{{personaSummary}}
 
-COGNITIVE MODE: ${cognitiveMode}
-MEMORY TYPE: ${memoryType}
+COGNITIVE MODE: {{cognitiveMode}}
+MEMORY TYPE: {{memoryType}}
 
 Convert this memory into a conversational exchange suitable for training.
 
@@ -134,14 +99,70 @@ Respond with JSON:
   "suitableForTraining": true/false
 }`;
 
+const DEFAULT_USER_PROMPT_TEMPLATE = `Memory content:
+{{content}}
+
+{{responseSection}}`;
+
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  // Inputs are keyed by targetHandle name from graph edges, not array index
+  const memoriesInput = inputs.memories || inputs[0];
+  const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || memoriesInput || [];
+  const personaSummary = (inputs.personaSummary || inputs[1]) as string;
+  const temperature = properties?.temperature ?? 0.3;
+  const role = properties?.role ?? 'curator';
+  const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
+  const username = context.userId || context.username;
+
+  if (!memories || memories.length === 0) {
+    return {
+      success: true,
+      curatedMemories: [],
+      count: 0,
+    };
+  }
+
+  const curatedResults: any[] = [];
+
+  for (const memory of memories) {
+    if (!memory || !memory.content) continue;
+
+    // Skip memories with negative feedback - user explicitly marked these as bad
+    // They should not influence training data
+    if (memory.metadata?.reinforcementSignal === -1) {
+      console.log(`[curator_llm] ⏭️ Skipping memory ${memory.id}: negative user feedback`);
+      continue;
+    }
+
+    // Skip feedback memories themselves - they're meta-data, not training content
+    if (memory.tags?.includes('feedback')) {
+      continue;
+    }
+
+    const cognitiveMode = memory.metadata?.cognitiveMode || 'emulation';
+    const memoryType = memory.type || 'conversation';
+
+    const systemPrompt = renderPromptTemplate(systemPromptTemplate, {
+      personaSummary,
+      cognitiveMode,
+      memoryType,
+    });
+    const userPrompt = renderPromptTemplate(userPromptTemplate, {
+      content: memory.content,
+      response: memory.response || '',
+      responseSection: memory.response ? `Response: ${memory.response}` : '',
+      memory,
+    });
+
     const messages: any[] = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Memory content:\n${memory.content}\n\n${memory.response ? `Response: ${memory.response}` : ''}` },
+      { role: 'user', content: userPrompt },
     ];
 
     try {
       const response = await callLLM({
-        role: 'curator',
+        role,
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode || 'dual',
@@ -216,12 +237,34 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.3,
+    role: 'curator',
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
       type: 'number',
       default: 0.3,
       label: 'Temperature',
+    },
+    role: {
+      type: 'string',
+      default: 'curator',
+      label: 'LLM Role',
+    },
+    systemPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt Template',
+      description: 'Template variables: {{personaSummary}}, {{cognitiveMode}}, {{memoryType}}.',
+      rows: 28,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{content}}, {{response}}, {{responseSection}}, {{memory}}.',
+      rows: 6,
     },
   },
   description: 'Generates conversational exchanges from raw memories',

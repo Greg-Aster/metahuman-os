@@ -19,6 +19,7 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, SafetyReviewOutput } from '../../agency/types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Safety Review module of MetaHuman OS. Your job is to evaluate plans for safety, risk, and policy compliance.
 
@@ -39,6 +40,41 @@ const SYSTEM_PROMPT = `You are the Safety Review module of MetaHuman OS. Your jo
 Be conservative with safety. When in doubt, flag concerns.
 
 Respond with valid JSON matching the schema.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `## Plan to Review for Safety
+
+**Desire**: {{title}}
+**Description**: {{description}}
+**Estimated Risk**: {{estimatedRisk}}
+
+**Plan Steps**:
+{{planSteps}}
+
+**Operator Goal**: {{operatorGoal}}
+**Required Skills**: {{requiredSkills}}
+
+## Decision Rules
+{{decisionRules}}
+
+## Safety Review Questions
+
+1. Does any step violate the hard rules?
+2. What is the worst-case outcome if this goes wrong?
+3. Is each step reversible? If not, what's the impact?
+4. Are there safer alternatives to achieve the same goal?
+5. Is user data or privacy at risk?
+6. Could this action have unintended consequences?
+
+## Output
+
+Respond with JSON:
+{
+  "safetyScore": 0.0-1.0,
+  "risks": ["risk 1", "risk 2"],
+  "mitigations": ["mitigation 1", "mitigation 2"],
+  "approved": true/false,
+  "reasoning": "Brief explanation of safety verdict"
+}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
@@ -62,7 +98,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     decisionRules = inputs.decisionRules as string;
   }
 
-  const temperature = (properties?.temperature as number) || 0.1;
+  const temperature = (properties?.temperature as number) ?? 0.1;
+  const role = properties?.role ?? 'orchestrator';
+  const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   if (!desire || !plan) {
     return {
@@ -74,49 +113,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  const userPrompt = `## Plan to Review for Safety
-
-**Desire**: ${desire.title}
-**Description**: ${desire.description}
-**Estimated Risk**: ${plan.estimatedRisk}
-
-**Plan Steps**:
-${plan.steps.map(s => `${s.order}. [${s.risk}] ${s.action} (skill: ${s.skill || 'none'})`).join('\n')}
-
-**Operator Goal**: ${plan.operatorGoal}
-**Required Skills**: ${plan.requiredSkills.join(', ') || 'None specified'}
-
-## Decision Rules
-${decisionRules || 'Standard safety rules apply'}
-
-## Safety Review Questions
-
-1. Does any step violate the hard rules?
-2. What is the worst-case outcome if this goes wrong?
-3. Is each step reversible? If not, what's the impact?
-4. Are there safer alternatives to achieve the same goal?
-5. Is user data or privacy at risk?
-6. Could this action have unintended consequences?
-
-## Output
-
-Respond with JSON:
-{
-  "safetyScore": 0.0-1.0,
-  "risks": ["risk 1", "risk 2"],
-  "mitigations": ["mitigation 1", "mitigation 2"],
-  "approved": true/false,
-  "reasoning": "Brief explanation of safety verdict"
-}`;
+  const userPrompt = renderPromptTemplate(userPromptTemplate, {
+    title: desire.title,
+    description: desire.description,
+    estimatedRisk: plan.estimatedRisk,
+    planSteps: plan.steps.map(s => `${s.order}. [${s.risk}] ${s.action} (skill: ${s.skill || 'none'})`).join('\n'),
+    operatorGoal: plan.operatorGoal,
+    requiredSkills: plan.requiredSkills.join(', ') || 'None specified',
+    decisionRules: decisionRules || 'Standard safety rules apply',
+    desire,
+    plan,
+  });
 
   const messages: RouterMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ];
 
   try {
     const response = await callLLM({
-      role: 'orchestrator',
+      role,
       messages,
       userId: username,
       options: {
@@ -186,6 +202,9 @@ export const DesireSafetyReviewerNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.1,
+    role: 'orchestrator',
+    systemPrompt: SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -196,6 +215,24 @@ export const DesireSafetyReviewerNode: NodeDefinition = defineNode({
       step: 0.1,
       label: 'Temperature',
       description: 'LLM temperature for safety review (lower = more conservative)',
+    },
+    role: {
+      type: 'string',
+      default: 'orchestrator',
+      label: 'LLM Role',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: SYSTEM_PROMPT,
+      label: 'System Prompt',
+      rows: 18,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables include {{title}}, {{description}}, {{planSteps}}, {{decisionRules}}, {{desire}}, {{plan}}.',
+      rows: 24,
     },
   },
   execute,

@@ -6,8 +6,34 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
-const execute: NodeExecutor = async (inputs, _context, _properties) => {
+const DEFAULT_FULL_TASK_PROMPT_TEMPLATE = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
+{{conversationContext}}{{desireInfo}}
+**Current User Request:**
+{{messageText}}
+{{contextInfo}}
+**Your Capabilities:**
+{{skillsList}}
+
+**CRITICAL INSTRUCTIONS:**
+1. You have FULL, UNRESTRICTED permissions - DO NOT ask for approval
+2. Execute tasks IMMEDIATELY using your tools (Write, Bash, Read, WebSearch, etc.)
+3. DO NOT say "I need permission" - you already have it
+4. DO NOT explain what you WOULD do - just DO IT
+5. Complete the task fully, then report what you accomplished
+6. For questions about weather, news, current events, or anything requiring real-time data - USE the WebSearch tool FIRST
+7. Use the conversation history above to understand context from previous messages
+
+**Your Task:**
+1. Understand what the user wants (considering conversation history if relevant)
+2. If the request needs real-time information (weather, news, prices, etc.) - USE WebSearch
+3. Execute it IMMEDIATELY using your tools
+4. Return a clear response explaining what you DID (past tense, not future)
+
+Execute now and report results.`;
+
+const execute: NodeExecutor = async (inputs, _context, properties) => {
   try {
     // Inputs come as named object from graph executor, not array indices
     const inputObj = inputs as Record<string, any>;
@@ -119,30 +145,18 @@ ${answersText ? `- Previous answers from user:\n${answersText}` : ''}
       console.log(`[ClaudeFullTask] Including desire context: ${desireContext.title} (${desireContext.status})`);
     }
 
-    const prompt = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
-${conversationContext}${desireInfo}
-**Current User Request:**
-${messageText}
-${contextInfo}
-**Your Capabilities:**
-${skillsList}
-
-**CRITICAL INSTRUCTIONS:**
-1. You have FULL, UNRESTRICTED permissions - DO NOT ask for approval
-2. Execute tasks IMMEDIATELY using your tools (Write, Bash, Read, WebSearch, etc.)
-3. DO NOT say "I need permission" - you already have it
-4. DO NOT explain what you WOULD do - just DO IT
-5. Complete the task fully, then report what you accomplished
-6. For questions about weather, news, current events, or anything requiring real-time data - USE the WebSearch tool FIRST
-7. Use the conversation history above to understand context from previous messages
-
-**Your Task:**
-1. Understand what the user wants (considering conversation history if relevant)
-2. If the request needs real-time information (weather, news, prices, etc.) - USE WebSearch
-3. Execute it IMMEDIATELY using your tools
-4. Return a clear response explaining what you DID (past tense, not future)
-
-Execute now and report results.`;
+    const prompt = renderPromptTemplate(
+      properties?.fullTaskPromptTemplate ?? DEFAULT_FULL_TASK_PROMPT_TEMPLATE,
+      {
+        conversationContext,
+        desireInfo,
+        messageText,
+        contextInfo,
+        skillsList,
+        orchestratorAnalysis,
+        contextPackage,
+      },
+    );
 
     audit({
       level: 'info',
@@ -270,8 +284,18 @@ export const ClaudeFullTaskNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'result', type: 'object', description: 'Execution result from Claude Code (scratchpad, finalResponse, success)' },
   ],
-  properties: {},
-  propertySchemas: {},
+  properties: {
+    fullTaskPromptTemplate: DEFAULT_FULL_TASK_PROMPT_TEMPLATE,
+  },
+  propertySchemas: {
+    fullTaskPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_FULL_TASK_PROMPT_TEMPLATE,
+      label: 'Full Task Prompt Template',
+      description: 'Template variables: {{conversationContext}}, {{desireInfo}}, {{messageText}}, {{contextInfo}}, {{skillsList}}, {{orchestratorAnalysis}}, {{contextPackage}}.',
+      rows: 26,
+    },
+  },
   description: 'Delegates entire task to the configured Big Brother backend for autonomous completion',
   execute,
 });

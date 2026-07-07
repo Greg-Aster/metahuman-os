@@ -209,7 +209,7 @@ export function getNodeSchema(id: string): NodeSchema | undefined {
  * Get all node schemas as an array (for frontend palette)
  */
 export function getAllSchemas(): NodeSchema[] {
-  return Array.from(nodeSchemas.values());
+  return allNodes.map(node => extractSchema(node));
 }
 
 /**

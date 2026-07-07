@@ -28,6 +28,7 @@
 	"scripts": {
 		"postinstall": "node scripts/postinstall.mjs",
 		"validate:graphs": "tsx scripts/validate-graphs.ts",
+		"validate:node-defaults": "tsx scripts/validate-node-defaults.ts",
 		"audit:graph-executors": "tsx scripts/audit-graph-executors.ts",
 		"check:architecture": "tsx scripts/check-architecture.ts",
 		"check:architecture:update-baseline": "tsx scripts/check-architecture.ts --update-baseline",

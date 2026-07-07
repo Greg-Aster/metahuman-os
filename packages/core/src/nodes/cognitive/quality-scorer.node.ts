@@ -18,6 +18,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface PersonaIssue {
   type: 'values_violation' | 'privacy_breach' | 'out_of_character' | 'hallucination';
@@ -33,6 +34,17 @@ interface QualityScorerResult {
   suggestions: string[];
   evaluation: string;
 }
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `Check if this response aligns with the persona.
+
+{{personaContext}}
+
+Query: "{{originalQuery}}"
+Response: "{{responseText}}"
+
+Output JSON: {"qualityScore": 0.0-1.0, "issues": [], "needsRefinement": false, "evaluation": ""}`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = 'Evaluate this response for persona values alignment.';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract inputs
@@ -118,18 +130,19 @@ ${styleText ? `\nSTYLE: ${styleText}` : ''}
 `.trim();
 
   try {
-    const systemPrompt = `Check if this response aligns with the persona.
-
-${personaContext}
-
-Query: "${originalQuery}"
-Response: "${responseText}"
-
-Output JSON: {"qualityScore": 0.0-1.0, "issues": [], "needsRefinement": false, "evaluation": ""}`;
+    const promptValues = { personaContext, originalQuery, responseText };
+    const systemPrompt = renderPromptTemplate(
+      properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      promptValues,
+    );
+    const userPrompt = renderPromptTemplate(
+      properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+      promptValues,
+    );
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: 'Evaluate this response for persona values alignment.' },
+      { role: 'user' as const, content: userPrompt },
     ];
 
     const llmResponse = await callLLM({
@@ -246,6 +259,8 @@ export const QualityScorerNode: NodeDefinition = defineNode({
   properties: {
     qualityThreshold: 0.7,
     strictHallucinationCheck: true,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     qualityThreshold: {
@@ -260,6 +275,20 @@ export const QualityScorerNode: NodeDefinition = defineNode({
       type: 'toggle',
       default: true,
       label: 'Check Hallucination (when unknownSignal=true)',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt',
+      description: 'Supports {{personaContext}}, {{originalQuery}}, and {{responseText}}.',
+      rows: 10,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Supports {{personaContext}}, {{originalQuery}}, and {{responseText}}.',
+      rows: 3,
     },
   },
   description: 'Evaluates response against persona VALUES - not generic quality. Checks values alignment, privacy, and character consistency.',

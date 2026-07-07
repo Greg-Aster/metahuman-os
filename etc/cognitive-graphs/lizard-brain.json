@@ -8,22 +8,12 @@
     {
       "id": "1",
       "type": "inputNode",
-      "position": { "x": 0, "y": 100 },
+      "position": {
+        "x": 0,
+        "y": 100
+      },
       "data": {
         "nodeType": "trigger_candidates",
-        "schema": {
-          "id": "trigger_candidates",
-          "name": "Trigger Candidates",
-          "category": "input",
-          "inputs": [],
-          "outputs": [
-            { "name": "candidates", "type": "array", "description": "Array of candidate triggers that passed condition checks" },
-            { "name": "candidateCount", "type": "number", "description": "Number of candidates" }
-          ],
-          "description": "Input node receiving all triggers that passed their condition check (idle, inbox, circadian, etc.)",
-          "color": "#4ade80",
-          "bgColor": "#166534"
-        },
         "properties": {},
         "title": "Trigger Candidates"
       }
@@ -31,23 +21,12 @@
     {
       "id": "2",
       "type": "contextNode",
-      "position": { "x": 0, "y": 250 },
+      "position": {
+        "x": 0,
+        "y": 250
+      },
       "data": {
         "nodeType": "current_queue",
-        "schema": {
-          "id": "current_queue",
-          "name": "Current Queue",
-          "category": "context",
-          "inputs": [],
-          "outputs": [
-            { "name": "queuedTasks", "type": "array", "description": "Tasks currently waiting in the queue" },
-            { "name": "queueLength", "type": "number", "description": "Number of tasks in queue" },
-            { "name": "hasCritical", "type": "boolean", "description": "Whether queue has critical priority tasks" }
-          ],
-          "description": "Provides current task queue state for the unified decision",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {},
         "title": "Current Queue"
       }
@@ -55,39 +34,12 @@
     {
       "id": "3",
       "type": "contextNode",
-      "position": { "x": 0, "y": 400 },
+      "position": {
+        "x": 0,
+        "y": 400
+      },
       "data": {
         "nodeType": "system_state",
-        "schema": {
-          "id": "system_state",
-          "name": "System State",
-          "category": "context",
-          "inputs": [],
-          "outputs": [
-            { "name": "unprocessedMemories", "type": "number", "description": "Count of unprocessed memories" },
-            { "name": "indexAgeHours", "type": "number", "description": "Hours since last index build" },
-            { "name": "pendingDesires", "type": "number", "description": "Count of pending desires (waiting for activation)" },
-            { "name": "activeDesires", "type": "number", "description": "Count of active desires (evaluating/planning/reviewing/executing)" },
-            { "name": "awaitingApprovalDesires", "type": "number", "description": "Count of desires awaiting user approval" },
-            { "name": "approvedDesires", "type": "number", "description": "Count of approved desires ready for autonomous execution" },
-            { "name": "hoursSinceReflection", "type": "number", "description": "Hours since last reflection" },
-            { "name": "userActive", "type": "boolean", "description": "Whether user is currently active" },
-            { "name": "activeTasks", "type": "number", "description": "Total active tasks from task manager" },
-            { "name": "highPriorityTasks", "type": "number", "description": "Count of P0/P1 priority tasks" },
-            { "name": "overdueTasks", "type": "number", "description": "Count of overdue tasks" },
-            { "name": "inProgressTasks", "type": "number", "description": "Count of tasks in progress" },
-            { "name": "blockedTasks", "type": "number", "description": "Count of blocked tasks" },
-            { "name": "shortTermGoals", "type": "number", "description": "Count of short-term persona goals" },
-            { "name": "midTermGoals", "type": "number", "description": "Count of mid-term persona goals" },
-            { "name": "longTermGoals", "type": "number", "description": "Count of long-term persona goals" },
-            { "name": "proposedGoals", "type": "number", "description": "Count of proposed goals awaiting approval" },
-            { "name": "activeGoals", "type": "number", "description": "Count of active persona goals" },
-            { "name": "systemState", "type": "object", "description": "Full system state object for LLM context" }
-          ],
-          "description": "Provides current system state metrics for context-aware decisions",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
-        },
         "properties": {},
         "title": "System State"
       }
@@ -95,84 +47,27 @@
     {
       "id": "4",
       "type": "contextNode",
-      "position": { "x": 0, "y": 550 },
+      "position": {
+        "x": 0,
+        "y": 550
+      },
       "data": {
         "nodeType": "scratchpad_context",
-        "schema": {
-          "id": "scratchpad_context",
-          "name": "Recent Activity",
-          "category": "context",
-          "inputs": [],
-          "outputs": [
-            { "name": "recentActivity", "type": "string", "description": "Recent activity from scratchpad (last N entries)" },
-            { "name": "lastDecision", "type": "object", "description": "Most recent decision made" }
-          ],
-          "properties": {
-            "maxEntries": 10
-          },
-          "propertySchemas": {
-            "maxEntries": {
-              "type": "slider",
-              "default": 10,
-              "label": "Max Entries",
-              "min": 5,
-              "max": 20,
-              "step": 1
-            }
-          },
-          "description": "Loads recent activity context to prevent repetition",
-          "color": "#60a5fa",
-          "bgColor": "#1e3a8a"
+        "properties": {
+          "maxEntries": 10
         },
-        "properties": { "maxEntries": 10 },
         "title": "Recent Activity"
       }
     },
     {
       "id": "5",
       "type": "llmNode",
-      "position": { "x": 350, "y": 300 },
+      "position": {
+        "x": 350,
+        "y": 300
+      },
       "data": {
         "nodeType": "unified_decision_llm",
-        "schema": {
-          "id": "unified_decision_llm",
-          "name": "Unified Decision LLM",
-          "category": "reasoning",
-          "inputs": [
-            { "name": "candidates", "type": "array", "description": "Candidate triggers to evaluate" },
-            { "name": "queuedTasks", "type": "array", "description": "Current queue state" },
-            { "name": "systemState", "type": "object", "description": "Current system metrics" },
-            { "name": "recentActivity", "type": "string", "description": "Recent activity context" }
-          ],
-          "outputs": [
-            { "name": "task", "type": "string", "description": "The task type to execute (or null)" },
-            { "name": "reasoning", "type": "string", "description": "Why this task was chosen" }
-          ],
-          "properties": {
-            "model": "orchestrator",
-            "temperature": 0.3
-          },
-          "propertySchemas": {
-            "model": {
-              "type": "select",
-              "default": "orchestrator",
-              "label": "Model",
-              "options": ["orchestrator", "persona", "coder"]
-            },
-            "temperature": {
-              "type": "slider",
-              "default": 0.3,
-              "label": "Temperature",
-              "min": 0,
-              "max": 1,
-              "step": 0.1
-            }
-          },
-          "size": [320, 220],
-          "description": "Single LLM that evaluates triggers + queue + state and decides what ONE task to execute next",
-          "color": "#f472b6",
-          "bgColor": "#9f1239"
-        },
         "properties": {
           "model": "orchestrator",
           "temperature": 0.3,
@@ -184,25 +79,12 @@
     {
       "id": "6",
       "type": "outputNode",
-      "position": { "x": 700, "y": 300 },
+      "position": {
+        "x": 700,
+        "y": 300
+      },
       "data": {
         "nodeType": "task_execution",
-        "schema": {
-          "id": "task_execution",
-          "name": "Task Execution",
-          "category": "output",
-          "inputs": [
-            { "name": "task", "type": "string", "description": "Task type to execute" },
-            { "name": "reasoning", "type": "string", "description": "Decision reasoning for audit" }
-          ],
-          "outputs": [
-            { "name": "executed", "type": "boolean", "description": "Whether task was executed" },
-            { "name": "result", "type": "object", "description": "Execution result" }
-          ],
-          "description": "Executes the chosen task via the task executor",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Task Execution"
       }
@@ -210,24 +92,12 @@
     {
       "id": "7",
       "type": "outputNode",
-      "position": { "x": 700, "y": 450 },
+      "position": {
+        "x": 700,
+        "y": 450
+      },
       "data": {
         "nodeType": "audit_logger",
-        "schema": {
-          "id": "audit_logger",
-          "name": "Audit Logger",
-          "category": "output",
-          "inputs": [
-            { "name": "eventType", "type": "string" },
-            { "name": "details", "type": "object" }
-          ],
-          "outputs": [
-            { "name": "logged", "type": "boolean" }
-          ],
-          "description": "Logs unified decision to audit trail",
-          "color": "#ef4444",
-          "bgColor": "#991b1b"
-        },
         "properties": {},
         "title": "Audit Logger"
       }
@@ -235,25 +105,19 @@
     {
       "id": "8",
       "type": "outputNode",
-      "position": { "x": 700, "y": 600 },
+      "position": {
+        "x": 700,
+        "y": 600
+      },
       "data": {
         "nodeType": "inner_dialogue_capture",
-        "schema": {
-          "id": "inner_dialogue_capture",
-          "name": "Inner Dialogue",
-          "category": "output",
-          "inputs": [
-            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
-          ],
-          "outputs": [
-            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
-          ],
-          "description": "Saves the LLM's reasoning as inner dialogue (visible in Inner Dialogue tab)",
-          "color": "#a855f7",
-          "bgColor": "#6b21a8"
-        },
         "properties": {
-          "tags": ["lizard-brain", "decision", "autonomous", "inner"],
+          "tags": [
+            "lizard-brain",
+            "decision",
+            "autonomous",
+            "inner"
+          ],
           "displayColor": "#22c55e",
           "dialogueSource": "lizard-brain"
         },
@@ -263,7 +127,10 @@
     {
       "id": "9",
       "type": "outputNode",
-      "position": { "x": 700, "y": 750 },
+      "position": {
+        "x": 700,
+        "y": 750
+      },
       "data": {
         "nodeType": "tts",
         "properties": {
@@ -276,26 +143,12 @@
     {
       "id": "10",
       "type": "reviewNode",
-      "position": { "x": 700, "y": 900 },
+      "position": {
+        "x": 700,
+        "y": 900
+      },
       "data": {
         "nodeType": "big_brother_reviewer",
-        "schema": {
-          "id": "big_brother_reviewer",
-          "name": "Big Brother Reviewer",
-          "category": "review",
-          "inputs": [
-            { "name": "executed", "type": "boolean", "description": "Whether a task was executed" },
-            { "name": "success", "type": "boolean", "description": "Whether execution succeeded" },
-            { "name": "reasoning", "type": "string", "description": "Decision reasoning" }
-          ],
-          "outputs": [
-            { "name": "triggered", "type": "boolean", "description": "Whether review was triggered" },
-            { "name": "suggestions", "type": "array", "description": "Suggestions from Big Brother" }
-          ],
-          "description": "Triggers Big Brother reviews based on periodic intervals, errors, or stuck conditions",
-          "color": "#f97316",
-          "bgColor": "#9a3412"
-        },
         "properties": {
           "enabled": true,
           "periodicReviewInterval": 50,
@@ -312,19 +165,14 @@
     {
       "id": "99",
       "type": "noteNode",
-      "position": { "x": 0, "y": -100 },
+      "position": {
+        "x": 0,
+        "y": -100
+      },
       "width": 700,
       "height": 150,
       "data": {
         "nodeType": "graph_note",
-        "schema": {
-          "id": "graph_note",
-          "name": "Graph Note",
-          "category": "utility",
-          "inputs": [],
-          "outputs": [],
-          "properties": { "title": "Note", "content": "", "style": "info" }
-        },
         "properties": {
           "title": "Lizard Brain - Unified Decision Engine",
           "content": "PURPOSE: Single LLM makes ALL autonomous decisions (no separate filter + selector)\n\nFLOW:\n1. Trigger Candidates - All triggers that passed their condition check\n2. Current Queue - Tasks already waiting to be executed\n3. System State - Metrics including memories, desires, user tasks, and persona goals\n4. Recent Activity - What ran recently (to avoid repetition)\n5. Unified LLM - ONE call decides what to execute next\n6. Task Execution - Chosen task is executed immediately\n7. Big Brother Reviewer - Periodic/error-based review via Claude Code\n\nKEY PRINCIPLE: One brain, one decision - task/goal aware, no queue bloat.\nSELF-HEALING: Big Brother reviews after errors or every 50 cycles.",
@@ -342,7 +190,9 @@
       "sourceHandle": "candidates",
       "targetHandle": "candidates",
       "type": "default",
-      "data": { "comment": "Trigger candidates -> Unified LLM" }
+      "data": {
+        "comment": "Trigger candidates -> Unified LLM"
+      }
     },
     {
       "id": "e-2-queue-5-queue",
@@ -351,7 +201,9 @@
       "sourceHandle": "queuedTasks",
       "targetHandle": "queuedTasks",
       "type": "default",
-      "data": { "comment": "Current queue -> Unified LLM" }
+      "data": {
+        "comment": "Current queue -> Unified LLM"
+      }
     },
     {
       "id": "e-3-state-5-state",
@@ -360,7 +212,9 @@
       "sourceHandle": "systemState",
       "targetHandle": "systemState",
       "type": "default",
-      "data": { "comment": "System state -> Unified LLM (full object with desire counts)" }
+      "data": {
+        "comment": "System state -> Unified LLM (full object with desire counts)"
+      }
     },
     {
       "id": "e-4-activity-5-activity",
@@ -369,7 +223,9 @@
       "sourceHandle": "recentActivity",
       "targetHandle": "recentActivity",
       "type": "default",
-      "data": { "comment": "Recent activity -> Unified LLM" }
+      "data": {
+        "comment": "Recent activity -> Unified LLM"
+      }
     },
     {
       "id": "e-5-task-6-task",
@@ -378,7 +234,9 @@
       "sourceHandle": "task",
       "targetHandle": "task",
       "type": "default",
-      "data": { "comment": "Chosen task -> Execution" }
+      "data": {
+        "comment": "Chosen task -> Execution"
+      }
     },
     {
       "id": "e-5-reasoning-6-reasoning",
@@ -387,7 +245,9 @@
       "sourceHandle": "reasoning",
       "targetHandle": "reasoning",
       "type": "default",
-      "data": { "comment": "Decision reasoning -> Execution" }
+      "data": {
+        "comment": "Decision reasoning -> Execution"
+      }
     },
     {
       "id": "e-5-task-7-details",
@@ -396,7 +256,9 @@
       "sourceHandle": "task",
       "targetHandle": "details",
       "type": "default",
-      "data": { "comment": "Decision -> Audit Logger" }
+      "data": {
+        "comment": "Decision -> Audit Logger"
+      }
     },
     {
       "id": "e-5-reasoning-9-innerDialogue",
@@ -405,7 +267,9 @@
       "sourceHandle": "reasoning",
       "targetHandle": "innerDialogue",
       "type": "default",
-      "data": { "comment": "Decision reasoning -> TTS Output (speaks in inner dialogue mode)" }
+      "data": {
+        "comment": "Decision reasoning -> TTS Output (speaks in inner dialogue mode)"
+      }
     },
     {
       "id": "e-6-executed-10-executed",
@@ -414,7 +278,9 @@
       "sourceHandle": "executed",
       "targetHandle": "executed",
       "type": "default",
-      "data": { "comment": "Task execution status -> Big Brother Reviewer" }
+      "data": {
+        "comment": "Task execution status -> Big Brother Reviewer"
+      }
     },
     {
       "id": "e-6-success-10-success",
@@ -423,7 +289,9 @@
       "sourceHandle": "success",
       "targetHandle": "success",
       "type": "default",
-      "data": { "comment": "Task success status -> Big Brother Reviewer" }
+      "data": {
+        "comment": "Task success status -> Big Brother Reviewer"
+      }
     },
     {
       "id": "e-5-reasoning-10-reasoning",
@@ -432,7 +300,9 @@
       "sourceHandle": "reasoning",
       "targetHandle": "reasoning",
       "type": "default",
-      "data": { "comment": "Decision reasoning -> Big Brother Reviewer" }
+      "data": {
+        "comment": "Decision reasoning -> Big Brother Reviewer"
+      }
     }
   ]
 }

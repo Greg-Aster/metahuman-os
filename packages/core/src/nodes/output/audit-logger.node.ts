@@ -8,8 +8,8 @@ import { defineNode, type NodeDefinition } from '../types.js';
 import { audit } from '../../audit.js';
 
 export const AuditLoggerNode: NodeDefinition = defineNode({
-  id: 'audit_logger',
-  name: 'Audit Logger',
+  id: 'output_audit_logger',
+  name: 'Output Audit Logger',
   category: 'output',
   inputs: [
     { name: 'eventType', type: 'string', description: 'Type of event to log' },

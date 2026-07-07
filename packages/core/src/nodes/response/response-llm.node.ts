@@ -28,6 +28,7 @@ import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
 import { loadOperatorConfig } from '../../config.js';
 import type { Desire } from '../../agency/types.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 const LOG_PREFIX = '[response-llm]';
 
@@ -284,6 +285,42 @@ At the end, output a JSON block:
 \`\`\``,
 };
 
+const DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE = `{{instructions}}
+{{desireContext}}
+## Card Context
+{{cardContext}}
+
+---
+
+## User's Message
+{{message}}
+
+---
+
+Please respond helpfully to the user. Use your tools if you need to check files, system state, or verify information.
+Remember to include the JSON block at the end with your suggestedAction and actionData.`;
+
+const DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE = `You are a helpful assistant responding to a card-based interaction.
+
+Card Type: {{cardType}}
+{{desireLine}}
+
+Respond helpfully to the user's message. Be conversational but focused.
+
+Output JSON with:
+{
+  "response": "Your conversational response to the user",
+  "suggestedAction": "acknowledge" | "request_clarification" | "take_action",
+  "actionData": {}
+}`;
+
+const DEFAULT_LOCAL_USER_PROMPT_TEMPLATE = `{{cardContext}}
+
+---
+User's message: {{message}}
+
+Please respond with valid JSON containing response, suggestedAction, and actionData fields.`;
+
 interface ResponseLLMOutput {
   response: string;
   suggestedAction: string;
@@ -297,9 +334,11 @@ function buildBigBrotherPrompt(
   cardType: string,
   cardContext: string,
   message: string,
-  desire?: Desire
+  desire?: Desire,
+  properties?: Record<string, any>
 ): string {
-  const instructions = CARD_TYPE_INSTRUCTIONS[cardType] || CARD_TYPE_INSTRUCTIONS.default;
+  const cardTypeInstructions = properties?.cardTypeInstructions || CARD_TYPE_INSTRUCTIONS;
+  const instructions = cardTypeInstructions[cardType] || cardTypeInstructions.default || CARD_TYPE_INSTRUCTIONS.default;
 
   let desireContext = '';
   if (desire) {
@@ -320,20 +359,17 @@ ${desire.clarifyingQuestions.questions.map((q, i) => `  ${i + 1}. ${q.text}${q.r
 `;
   }
 
-  return `${instructions}
-${desireContext}
-## Card Context
-${cardContext}
-
----
-
-## User's Message
-${message}
-
----
-
-Please respond helpfully to the user. Use your tools if you need to check files, system state, or verify information.
-Remember to include the JSON block at the end with your suggestedAction and actionData.`;
+  return renderPromptTemplate(
+    properties?.bigBrotherPromptTemplate ?? DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE,
+    {
+      instructions,
+      desireContext,
+      cardType,
+      cardContext,
+      message,
+      desire: desire || null,
+    },
+  );
 }
 
 /**
@@ -418,26 +454,24 @@ async function fallbackToLocalLLM(
 ): Promise<ResponseLLMOutput> {
   console.log(`${LOG_PREFIX} Falling back to local LLM`);
 
-  const systemPrompt = `You are a helpful assistant responding to a card-based interaction.
+  const systemPrompt = renderPromptTemplate(
+    properties?.localSystemPromptTemplate ?? DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
+    {
+      cardType,
+      desireLine: desire ? `Desire: ${desire.title} (${desire.status})` : '',
+      desire: desire || null,
+    },
+  );
 
-Card Type: ${cardType}
-${desire ? `Desire: ${desire.title} (${desire.status})` : ''}
-
-Respond helpfully to the user's message. Be conversational but focused.
-
-Output JSON with:
-{
-  "response": "Your conversational response to the user",
-  "suggestedAction": "acknowledge" | "request_clarification" | "take_action",
-  "actionData": {}
-}`;
-
-  const userPrompt = `${cardContext}
-
----
-User's message: ${message}
-
-Please respond with valid JSON containing response, suggestedAction, and actionData fields.`;
+  const userPrompt = renderPromptTemplate(
+    properties?.localUserPromptTemplate ?? DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
+    {
+      cardContext,
+      message,
+      cardType,
+      desire: desire || null,
+    },
+  );
 
   const result = await callLLM({
     role: 'orchestrator',
@@ -491,6 +525,11 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     temperature: 0.7,
     maxTokens: 1024,
     useBigBrother: true,
+    bigBrotherTimeoutMs: 300000,
+    cardTypeInstructions: CARD_TYPE_INSTRUCTIONS,
+    bigBrotherPromptTemplate: DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE,
+    localSystemPromptTemplate: DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
+    localUserPromptTemplate: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -515,6 +554,39 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
       default: true,
       label: 'Use Big Brother',
       description: 'Route through Big Brother for tool execution and terminal visibility',
+    },
+    bigBrotherTimeoutMs: {
+      type: 'number',
+      default: 300000,
+      min: 30000,
+      max: 900000,
+      step: 10000,
+      label: 'Big Brother Timeout (ms)',
+      description: 'Maximum time to wait for Big Brother backend execution',
+    },
+    cardTypeInstructions: {
+      type: 'json',
+      default: CARD_TYPE_INSTRUCTIONS,
+      label: 'Card Type Instructions',
+      description: 'Instruction map used to specialize responses by card type',
+    },
+    bigBrotherPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE,
+      label: 'Big Brother Prompt Template',
+      description: 'Prompt template sent to Big Brother; supports {{instructions}}, {{desireContext}}, {{cardContext}}, and {{message}}',
+    },
+    localSystemPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
+      label: 'Local System Prompt Template',
+      description: 'Fallback local LLM system prompt template',
+    },
+    localUserPromptTemplate: {
+      type: 'textarea',
+      default: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
+      label: 'Local User Prompt Template',
+      description: 'Fallback local LLM user prompt template',
     },
   },
   description: 'Generates focused response using Big Brother for tool execution. Falls back to local LLM if unavailable.',
@@ -560,7 +632,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
       console.log(`${LOG_PREFIX} 🤖 Routing to Big Brother for tool execution and terminal visibility`);
 
       try {
-        const prompt = buildBigBrotherPrompt(cardType, cardContext, message, desire);
+        const prompt = buildBigBrotherPrompt(cardType, cardContext, message, desire, properties);
 
         if (preferredBackend === 'claude-code') {
           // Dynamic import to avoid circular dependencies
@@ -594,7 +666,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
         console.log(`${LOG_PREFIX} Sending prompt to Big Brother backend (${preferredBackend || 'default'})`);
 
         const result = await escalate(prompt, {
-          timeout: 300000,
+          timeout: properties?.bigBrotherTimeoutMs ?? 300000,
           username,
           preferredBackend,
         });

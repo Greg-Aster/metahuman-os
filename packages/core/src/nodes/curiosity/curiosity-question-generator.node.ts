@@ -5,6 +5,18 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
+import { renderPromptTemplate } from '../prompt-template.js';
+
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `{{personaPrompt}}
+
+Looking back at these recent memories, you're genuinely curious about something. Ask the user ONE natural, conversational question that reflects your authentic curiosity.
+
+Be yourself - ask in your own voice, not like an AI. Keep it under 20 words and make it feel like a real question you'd ask a friend.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Recent experiences you're reflecting on:
+{{memoriesText}}
+
+What are you genuinely curious about? Ask one natural question.`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Access inputs by handle name, with fallback to indexed access
@@ -32,20 +44,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const memoriesText = memories.map((m: any, i: number) => `${i + 1}. ${m.content}`).join('\n');
     const personaPrompt = personaInput?.formatted || personaInput || '';
 
-    const systemPrompt = `
-${personaPrompt}
-
-Looking back at these recent memories, you're genuinely curious about something. Ask the user ONE natural, conversational question that reflects your authentic curiosity.
-
-Be yourself - ask in your own voice, not like an AI. Keep it under 20 words and make it feel like a real question you'd ask a friend.
-    `.trim();
-
-    const userPrompt = `
-Recent experiences you're reflecting on:
-${memoriesText}
-
-What are you genuinely curious about? Ask one natural question.
-    `.trim();
+    const promptValues = { personaPrompt, memoriesText };
+    const systemPrompt = renderPromptTemplate(
+      properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      promptValues,
+    ).trim();
+    const userPrompt = renderPromptTemplate(
+      properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+      promptValues,
+    ).trim();
 
     const messages: RouterMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -102,12 +109,28 @@ export const CuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
   ],
   properties: {
     temperature: 0.6,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
       type: 'number',
       default: 0.6,
       label: 'Temperature',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      label: 'System Prompt',
+      description: 'Supports {{personaPrompt}} and {{memoriesText}}.',
+      rows: 8,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Supports {{personaPrompt}} and {{memoriesText}}.',
+      rows: 6,
     },
   },
   description: 'Generates a natural curiosity question via LLM',

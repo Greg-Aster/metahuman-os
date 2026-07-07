@@ -86,22 +86,12 @@
       "data": {
         "label": "Inner Dialogue",
         "nodeType": "inner_dialogue_capture",
-        "schema": {
-          "id": "inner_dialogue_capture",
-          "name": "Inner Dialogue",
-          "category": "output",
-          "inputs": [
-            { "name": "text", "type": "string", "description": "The content to save as inner dialogue" }
-          ],
-          "outputs": [
-            { "name": "saved", "type": "boolean", "description": "Whether the inner dialogue was saved" }
-          ],
-          "description": "Saves daydream thoughts as inner dialogue (visible in Inner Dialogue tab)",
-          "color": "#a855f7",
-          "bgColor": "#6b21a8"
-        },
         "properties": {
-          "tags": ["daydream", "inner", "musing"],
+          "tags": [
+            "daydream",
+            "inner",
+            "musing"
+          ],
           "displayColor": "#a78bfa",
           "dialogueSource": "daydreamer",
           "role": "daydream"

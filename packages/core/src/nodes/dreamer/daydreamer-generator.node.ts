@@ -8,6 +8,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { scheduler } from '../../agent-scheduler.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 interface Memory {
   id: string;
@@ -19,12 +20,35 @@ function markBackgroundActivity() {
   try { scheduler.recordActivity(); } catch {}
 }
 
+const DEFAULT_SYSTEM_PROMPT = `You are generating a brief daydream - a fleeting inner musing or reverie.
+
+Your daydreams should be:
+- Short (2-4 sentences)
+- Whimsical or contemplative
+- First-person perspective
+- May blend memories in creative ways
+- Can be slightly surreal or metaphorical
+- Never include action items or to-dos
+- Pure inner musing, not meant for anyone else to read
+
+This is private inner dialogue - stream of consciousness thoughts that drift through the mind during idle moments.
+
+Start directly with the daydream content, no preamble.`;
+
+const DEFAULT_USER_PROMPT_TEMPLATE = `Based on these memory fragments, generate a brief daydream:
+
+{{memoriesText}}
+
+Generate a short, whimsical daydream (2-4 sentences) that weaves these memories together in a creative, contemplative way.`;
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const memoriesInput = inputs.memories?.memories || inputs.memories || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
-  const temperature = properties?.temperature || 0.9;
-  const role = properties?.role || 'persona';
-  const maxTokens = properties?.maxTokens || 200;
+  const temperature = properties?.temperature ?? 0.9;
+  const role = properties?.role ?? 'persona';
+  const maxTokens = properties?.maxTokens ?? 200;
+  const systemPrompt = properties?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
   const username = context.userId || context.username;
 
   if (memories.length < 3) {
@@ -42,27 +66,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     })
     .join('\n');
 
-  // Daydream-specific prompt - shorter, more whimsical than full dreams
-  const systemPrompt = `You are generating a brief daydream - a fleeting inner musing or reverie.
-
-Your daydreams should be:
-- Short (2-4 sentences)
-- Whimsical or contemplative
-- First-person perspective
-- May blend memories in creative ways
-- Can be slightly surreal or metaphorical
-- Never include action items or to-dos
-- Pure inner musing, not meant for anyone else to read
-
-This is private inner dialogue - stream of consciousness thoughts that drift through the mind during idle moments.
-
-Start directly with the daydream content, no preamble.`.trim();
-
-  const userPrompt = `Based on these memory fragments, generate a brief daydream:
-
-${memoriesText}
-
-Generate a short, whimsical daydream (2-4 sentences) that weaves these memories together in a creative, contemplative way.`;
+  const userPrompt = renderPromptTemplate(userPromptTemplate, { memoriesText });
 
   try {
     markBackgroundActivity();
@@ -78,7 +82,7 @@ Generate a short, whimsical daydream (2-4 sentences) that weaves these memories 
       userId: username,
       options: {
         temperature,
-        max_tokens: maxTokens,
+        maxTokens,
       },
     });
 
@@ -127,6 +131,8 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
     temperature: 0.9,
     role: 'persona',
     maxTokens: 200,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
     temperature: {
@@ -145,6 +151,20 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
       default: 200,
       label: 'Max Tokens',
       description: 'Maximum tokens for short daydream output',
+    },
+    systemPrompt: {
+      type: 'text_multiline',
+      default: DEFAULT_SYSTEM_PROMPT,
+      label: 'System Prompt',
+      description: 'Instructions for the daydream generator.',
+      rows: 12,
+    },
+    userPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_USER_PROMPT_TEMPLATE,
+      label: 'User Prompt Template',
+      description: 'Template variables: {{memoriesText}}.',
+      rows: 8,
     },
   },
   description: 'Generates a brief, whimsical daydream from memory fragments',

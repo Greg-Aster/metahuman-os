@@ -30,9 +30,30 @@ import {
 } from '../../escalation-backend.js';
 import { loadFreshOperatorConfig, loadUserConfig } from '../../config.js';
 import type { AgencyExecutionConfig } from '../../agency/types.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 // Default timeout: 10 minutes
 const DEFAULT_EXECUTION_TIMEOUT = 600000;
+
+const DEFAULT_TASK_PROMPT_TEMPLATE = `You are executing a task for MetaHuman OS Agency system.
+
+## Desire Context
+**Title**: {{title}}
+**Description**: {{description}}
+**Reason**: {{reason}}
+
+## Current Step ({{stepOrder}} of {{stepCount}})
+**Action**: {{action}}
+**Expected Outcome**: {{expectedOutcome}}
+**Risk Level**: {{risk}}
+{{skillSection}}{{inputsSection}}
+
+## Instructions
+1. Execute this step to completion
+2. Be thorough and verify your work
+3. Report what you accomplished
+
+Please execute this step now.`;
 
 interface StepResult {
   stepOrder: number;
@@ -45,27 +66,23 @@ interface StepResult {
 /**
  * Build a task prompt for execution
  */
-function buildTaskPrompt(step: PlanStep, desire: Desire): string {
-  return `You are executing a task for MetaHuman OS Agency system.
-
-## Desire Context
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason || 'Not specified'}
-
-## Current Step (${step.order} of ${desire.plan?.steps?.length || '?'})
-**Action**: ${step.action}
-**Expected Outcome**: ${step.expectedOutcome || 'Complete successfully'}
-**Risk Level**: ${step.risk}
-${step.skill ? `**Suggested Approach**: ${step.skill}` : ''}
-${step.inputs ? `**Inputs**: ${JSON.stringify(step.inputs, null, 2)}` : ''}
-
-## Instructions
-1. Execute this step to completion
-2. Be thorough and verify your work
-3. Report what you accomplished
-
-Please execute this step now.`;
+function buildTaskPrompt(step: PlanStep, desire: Desire, taskPromptTemplate = DEFAULT_TASK_PROMPT_TEMPLATE): string {
+  return renderPromptTemplate(taskPromptTemplate, {
+    title: desire.title,
+    description: desire.description,
+    reason: desire.reason || 'Not specified',
+    stepOrder: step.order,
+    stepCount: desire.plan?.steps?.length || '?',
+    action: step.action,
+    expectedOutcome: step.expectedOutcome || 'Complete successfully',
+    risk: step.risk,
+    skill: step.skill || '',
+    skillSection: step.skill ? `**Suggested Approach**: ${step.skill}\n` : '',
+    inputs: step.inputs || null,
+    inputsSection: step.inputs ? `**Inputs**: ${JSON.stringify(step.inputs, null, 2)}\n` : '',
+    desire,
+    step,
+  });
 }
 
 /**
@@ -104,9 +121,10 @@ async function executeStep(
   step: PlanStep,
   desire: Desire,
   username?: string,
-  onProgress?: DesireProgressCallback
+  onProgress?: DesireProgressCallback,
+  taskPromptTemplate?: string,
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
-  const prompt = buildTaskPrompt(step, desire);
+  const prompt = buildTaskPrompt(step, desire, taskPromptTemplate);
 
   // Ensure backends are loaded before checking
   await ensureBackendsInitialized();
@@ -231,12 +249,13 @@ async function executeStep(
   }
 }
 
-const execute: NodeExecutor = async (inputs, context, _properties) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs from graph - graph executor maps by handle name (string keys)
   // Edge uses slot_0/slot_1 handles, so we access by those keys
   // Also check context.desire for direct injection from executeDesireViaGraph
   const slot0 = (inputs['slot_0'] || inputs[0]) as { desire?: Desire } | Desire | undefined;
   const slot1 = (inputs['slot_1'] || inputs[1]) as { userId?: string; cognitiveMode?: string } | undefined;
+  const taskPromptTemplate = properties?.taskPromptTemplate ?? DEFAULT_TASK_PROMPT_TEMPLATE;
 
   // Handle both wrapped { desire } format and direct Desire object
   // Also check context.desire for cases where desire is injected directly
@@ -316,7 +335,7 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
     }
 
     try {
-      const result = await executeStep(step, desire, username, onProgress);
+      const result = await executeStep(step, desire, username, onProgress, taskPromptTemplate);
 
       const stepResult: StepResult = {
         stepOrder: step.order,
@@ -547,7 +566,18 @@ export const DesireExecutorNode: NodeDefinition = defineNode({
     { name: 'summary', type: 'string', description: 'Human-readable summary for inner dialogue and TTS' },
   ],
 
-  properties: {},
+  properties: {
+    taskPromptTemplate: DEFAULT_TASK_PROMPT_TEMPLATE,
+  },
+  propertySchemas: {
+    taskPromptTemplate: {
+      type: 'text_multiline',
+      default: DEFAULT_TASK_PROMPT_TEMPLATE,
+      label: 'Task Prompt Template',
+      description: 'Template variables include {{title}}, {{description}}, {{stepOrder}}, {{stepCount}}, {{action}}, {{expectedOutcome}}, {{risk}}, {{skillSection}}, {{inputsSection}}, {{desire}}, {{step}}.',
+      rows: 18,
+    },
+  },
 
   execute,
 });
