@@ -29,12 +29,10 @@ Headless Mode is a runtime state that:
 - Cloudflare tunnel (if enabled)
 - Astro web server
 - Web UI (fully accessible)
-- `headless-watcher` agent (monitors mode changes)
 
 ⏸️ **Pauses:**
-- `scheduler-service` (agent orchestrator)
-- `boredom-service` (reflector trigger)
-- `sleep-service` (nightly pipeline)
+- New proactive coordinator admissions, including inactivity and sleep-workflow triggers
+- Boot-managed agent processes that are not required for the remote session
 - `organizer` (memory enrichment)
 - `reflector` (insight generation)
 - `audio-organizer` (audio processing)
@@ -109,12 +107,11 @@ Headless Mode is a runtime state that:
    }
    ```
 
-2. **Headless Watcher Agent**
-   - Monitors `etc/runtime.json` for changes
-   - Stops all agents when headless enabled
-   - Resumes agents when headless disabled
-   - Built-in keepalive prevents process exit
-   - Automatic error recovery with retry logic
+2. **Runtime Mode Handler**
+   - Applies headless mode changes through the runtime-mode API path
+   - Stops agents when headless mode is enabled
+   - Resumes Boot Manager-selected agents when headless mode is disabled
+   - Does not require a separate headless watcher agent
 
 3. **Startup Guards**
    - CLI: `mh start` checks mode before spawning agents
@@ -218,8 +215,8 @@ When headless mode is active and you access MetaHuman remotely, you'll see a **c
    - Sets `claimedBy` to your user ID
 
 2. **Agent Resume (~2 seconds)**
-   - headless-watcher detects mode change
-   - Starts default agents (scheduler, boredom, sleep services)
+   - Runtime mode handler applies the mode change
+   - Starts agents selected in Boot Manager
    - Agents resume normal operation
 
 3. **Page Reload**
@@ -239,7 +236,7 @@ When headless mode is active and you access MetaHuman remotely, you'll see a **c
 
 ### ⚠️ Important Limitation
 
-**The headless-watcher keeps the Node.js process alive (event loop active), but does NOT prevent OS-level system sleep.**
+**Headless mode keeps the web server process available, but does NOT prevent OS-level system sleep.**
 
 For true sleep prevention, configure your operating system:
 
@@ -350,20 +347,18 @@ while ($true) {
 ./bin/mh agent ps
 
 # Expected in headless mode:
-# headless-watcher   RUNNING   PID: 12345
+# no autonomous boot agents running
 
 # Expected in normal mode:
-# headless-watcher   RUNNING   PID: 12345
-# scheduler-service  RUNNING   PID: 12346
-# boredom-service    RUNNING   PID: 12347
-# sleep-service      RUNNING   PID: 12348
+# agents selected in Boot Manager, such as:
+# scheduler-service     RUNNING   PID: 12346
 ```
 
-### Watch Watcher Logs
+### Watch Runtime Logs
 
 ```bash
-# Follow audit log for watcher activity
-tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep headless-watcher
+# Follow audit log for runtime mode activity
+tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep runtime_mode
 
 # Expected output when toggling:
 # {"category":"system","level":"info","message":"Headless mode activated - agents stopped",...}
@@ -380,15 +375,6 @@ watch -n 1 cat etc/runtime.json
 watch -n 1 'cat etc/runtime.json | jq'
 ```
 
-### Verify Keepalive Heartbeat
-
-```bash
-# Check for keepalive messages (every 60 seconds in headless mode)
-tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep "Keepalive heartbeat"
-```
-
----
-
 ## Troubleshooting
 
 ### Agents Not Stopping When Headless Enabled
@@ -399,40 +385,30 @@ tail -f logs/audit/$(date +%Y-%m-%d).ndjson | grep "Keepalive heartbeat"
 
 **Diagnosis:**
 ```bash
-# Check if headless-watcher is running
-./bin/mh agent ps | grep headless-watcher
+# Check current runtime mode
+cat etc/runtime.json
 
-# Check watcher logs
-tail -50 logs/audit/$(date +%Y-%m-%d).ndjson | grep headless-watcher
+# Check runtime mode logs
+tail -50 logs/audit/$(date +%Y-%m-%d).ndjson | grep runtime_mode
 ```
 
 **Solutions:**
 
-1. **Watcher Not Running**
+1. **Runtime Mode Handler Did Not Apply**
    ```bash
-   # Start watcher manually
-   ./bin/mh agent run headless-watcher
-
-   # Or restart all services
+   # Restart through the normal service path
    ./bin/mh start --restart
    ```
 
-2. **Watcher Crashed**
+2. **Stop Agents Manually**
    ```bash
-   # Check for errors in audit log
-   grep -A 5 "headless-watcher.*error" logs/audit/$(date +%Y-%m-%d).ndjson
-
-   # Restart watcher
-   ./bin/mh agent stop headless-watcher
-   ./bin/mh agent run headless-watcher
+   # Stop all registered agents
+   ./bin/mh agent stop-all
    ```
 
-3. **File Watcher Not Triggering**
+3. **Apply Mode Through API/UI**
    ```bash
-   # Manually trigger by editing file
-   echo '{"headless":true,"lastChangedBy":"local","changedAt":"'$(date -Iseconds)'","claimedBy":null}' > etc/runtime.json
-
-   # Wait 2 seconds and check
+   # Toggle headless mode from the UI, then verify
    ./bin/mh agent ps
    ```
 
@@ -448,25 +424,18 @@ tail -50 logs/audit/$(date +%Y-%m-%d).ndjson | grep headless-watcher
 cat etc/runtime.json
 # Should show: "headless": false
 
-# Check watcher status
-./bin/mh agent ps | grep headless-watcher
+# Check configured boot agents in System Settings > Boot Manager
 ```
 
 **Solutions:**
 
-1. **Watcher Stopped**
+1. **Manual Resume**
    ```bash
-   # Restart watcher (it will resume agents)
-   ./bin/mh agent run headless-watcher
-   ```
-
-2. **Manual Resume**
-   ```bash
-   # Start agents manually
+   # Start configured boot agents
    ./bin/mh start --restart
    ```
 
-3. **Check Watcher Errors**
+2. **Check Runtime Errors**
    ```bash
    # Look for spawn errors
    grep "Failed to start.*agent" logs/audit/$(date +%Y-%m-%d).ndjson
@@ -594,9 +563,9 @@ Headless mode changes are fully audited:
   "category": "system",
   "level": "info",
   "message": "Headless mode activated - agents stopped",
-  "actor": "headless-watcher",
+  "actor": "runtime-mode",
   "metadata": {
-    "stopped": ["scheduler-service", "boredom-service", "sleep-service"],
+    "stopped": ["scheduler-service"],
     "failed": [],
     "total": 3,
     "changedBy": "local"

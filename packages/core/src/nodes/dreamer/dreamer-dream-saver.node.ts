@@ -7,7 +7,6 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { scheduler } from '../../agent-scheduler.js';
 // Note: Buffer append is now handled by inner_dialogue_capture node in the graph
 
 interface Memory {
@@ -16,7 +15,6 @@ interface Memory {
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
-  try { scheduler.recordActivity(); } catch {}
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {

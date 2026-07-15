@@ -1,0 +1,77 @@
+{
+  "version": "2.0",
+  "format": "svelte-flow",
+  "name": "Active Operator Policy",
+  "description": "One bounded full-autonomy policy decision. The graph has no direct executor authority.",
+  "last_modified": "2026-07-14T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "context",
+      "type": "contextNode",
+      "position": { "x": 0, "y": 120 },
+      "data": {
+        "nodeType": "operator_policy_context",
+        "properties": {},
+        "title": "Policy Context"
+      }
+    },
+    {
+      "id": "decision",
+      "type": "llmNode",
+      "position": { "x": 360, "y": 120 },
+      "data": {
+        "nodeType": "operator_policy_decision",
+        "properties": {
+          "model": "orchestrator",
+          "temperature": 0.2,
+          "maxTokens": 500
+        },
+        "title": "Bounded Decision"
+      }
+    },
+    {
+      "id": "gate",
+      "type": "outputNode",
+      "position": { "x": 720, "y": 120 },
+      "data": {
+        "nodeType": "operator_policy_gate",
+        "properties": {},
+        "title": "Deterministic Gate"
+      }
+    },
+    {
+      "id": "note",
+      "type": "noteNode",
+      "position": { "x": 0, "y": -120 },
+      "width": 840,
+      "height": 140,
+      "data": {
+        "nodeType": "graph_note",
+        "properties": {
+          "title": "Active Operator Policy Boundary",
+          "content": "The context node reads bounded coordinator/history/mode/activity/environment state. The LLM returns one strict decision. The gate accepts only deterministic selection, wait, request_input, or one allow-listed low-priority proposal. It cannot execute a task or send a robot command.",
+          "style": "info"
+        },
+        "title": "Policy Boundary"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "context-to-decision",
+      "source": "context",
+      "target": "decision",
+      "sourceHandle": "policyContext",
+      "targetHandle": "policyContext",
+      "type": "default"
+    },
+    {
+      "id": "decision-to-gate",
+      "source": "decision",
+      "target": "gate",
+      "sourceHandle": "decision",
+      "targetHandle": "decision",
+      "type": "default"
+    }
+  ]
+}

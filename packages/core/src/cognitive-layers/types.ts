@@ -226,6 +226,9 @@ export interface LayerConfigFile {
 
   /** Configuration for emulation mode */
   emulation: ModeLayerConfig;
+
+  /** Environment Mode uses its graph directly and currently has no layered pipeline */
+  environment: ModeLayerConfig;
 }
 
 // ============================================================================

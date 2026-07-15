@@ -18,7 +18,6 @@ import {
   ROOT,
   audit,
   recordSystemActivity,
-  scheduler,
   getTargetUser,
   withUserContext,
   runGraph,
@@ -63,10 +62,6 @@ const LOG_PREFIX = '[daydreamer]';
 function markBackgroundActivity() {
   try {
     recordSystemActivity();
-  } catch {}
-
-  try {
-    scheduler.recordActivity();
   } catch {}
 }
 

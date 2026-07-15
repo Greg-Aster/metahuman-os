@@ -73,7 +73,7 @@ export const GET: APIRoute = async ({ cookies }) => {
 ```
 
 **Impact**:
-- Anonymous users could start/stop boredom-service, audio-organizer, headless-watcher
+- Anonymous users could start/stop then-available services such as boredom-service, audio-organizer, and the former headless-watcher
 - Could disrupt system operations
 - Potential DoS attack vector
 

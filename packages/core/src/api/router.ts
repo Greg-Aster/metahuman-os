@@ -174,7 +174,7 @@ import {
 import { handleGetModelInfo } from './handlers/model-info.js';
 import { handleListFunctions } from './handlers/functions.js';
 import { handleGetGpuStatus } from './handlers/gpu-status.js';
-import { handleGetMonitor } from './handlers/monitor.js';
+import { handleGetMonitor, handleSetMonitorAgentVariable } from './handlers/monitor.js';
 import { handleGetVoiceStatus } from './handlers/voice-status.js';
 import { handleGetApprovals, handlePostApproval } from './handlers/approvals.js';
 import { handleGetSecurityPolicy } from './handlers/security-policy.js';
@@ -192,16 +192,18 @@ import { handleGetStorageStatus } from './handlers/storage-status.js';
 import { handleGetAgencyConfig, handleSetAgencyConfig } from './handlers/agency-config.js';
 import { handleActivityPing } from './handlers/activity-ping.js';
 import {
+  handleClearQueueTasks,
+  handleDeleteQueueTask,
   handleEnqueueTask,
-  handleGetQueueLaneControl,
-  handleGetQueueMetrics,
+  handleSubmitCoordinatorWork,
   handleGetQueueStatus,
+  handleGetQueueTask,
   handleGetTriggers,
   handleQueueStream,
+  handleQueueTaskStream,
   handleQueueControl,
   handleRecordActivity,
   handleTriggerAgent,
-  handleUpdateQueueLaneControl,
 } from './handlers/unified-queue.js';
 import { handleGetRunpodConfig } from './handlers/runpod-config.js';
 import { handleValidateRunpodKey } from './handlers/runpod-validate.js';
@@ -271,13 +273,13 @@ import { handleGetMobileDownload } from './handlers/mobile-download.js';
 import { handleMemorySyncPull, handleMemorySyncPushCreate, handleMemorySyncPushUpdate } from './handlers/memory-sync.js';
 import { handleGetCredentialsSync, handleSaveCredentialsSync } from './handlers/credentials-sync.js';
 import { handleStt } from './handlers/stt.js';
-import { handleAgentsControl, handleRunAgent, handleStartAgent } from './handlers/agent.js';
+import { handleAgentsControl, handleRunAgent } from './handlers/agent.js';
 import {
   handleEnvironmentBridgeActionResult,
-  handleEnvironmentBridgeActions,
   handleEnvironmentBridgeControl,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStatus,
+  handleEnvironmentBridgeStream,
 } from './handlers/environment-bridge.js';
 import { handleGetChatHistory } from './handlers/chat-history.js';
 import { handleGetSimpleBuffer } from './handlers/buffer.js';
@@ -316,7 +318,6 @@ import { handleGetTemplate } from './handlers/templates.js';
 import { handleGetEmbeddingsConfig, handleUpdateEmbeddingsConfig } from './handlers/embeddings.js';
 import { handleGetPersonaInsights } from './handlers/persona-insights.js';
 import { handleExtractOnboardingPersona } from './handlers/onboarding-persona.js';
-import { handleGetLizardBrainLogs, handleTriggerLizardBrainReview } from './handlers/lizard-brain.js';
 import { handleGetEventBusStatus, handlePostEventBusStatus } from './handlers/event-bus-status.js';
 import { handleGetMemorySyncItem, handleDeleteMemorySyncItem } from './handlers/memory-sync-item.js';
 import { handleTemplateWatch } from './handlers/template-watch.js';
@@ -528,11 +529,6 @@ import { handleGetServerInfo } from './handlers/server-info.js';
 import { handleGetProfileSyncState, handleGetUpdateState } from './handlers/local-state.js';
 import { handleGetPauseState, handleUpdatePauseState } from './handlers/pause-state.js';
 import { handleGetAdapters, handlePostAdapters } from './handlers/adapters.js';
-import {
-  handleGetBabysitterPatterns,
-  handleGetBabysitterReports,
-  handleGetBabysitterStatus,
-} from './handlers/babysitter.js';
 // Note: Some complex routes (kokoro-training, etc.) kept in Astro files
 
 // ============================================================================
@@ -551,55 +547,50 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/pause-state', handler: handleUpdatePauseState, requiresAuth: true },
   { method: 'GET', pattern: '/api/event-bus-status', handler: handleGetEventBusStatus },
   { method: 'POST', pattern: '/api/event-bus-status', handler: handlePostEventBusStatus, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/big-brother-status', handler: handleBigBrotherStatus },
+  { method: 'GET', pattern: '/api/big-brother-status', handler: handleBigBrotherStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-status', handler: handleBigBrotherControl, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/big-brother-input', handler: handleGetBigBrotherInputStatus },
+  { method: 'GET', pattern: '/api/big-brother-input', handler: handleGetBigBrotherInputStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-input', handler: handleBigBrotherInput, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/big-brother/terminal-events', handler: handleBigBrotherTerminalEvents },
-  { method: 'GET', pattern: '/api/astro-servers', handler: handleGetAstroServers },
-  { method: 'POST', pattern: '/api/astro-servers', handler: handlePostAstroServers },
-  { method: 'GET', pattern: '/api/node-pipeline', handler: handleGetNodePipeline },
+  { method: 'GET', pattern: '/api/big-brother/terminal-events', handler: handleBigBrotherTerminalEvents, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/astro-servers', handler: handleGetAstroServers, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/astro-servers', handler: handlePostAstroServers, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/node-pipeline', handler: handleGetNodePipeline, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/node-pipeline', handler: handleSetNodePipeline, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/claude-session', handler: handleGetClaudeSession, requiresAuth: true },
   { method: 'POST', pattern: '/api/claude-session', handler: handlePostClaudeSession, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/profile-path/encrypt', handler: handleEncryptProfilePath, requiresAuth: true },
   { method: 'POST', pattern: '/api/profile-path/decrypt', handler: handleDecryptProfilePath, requiresAuth: true },
-  { method: ['GET', 'POST'], pattern: '/api/kokoro-addon', handler: handleKokoroAddon },
+  { method: ['GET', 'POST'], pattern: '/api/kokoro-addon', handler: handleKokoroAddon, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/kokoro-server', handler: handleKokoroServer },
   { method: 'POST', pattern: '/api/kokoro-server', handler: handleKokoroServer, requiresAuth: true },
-  { method: ['GET', 'POST'], pattern: '/api/rvc-addon', handler: handleRvcAddon },
+  { method: ['GET', 'POST'], pattern: '/api/rvc-addon', handler: handleRvcAddon, requiresAuth: true, guard: 'owner' },
   { method: ['GET', 'POST'], pattern: '/api/rvc-server', handler: handleRvcServer, requiresAuth: true },
-  { method: ['GET', 'POST'], pattern: '/api/sovits-server', handler: handleSovitsServer },
+  { method: ['GET', 'POST'], pattern: '/api/sovits-server', handler: handleSovitsServer, requiresAuth: true, guard: 'owner' },
   { method: ['GET', 'POST'], pattern: '/api/whisper-server', handler: handleWhisperServer, requiresAuth: true },
   { method: 'GET', pattern: '/api/buffer-stream', handler: handleBufferStream },
-  { method: 'GET', pattern: '/api/monitor/stream', handler: handleMonitorStream },
+  { method: 'GET', pattern: '/api/monitor/stream', handler: handleMonitorStream, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/tts-stream', handler: handleTtsStream, requiresAuth: true },
-
-  // Babysitter read-only status/reporting
-  { method: 'GET', pattern: '/api/babysitter/status', handler: handleGetBabysitterStatus },
-  { method: 'GET', pattern: '/api/babysitter/patterns', handler: handleGetBabysitterPatterns },
-  { method: 'GET', pattern: '/api/babysitter/reports', handler: handleGetBabysitterReports },
 
   // Auth
   { method: 'GET', pattern: '/api/auth/me', handler: handleGetMe },
-  { method: 'POST', pattern: '/api/auth/login', handler: handleLogin },
-  { method: 'POST', pattern: '/api/auth/logout', handler: handleLogout },
-  { method: 'POST', pattern: '/api/auth/register', handler: handleRegister },
-  { method: 'POST', pattern: '/api/auth/guest', handler: handleGuest },
-  { method: 'POST', pattern: '/api/auth/sync-user', handler: handleCreateSyncUser },
+  { method: 'POST', pattern: '/api/auth/login', handler: handleLogin, public: true, publicReason: 'auth bootstrap login' },
+  { method: 'POST', pattern: '/api/auth/logout', handler: handleLogout, public: true, publicReason: 'logout clears stale cookies' },
+  { method: 'POST', pattern: '/api/auth/register', handler: handleRegister, public: true, publicReason: 'first-user/account bootstrap' },
+  { method: 'POST', pattern: '/api/auth/guest', handler: handleGuest, public: true, publicReason: 'explicit guest session bootstrap' },
+  { method: 'POST', pattern: '/api/auth/sync-user', handler: handleCreateSyncUser, public: true, publicReason: 'mobile/profile sync bootstrap with credentials' },
   { method: 'GET', pattern: '/api/auth/users', handler: handleListUsers },
   { method: 'POST', pattern: '/api/auth/change-password', handler: handleChangePassword, requiresAuth: true },
-  { method: 'POST', pattern: '/api/auth/reset-password', handler: handleResetPassword },  // No auth - uses recovery code
+  { method: 'POST', pattern: '/api/auth/reset-password', handler: handleResetPassword, public: true, publicReason: 'password recovery code flow' },
   { method: 'POST', pattern: '/api/auth/change-username', handler: handleChangeUsername, requiresAuth: true },
   { method: 'PUT', pattern: '/api/auth/update-profile', handler: handleUpdateProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/user', handler: handleSyncUser, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/export', handler: handleExportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile, requiresAuth: true },
-  { method: 'POST', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile },  // POST accepts creds in body
+  { method: 'POST', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile, public: true, publicReason: 'cross-device sync authenticates with body credentials' },
   { method: 'POST', pattern: '/api/profile-sync/import', handler: handleImportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/metadata', handler: handleGetProfileMetadata, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, requiresAuth: true },
-  { method: 'POST', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories },  // POST with credentials in body (cross-origin mobile)
+  { method: 'POST', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, public: true, publicReason: 'cross-device sync authenticates with body credentials' },
   { method: 'GET', pattern: '/api/profile-sync/tasks', handler: handleGetProfileTasks, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/changes', handler: handleGetProfileChanges, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/memory\/sync\/([^\/]+)$/, handler: handleGetMemorySyncItem, requiresAuth: true },
@@ -711,44 +702,41 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/voice-settings', handler: handleSaveVoiceSettings, requiresAuth: true },
 
   // Terminal Control
-  { method: 'GET', pattern: '/api/terminal/list', handler: handleListTerminals },
-  { method: 'POST', pattern: '/api/terminal/spawn', handler: handleSpawnTerminal },
-  { method: 'POST', pattern: '/api/terminal/spawn-claude', handler: handleSpawnClaudeTerminal },
-  { method: 'DELETE', pattern: '/api/terminal/spawn-claude', handler: handleStopClaudeTerminal },
-  { method: 'GET', pattern: '/api/terminal/cleanup', handler: handleTerminalStatus },
-  { method: 'POST', pattern: '/api/terminal/cleanup', handler: handleCleanupTerminals },
-  { method: 'POST', pattern: /^\/api\/terminal\/kill\/([^\/]+)$/, handler: handleKillTerminal },
+  { method: 'GET', pattern: '/api/terminal/list', handler: handleListTerminals, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/terminal/spawn', handler: handleSpawnTerminal, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/terminal/spawn-claude', handler: handleSpawnClaudeTerminal, requiresAuth: true, guard: 'owner' },
+  { method: 'DELETE', pattern: '/api/terminal/spawn-claude', handler: handleStopClaudeTerminal, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/terminal/cleanup', handler: handleTerminalStatus, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/terminal/cleanup', handler: handleCleanupTerminals, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: /^\/api\/terminal\/kill\/([^\/]+)$/, handler: handleKillTerminal, requiresAuth: true, guard: 'owner' },
 
   // Active Operator
-  { method: 'GET', pattern: '/api/active-operator/status', handler: handleGetActiveOperatorStatus },
-  { method: 'GET', pattern: '/api/active-operator/config', handler: handleGetActiveOperatorConfig },
-  { method: 'POST', pattern: '/api/active-operator/config', handler: handleUpdateActiveOperatorConfig },
-  { method: 'POST', pattern: '/api/active-operator/control', handler: handleActiveOperatorControl },
-  { method: 'GET', pattern: '/api/active-operator/proposals', handler: handleGetActiveOperatorProposals },
-  { method: 'POST', pattern: '/api/active-operator/proposals', handler: handleUpdateActiveOperatorProposal },
-  { method: 'GET', pattern: '/api/active-operator/approvals', handler: handleGetActiveOperatorApprovals },
-  { method: 'POST', pattern: '/api/active-operator/approvals', handler: handleResolveActiveOperatorApproval },
-  { method: 'GET', pattern: '/api/lizard-brain/logs', handler: handleGetLizardBrainLogs },
-  { method: 'POST', pattern: '/api/lizard-brain/trigger-review', handler: handleTriggerLizardBrainReview, requiresAuth: true, guard: 'owner' },
-
+  { method: 'GET', pattern: '/api/active-operator/status', handler: handleGetActiveOperatorStatus, requiresAuth: true },
+  { method: 'GET', pattern: '/api/active-operator/config', handler: handleGetActiveOperatorConfig, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/active-operator/config', handler: handleUpdateActiveOperatorConfig, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/active-operator/control', handler: handleActiveOperatorControl, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/active-operator/proposals', handler: handleGetActiveOperatorProposals, requiresAuth: true },
+  { method: 'POST', pattern: '/api/active-operator/proposals', handler: handleUpdateActiveOperatorProposal, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/active-operator/approvals', handler: handleGetActiveOperatorApprovals, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/active-operator/approvals', handler: handleResolveActiveOperatorApproval, requiresAuth: true, guard: 'owner' },
   // Operator Proposals (human-in-the-loop operator approvals)
-  { method: 'GET', pattern: '/api/operator-proposals', handler: handleGetOperatorProposals },
-  { method: 'GET', pattern: '/api/operator-proposals/stream', handler: handleOperatorProposalsStream },
-  { method: 'POST', pattern: '/api/operator-proposals/respond', handler: handleRespondToOperatorProposal },
-  { method: 'POST', pattern: '/api/operator-proposals/post-feedback', handler: handlePostOperatorProposalFeedback },
-  { method: 'POST', pattern: '/api/operator-proposals/review', handler: handleReviewOperatorProposal },
-  { method: 'POST', pattern: '/api/operator-proposals/improve', handler: handleImproveOperatorProposal },
+  { method: 'GET', pattern: '/api/operator-proposals', handler: handleGetOperatorProposals, requiresAuth: true },
+  { method: 'GET', pattern: '/api/operator-proposals/stream', handler: handleOperatorProposalsStream, requiresAuth: true },
+  { method: 'POST', pattern: '/api/operator-proposals/respond', handler: handleRespondToOperatorProposal, requiresAuth: true },
+  { method: 'POST', pattern: '/api/operator-proposals/post-feedback', handler: handlePostOperatorProposalFeedback, requiresAuth: true },
+  { method: 'POST', pattern: '/api/operator-proposals/review', handler: handleReviewOperatorProposal, requiresAuth: true },
+  { method: 'POST', pattern: '/api/operator-proposals/improve', handler: handleImproveOperatorProposal, requiresAuth: true },
 
   // Agent process controls
-  { method: 'POST', pattern: '/api/agents/control', handler: handleAgentsControl },
-  { method: 'POST', pattern: '/api/agents/run', handler: handleRunAgent },
+  { method: 'POST', pattern: '/api/agents/control', handler: handleAgentsControl, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/agents/run', handler: handleRunAgent, requiresAuth: true, guard: 'owner' },
 
   // Environment bridge
-  { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus },
-  { method: 'POST', pattern: '/api/environment-bridge/observation', handler: handleEnvironmentBridgeObservation },
-  { method: 'GET', pattern: '/api/environment-bridge/actions', handler: handleEnvironmentBridgeActions },
-  { method: 'POST', pattern: '/api/environment-bridge/action-result', handler: handleEnvironmentBridgeActionResult },
-  { method: 'POST', pattern: '/api/environment-bridge/control', handler: handleEnvironmentBridgeControl, requiresAuth: true },
+  { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus, requiresAuth: true },
+  { method: 'POST', pattern: '/api/environment-bridge/observation', handler: handleEnvironmentBridgeObservation, public: true, publicReason: 'service-token authenticated environment observation ingestion' },
+  { method: 'GET', pattern: '/api/environment-bridge/stream', handler: handleEnvironmentBridgeStream, public: true, publicReason: 'service-token authenticated environment action stream' },
+  { method: 'POST', pattern: '/api/environment-bridge/action-result', handler: handleEnvironmentBridgeActionResult, public: true, publicReason: 'service-token authenticated environment action result ingestion' },
+  { method: 'POST', pattern: '/api/environment-bridge/control', handler: handleEnvironmentBridgeControl, requiresAuth: true, guard: 'owner' },
 
   // Persona
   { method: 'GET', pattern: '/api/persona', handler: handleGetPersona, requiresAuth: true },
@@ -772,7 +760,7 @@ const routes: RouteDefinition[] = [
   { method: ['GET', 'POST'], pattern: '/api/persona_chat', handler: handlePersonaChat, requiresAuth: true },
   { method: 'DELETE', pattern: '/api/persona_chat', handler: handleClearPersonaChat, requiresAuth: true },
   { method: 'POST', pattern: '/api/persona_chat/cancel', handler: handleCancelPersonaChat, requiresAuth: true },
-  { method: 'POST', pattern: '/api/cancel-chat', handler: handleCancelChatAlias },
+  { method: 'POST', pattern: '/api/cancel-chat', handler: handleCancelChatAlias, requiresAuth: true },
 
   // Chat (cloud provider management for mobile/offline mode)
   { method: 'GET', pattern: '/api/chat/usage', handler: handleGetUsage, requiresAuth: true },
@@ -782,7 +770,7 @@ const routes: RouteDefinition[] = [
   { method: 'DELETE', pattern: '/api/chat/credentials', handler: handleDeleteCredentials, requiresAuth: true },
 
   // Feedback
-  { method: 'POST', pattern: '/api/feedback', handler: handleSubmitFeedback, requiresAuth: true, guard: 'writeMode' },
+  { method: 'POST', pattern: '/api/feedback', handler: handleSubmitFeedback, requiresAuth: true },
 
   // Embeddings
   { method: 'GET', pattern: '/api/embeddings', handler: handleGetEmbeddingsConfig },
@@ -831,30 +819,30 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/confirm-complete$/, handler: handleConfirmCompleteDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/execute$/, handler: handleExecuteDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/feedback$/, handler: handleDesireFeedback, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/generate-plan$/, handler: handleGenerateDesirePlan },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/generate-plan-stream$/, handler: handleGenerateDesirePlanStream },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/outcome-review$/, handler: handleOutcomeReview },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/generate-plan$/, handler: handleGenerateDesirePlan, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/generate-plan-stream$/, handler: handleGenerateDesirePlanStream, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/outcome-review$/, handler: handleOutcomeReview, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/agency\/desires\/[^\/]+\/outcome-review-stream$/, handler: handleOutcomeReviewStream },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/ready-to-plan$/, handler: handleReadyToPlanDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/request-revision$/, handler: handleRequestDesireRevision, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/review$/, handler: handleReviewDesirePlan },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/review$/, handler: handleReviewDesirePlan, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/revise$/, handler: handleReviseDesire, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run$/, handler: handleRunDesire },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run-stream$/, handler: handleRunDesireStream },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run$/, handler: handleRunDesire, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run-stream$/, handler: handleRunDesireStream, requiresAuth: true },
 
   // Config
   { method: 'GET', pattern: '/api/boredom', handler: handleGetBoredom },
-  { method: 'POST', pattern: '/api/boredom', handler: handleSetBoredom },
+  { method: 'POST', pattern: '/api/boredom', handler: handleSetBoredom, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/curiosity-config', handler: handleGetCuriosityConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/curiosity-config', handler: handleSetCuriosityConfig, requiresAuth: true, guard: 'owner' },
 
   // Addons
   { method: 'GET', pattern: '/api/addons', handler: handleGetAddons },
-  { method: 'POST', pattern: '/api/addons/install', handler: handleInstallAddon },
+  { method: 'POST', pattern: '/api/addons/install', handler: handleInstallAddon, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/addons/install-stream', handler: handleInstallAddonStream },
-  { method: 'POST', pattern: '/api/addons/toggle', handler: handleToggleAddon },
-  { method: 'POST', pattern: '/api/addons/mark-installed', handler: handleMarkAddonInstalled },
-  { method: 'POST', pattern: '/api/addons/uninstall', handler: handleUninstallAddon },
+  { method: 'POST', pattern: '/api/addons/toggle', handler: handleToggleAddon, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/addons/mark-installed', handler: handleMarkAddonInstalled, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/addons/uninstall', handler: handleUninstallAddon, requiresAuth: true, guard: 'owner' },
 
   // Code Approvals
   { method: 'GET', pattern: '/api/code-approvals', handler: handleListCodeApprovals, requiresAuth: true },
@@ -863,27 +851,27 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: /^\/api\/code-approvals\/[^\/]+\/reject$/, handler: handleRejectCodeChange, requiresAuth: true },
 
   // Training
-  { method: 'GET', pattern: '/api/training-config', handler: handleGetTrainingConfig },
+  { method: 'GET', pattern: '/api/training-config', handler: handleGetTrainingConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/training-config', handler: handleUpdateTrainingConfig, requiresAuth: true },
   { method: 'GET', pattern: '/api/training-data', handler: handleGetTrainingData, requiresAuth: true },
   { method: 'POST', pattern: '/api/training-data', handler: handleUpdateTrainingData, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/adapters', handler: handleGetAdapters },
-  { method: 'POST', pattern: '/api/adapters', handler: handlePostAdapters },
-  { method: 'GET', pattern: '/api/voice-training', handler: handleGetVoiceTraining },
-  { method: 'POST', pattern: '/api/voice-training', handler: handlePostVoiceTraining },
-  { method: 'POST', pattern: '/api/audio/upload', handler: handleAudioUpload },
-  { method: 'POST', pattern: '/api/voice-profile/upload', handler: handleVoiceProfileUpload },
-  { method: 'POST', pattern: '/api/process-stream', handler: handleProcessStream },
+  { method: 'GET', pattern: '/api/adapters', handler: handleGetAdapters, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/adapters', handler: handlePostAdapters, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/voice-training', handler: handleGetVoiceTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/voice-training', handler: handlePostVoiceTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/audio/upload', handler: handleAudioUpload, requiresAuth: true },
+  { method: 'POST', pattern: '/api/voice-profile/upload', handler: handleVoiceProfileUpload, requiresAuth: true },
+  { method: 'POST', pattern: '/api/process-stream', handler: handleProcessStream, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/tts-queue-stream', handler: handleTtsQueueStream },
-  { method: 'GET', pattern: '/api/rvc-training', handler: handleGetRvcTraining },
-  { method: 'POST', pattern: '/api/rvc-training', handler: handlePostRvcTraining },
-  { method: 'GET', pattern: '/api/sovits-training', handler: handleGetSovitsTraining },
-  { method: 'POST', pattern: '/api/sovits-training', handler: handlePostSovitsTraining },
+  { method: 'GET', pattern: '/api/rvc-training', handler: handleGetRvcTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/rvc-training', handler: handlePostRvcTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/sovits-training', handler: handleGetSovitsTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/sovits-training', handler: handlePostSovitsTraining, requiresAuth: true, guard: 'owner' },
 
   // Profiles
   { method: 'GET', pattern: '/api/profiles/visibility', handler: handleGetProfileVisibility, requiresAuth: true },
   { method: 'POST', pattern: '/api/profiles/visibility', handler: handleSetProfileVisibility, requiresAuth: true },
-  { method: 'GET', pattern: '/api/profiles/list', handler: handleListProfiles },
+  { method: 'GET', pattern: '/api/profiles/list', handler: handleListProfiles, requiresAuth: true },
 
   // Onboarding
   { method: 'GET', pattern: '/api/onboarding/state', handler: handleGetOnboardingState, requiresAuth: true },
@@ -894,11 +882,11 @@ const routes: RouteDefinition[] = [
 
   // Chat Settings
   { method: 'GET', pattern: '/api/chat-settings', handler: handleGetChatSettings },
-  { method: 'PUT', pattern: '/api/chat-settings', handler: handleUpdateChatSettings },
-  { method: 'POST', pattern: '/api/chat-settings', handler: handleApplyChatPreset },
+  { method: 'PUT', pattern: '/api/chat-settings', handler: handleUpdateChatSettings, requiresAuth: true },
+  { method: 'POST', pattern: '/api/chat-settings', handler: handleApplyChatPreset, requiresAuth: true },
 
   // Trust
-  { method: 'GET', pattern: '/api/trust', handler: handleGetTrust },
+  { method: 'GET', pattern: '/api/trust', handler: handleGetTrust, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/trust', handler: handleSetTrust, requiresAuth: true, guard: 'owner' },
 
   // Agent Config
@@ -911,21 +899,21 @@ const routes: RouteDefinition[] = [
 
   // Cognitive Layers Config
   { method: 'GET', pattern: '/api/cognitive-layers-config', handler: handleGetCognitiveLayersConfig },
-  { method: 'POST', pattern: '/api/cognitive-layers-config', handler: handleSetCognitiveLayersConfig },
+  { method: 'POST', pattern: '/api/cognitive-layers-config', handler: handleSetCognitiveLayersConfig, requiresAuth: true, guard: 'owner' },
 
   // System Status
   { method: 'GET', pattern: '/api/system-status', handler: handleGetSystemStatus },
 
   // Trust Coupling
-  { method: 'GET', pattern: '/api/trust-coupling', handler: handleGetTrustCoupling },
+  { method: 'GET', pattern: '/api/trust-coupling', handler: handleGetTrustCoupling, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/trust-coupling', handler: handleSetTrustCoupling, requiresAuth: true, guard: 'owner' },
 
   // Logging Config
   { method: 'GET', pattern: '/api/logging-config', handler: handleGetLoggingConfig },
-  { method: 'POST', pattern: '/api/logging-config', handler: handleSetLoggingConfig },
+  { method: 'POST', pattern: '/api/logging-config', handler: handleSetLoggingConfig, requiresAuth: true, guard: 'owner' },
 
   // Audit
-  { method: 'GET', pattern: '/api/audit', handler: handleGetAudit },
+  { method: 'GET', pattern: '/api/audit', handler: handleGetAudit, requiresAuth: true, guard: 'owner' },
 
   // LoRA State
   { method: 'GET', pattern: '/api/lora-state', handler: handleGetLoraState },
@@ -948,14 +936,15 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/model-info', handler: handleGetModelInfo },
 
   // Functions
-  { method: 'GET', pattern: '/api/functions', handler: handleListFunctions },
-  { method: 'GET', pattern: '/api/template-watch', handler: handleTemplateWatch },
+  { method: 'GET', pattern: '/api/functions', handler: handleListFunctions, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/template-watch', handler: handleTemplateWatch, requiresAuth: true, guard: 'owner' },
 
   // GPU Status
   { method: 'GET', pattern: '/api/gpu-status', handler: handleGetGpuStatus },
 
   // Monitor
-  { method: 'GET', pattern: '/api/monitor', handler: handleGetMonitor },
+  { method: 'GET', pattern: '/api/monitor', handler: handleGetMonitor, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/monitor/agent-variable', handler: handleSetMonitorAgentVariable, requiresAuth: true, guard: 'owner' },
 
   // Voice Status
   { method: 'GET', pattern: '/api/voice-status', handler: handleGetVoiceStatus },
@@ -968,11 +957,11 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/security/policy', handler: handleGetSecurityPolicy },
 
   // Runtime Mode
-  { method: 'GET', pattern: '/api/runtime/mode', handler: handleGetRuntimeMode },
+  { method: 'GET', pattern: '/api/runtime/mode', handler: handleGetRuntimeMode, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/runtime/mode', handler: handleSetRuntimeMode, requiresAuth: true, guard: 'owner' },
 
   // Profile Management
-  { method: 'POST', pattern: '/api/profiles/select', handler: handleSelectProfile },
+  { method: 'POST', pattern: '/api/profiles/select', handler: handleSelectProfile, requiresAuth: true },
   { method: 'POST', pattern: '/api/profiles/delete', handler: handleDeleteProfile, requiresAuth: true },
   { method: 'POST', pattern: '/api/profiles/create', handler: handleCreateProfile, requiresAuth: true, guard: 'owner' },
 
@@ -990,11 +979,11 @@ const routes: RouteDefinition[] = [
   { method: 'DELETE', pattern: '/api/audit/clear', handler: handleClearAudit, requiresAuth: true },
 
   // Scheduler Config
-  { method: 'GET', pattern: '/api/scheduler-config', handler: handleGetSchedulerConfig },
+  { method: 'GET', pattern: '/api/scheduler-config', handler: handleGetSchedulerConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/scheduler-config', handler: handleSetSchedulerConfig, requiresAuth: true, guard: 'owner' },
 
   // Big Brother Config
-  { method: 'GET', pattern: '/api/big-brother-config', handler: handleGetBigBrotherConfig },
+  { method: 'GET', pattern: '/api/big-brother-config', handler: handleGetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-config', handler: handleSetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
 
   // Curiosity Questions (deprecated)
@@ -1002,39 +991,41 @@ const routes: RouteDefinition[] = [
 
   // Persona Toggle
   { method: 'GET', pattern: '/api/persona-toggle', handler: handleGetPersonaToggle },
-  { method: 'POST', pattern: '/api/persona-toggle', handler: handleSetPersonaToggle },
+  { method: 'POST', pattern: '/api/persona-toggle', handler: handleSetPersonaToggle, requiresAuth: true },
 
   // Storage Status
-  { method: 'GET', pattern: '/api/storage-status', handler: handleGetStorageStatus },
+  { method: 'GET', pattern: '/api/storage-status', handler: handleGetStorageStatus, requiresAuth: true },
 
   // Agency Config
   { method: 'GET', pattern: '/api/agency/config', handler: handleGetAgencyConfig, requiresAuth: true },
   { method: 'PUT', pattern: '/api/agency/config', handler: handleSetAgencyConfig, requiresAuth: true, guard: 'owner' },
 
   // Activity Ping
-  { method: 'POST', pattern: '/api/activity-ping', handler: handleActivityPing },
+  { method: 'POST', pattern: '/api/activity-ping', handler: handleActivityPing, requiresAuth: true },
 
   // Unified Queue
-  { method: 'GET', pattern: '/api/unified-queue', handler: handleGetQueueStatus },
-  { method: 'POST', pattern: '/api/unified-queue', handler: handleEnqueueTask },
-  { method: 'POST', pattern: '/api/unified-queue/control', handler: handleQueueControl },
-  { method: 'POST', pattern: '/api/unified-queue/activity', handler: handleRecordActivity },
-  { method: 'GET', pattern: '/api/unified-queue/triggers', handler: handleGetTriggers },
-  { method: 'POST', pattern: /^\/api\/unified-queue\/trigger\/([^\/]+)$/, handler: handleTriggerAgent },
-  { method: 'GET', pattern: '/api/queue-stream', handler: handleQueueStream },
-  { method: 'GET', pattern: '/api/queue/lane-control', handler: handleGetQueueLaneControl },
-  { method: 'POST', pattern: '/api/queue/lane-control', handler: handleUpdateQueueLaneControl },
-  { method: 'GET', pattern: '/api/queue/metrics', handler: handleGetQueueMetrics },
+  { method: 'GET', pattern: '/api/unified-queue', handler: handleGetQueueStatus, requiresAuth: true },
+  { method: 'POST', pattern: '/api/unified-queue', handler: handleEnqueueTask, requiresAuth: true },
+  { method: 'POST', pattern: '/api/internal/work-coordinator/enqueue', handler: handleSubmitCoordinatorWork, public: true, publicReason: 'runtime service-token authenticated coordinator handoff' },
+  { method: 'POST', pattern: '/api/unified-queue/control', handler: handleQueueControl, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/unified-queue/activity', handler: handleRecordActivity, requiresAuth: true },
+  { method: 'POST', pattern: '/api/unified-queue/clear', handler: handleClearQueueTasks, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/unified-queue/triggers', handler: handleGetTriggers, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: /^\/api\/unified-queue\/trigger\/([^\/]+)$/, handler: handleTriggerAgent, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)\/stream$/, handler: handleQueueTaskStream },
+  { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleGetQueueTask, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleDeleteQueueTask, requiresAuth: true },
+  { method: 'GET', pattern: '/api/queue-stream', handler: handleQueueStream, requiresAuth: true },
 
   // RunPod
   { method: 'GET', pattern: '/api/runpod/config', handler: handleGetRunpodConfig, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/runpod/validate', handler: handleValidateRunpodKey },
+  { method: 'POST', pattern: '/api/runpod/validate', handler: handleValidateRunpodKey, requiresAuth: true, guard: 'owner' },
 
   // Conversation Summary
   { method: 'GET', pattern: '/api/conversation/summary', handler: handleGetConversationSummary, requiresAuth: true },
 
   // Semantic Turn Detection
-  { method: 'POST', pattern: '/api/semantic-turn', handler: handleSemanticTurn },
+  { method: 'POST', pattern: '/api/semantic-turn', handler: handleSemanticTurn, requiresAuth: true },
 
   // Training Models
   { method: 'GET', pattern: '/api/training-models', handler: handleGetTrainingModels },
@@ -1046,10 +1037,10 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/voice-models', handler: handleGetVoiceModels },
 
   // Training History
-  { method: 'GET', pattern: '/api/training/history', handler: handleGetTrainingHistory },
+  { method: 'GET', pattern: '/api/training/history', handler: handleGetTrainingHistory, requiresAuth: true, guard: 'owner' },
 
   // Memory Content
-  { method: 'GET', pattern: '/api/memory-content', handler: handleGetMemoryContent },
+  { method: 'GET', pattern: '/api/memory-content', handler: handleGetMemoryContent, requiresAuth: true },
   { method: 'PUT', pattern: '/api/memory-content', handler: handlePutMemoryContent, requiresAuth: true },
 
   // Persona Archives
@@ -1092,14 +1083,14 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/agency/scratchpad', handler: handleGetAgencyScratchpad, requiresAuth: true },
 
   // Cognitive Graphs
-  { method: 'GET', pattern: '/api/cognitive-graphs', handler: handleListCognitiveGraphs },
-  { method: 'GET', pattern: '/api/cognitive-graph', handler: handleGetCognitiveGraph },
+  { method: 'GET', pattern: '/api/cognitive-graphs', handler: handleListCognitiveGraphs, requiresAuth: true },
+  { method: 'GET', pattern: '/api/cognitive-graph', handler: handleGetCognitiveGraph, requiresAuth: true },
   { method: 'POST', pattern: '/api/cognitive-graph', handler: handleCreateCognitiveGraph, requiresAuth: true },
   { method: 'DELETE', pattern: '/api/cognitive-graph', handler: handleDeleteCognitiveGraph, requiresAuth: true },
 
   // Graph Execution
-  { method: 'GET', pattern: '/api/graph-traces', handler: handleGetGraphTraces },
-  { method: 'POST', pattern: '/api/execute-graph', handler: handleExecuteGraph },
+  { method: 'GET', pattern: '/api/graph-traces', handler: handleGetGraphTraces, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/execute-graph', handler: handleExecuteGraph, requiresAuth: true, guard: 'owner' },
 
   // Node Schemas
   { method: 'GET', pattern: '/api/node-schemas', handler: handleGetNodeSchemas },
@@ -1118,7 +1109,7 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/drift/reports', handler: handleGetDriftReports, requiresAuth: true },
 
   // LLM Backend
-  { method: 'GET', pattern: '/api/llm-backend/config', handler: handleGetLlmBackendConfig },
+  { method: 'GET', pattern: '/api/llm-backend/config', handler: handleGetLlmBackendConfig, requiresAuth: true, guard: 'owner' },
   { method: 'PUT', pattern: '/api/llm-backend/config', handler: handleSetLlmBackendConfig, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/llm-backend/status', handler: handleGetLlmBackendStatus },
   { method: 'POST', pattern: '/api/llm-backend/switch', handler: handleSwitchLlmBackend, requiresAuth: true, guard: 'owner' },
@@ -1157,28 +1148,28 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: /^\/api\/drift\/reports\/([^\/]+)$/, handler: handleGetDriftReport, requiresAuth: true },
 
   // Cloudflare Tunnel
-  { method: 'GET', pattern: '/api/cloudflare/status', handler: handleGetCloudflareStatus },
-  { method: 'POST', pattern: '/api/cloudflare/start', handler: handleCloudflareStart },
-  { method: 'POST', pattern: '/api/cloudflare/stop', handler: handleCloudflareStop },
-  { method: 'POST', pattern: '/api/cloudflare/toggle', handler: handleCloudflareToggle },
+  { method: 'GET', pattern: '/api/cloudflare/status', handler: handleGetCloudflareStatus, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/cloudflare/start', handler: handleCloudflareStart, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/cloudflare/stop', handler: handleCloudflareStop, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/cloudflare/toggle', handler: handleCloudflareToggle, requiresAuth: true, guard: 'owner' },
 
   // Training
-  { method: 'GET', pattern: '/api/training/status', handler: handleGetTrainingStatus },
-  { method: 'POST', pattern: '/api/training/launch', handler: handleLaunchTraining },
-  { method: 'POST', pattern: '/api/training/load-model', handler: handleLoadTrainingModel },
-  { method: 'GET', pattern: '/api/training/console-logs', handler: handleGetTrainingConsoleLogs },
-  { method: 'GET', pattern: '/api/training/running', handler: handleGetTrainingRunning },
+  { method: 'GET', pattern: '/api/training/status', handler: handleGetTrainingStatus, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/training/launch', handler: handleLaunchTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/training/load-model', handler: handleLoadTrainingModel, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/training/console-logs', handler: handleGetTrainingConsoleLogs, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/training/running', handler: handleGetTrainingRunning, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/training/dataset-stats', handler: handleGetTrainingDatasetStats, requiresAuth: true },
-  { method: 'GET', pattern: '/api/training/logs', handler: handleGetTrainingLogs },
+  { method: 'GET', pattern: '/api/training/logs', handler: handleGetTrainingLogs, requiresAuth: true, guard: 'owner' },
 
   // Lifeline
-  { method: 'POST', pattern: '/api/lifeline/trigger', handler: handleLifelineTrigger },
+  { method: 'POST', pattern: '/api/lifeline/trigger', handler: handleLifelineTrigger, requiresAuth: true, guard: 'owner' },
 
   // VeraCrypt
   { method: 'GET', pattern: '/api/veracrypt/status', handler: handleGetVeracryptStatus },
 
   // Training Log File
-  { method: 'GET', pattern: '/api/training/log-file', handler: handleGetTrainingLogFile },
+  { method: 'GET', pattern: '/api/training/log-file', handler: handleGetTrainingLogFile, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: /^\/api\/training\/([^\/]+)$/, handler: handleGetTrainingOperation },
 
   // Export Conversations
@@ -1195,7 +1186,7 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/reset-factory', handler: handleResetFactoryGet },
 
   // Execute CLI Command
-  { method: 'POST', pattern: '/api/execute', handler: handleExecuteCommand },
+  { method: 'POST', pattern: '/api/execute', handler: handleExecuteCommand, requiresAuth: true, guard: 'owner' },
 
   // Persona Icon (binary image response)
   { method: 'GET', pattern: '/api/persona-icon', handler: handleGetPersonaIcon },
@@ -1230,10 +1221,7 @@ const routes: RouteDefinition[] = [
   // - /api/conversation/summarize
 
   // STT (Speech-to-Text)
-  { method: 'POST', pattern: '/api/stt', handler: handleStt },
-
-  // Agent Control
-  { method: 'POST', pattern: '/api/agent', handler: handleStartAgent, requiresAuth: true },
+  { method: 'POST', pattern: '/api/stt', handler: handleStt, requiresAuth: true },
 
   // Chat History
   { method: 'GET', pattern: '/api/chat/history', handler: handleGetChatHistory },
@@ -1242,11 +1230,11 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/buffer', handler: handleGetSimpleBuffer },
 
   // TTS (Text-to-Speech)
-  { method: 'POST', pattern: '/api/tts', handler: handleTtsGenerate },
+  { method: 'POST', pattern: '/api/tts', handler: handleTtsGenerate, requiresAuth: true },
   { method: 'GET', pattern: '/api/tts', handler: handleTtsStatus },
 
   // Response Pipeline
-  { method: 'POST', pattern: '/api/response-pipeline', handler: handleResponsePipelineApi },
+  { method: 'POST', pattern: '/api/response-pipeline', handler: handleResponsePipelineApi, requiresAuth: true },
 
   // Memories All (memory browser)
   { method: 'GET', pattern: '/api/memories_all', handler: handleGetAllMemories, requiresAuth: true },
@@ -1256,8 +1244,8 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/index', handler: handleBuildIndex, requiresAuth: true },
 
   // File Operations
-  { method: 'GET', pattern: '/api/file_operations', handler: handleFileOperationsStatus },
-  { method: 'POST', pattern: '/api/file_operations', handler: handleFileOperation },
+  { method: 'GET', pattern: '/api/file_operations', handler: handleFileOperationsStatus, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/file_operations', handler: handleFileOperation, requiresAuth: true, guard: 'owner' },
 
   // Photo Ingestion (Phase 3 Connectors)
   { method: 'POST', pattern: '/api/photos/ingest', handler: handleIngestPhoto, requiresAuth: true },
@@ -1302,7 +1290,7 @@ const routes: RouteDefinition[] = [
 
   // Encryption
   { method: 'GET', pattern: '/api/encryption', handler: handleGetEncryption },
-  { method: 'POST', pattern: '/api/encryption/setup', handler: handleSetupEncryption, requiresAuth: true, guard: 'writeMode' },
+  { method: 'POST', pattern: '/api/encryption/setup', handler: handleSetupEncryption, requiresAuth: true, guard: 'owner' },
 
   // Profile Path
   { method: 'GET', pattern: '/api/profile-path', handler: handleGetProfilePath, requiresAuth: true },
@@ -1323,13 +1311,13 @@ const routes: RouteDefinition[] = [
   // Remote Server (connect to desktop LLM from mobile/laptop)
   { method: 'GET', pattern: '/api/remote-server/health', handler: handleRemoteServerHealth },
   { method: 'GET', pattern: '/api/remote-server/models', handler: handleRemoteServerModels },
-  { method: 'POST', pattern: '/api/remote-server/test', handler: handleRemoteServerTest },
+  { method: 'POST', pattern: '/api/remote-server/test', handler: handleRemoteServerTest, requiresAuth: true },
   { method: 'POST', pattern: '/api/remote-server/connect', handler: handleRemoteServerConnect, requiresAuth: true },
   { method: 'DELETE', pattern: '/api/remote-server/disconnect', handler: handleRemoteServerDisconnect, requiresAuth: true },
 
   // Local Models (Transformers.js service for mobile/offline embeddings & LLM)
   { method: 'GET', pattern: '/api/local-models/status', handler: handleGetLocalModelsStatus },
-  { method: 'GET', pattern: '/api/local-models/config', handler: handleGetLocalModelsConfig },
+  { method: 'GET', pattern: '/api/local-models/config', handler: handleGetLocalModelsConfig, requiresAuth: true, guard: 'owner' },
   { method: 'PUT', pattern: '/api/local-models/config', handler: handleSetLocalModelsConfig, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/local-models/models', handler: handleGetLocalModelsAvailable },
   { method: 'POST', pattern: '/api/local-models/download', handler: handleDownloadLocalModel, requiresAuth: true, guard: 'owner' },
@@ -1394,6 +1382,10 @@ function extractPathParams(path: string, pattern: string | RegExp): Record<strin
       params.id = segments[2];
       return params;
     }
+    if (segments[0] === 'api' && segments[1] === 'unified-queue' && segments[2] === 'tasks' && segments.length >= 4) {
+      params.id = segments[3];
+      return params;
+    }
 
     if (segments.length > 2) {
       params.id = segments[segments.length - 1];
@@ -1433,14 +1425,78 @@ function checkGuard(guard: string | undefined, user: UnifiedRequest['user']): bo
   switch (guard) {
     case 'owner':
       return user.role === 'owner';
-    case 'writeMode':
-      // TODO: Check cognitive mode from config
-      return user.isAuthenticated;
-    case 'operatorMode':
-      return user.role === 'owner';
     default:
-      return true;
+      return false;
   }
+}
+
+function isMutatingMethod(method: string): boolean {
+  return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+}
+
+function getHeader(req: UnifiedRequest, name: string): string | undefined {
+  const headers = req.headers || {};
+  return headers[name] || headers[name.toLowerCase()] || headers[name.toUpperCase()];
+}
+
+function stripPort(host: string): string {
+  const normalized = host.trim().toLowerCase();
+  if (normalized.startsWith('[')) {
+    return normalized.slice(1, normalized.indexOf(']'));
+  }
+  return normalized.split(':')[0];
+}
+
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return true;
+  const hostname = stripPort(host);
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function originHost(origin: string | undefined): string | undefined {
+  if (!origin) return undefined;
+  try {
+    return new URL(origin).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function configuredAllowedOrigins(): Set<string> {
+  return new Set((process.env.MH_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean));
+}
+
+function requestExposureMode(): 'local' | 'shared' {
+  return process.env.MH_EXPOSURE_MODE === 'shared' ? 'shared' : 'local';
+}
+
+function checkRequestBoundary(req: UnifiedRequest, route: RouteDefinition): UnifiedResponse | null {
+  if (!isMutatingMethod(req.method) || route.public) return null;
+
+  const host = getHeader(req, 'host');
+  const origin = getHeader(req, 'origin')?.replace(/\/+$/, '');
+  const mode = requestExposureMode();
+
+  if (mode === 'local') {
+    if (!isLoopbackHost(host)) {
+      return forbiddenResponse('Local mode only accepts loopback host requests');
+    }
+    if (origin && !isLoopbackHost(originHost(origin))) {
+      return forbiddenResponse('Local mode only accepts loopback origin requests');
+    }
+    return null;
+  }
+
+  if (!origin) return null;
+
+  const hostOrigin = host ? `${origin.startsWith('https://') ? 'https' : 'http'}://${host}` : undefined;
+  if (hostOrigin && origin === hostOrigin.replace(/\/+$/, '')) return null;
+  if (configuredAllowedOrigins().has(origin)) return null;
+
+  return forbiddenResponse('Origin is not allowed for shared mode');
 }
 
 // ============================================================================
@@ -1460,9 +1516,27 @@ export async function routeRequest(req: UnifiedRequest): Promise<UnifiedResponse
     return notFoundResponse(`Route not found: ${req.method} ${req.path}`);
   }
 
-  // Check authentication
-  if (route.requiresAuth && !req.user.isAuthenticated) {
-    return unauthorizedResponse();
+  const boundaryFailure = checkRequestBoundary(req, route);
+  if (boundaryFailure) {
+    return boundaryFailure;
+  }
+
+  // Mutating routes require authentication by default. Auth bootstrap and
+  // external bridge ingestion must opt out explicitly with public/publicReason.
+  const requiresAuthentication = route.requiresAuth || (isMutatingMethod(req.method) && !route.public);
+  if (requiresAuthentication && !req.user.isAuthenticated) {
+    return {
+      ...unauthorizedResponse(),
+      ...(req.sessionId
+        ? {
+            cookies: [{
+              action: 'delete' as const,
+              name: 'mh_session',
+              options: { path: '/' },
+            }],
+          }
+        : {}),
+    };
   }
 
   // Check security guard

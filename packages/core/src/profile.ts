@@ -822,18 +822,18 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         maxRetries: 2,
         comment: 'LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity',
       },
-      'night-pipeline': {
-        id: 'night-pipeline',
+      'sleep-workflow': {
+        id: 'sleep-workflow',
         enabled: true,
         type: 'time-of-day',
         priority: 'low',
-        agentPath: 'night-pipeline.ts',
+        agentPath: 'coordinator:workflow.sleep',
         usesLLM: true,
         schedule: '02:00',
         runOnBoot: false,
         autoRestart: false,
         maxRetries: 1,
-        comment: 'Runs nightly processing: dreamer, audio backlog, LoRA training',
+        comment: 'Queues bounded dream and persona-review children through the work coordinator.',
       },
       'boredom-maintenance': {
         id: 'boredom-maintenance',

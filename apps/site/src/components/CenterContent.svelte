@@ -150,9 +150,6 @@
         case 'ActiveOperatorDashboard':
           module = await import('./ActiveOperatorDashboard.svelte');
           break;
-        case 'UnifiedQueueDashboard':
-          module = await import('./UnifiedQueueDashboard.svelte');
-          break;
         case 'SystemCoderDashboard':
           module = await import('./SystemCoderDashboard.svelte');
           break;
@@ -217,7 +214,7 @@ let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' 
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
 let systemTab: 'chat' | 'lifeline' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' | 'terminal' = 'settings'
-let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' | 'queue' = 'overview'
+let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -480,7 +477,7 @@ function getPreview(content = '', limit = 160): string {
 // Map dialogueSource identifiers to friendly display labels
 function formatDialogueSource(source: string): string {
   const labels: Record<string, string> = {
-    'lizard-brain': '⚡ Lizard Brain',
+    'operator-policy': '🧭 Operator Policy',
     'agency-system': '📋 Agency',
     'reflector': '💭 Reflection',
     'curiosity': '❓ Curiosity',
@@ -663,7 +660,6 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button {dashboardTab === 'tasks' ? 'active' : ''}" on:click={() => dashboardTab = 'tasks'}>Tasks</button>
           <button class="tab-button {dashboardTab === 'approvals' ? 'active' : ''}" on:click={() => dashboardTab = 'approvals'}>Approvals</button>
           <button class="tab-button {dashboardTab === 'operator' ? 'active' : ''}" on:click={() => dashboardTab = 'operator'}>Active Operator</button>
-          <button class="tab-button {dashboardTab === 'queue' ? 'active' : ''}" on:click={() => dashboardTab = 'queue'}>Queue Lanes</button>
         </div>
         {#if dashboardTab === 'overview'}
           {#await loadComponent('Dashboard')}
@@ -686,12 +682,6 @@ async function loadMemoryContent(relPath: string) {
         {:else if dashboardTab === 'operator'}
           {#await loadComponent('ActiveOperatorDashboard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading active operator...</div>
-          {:then Component}
-            <svelte:component this={Component} />
-          {/await}
-        {:else if dashboardTab === 'queue'}
-          {#await loadComponent('UnifiedQueueDashboard')}
-            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading queue lanes...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}

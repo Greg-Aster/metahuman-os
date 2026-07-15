@@ -23,7 +23,7 @@ export function adapterList() {
 
   if (!fs.existsSync(adaptersDir)) {
     console.log('No adapter datasets found.');
-    console.log('Run sleep-service with adapters.lora: true to generate datasets.');
+    console.log('Use Adaptation → Run Full Cycle Now in the web UI to generate datasets.');
     return;
   }
 

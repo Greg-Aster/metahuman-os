@@ -205,7 +205,7 @@ function ensureDir(dir: string): void {
 
 /**
  * Create a new operator proposal.
- * This is called by the Lizard Brain when it wants to execute a task.
+ * This is called by Operator Policy when it proposes work for approval.
  */
 export function createProposal(
   username: string,
@@ -235,7 +235,7 @@ export function createProposal(
     category: 'system',
     level: 'info',
     event: 'operator_proposal_created',
-    actor: 'lizard-brain',
+    actor: 'operator-policy',
     details: {
       proposalId: proposal.id,
       taskType,
@@ -299,7 +299,7 @@ export function getPendingProposals(username: string): OperatorProposal[] {
 
 /**
  * Get task types that have pending proposals.
- * Used by the Lizard Brain to skip tasks awaiting user approval.
+ * Used by Operator Policy to avoid duplicate approval requests.
  */
 export function getPendingProposalTaskTypes(username: string): ProposalTaskType[] {
   const pending = getPendingProposals(username);
@@ -401,49 +401,6 @@ export function respondToProposal(
     return proposal;
   } catch {
     return null;
-  }
-}
-
-/**
- * Mark a proposal as executed after successful task completion.
- */
-export function markProposalExecuted(
-  username: string,
-  proposalId: string,
-  result: OperatorProposal['executionResult']
-): boolean {
-  const proposalsDir = getProposalsDir(username);
-  const filePath = path.join(proposalsDir, `${proposalId}.json`);
-
-  if (!fs.existsSync(filePath)) {
-    return false;
-  }
-
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const proposal = JSON.parse(content) as OperatorProposal;
-
-    proposal.status = 'executed';
-    proposal.executedAt = new Date().toISOString();
-    proposal.executionResult = result;
-
-    fs.writeFileSync(filePath, JSON.stringify(proposal, null, 2));
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'operator_proposal_executed',
-      actor: 'lizard-brain',
-      details: {
-        proposalId,
-        taskType: proposal.taskType,
-        success: result?.success ?? false,
-      },
-    });
-
-    return true;
-  } catch {
-    return false;
   }
 }
 

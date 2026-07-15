@@ -21,6 +21,7 @@ import {
 import { audit } from '../../audit.js';
 import { systemPaths } from '../../paths.js';
 import { loadModelRegistry } from '../../model-resolver.js';
+import { getQueueSystem } from '../../queue/queue-system.js';
 
 function ownerRequired(req: UnifiedRequest, message: string): UnifiedResponse | null {
   if (!req.user.isAuthenticated) {
@@ -64,20 +65,6 @@ function backgroundTrainingScript(scriptFile: string, args: string[] = [], optio
     stdio: options?.stdio ?? 'ignore',
     detached: true,
     env: options?.env,
-  });
-  child.unref();
-}
-
-function backgroundAgent(agentFile: string, args: string[] = []): void {
-  const agentPath = path.join(systemPaths.brain, 'agents', agentFile);
-  if (!fs.existsSync(agentPath)) {
-    throw new Error(`Agent not found: ${agentFile}`);
-  }
-
-  const child = spawn('tsx', [agentPath, ...args], {
-    cwd: systemPaths.root,
-    stdio: 'ignore',
-    detached: true,
   });
   child.unref();
 }
@@ -357,19 +344,28 @@ export async function handlePostAdapters(req: UnifiedRequest): Promise<UnifiedRe
         return successResponse({ success: true, message: 'Adapter-builder started in background' });
       }
       case 'runDreamer': {
-        backgroundAgent('dreamer.ts');
-        audit({ level: 'info', category: 'action', event: 'dreamer_queued', details: { actor: req.user.username }, actor: req.user.username });
-        return successResponse({ success: true, message: 'Dreamer started in background' });
+        const task = getQueueSystem().enqueue({
+          type: 'dream',
+          handler: 'agent.dreamer',
+          source: 'user',
+          username: req.user.username,
+          priority: 'normal',
+          input: { triggeredBy: 'adapter-controls' },
+        });
+        audit({ level: 'info', category: 'action', event: 'dreamer_queued', details: { taskId: task.id }, actor: req.user.username });
+        return successResponse({ success: true, message: 'Dreamer queued', taskId: task.id });
       }
-      case 'runNightProcessor': {
-        backgroundAgent('night-processor.ts');
-        audit({ level: 'info', category: 'action', event: 'night_processor_queued', details: { actor: req.user.username }, actor: req.user.username });
-        return successResponse({ success: true, message: 'Night processor started in background' });
-      }
-      case 'startSleepService': {
-        backgroundAgent('sleep-service.ts');
-        audit({ level: 'info', category: 'system', event: 'sleep_service_started_from_ui', details: { actor: req.user.username }, actor: req.user.username });
-        return successResponse({ success: true, message: 'Sleep service started (long-running)' });
+      case 'runSleepWorkflow': {
+        const task = getQueueSystem().enqueue({
+          type: 'sleep_workflow',
+          handler: 'workflow.sleep',
+          source: 'user',
+          username: req.user.username,
+          priority: 'low',
+          input: { force: true },
+        });
+        audit({ level: 'info', category: 'system', event: 'sleep_workflow_queued', details: { taskId: task.id }, actor: req.user.username });
+        return successResponse({ success: true, message: 'Sleep workflow queued', taskId: task.id });
       }
       case 'fullCycle': {
         const env = { ...process.env };

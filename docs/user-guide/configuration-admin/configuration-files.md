@@ -99,7 +99,7 @@ This file in the project root allows you to configure system behavior and activa
 
 - `HEADLESS_RUNTIME=true`
   - **Purpose**: Enables headless runtime mode for remote access.
-  - **Effect**: Pauses all autonomous agents while keeping web UI and tunnel running. Only essential `headless-watcher` service runs. Reduces resource conflicts when accessing system remotely.
+  - **Effect**: Pauses autonomous agents while keeping the web UI and tunnel running. Agents resume from the Boot Manager configuration when headless mode is disabled. Reduces resource conflicts when accessing system remotely.
 
 #### 3-Layer Cognitive Architecture (Phase 4)
 

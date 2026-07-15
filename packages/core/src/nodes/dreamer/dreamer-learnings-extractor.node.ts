@@ -6,7 +6,6 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { scheduler } from '../../agent-scheduler.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 interface Memory {
@@ -16,7 +15,6 @@ interface Memory {
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
-  try { scheduler.recordActivity(); } catch {}
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are analyzing recent episodic memories to extract implicit and explicit preferences, decision heuristics, writing style patterns, and things to avoid.

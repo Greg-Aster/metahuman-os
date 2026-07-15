@@ -25,9 +25,7 @@ export const environmentObservationNode = defineNode({
   async execute(inputs, context) {
     const sessionId = typeof inputs.sessionId === 'string' && inputs.sessionId
       ? inputs.sessionId
-      : typeof context.sessionId === 'string'
-        ? context.sessionId
-        : undefined;
+      : undefined;
     const contextObservation = context.environmentObservation && typeof context.environmentObservation === 'object'
       ? context.environmentObservation as ReturnType<typeof getLatestEnvironmentObservation>
       : undefined;

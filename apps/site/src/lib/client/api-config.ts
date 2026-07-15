@@ -11,10 +11,11 @@
  * Server connection is OPTIONAL and only for syncing profiles.
  */
 
-// Default servers
+// Default servers for explicit profile sync.
+// Local web/API calls remain same-origin; remote sync requires user input.
 const DEFAULT_SERVERS = {
-  local: 'https://mh.dndiy.org',
-  cloud: 'https://api.metahuman.cloud'  // Future cloud deployment
+  local: '',
+  cloud: ''
 };
 
 // Cache for server URL (avoid async calls on every request)
@@ -61,7 +62,7 @@ export async function initServerUrl(): Promise<void> {
 
   cachedServerUrl = DEFAULT_SERVERS.local;
   cacheInitialized = true;
-  console.log('[api-config] Initialized server URL:', cachedServerUrl);
+  console.log('[api-config] Initialized sync server URL:', cachedServerUrl || '(not configured)');
 }
 
 /**
@@ -183,13 +184,80 @@ export function getDefaultServers(): typeof DEFAULT_SERVERS {
  *
  * @example
  * // In mobile app:
- * apiUrl('/api/status') // => 'https://mh.dndiy.org/api/status'
+ * apiUrl('/api/status') // => '/api/status'
  *
  * // In web browser:
  * apiUrl('/api/status') // => '/api/status'
  */
 export function apiUrl(path: string): string {
   return `${getApiBaseUrl()}${path}`;
+}
+
+function shouldReportAuthFailure(path: string): boolean {
+  return ![
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/guest',
+    '/api/auth/sync-user',
+    '/api/auth/users',
+    '/api/auth/reset-password',
+    '/api/auth/logout',
+  ].some(authPath => path.startsWith(authPath));
+}
+
+function isMutatingMethod(method: string): boolean {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
+}
+
+function shouldReportAction(path: string, method: string): boolean {
+  if (!isMutatingMethod(method)) return false;
+  return ![
+    '/api/auth/',
+    '/api/persona_chat',
+    '/api/semantic-turn',
+    '/api/llm-proxy',
+    '/api/profile-sync/import',
+  ].some(prefix => path.startsWith(prefix));
+}
+
+function actionLabel(path: string, method: string): string {
+  const normalized = path
+    .replace(/^\/api\//, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/[-_/]+/g, ' ')
+    .trim();
+  return `${method.toUpperCase()} ${normalized || 'API action'}`;
+}
+
+async function reportAuthFailure(path: string, response: Response): Promise<void> {
+  if (typeof window === 'undefined' || !shouldReportAuthFailure(path)) return;
+
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    payload = undefined;
+  }
+
+  window.dispatchEvent(new CustomEvent('mh:api-auth-failure', {
+    detail: {
+      path,
+      status: response.status,
+      payload,
+    },
+  }));
+}
+
+function reportAction(detail: {
+  id: string;
+  path: string;
+  method: string;
+  state: 'pending' | 'success' | 'error';
+  status?: number;
+  message?: string;
+}): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('mh:api-action', { detail }));
 }
 
 /**
@@ -214,8 +282,52 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     ...init,
     credentials: init?.credentials ?? 'same-origin',
   };
+  const method = options.method || 'GET';
+  const shouldReport = shouldReportAction(path, method);
+  const actionId = shouldReport
+    ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    : '';
 
-  return fetch(url, options);
+  if (shouldReport) {
+    reportAction({
+      id: actionId,
+      path,
+      method,
+      state: 'pending',
+      message: `${actionLabel(path, method)} started`,
+    });
+  }
+
+  try {
+    const response = await fetch(url, options);
+    if (response.status === 401 || response.status === 403) {
+      void reportAuthFailure(path, response);
+    }
+    if (shouldReport) {
+      reportAction({
+        id: actionId,
+        path,
+        method,
+        state: response.ok ? 'success' : 'error',
+        status: response.status,
+        message: response.ok
+          ? `${actionLabel(path, method)} completed`
+          : `${actionLabel(path, method)} failed (${response.status})`,
+      });
+    }
+    return response;
+  } catch (error) {
+    if (shouldReport) {
+      reportAction({
+        id: actionId,
+        path,
+        method,
+        state: 'error',
+        message: `${actionLabel(path, method)} failed: ${error instanceof Error ? error.message : 'Network error'}`,
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -241,7 +353,7 @@ export function apiEventSource(path: string): EventSource {
  * Normalize a URL to ensure it has a protocol (https://)
  *
  * Handles common user input mistakes:
- * - "mh.dndiy.org" -> "https://mh.dndiy.org"
+ * - "example.local" -> "https://example.local"
  * - "http://..." -> "https://..." (upgrade to https)
  * - "https://..." -> unchanged
  * - Removes trailing slashes
@@ -274,7 +386,7 @@ export function normalizeUrl(url: string): string {
  * Fetch wrapper for REMOTE servers (external URLs)
  *
  * IMPORTANT: This is different from apiFetch() which is for LOCAL API calls.
- * Use this for sync operations to external servers like mh.dndiy.org.
+ * Use this only for explicit sync operations to user-configured external servers.
  *
  * Uses standard fetch on both platforms.
  *

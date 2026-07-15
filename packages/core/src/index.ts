@@ -70,6 +70,8 @@ export * from './model-artifacts';
 export * from './model-router';
 export * from './specialist-broker';
 export * from './agent-monitor';
+export * from './agent-executable-resolver';
+export * from './agent-process-runner';
 export * from './vector-index';
 // Embeddings - exclude isEmbeddingServiceAvailable (conflicts with model-router)
 export {
@@ -217,20 +219,6 @@ export * from './state';
 export * from './context-builder';
 // Cognitive layers - primary source for ValidationResult
 export * from './cognitive-layers';
-
-// Agent scheduler - rename AgentStatus to avoid conflict with agent-monitor
-export type {
-  TriggerType,
-  AgentPriority,
-  AgentStatus as SchedulerAgentStatus,
-  AgentConfig,
-  GlobalSchedulerSettings,
-  SchedulerConfig,
-} from './agent-scheduler.js';
-export {
-  AgentScheduler,
-  scheduler,
-} from './agent-scheduler.js';
 
 // Schema manager - rename FormattedSample to avoid conflict with mode-validator
 export type {
@@ -476,11 +464,12 @@ export * from './plugin-system';
 // Agency System
 export * from './agency/index.js';
 
-// Unified Queue System (resource-aware task scheduling)
+// Work Coordinator (single durable task lifecycle)
 // Note: Types renamed to avoid conflict with active-operator
 export {
   // Facade
   QueueSystem,
+  ensureQueueSystemStarted,
   getQueueSystem,
   resetQueueSystem,
   // Components
@@ -492,120 +481,48 @@ export {
   RemoteDispatcher,
   // Types (renamed to avoid conflicts)
   type ResourceLaneId,
-  type QueuedTask as UnifiedQueueTask,
-  type TaskType as UnifiedTaskType,
-  type Priority as UnifiedPriority,
+  type WorkState,
+  type WorkSource,
+  type WorkResource,
+  type WorkError,
+  type WorkCognitiveMode,
+  type QueueLifecycleState,
+  type AutonomyMode,
   type TaskInput,
   type LaneConfig,
   type ResourceLane,
   type RemoteTaskHandle,
   type RemoteResult,
-  type TriggerConfig,
   type QueueConfig,
   type QueueState,
   type QueueEvent,
   type QueueEventType,
   type QueueEventListener,
-  type TriggerType as QueueTriggerType,
   type AgentTriggerConfig,
   type TriggerManagerConfig,
   TASK_LANE_MAP,
+  DEFAULT_HANDLERS,
   DEFAULT_PRIORITIES,
   PRIORITY_VALUES,
   // Persistence
-  loadQueueState as loadUnifiedQueueState,
+  loadQueueState,
   persistQueueState,
-  saveCurrentTask as saveUnifiedCurrentTask,
-  loadCurrentTask as loadUnifiedCurrentTask,
-  clearCurrentTask as clearUnifiedCurrentTask,
   shouldRestoreState,
   getQueueStateDir,
-  // Lane Metrics
-  type HourlyMetrics,
-  type LaneMetrics,
-  type QueueMetrics,
-  loadLaneMetrics,
-  clearLaneMetrics,
-  recordTaskComplete,
-  recordTaskFailed,
-  recordTaskFromTask,
-  getAllLaneMetrics,
-  getLaneMetrics,
-  getThroughputHistory,
-  getLastHourSummary,
-  getLastHourAvgDuration,
 } from './queue/index.js';
 
-// Active Operator System (LLM-controlled continuous thinking)
-// Note: loadMetrics/saveMetrics renamed to avoid conflict with agency module
+// Active Operator bounded autonomy policy (owns no work queue or executor)
 export {
   // Types
-  type QueuedTask,
-  type TaskType,
-  type Priority,
-  type TaskPayload,
-  type TaskResult,
   type OperatorMode,
-  type OperatorStatus,
-  type SystemState,
-  type TaskDecision,
   type ActiveOperatorConfig,
-  type OperatorMetrics,
-  // Queue
-  UnifiedQueue,
-  createPersistentQueue,
-  // State persistence
-  type ScratchpadEntry,
-  type DecisionScratchpad,
-  loadScratchpad,
-  saveScratchpad,
-  addScratchpadEntry,
-  recordDecision,
-  recordExecutionStart,
-  recordTaskResult,
-  recordThought,
-  updateActivitySummary,
-  createFreshScratchpad,
-  clearScratchpad,
-  getScratchpadContext,
-  saveQueueState,
-  loadQueueState,
-  clearQueueState,
-  saveCurrentTask,
-  loadCurrentTask,
-  clearCurrentTask,
-  saveMetrics as saveActiveOperatorMetrics,
-  loadMetrics as loadActiveOperatorMetrics,
-  resetMetrics as resetActiveOperatorMetrics,
   loadActiveOperatorConfig,
   saveActiveOperatorConfig,
   updateActiveOperatorConfig,
-  clearAllState as clearAllActiveOperatorState,
-  getStateDir as getActiveOperatorStateDir,
   // Mode controller
   ModeController,
   getModeController,
-  isActiveOperatorEnabled,
   getOperatorMode,
-  // System state gathering
-  gatherSystemState,
-  formatSystemStateForLLM,
-  getTaskRecommendations,
-  // Cost tracking
-  recordTokenUsage,
-  recordTaskExecution,
-  getTokensUsedThisHour,
-  isWithinBudget,
-  getRemainingBudget,
-  getBudgetUtilization,
-  getCostSummary,
-  shouldPauseDueToErrors,
-  getErrorStatus,
-  resetErrorCounter,
-  // Task execution
-  executeTask,
-  isTaskExecutable,
-  getAvailableTaskTypes,
   // Self-healing
   type TSError,
   type FixProposal,
@@ -620,39 +537,6 @@ export {
   runSelfHealing,
   getErrorCount,
   triggerBigBrotherHealing,
-  // Lizard Brain Logger
-  type LizardBrainLogEntry,
-  type LizardBrainLogFile,
-  type LizardBrainLoggerConfig,
-  getLizardBrainLogs,
-  logLizardBrainCycle,
-  updateLogEntry,
-  recordExecutionResult,
-  recordBigBrotherReview,
-  getAvailableLogDates,
-  cleanupOldLogs,
-  getRecentEntries,
-  getMultiDaySummary,
-  createLogEntryFromCycle,
-  // Lizard Brain
-  type Trigger,
-  type TriggerResult,
-  type CircadianWindow,
-  CIRCADIAN_WINDOWS,
-  TRIGGERS,
-  getCurrentCircadianWindow,
-  isTaskCircadianAppropriate,
-  getCircadianRecommendations,
-  evaluateTrigger,
-  getTriggerStatuses,
-  checkFocusConstraints,
-  // makeUnifiedDecision - DEPRECATED: now handled by lizard-brain.json graph
-  // Service Manager (lifecycle control)
-  startActiveOperatorService,
-  stopActiveOperatorService,
-  toggleActiveOperatorService,
-  getActiveOperatorServiceStatus,
-  enqueueUserMessage,
   // Critic (Superego - review and approval)
   type ProposedChange,
   type CriticReview,
@@ -686,7 +570,6 @@ export {
   hasPendingProposalForTask,
   getProposal,
   respondToProposal,
-  markProposalExecuted,
   getApprovalRequirement,
   getUserTrustLevel,
   getProposalFeedback,

@@ -20,9 +20,8 @@ async function main(): Promise<void> {
   initGlobalLogger('audio-organizer');
   console.log(`${LOG_PREFIX} ========== main HIT ==========`);
 
-  const args = process.argv.slice(2);
   const options: AudioOrganizerOptions = {
-    oneShot: args.includes('--oneshot'),
+    oneShot: true,
   };
   console.log(`${LOG_PREFIX} Options: oneShot=${options.oneShot}`);
 

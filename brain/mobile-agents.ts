@@ -2,8 +2,7 @@
  * Mobile Agent Wrappers
  *
  * Wraps unified agent functionality for in-process execution on mobile.
- * These agents are registered with the MobileAgentScheduler and run
- * without spawning child processes.
+ * These agents register in-process handlers with the core work coordinator.
  *
  * All agents use the model router which respects the user's LLM configuration
  * (local Ollama, vLLM, RunPod, Claude, etc.)
@@ -30,7 +29,8 @@
 
 import { withUserContext } from '@metahuman/core/context';
 import {
-  mobileScheduler,
+  initializeMobileAgents as initializeCoordinatorMobileAgents,
+  stopMobileAgents as stopCoordinatorMobileAgents,
   type MobileAgentContext,
   type MobileAgentRegistration,
 } from '@metahuman/core/mobile-handlers';
@@ -354,7 +354,7 @@ async function runProfileSyncWrapper(context: MobileAgentContext): Promise<void>
 /**
  * Register all mobile-compatible agents with the scheduler
  */
-export function registerMobileAgents(): void {
+export function registerMobileAgents(): MobileAgentRegistration[] {
   const agents: MobileAgentRegistration[] = [
     // Sync agents (high priority, run on login)
     {
@@ -458,20 +458,15 @@ export function registerMobileAgents(): void {
     },
   ];
 
-  for (const agent of agents) {
-    mobileScheduler.register(agent);
-  }
-
-  console.log(`[mobile-agents] Registered ${agents.length} agents`);
+  return agents;
 }
 
 /**
  * Initialize and start mobile agents
  */
-export function initializeMobileAgents(dataDir: string, username?: string): void {
-  mobileScheduler.initialize(dataDir, username);
-  registerMobileAgents();
-  mobileScheduler.start();
+export async function initializeMobileAgents(dataDir: string, username?: string): Promise<void> {
+  const agents = registerMobileAgents();
+  await initializeCoordinatorMobileAgents(dataDir, username, agents);
   console.log('[mobile-agents] Mobile agent system initialized');
 }
 
@@ -479,7 +474,7 @@ export function initializeMobileAgents(dataDir: string, username?: string): void
  * Stop mobile agents
  */
 export function stopMobileAgents(): void {
-  mobileScheduler.stop();
+  stopCoordinatorMobileAgents();
   console.log('[mobile-agents] Mobile agent system stopped');
 }
 

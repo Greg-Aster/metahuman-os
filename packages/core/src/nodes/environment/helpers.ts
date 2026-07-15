@@ -6,23 +6,60 @@ const ACTION_TYPES = new Set<EnvironmentActionType>([
   'jump',
   'interact',
   'stop',
+  'robotCommand',
   'sendText',
 ]);
 
-const NUMBER_WORDS: Record<string, number> = {
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  nine: 9,
-  ten: 10,
-  eleven: 11,
-  twelve: 12,
-};
+export interface DirectRobotInstruction {
+  action: Partial<EnvironmentAction>;
+  response: string;
+}
+
+export function parseDirectRobotInstruction(
+  value: unknown,
+  sessionId?: string,
+): DirectRobotInstruction | null {
+  if (typeof value !== 'string') return null;
+
+  const instruction = value.trim().toLowerCase().replace(/[.!]+$/, '');
+  if (!instruction || instruction.length > 120) return null;
+  if (/\b(?:don't|do not|never|not)\b/.test(instruction)) return null;
+
+  if (/^(?:please\s+)?(?:stop|halt|stop moving)$/.test(instruction)) {
+    return {
+      action: { type: 'stop', sessionId },
+      response: 'Stopping.',
+    };
+  }
+
+  const match = instruction.match(
+    /^(?:please\s+)?(?:(?:walk|move|go)\s+(forward|forwards|backward|backwards)|turn\s+(left|right))(?:\s+(?:for\s+)?(\d{1,2})\s+(?:steps?|units?))?$/,
+  );
+  if (!match) return null;
+
+  const direction = match[1] ?? match[2];
+  const units = match[3] ? Math.max(1, Math.min(10, Number.parseInt(match[3], 10))) : undefined;
+  const command = direction.startsWith('forward')
+    ? 'walk'
+    : direction.startsWith('backward')
+      ? 'backward'
+      : direction;
+  const response = command === 'walk'
+    ? 'Walking forward.'
+    : command === 'backward'
+      ? 'Walking backward.'
+      : `Turning ${command}.`;
+
+  return {
+    action: {
+      type: 'robotCommand',
+      command,
+      units,
+      sessionId,
+    },
+    response,
+  };
+}
 
 export function stringifyEnvironmentObservation(observation: EnvironmentObservation, systemPrompt: string): string {
   const sections: string[] = [];
@@ -76,6 +113,18 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   }
 
   sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
+  sections.push([
+    'Response contract:',
+    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[]}.',
+    '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
+  ].join('\n'));
+  if (observation.capabilities.actions.includes('robotCommand')) {
+    sections.push([
+      'Robot command contract:',
+      '- A robotCommand contains a semantic command and optional units, never simulator commands or raw servo values.',
+      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}]}.',
+    ].join('\n'));
+  }
 
   return sections.join('\n\n');
 }
@@ -108,6 +157,17 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     return null;
   }
 
+  if (type === 'robotCommand') {
+    const command = typeof record.command === 'string' ? record.command.trim() : '';
+    if (!command) {
+      return null;
+    }
+  }
+
+  if (type === 'sendText' && (typeof record.text !== 'string' || !record.text.trim())) {
+    return null;
+  }
+
   const vector = record.vector && typeof record.vector === 'object'
     ? record.vector as EnvironmentAction['vector']
     : undefined;
@@ -118,6 +178,8 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     type: type as EnvironmentActionType,
     text: typeof record.text === 'string' ? record.text : undefined,
     direction: typeof record.direction === 'string' ? record.direction as EnvironmentAction['direction'] : undefined,
+    command: typeof record.command === 'string' ? record.command : undefined,
+    units: typeof record.units === 'number' ? record.units : undefined,
     amount: typeof record.amount === 'number' ? record.amount : undefined,
     durationMs: typeof record.durationMs === 'number' ? record.durationMs : undefined,
     target: typeof record.target === 'string' ? record.target : undefined,
@@ -128,65 +190,9 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
   };
 }
 
-function numberFromInstruction(text: string): number | undefined {
-  const digitMatch = text.match(/\b(\d{1,2})\b/);
-  if (digitMatch) {
-    return Number(digitMatch[1]);
-  }
-
-  for (const [word, value] of Object.entries(NUMBER_WORDS)) {
-    if (new RegExp(`\\b${word}\\b`).test(text)) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-function parseNaturalMovementInstruction(text: string, sessionId?: string): Partial<EnvironmentAction> | null {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return null;
-
-  if (/\b(?:stop|halt|stand still|freeze)\b/.test(normalized)) {
-    return { type: 'stop', sessionId };
-  }
-
-  const movementVerb = /\b(?:walk|move|go|run|step|head|travel)\b/;
-  if (!movementVerb.test(normalized)) {
-    return null;
-  }
-
-  const direction =
-    /\b(?:forward|forwards|ahead)\b/.test(normalized) ? 'forward'
-      : /\b(?:back|backward|backwards)\b/.test(normalized) ? 'back'
-        : /\bleft\b/.test(normalized) ? 'left'
-          : /\bright\b/.test(normalized) ? 'right'
-            : undefined;
-
-  if (!direction) {
-    return null;
-  }
-
-  const stepCount = numberFromInstruction(normalized) ?? 1;
-  return {
-    type: 'move',
-    sessionId,
-    direction,
-    amount: 1,
-    durationMs: Math.max(250, Math.min(1500, stepCount * 150)),
-    metadata: {
-      source: 'natural-language-fallback',
-      instruction: text.trim(),
-      stepCount,
-    },
-  };
-}
-
 export function parseEnvironmentActions(
   value: unknown,
   sessionId?: string,
-  textFallback = true,
-  naturalMovementFallback = false,
 ): Partial<EnvironmentAction>[] {
   if (Array.isArray(value)) {
     return value.map(item => normalizeAction(item, sessionId)).filter(action => action !== null);
@@ -194,18 +200,7 @@ export function parseEnvironmentActions(
 
   if (typeof value === 'string') {
     const parsed = extractJsonObject(value);
-    if (parsed) {
-      return parseEnvironmentActions(parsed, sessionId, textFallback, naturalMovementFallback);
-    }
-    const movementAction = naturalMovementFallback
-      ? parseNaturalMovementInstruction(value, sessionId)
-      : null;
-    if (movementAction) {
-      return [movementAction];
-    }
-    return textFallback && value.trim()
-      ? [{ type: 'sendText', sessionId, text: value.trim() }]
-      : [];
+    return parsed ? parseEnvironmentActions(parsed, sessionId) : [];
   }
 
   if (!value || typeof value !== 'object') {
@@ -214,12 +209,32 @@ export function parseEnvironmentActions(
 
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.actions)) {
-    return parseEnvironmentActions(record.actions, sessionId, textFallback, naturalMovementFallback);
+    return parseEnvironmentActions(record.actions, sessionId);
   }
   if (record.action) {
-    return parseEnvironmentActions(record.action, sessionId, textFallback, naturalMovementFallback);
+    return parseEnvironmentActions(record.action, sessionId);
   }
 
   const normalized = normalizeAction(record, sessionId);
   return normalized ? [normalized] : [];
+}
+
+export function parseEnvironmentModelOutput(
+  value: unknown,
+  sessionId?: string,
+): { response: string; actions: Partial<EnvironmentAction>[] } {
+  const parsed = typeof value === 'string' ? extractJsonObject(value) : value;
+  const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+  const response = typeof record?.response === 'string'
+    ? record.response.trim()
+    : typeof value === 'string' && !parsed
+      ? value.trim()
+      : '';
+
+  return {
+    response,
+    actions: parseEnvironmentActions(parsed, sessionId),
+  };
 }

@@ -51,6 +51,14 @@ import {
   isRemoteServerProvider,
 } from './types.js';
 
+function messageText(message: ProviderMessage): string {
+  if (typeof message.content === 'string') return message.content;
+  return message.content
+    .filter(part => part.type === 'text')
+    .map(part => part.text)
+    .join('\n');
+}
+
 // Re-export types for convenience
 export * from './types.js';
 
@@ -132,9 +140,9 @@ export async function callProvider(
 
     // Format messages for the backend
     const prompt = messages.map(m => {
-      if (m.role === 'system') return `[System]: ${m.content}`;
-      if (m.role === 'user') return `[User]: ${m.content}`;
-      return `[Assistant]: ${m.content}`;
+      if (m.role === 'system') return `[System]: ${messageText(m)}`;
+      if (m.role === 'user') return `[User]: ${messageText(m)}`;
+      return `[Assistant]: ${messageText(m)}`;
     }).join('\n\n');
 
     onProgress?.({ phase: 'running', message: `${backendName}: Processing...` });
@@ -345,7 +353,7 @@ async function callRemoteProvider(
   // Convert messages to mobile provider format
   const mobileMessages = messages.map(m => ({
     role: m.role,
-    content: m.content,
+    content: messageText(m),
   }));
 
   // Get credentials from user profile (same pattern as model-router.ts)
@@ -431,7 +439,7 @@ async function callRemoteServerProvider(
         model,
         messages: messages.map(m => ({
           role: m.role,
-          content: m.content,
+          content: messageText(m),
         })),
         options: {
           temperature: options.temperature,
@@ -575,7 +583,10 @@ async function callOllamaProvider(
   // Call Ollama with OOM error detection
   let response;
   try {
-    response = await ollama.chat(model, messages, {
+    response = await ollama.chat(model, messages.map(message => ({
+      role: message.role,
+      content: messageText(message),
+    })), {
       ...ollamaOptions,
       format: options.format === 'json' ? 'json' : undefined,
       keep_alive: options.keepAlive,
@@ -710,7 +721,10 @@ async function callVLLMProvider(
       if (msg.content === undefined || msg.content === null) {
         console.error(`[provider-bridge] WARNING: Message ${i} (${msg.role}) has ${msg.content === null ? 'null' : 'undefined'} content!`);
       }
-      console.log(`[provider-bridge] Message ${i} (${msg.role}): ${(msg.content || '').length} chars`);
+      const contentSummary = typeof msg.content === 'string'
+        ? `${msg.content.length} chars`
+        : `${msg.content.length} content parts`;
+      console.log(`[provider-bridge] Message ${i} (${msg.role}): ${contentSummary}`);
     }
 
     const response = await vllm.chat(
@@ -778,7 +792,7 @@ async function callMobileRunPodProvider(
 
   const mobileMessages = messages.map(m => ({
     role: m.role,
-    content: m.content,
+    content: messageText(m),
   }));
 
   const endpoint = runpodConfig.endpoints.default || '';

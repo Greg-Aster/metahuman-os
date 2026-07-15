@@ -11,10 +11,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
-import { systemPaths, ROOT } from './path-builder.js';
+import { systemPaths } from './path-builder.js';
 import { audit } from './audit.js';
-import { stopAllAgents, registerAgent, unregisterAgent } from './agent-monitor.js';
+import { getAgentMonitorSnapshot, stopAllAgents } from './agent-monitor.js';
+import { startAgentProcess } from './agent-process-runner.js';
 
 const RUNTIME_CONFIG_PATH = path.join(systemPaths.etc, 'runtime.json');
 
@@ -160,75 +160,25 @@ export function exitHeadlessMode(actor?: string, claimedBy?: string): void {
 
   // Start default agents after a brief delay for cleanup
   setTimeout(() => {
-    startDefaultAgents(actor);
+    void startDefaultAgents(actor);
   }, 2000);
 }
 
 /**
- * Start default agents when exiting headless mode
+ * Start configured boot agents when exiting headless mode.
  */
-function startDefaultAgents(actor?: string): void {
-  const defaultAgents = ['scheduler-service', 'boredom-service', 'audio-organizer'];
+async function startDefaultAgents(actor?: string): Promise<void> {
+  const bootAgents = getAgentMonitorSnapshot().bootAgents
+    .filter(agent => agent.enabled && agent.runOnBoot)
+    .map(agent => agent.agentId);
 
-  console.log('[runtime-mode] Starting default agents...');
+  console.log('[runtime-mode] Starting configured boot agents...');
 
-  for (const agentName of defaultAgents) {
-    try {
-      const agentPath = path.join(systemPaths.agents, `${agentName}.ts`);
-
-      // Check if agent file exists
-      if (!fs.existsSync(agentPath)) {
-        console.warn(`[runtime-mode] Agent not found: ${agentPath}`);
-        continue;
-      }
-
-      // Use bootstrap wrapper to establish user context for agents
-      const bootstrapPath = path.join(systemPaths.agents, '_bootstrap.ts');
-      const child = spawn('tsx', [bootstrapPath, agentName], {
-        detached: true,
-        stdio: 'ignore',
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          NODE_PATH: [
-            path.join(ROOT, 'node_modules'),
-            path.join(ROOT, 'packages/cli/node_modules'),
-            path.join(ROOT, 'apps/site/node_modules'),
-          ].join(':'),
-        },
-      });
-
-      if (child.pid) {
-        registerAgent(agentName, child.pid);
-        console.log(`[runtime-mode] Started ${agentName} (PID: ${child.pid})`);
-
-        audit({
-          level: 'info',
-          category: 'system',
-          event: 'agent_started',
-          details: { agent: agentName, pid: child.pid, source: 'runtime-mode' },
-          actor: actor || 'system',
-        });
-
-        // Attach event handlers BEFORE unref()
-        child.on('close', (code: number) => {
-          audit({
-            level: code === 0 ? 'info' : 'error',
-            category: 'system',
-            event: 'agent_stopped',
-            details: { agent: agentName, exitCode: code, source: 'runtime-mode' },
-            actor: actor || 'system',
-          });
-          unregisterAgent(agentName);
-        });
-      }
-
-      // IMPORTANT: unref() AFTER event handlers
-      child.unref();
-    } catch (error) {
-      console.error(`[runtime-mode] Failed to start ${agentName}:`, error);
-    }
-  }
+  await Promise.all(bootAgents.map(agentName => startAgentProcess(agentName, {
+    actor: actor || 'system',
+    source: 'runtime-mode',
+    useBootstrap: true,
+  })));
 
   audit({
     category: 'system',
@@ -236,5 +186,8 @@ function startDefaultAgents(actor?: string): void {
     event: 'headless_mode_deactivated',
     message: 'Headless mode deactivated - agents resumed',
     actor: actor || 'system',
+    metadata: {
+      startedFromBootConfig: bootAgents,
+    },
   });
 }

@@ -1,102 +1,29 @@
 /**
  * Active Operator System
  *
- * A proactive, LLM-controlled continuous thinking system that transforms
- * MetaHuman OS from passive response generation into active cognition.
+ * Bounded autonomy policy and user-control services above the core work
+ * coordinator. This module owns no executable queue and invokes no executor.
  *
- * Key components:
- * - Service Manager: Lifecycle control for the decision loop
- * - Lizard Brain: Autonomous decision making with triggers
- * - Task Executor: Execute tasks via existing agents
- * - Mode Controller: Switch between passive/active modes
- * - State Persister: Disk persistence for crash recovery
- *
- * NOTE: The Active Operator now uses the unified lane-based queue system
- * from packages/core/src/queue/ for task management. The legacy UnifiedQueue
- * is kept for backwards compatibility but is no longer used internally.
+ * The queue, work lifecycle, ordering, execution registry, and recovery owner
+ * is packages/core/src/queue.
  */
 
 // Types
 export * from './types.js';
 
-// Queue (DEPRECATED: Use packages/core/src/queue/ instead)
-// Kept for backwards compatibility - internal code uses lane-based queue
-export { UnifiedQueue, createPersistentQueue } from './unified-queue.js';
-
 // State persistence
 export {
-  // Scratchpad
-  type ScratchpadEntry,
-  type DecisionScratchpad,
-  loadScratchpad,
-  saveScratchpad,
-  addScratchpadEntry,
-  recordDecision,
-  recordExecutionStart,
-  recordTaskResult,
-  recordThought,
-  updateActivitySummary,
-  createFreshScratchpad,
-  clearScratchpad,
-  getScratchpadContext,
-  // Queue state
-  saveQueueState,
-  loadQueueState,
-  clearQueueState,
-  // Current task
-  saveCurrentTask,
-  loadCurrentTask,
-  clearCurrentTask,
-  // Metrics
-  saveMetrics,
-  loadMetrics,
-  loadMetrics as loadActiveOperatorMetrics,
-  resetMetrics,
-  resetMetrics as resetActiveOperatorMetrics,
-  // Config
   loadConfig as loadActiveOperatorConfig,
   saveConfig as saveActiveOperatorConfig,
   updateConfig as updateActiveOperatorConfig,
-  // Full state
-  clearAllState,
-  getStateDir,
 } from './state-persister.js';
 
 // Mode controller
 export {
   ModeController,
   getModeController,
-  isActiveOperatorEnabled,
   getOperatorMode,
 } from './mode-controller.js';
-
-// System state gathering
-export {
-  gatherSystemState,
-  formatSystemStateForLLM,
-  getTaskRecommendations,
-} from './system-state.js';
-
-// Cost tracking
-export {
-  recordTokenUsage,
-  recordTaskExecution,
-  getTokensUsedThisHour,
-  isWithinBudget,
-  getRemainingBudget,
-  getBudgetUtilization,
-  getCostSummary,
-  shouldPauseDueToErrors,
-  getErrorStatus,
-  resetErrorCounter,
-} from './cost-tracker.js';
-
-// Task execution
-export {
-  executeTask,
-  isTaskExecutable,
-  getAvailableTaskTypes,
-} from './task-executor.js';
 
 // Self-healing
 export {
@@ -114,48 +41,6 @@ export {
   getErrorCount,
   triggerBigBrotherHealing,
 } from './self-healing.js';
-
-// Lizard Brain (autonomous triggers + unified decision)
-export {
-  type Trigger,
-  type TriggerResult,
-  type CircadianWindow,
-  CIRCADIAN_WINDOWS,
-  TRIGGERS,
-  getCurrentCircadianWindow,
-  isTaskCircadianAppropriate,
-  getCircadianRecommendations,
-  evaluateTrigger,
-  getTriggerStatuses,
-  checkFocusConstraints,
-  // makeUnifiedDecision - DEPRECATED: now handled by lizard-brain.json graph
-} from './lizard-brain.js';
-
-// Lizard Brain Logger (structured decision logging)
-export {
-  type LizardBrainLogEntry,
-  type LizardBrainLogFile,
-  type LizardBrainLoggerConfig,
-  getLizardBrainLogs,
-  logLizardBrainCycle,
-  updateLogEntry,
-  recordExecutionResult,
-  recordBigBrotherReview,
-  getAvailableLogDates,
-  cleanupOldLogs,
-  getRecentEntries,
-  getMultiDaySummary,
-  createLogEntryFromCycle,
-} from './lizard-brain-logger.js';
-
-// Service Manager (lifecycle control)
-export {
-  startActiveOperatorService,
-  stopActiveOperatorService,
-  toggleActiveOperatorService,
-  getActiveOperatorServiceStatus,
-  enqueueUserMessage,
-} from './service-manager.js';
 
 // Critic (Superego - review and approval)
 export {
@@ -221,7 +106,6 @@ export {
   hasPendingProposalForTask,
   getProposal,
   respondToProposal,
-  markProposalExecuted,
   // Trust-based approval
   getApprovalRequirement,
   getUserTrustLevel,

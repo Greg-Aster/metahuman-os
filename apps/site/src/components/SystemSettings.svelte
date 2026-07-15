@@ -3,6 +3,7 @@
   import GPUMonitor from './GPUMonitor.svelte';
   import ActiveOperatorSettings from './ActiveOperatorSettings.svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import { systemCoderDisabled } from '../stores/navigation';
 
   // Welcome modal toggle
   let showWelcomeModal = false;
@@ -81,6 +82,25 @@
     agent: 'Agent only - indexes AI responses, dreams, and system outputs'
   };
 
+  type BootAgentKind = 'service' | 'scheduled' | 'manual' | 'connection' | 'one-shot';
+
+  interface BootAgent {
+    agentId: string;
+    displayName: string;
+    description: string;
+    kind: BootAgentKind;
+    enabled: boolean;
+    runOnBoot: boolean;
+    autoRestart: boolean;
+    maxRetries: number;
+    dependencyNotes: string[];
+  }
+
+  let bootAgents: BootAgent[] = [];
+  let bootManagerLoading = false;
+  let bootManagerSaving = '';
+  let bootManagerFeedback: { type: 'success' | 'error'; text: string } | null = null;
+
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
@@ -92,7 +112,75 @@
     loadStorageStatus();
     loadReflectorContentMode();
     loadIndexContentMode();
+    loadBootManager();
   });
+
+  function bootManagerSaveKey(agentId: string, key: string): string {
+    return `${agentId}.${key}`;
+  }
+
+  function bootKindLabel(kind: BootAgentKind): string {
+    if (kind === 'service') return 'Service';
+    if (kind === 'scheduled') return 'Scheduled';
+    if (kind === 'connection') return 'Connection';
+    if (kind === 'one-shot') return 'One-shot';
+    return 'Manual';
+  }
+
+  function bootKindClass(kind: BootAgentKind): string {
+    if (kind === 'service') return 'bg-blue-500/10 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300';
+    if (kind === 'connection') return 'bg-amber-500/10 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300';
+    if (kind === 'scheduled') return 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300';
+    return 'bg-gray-500/10 text-gray-700 dark:bg-gray-400/15 dark:text-gray-300';
+  }
+
+  async function loadBootManager() {
+    bootManagerLoading = true;
+    try {
+      const res = await apiFetch('/api/monitor');
+      if (!res.ok) {
+        throw new Error('Failed to load boot manager');
+      }
+      const data = await res.json();
+      bootAgents = Array.isArray(data.bootAgents) ? data.bootAgents : [];
+    } catch (err) {
+      console.error('[SystemSettings] Error loading boot manager:', err);
+      bootManagerFeedback = { type: 'error', text: (err as Error).message };
+    } finally {
+      bootManagerLoading = false;
+    }
+  }
+
+  async function saveBootAgentVariable(agent: BootAgent, key: 'enabled' | 'runOnBoot' | 'autoRestart' | 'maxRetries', value: boolean | number) {
+    const saveKey = bootManagerSaveKey(agent.agentId, key);
+    if (bootManagerSaving) return;
+    bootManagerSaving = saveKey;
+    bootManagerFeedback = null;
+
+    try {
+      const res = await apiFetch('/api/monitor/agent-variable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: agent.agentId,
+          key,
+          value,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to save boot setting');
+      }
+      await loadBootManager();
+      bootManagerFeedback = { type: 'success', text: `${agent.displayName} boot setting saved` };
+    } catch (err) {
+      console.error('[SystemSettings] Error saving boot manager setting:', err);
+      bootManagerFeedback = { type: 'error', text: (err as Error).message };
+      await loadBootManager();
+    } finally {
+      bootManagerSaving = '';
+    }
+  }
 
   async function loadNodePipelineState() {
     nodePipelineLoading = true;
@@ -579,6 +667,113 @@
 
   <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Agent Settings</h3>
 
+  <!-- Agent Boot Manager -->
+  <div class="setting-group">
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <span class="setting-label m-0">Boot Manager</span>
+      <button
+        class="btn-secondary btn-sm"
+        on:click={loadBootManager}
+        disabled={bootManagerLoading || Boolean(bootManagerSaving)}
+      >
+        {bootManagerLoading ? 'Refreshing...' : 'Refresh'}
+      </button>
+    </div>
+
+    <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
+      Controls which boot-eligible agents are active when MetaHuman OS starts. Connection agents may still require endpoint configuration in Agent Monitor before they can start cleanly.
+    </p>
+
+    {#if bootManagerFeedback}
+      <div
+        class={`text-[0.8125rem] rounded-md border px-3 py-2 mb-3 ${bootManagerFeedback.type === 'success'
+          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:bg-emerald-400/10 dark:border-emerald-400/25 dark:text-emerald-300'
+          : 'bg-red-500/10 border-red-500/30 text-red-700 dark:bg-red-400/10 dark:border-red-400/25 dark:text-red-300'}`}
+      >
+        {bootManagerFeedback.text}
+      </div>
+    {/if}
+
+    {#if bootManagerLoading && bootAgents.length === 0}
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">Loading boot agents...</p>
+    {:else if bootAgents.length === 0}
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">No boot-eligible agents are currently registered.</p>
+    {:else}
+      <div class="flex flex-col gap-3">
+        {#each bootAgents as agent}
+          <div class="rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-black/[0.02] dark:bg-white/[0.02]">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">{agent.displayName}</span>
+                  <span class={`text-[0.68rem] font-semibold uppercase px-2 py-0.5 rounded ${bootKindClass(agent.kind)}`}>
+                    {bootKindLabel(agent.kind)}
+                  </span>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 m-0 mt-1">{agent.description}</p>
+              </div>
+              <label class="toggle-switch shrink-0" for={`boot-run-${agent.agentId}`} aria-label={`Run ${agent.displayName} on boot`}>
+                <input
+                  id={`boot-run-${agent.agentId}`}
+                  type="checkbox"
+                  checked={agent.runOnBoot}
+                  disabled={Boolean(bootManagerSaving)}
+                  on:change={(event) => saveBootAgentVariable(agent, 'runOnBoot', event.currentTarget.checked)}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            {#if agent.dependencyNotes.length > 0}
+              <div class="mt-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 dark:bg-amber-400/10 border border-amber-500/20 dark:border-amber-400/20 rounded px-2 py-1.5">
+                {agent.dependencyNotes.join(' ')}
+              </div>
+            {/if}
+
+            <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-300">
+                <span>Enabled</span>
+                <input
+                  type="checkbox"
+                  checked={agent.enabled}
+                  disabled={Boolean(bootManagerSaving)}
+                  on:change={(event) => saveBootAgentVariable(agent, 'enabled', event.currentTarget.checked)}
+                  class="cursor-pointer accent-violet-600 disabled:opacity-60"
+                />
+              </label>
+              <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-300">
+                <span>Auto restart</span>
+                <input
+                  type="checkbox"
+                  checked={agent.autoRestart}
+                  disabled={Boolean(bootManagerSaving)}
+                  on:change={(event) => saveBootAgentVariable(agent, 'autoRestart', event.currentTarget.checked)}
+                  class="cursor-pointer accent-violet-600 disabled:opacity-60"
+                />
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <span class="whitespace-nowrap">Retries</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  value={agent.maxRetries}
+                  disabled={Boolean(bootManagerSaving)}
+                  on:change={(event) => saveBootAgentVariable(agent, 'maxRetries', Number(event.currentTarget.value))}
+                  class="input-field py-1 px-2 text-sm"
+                />
+              </label>
+            </div>
+
+            {#if bootManagerSaving.startsWith(`${agent.agentId}.`)}
+              <p class="text-xs text-violet-600 dark:text-violet-400 m-0 mt-2 italic">Saving boot setting...</p>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
   <!-- Reflector Content Mode -->
   <div class="setting-group">
     <label class="setting-label">Idle Thoughts Content</label>
@@ -639,8 +834,37 @@
 
   <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Developer Settings</h3>
 
-  <!-- Node Pipeline Toggle -->
+  <!-- System Coder Visibility -->
   <div class="setting-group">
+    <label class="setting-label">System Coder</label>
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <span class="setting-label">Disable System Coder</span>
+        <label
+          class="toggle-switch"
+          for="system-coder-disabled-toggle"
+          aria-label="Disable System Coder tab"
+        >
+          <input
+            id="system-coder-disabled-toggle"
+            type="checkbox"
+            bind:checked={$systemCoderDisabled}
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
+        {#if $systemCoderDisabled}
+          System Coder is hidden from the right sidebar.
+        {:else}
+          System Coder is visible in the right sidebar.
+        {/if}
+      </p>
+    </div>
+  </div>
+
+  <!-- Node Pipeline Toggle -->
+  <div class="setting-group mt-6">
     <label class="setting-label">Node Pipeline</label>
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between">

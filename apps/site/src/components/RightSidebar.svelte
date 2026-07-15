@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { SvelteComponent } from 'svelte';
   import AgentMonitor from './AgentMonitor.svelte';
+  import QueuePanel from './QueuePanel.svelte';
   import ServerStatus from './ServerStatus.svelte';
-  import { rightSidebarOpen } from '../stores/navigation';
+  import { rightSidebarOpen, systemCoderDisabled } from '../stores/navigation';
 
-  let activeTab = 'coder';
+  let activeTab = 'queue';
+  let preferencesLoaded = false;
 
   // Lazy load SystemCoderDashboard
-  let SystemCoderDashboard: typeof SvelteComponent | null = null;
+  let SystemCoderDashboard: any = null;
   let coderLoading = false;
 
   // Load preferences from localStorage
@@ -16,14 +17,19 @@
     try {
       const savedTab = localStorage.getItem('mh_right_sidebar_tab');
       // Only restore if it's a valid tab (audit was removed)
-      if (savedTab !== null && ['coder', 'monitor', 'servers'].includes(savedTab)) {
+      if (savedTab !== null && ['coder', 'queue', 'monitor', 'servers'].includes(savedTab)) {
         activeTab = savedTab;
       }
     } catch {}
+    preferencesLoaded = true;
   });
 
+  $: if ($systemCoderDisabled && activeTab === 'coder') {
+    activeTab = 'queue';
+  }
+
   // Save active tab to localStorage
-  $: if (typeof activeTab !== 'undefined') {
+  $: if (preferencesLoaded && typeof activeTab !== 'undefined') {
     try {
       localStorage.setItem('mh_right_sidebar_tab', activeTab);
     } catch {}
@@ -35,14 +41,15 @@
     icon: string;
   }
 
-  const tabs: Tab[] = [
-    { id: 'coder', label: 'System Coder', icon: '🔧' },
+  $: tabs = [
+    ...($systemCoderDisabled ? [] : [{ id: 'coder', label: 'System Coder', icon: '🔧' }]),
+    { id: 'queue', label: 'Queue', icon: '☷' },
     { id: 'monitor', label: 'Agent Monitor', icon: '🤖' },
     { id: 'servers', label: 'Server Status', icon: '🖥️' },
-  ];
+  ] as Tab[];
 
   // Lazy load SystemCoderDashboard when coder tab is selected
-  $: if (activeTab === 'coder' && !SystemCoderDashboard && !coderLoading) {
+  $: if (!$systemCoderDisabled && activeTab === 'coder' && !SystemCoderDashboard && !coderLoading) {
     coderLoading = true;
     import('./SystemCoderDashboard.svelte')
       .then(module => {
@@ -92,7 +99,11 @@
       </div>
     {:else if activeTab === 'monitor'}
       <div class="p-3 h-full overflow-hidden flex flex-col gap-4">
-        <AgentMonitor compact={true} />
+        <AgentMonitor />
+      </div>
+    {:else if activeTab === 'queue'}
+      <div class="h-full overflow-hidden">
+        <QueuePanel />
       </div>
     {:else if activeTab === 'servers'}
       <div class="h-full overflow-hidden">

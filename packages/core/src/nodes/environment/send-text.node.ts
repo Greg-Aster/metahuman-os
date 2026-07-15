@@ -10,22 +10,22 @@ export const environmentSendTextNode = defineNode({
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
   ],
   outputs: [
-    { name: 'action', type: 'object', description: 'Queued sendText action' },
-    { name: 'queued', type: 'boolean', description: 'Whether text was queued' },
+    { name: 'command', type: 'object', description: 'Coordinator work for the sendText command' },
+    { name: 'accepted', type: 'boolean', description: 'Whether command work was created' },
   ],
   description: 'Queues chat/speech text for the active environment adapter.',
-  async execute(inputs) {
+  async execute(inputs, context) {
     const text = typeof inputs.text === 'string' ? inputs.text.trim() : '';
     if (!text) {
-      return { action: null, queued: false };
+      return { command: null, accepted: false };
     }
 
-    const action = enqueueEnvironmentAction({
+    const command = enqueueEnvironmentAction({
       type: 'sendText',
       text,
       sessionId: typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined,
-    });
+    }, { username: context.username, correlationId: context.sessionId, source: 'user' });
 
-    return { action, queued: true };
+    return { command, accepted: true };
   },
 });

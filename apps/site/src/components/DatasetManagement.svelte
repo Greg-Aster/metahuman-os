@@ -379,7 +379,7 @@
       <div class="text-center py-12 px-8 text-gray-500">
         <div class="text-5xl mb-4">📊</div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">No datasets available</div>
-        <p class="text-gray-500 text-sm">Run adapter-builder or sleep-service to generate instruction pairs.</p>
+        <p class="text-gray-500 text-sm">Run adapter-builder to generate instruction pairs.</p>
       </div>
     {:else}
       <table class="w-full border-collapse">

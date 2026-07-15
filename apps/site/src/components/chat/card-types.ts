@@ -10,7 +10,7 @@ export type CardComponent =
   | 'UserMessageCard'
   | 'AssistantMessageCard'
   | 'ReflectionCard'
-  | 'LizardBrainCard'
+  | 'OperatorProposalCard'
   | 'AgencyCard'
   | 'DreamCard'
   | 'CuriosityCard'

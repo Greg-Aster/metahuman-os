@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import { storageClient, systemPaths, audit, transcribe, isWhisperCppAvailable, getRecommendedProvider } from '@metahuman/core';
 import type { TranscriptionConfig } from '@metahuman/core';
+import { audioIdForPath, findAudioFiles } from './audio-inbox.js';
 
 const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 
@@ -58,7 +59,7 @@ function loadAudioConfig(): AudioConfig {
   return JSON.parse(fs.readFileSync(AUDIO_CONFIG_PATH, 'utf8'));
 }
 
-async function transcribeAudio(audioPath: string, audioId: string, config: AudioConfig): Promise<boolean> {
+async function transcribeAudio(audioPath: string, audioId: string, inboxDir: string, config: AudioConfig): Promise<boolean> {
   console.log(`Starting transcription for ${audioId}`);
 
   audit({
@@ -111,8 +112,8 @@ async function transcribeAudio(audioPath: string, audioId: string, config: Audio
 
     const archiveResult = storageClient.resolvePath({ category: 'voice', subcategory: 'archive' });
     const archiveDir = archiveResult.success && archiveResult.path ? archiveResult.path : path.join(systemPaths.memory, 'audio', 'archive');
-    const archivePath = path.join(archiveDir, path.basename(audioPath));
-    fs.mkdirSync(archiveDir, { recursive: true });
+    const archivePath = path.join(archiveDir, path.relative(inboxDir, audioPath));
+    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
     fs.renameSync(audioPath, archivePath);
 
     audit({
@@ -160,8 +161,27 @@ export async function runCycle(options: TranscriberOptions = {}): Promise<Transc
   });
   console.log(`Transcription provider: ${provider}`);
 
-  if (!isWhisperCppAvailable(config.transcription.whisperCppPath)) {
-    console.log('\n⚠️  whisper.cpp not found - using mock transcription');
+  if (config.transcription.provider === 'whisper.cpp') {
+    const whisperAvailable = isWhisperCppAvailable(config.transcription.whisperCppPath);
+    const modelAvailable = !config.transcription.modelPath || fs.existsSync(config.transcription.modelPath);
+    if (!whisperAvailable || !modelAvailable) {
+      const missing = [
+        !whisperAvailable ? `binary ${config.transcription.whisperCppPath || 'whisper'}` : null,
+        !modelAvailable ? `model ${config.transcription.modelPath}` : null,
+      ].filter(Boolean).join(' and ');
+      const message = `Whisper dependency missing: ${missing}. Audio inbox left unchanged.`;
+      console.error(`[transcriber] ${message}`);
+      audit({
+        category: 'agent',
+        level: 'error',
+        event: 'transcriber_dependency_missing',
+        actor: 'transcriber',
+        details: { missing, provider: config.transcription.provider },
+      });
+      result.success = false;
+      result.errors.push(message);
+      return result;
+    }
   }
 
   const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
@@ -171,10 +191,7 @@ export async function runCycle(options: TranscriberOptions = {}): Promise<Transc
     return result; // Inbox doesn't exist yet
   }
 
-  const files = fs.readdirSync(inboxDir);
-  const audioFiles = files.filter(
-    (f) => !f.startsWith('.') && /\.(mp3|wav|m4a|ogg|webm|flac)$/i.test(f)
-  );
+  const audioFiles = findAudioFiles(inboxDir);
 
   if (audioFiles.length === 0) {
     return result; // No files to process
@@ -183,12 +200,11 @@ export async function runCycle(options: TranscriberOptions = {}): Promise<Transc
   console.log(`Found ${audioFiles.length} audio file(s) to transcribe`);
   result.filesProcessed = audioFiles.length;
 
-  for (const file of audioFiles) {
-    const audioPath = path.join(inboxDir, file);
-    const audioId = file.split('.')[0];
+  for (const audioPath of audioFiles) {
+    const audioId = audioIdForPath(inboxDir, audioPath);
 
     try {
-      const success = await transcribeAudio(audioPath, audioId, config);
+      const success = await transcribeAudio(audioPath, audioId, inboxDir, config);
       if (success) {
         result.filesTranscribed++;
       } else {
@@ -196,7 +212,7 @@ export async function runCycle(options: TranscriberOptions = {}): Promise<Transc
       }
     } catch (error) {
       result.filesFailed++;
-      result.errors.push(`Error processing ${file}: ${(error as Error).message}`);
+      result.errors.push(`Error processing ${path.relative(inboxDir, audioPath)}: ${(error as Error).message}`);
     }
   }
 

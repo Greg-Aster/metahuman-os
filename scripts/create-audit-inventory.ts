@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 type AuditItem = {
@@ -24,6 +24,7 @@ function gitLsFiles(): string[] {
 }
 
 function isMaintained(file: string): boolean {
+  if (!existsSync(path.join(ROOT, file))) return false;
   if (file.startsWith('apps/code-oss/')) return false;
   if (file.startsWith('apps/mobile/')) return false;
   if (file.startsWith('vendor/')) return false;
@@ -159,7 +160,7 @@ md.push('');
 md.push('Full machine-readable inventory: `docs/audits/maintained-source-inventory.json`.');
 md.push('');
 
-writeFileSync(MD_OUT, `${md.join('\n')}\n`);
+writeFileSync(MD_OUT, md.join('\n'));
 
 console.log(`Wrote ${path.relative(ROOT, JSON_OUT)}`);
 console.log(`Wrote ${path.relative(ROOT, MD_OUT)}`);

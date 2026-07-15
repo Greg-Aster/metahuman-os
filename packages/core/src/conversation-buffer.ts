@@ -465,7 +465,7 @@ export async function appendToUserBuffer(
  * Convenience function for agents
  * @param userId - The user ID to append to
  * @param content - The reflection content
- * @param extraMeta - Optional additional metadata (e.g., { dialogueSource: 'lizard-brain' })
+ * @param extraMeta - Optional additional metadata (e.g., { dialogueSource: 'operator-policy' })
  */
 export async function appendReflectionToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
   return appendToUserBuffer(userId, 'inner', {

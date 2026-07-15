@@ -1,444 +1,354 @@
 /**
- * Unified Queue API Handler
- *
- * Provides status and control for the unified queue system.
- * Shows all lanes, running tasks, and allows triggering agents.
+ * Thin transport for the single work coordinator.
  */
 
 import {
-  getAllLaneMetrics,
-  getLastHourSummary,
+  DEFAULT_HANDLERS,
+  ensureQueueSystemStarted,
+  authorizeWorkSubmission,
   getQueueManager,
   getQueueSystem,
-  getThroughputHistory,
+  type Priority,
   type QueueEvent,
-  type ResourceLaneId,
+  type QueuedTask,
+  type TaskType,
+  type WorkCognitiveMode,
 } from '../../queue/index.js';
 import { audit } from '../../audit.js';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
-
-type LaneId = 'local-llm' | 'vector-index' | 'remote-llm';
-
-const VALID_LANES: LaneId[] = ['local-llm', 'vector-index', 'remote-llm'];
 
 function success(data: Record<string, unknown>, status = 200): UnifiedResponse {
   return { status, data };
 }
 
 function failure(error: string, status = 500): UnifiedResponse {
-  return {
-    status,
-    data: { success: false, error },
-  };
+  return { status, data: { success: false, error } };
 }
 
 function requireUser(user: UnifiedUser): UnifiedResponse | null {
-  if (user.isAuthenticated) return null;
-  return failure('Authentication required', 401);
+  return user.isAuthenticated ? null : failure('Authentication required', 401);
 }
 
-/**
- * GET /api/unified-queue
- * Returns the current queue state across all lanes
- */
+function sse(data: object): string {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+function canReadTask(task: QueuedTask, user: UnifiedUser): boolean {
+  return user.role === 'owner' || task.username === user.username;
+}
+
+function taskStatus(task: QueuedTask): 'queued' | 'running' | 'completed' | 'failed' {
+  if (task.state === 'leased') return 'running';
+  if (task.state === 'completed') return 'completed';
+  if (task.state === 'failed' || task.state === 'cancelled' || task.state === 'expired') return 'failed';
+  return 'queued';
+}
+
+function taskView(task: QueuedTask) {
+  return {
+    id: task.id,
+    type: task.type,
+    handler: task.handler,
+    resource: task.resource,
+    state: task.state,
+    status: taskStatus(task),
+    priority: task.priority,
+    source: task.source,
+    username: task.username,
+    cognitiveMode: task.cognitiveMode,
+    createdAt: task.createdAt,
+    notBefore: task.notBefore,
+    deadline: task.deadline,
+    startedAt: task.startedAt,
+    completedAt: task.completedAt,
+    waitingReason: task.waitingReason,
+    wakeAt: task.wakeAt,
+    attempt: task.attempt,
+    maxAttempts: task.maxAttempts,
+    correlationId: task.correlationId,
+    parentTaskId: task.parentTaskId,
+    cancellationRequestedAt: task.cancellationRequestedAt,
+    error: task.error?.message,
+  };
+}
+
+function queueSnapshot(user: UnifiedUser) {
+  const system = getQueueSystem();
+  const state = system.getState();
+  const manager = getQueueManager();
+  const visible = (tasks: QueuedTask[]) => tasks.filter(task => canReadTask(task, user)).map(taskView);
+  return {
+    success: true,
+    lifecycle: state.lifecycle,
+    running: state.running,
+    paused: state.paused,
+    degraded: state.degraded,
+    error: state.error,
+    proactiveScheduling: state.proactiveScheduling,
+    stats: state.stats,
+    resourceCapacity: state.resourceCapacity,
+    tasks: visible(manager.getAllTasks()),
+    history: visible(manager.getHistory()),
+    inFlightRemote: user.role === 'owner' ? state.inFlightRemote : [],
+    nextTriggers: user.role === 'owner' ? state.nextTriggers : [],
+    lastActivity: user.role === 'owner' ? state.lastActivity : undefined,
+  };
+}
+
 export async function handleGetQueueStatus(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const queueSystem = getQueueSystem();
-    const state = queueSystem.getState();
-
-    // Get tasks by lane for detailed view
-    const queueManager = getQueueManager();
-    const tasksByLane = {
-      'local-llm': queueManager.getLaneTasks('local-llm'),
-      'vector-index': queueManager.getLaneTasks('vector-index'),
-      'remote-llm': queueManager.getLaneTasks('remote-llm'),
-    };
-
-    return success({
-      success: true,
-      running: state.running,
-      paused: state.paused,
-      stats: state.stats,
-      lanes: state.lanes,
-      tasksByLane,
-      inFlightRemote: state.inFlightRemote,
-      nextTriggers: state.nextTriggers,
-      lastActivity: state.lastActivity,
-    });
+    const authError = requireUser(req.user);
+    if (authError) return authError;
+    await ensureQueueSystemStarted();
+    return success(queueSnapshot(req.user));
   } catch (error) {
-    console.error('[unified-queue] Error getting status:', error);
     return failure((error as Error).message);
   }
 }
 
-/**
- * POST /api/unified-queue
- * Enqueue a new task
- */
 export async function handleEnqueueTask(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const authError = requireUser(req.user);
     if (authError) return authError;
-
-    const body = req.body as {
-      type: string;
-      payload?: Record<string, any>;
-      priority?: string;
+    const body = (req.body || {}) as {
+      type?: TaskType;
+      input?: Record<string, any>;
+      priority?: Priority;
+      deadline?: string;
+      notBefore?: string;
+      idempotencyKey?: string;
+      cognitiveMode?: WorkCognitiveMode;
     };
-
-    if (!body.type) {
-      return failure('Missing task type', 400);
+    if (!body.type || !(body.type in DEFAULT_HANDLERS)) return failure('Unknown work type', 400);
+    if (req.user.role !== 'owner' && body.type !== 'user_message') {
+      return failure('Only the owner may enqueue system work', 403);
     }
 
-    const queueSystem = getQueueSystem();
-    const task = queueSystem.enqueue({
-      type: body.type as any,
-      payload: body.payload || {},
+    const input = body.input || {};
+    const kind = input.kind === 'response-pipeline' ? 'response-pipeline' : 'persona-chat';
+    const handler = body.type === 'user_message'
+      ? kind === 'response-pipeline' ? 'chat.response-pipeline' : 'chat.persona'
+      : DEFAULT_HANDLERS[body.type];
+    const system = await ensureQueueSystemStarted();
+    const task = system.enqueue({
+      type: body.type,
+      handler,
+      source: 'user',
+      input,
       username: req.user.username,
-      priority: (body.priority as any) || 'normal',
-    });
-
-    return success({
-      success: true,
-      task: {
-        id: task.id,
-        type: task.type,
-        priority: task.priority,
-        lane: task.resourceLane,
-        queuedAt: task.queuedAt,
+      priority: body.type === 'user_message' ? 'critical' : body.priority,
+      deadline: body.deadline,
+      notBefore: body.notBefore,
+      idempotencyKey: body.idempotencyKey,
+      cognitiveMode: body.cognitiveMode,
+      metadata: {
+        requestUser: { ...req.user },
+        requestSessionId: req.sessionId,
+        requestMetadata: req.metadata,
       },
     });
+
+    return success({ success: true, task: taskView(task) });
   } catch (error) {
-    console.error('[unified-queue] Error enqueueing task:', error);
+    console.error('[unified-queue] Error enqueueing work:', error);
     return failure((error as Error).message);
   }
 }
 
-/**
- * POST /api/unified-queue/trigger/:agentId
- * Manually trigger an agent
- */
+export async function handleSubmitCoordinatorWork(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorization = Object.entries(req.headers ?? {})
+    .find(([key]) => key.toLowerCase() === 'authorization')?.[1];
+  if (!authorizeWorkSubmission(authorization)) return failure('Valid coordinator service token required', 401);
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, any> : {};
+  if (!body.type || !DEFAULT_HANDLERS[body.type as TaskType]) return failure('Unknown work type', 400);
+  if (typeof body.username !== 'string' || !body.username.trim()) return failure('Work username is required', 400);
+  if (!body.input || typeof body.input !== 'object' || Array.isArray(body.input)) return failure('Work input must be an object', 400);
+  try {
+    const system = await ensureQueueSystemStarted();
+    const task = system.enqueue(body as any);
+    return success({ task }, 202);
+  } catch (error) {
+    return failure((error as Error).message, 503);
+  }
+}
+
+export async function handleDeleteQueueTask(req: UnifiedRequest): Promise<UnifiedResponse> {
+  try {
+    const authError = requireUser(req.user);
+    if (authError) return authError;
+    const taskId = req.params?.id;
+    if (!taskId) return failure('Missing task id', 400);
+    const manager = getQueueManager();
+    const existing = manager.getTask(taskId);
+    if (!existing || !canReadTask(existing, req.user)) return failure('Work item not found', 404);
+    const task = manager.cancel(taskId, `Cancelled by ${req.user.username}`);
+    if (!task) return failure('Work item is already terminal', 409);
+    return success({ success: true, task: taskView(task), snapshot: queueSnapshot(req.user) });
+  } catch (error) {
+    return failure((error as Error).message);
+  }
+}
+
+export async function handleGetQueueTask(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const taskId = req.params?.id;
+  if (!taskId) return failure('Missing task id', 400);
+  const task = getQueueManager().getTask(taskId);
+  if (!task || !canReadTask(task, req.user)) return failure('Work item not found', 404);
+  return success({ success: true, task: taskView(task) });
+}
+
+export async function handleClearQueueTasks(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const cancelled = getQueueManager().clearQueued();
+  return success({ success: true, cancelled, runningPreserved: true, snapshot: queueSnapshot(req.user) });
+}
+
 export async function handleTriggerAgent(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const authError = requireUser(req.user);
-    if (authError) return authError;
-
-    const agentId = req.params?.agentId || req.params?.id || req.body?.agentId;
-
-    if (!agentId) {
-      return failure('Missing agentId', 400);
-    }
-
-    const queueSystem = getQueueSystem();
-    const taskId = queueSystem.triggerAgent(agentId, req.user.username);
-
-    if (!taskId) {
-      return failure(`Unknown agent: ${agentId}`, 404);
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'queue_agent_triggered',
-      actor: req.user.username,
-      details: {
-        agentId,
-        taskId,
-      },
-    });
-
-    return success({
-      success: true,
-      agentId,
-      taskId,
-    });
-  } catch (error) {
-    console.error('[unified-queue] Error triggering agent:', error);
-    return failure((error as Error).message);
-  }
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const agentId = req.params?.agentId || req.params?.id || req.body?.agentId;
+  if (!agentId) return failure('Missing agentId', 400);
+  const taskId = getQueueSystem().triggerAgent(agentId, req.user.username);
+  if (!taskId) return failure(`Unknown agent: ${agentId}`, 404);
+  audit({ level: 'info', category: 'action', event: 'queue_agent_triggered', actor: req.user.username, details: { agentId, taskId } });
+  return success({ success: true, agentId, taskId });
 }
 
-/**
- * POST /api/unified-queue/control
- * Control the queue (start/stop/pause/resume)
- */
 export async function handleQueueControl(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const authError = requireUser(req.user);
-    if (authError) return authError;
-
-    const body = req.body as { action: 'start' | 'stop' | 'pause' | 'resume' };
-
-    if (!body.action) {
-      return failure('Missing action', 400);
-    }
-
-    const queueSystem = getQueueSystem();
-    let result = false;
-
-    switch (body.action) {
-      case 'start':
-        result = await queueSystem.start();
-        break;
-      case 'stop':
-        result = await queueSystem.stop();
-        break;
-      case 'pause':
-        queueSystem.pause();
-        result = true;
-        break;
-      case 'resume':
-        queueSystem.resume();
-        result = true;
-        break;
-      default:
-        return failure(`Unknown action: ${body.action}`, 400);
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: `queue_${body.action}`,
-      actor: req.user.username,
-      details: { result },
-    });
-
-    return success({
-      success: result,
-      action: body.action,
-      state: queueSystem.getState(),
-    });
-  } catch (error) {
-    console.error('[unified-queue] Error controlling queue:', error);
-    return failure((error as Error).message);
-  }
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const action = req.body?.action as 'start' | 'stop' | 'pause' | 'resume' | undefined;
+  const system = getQueueSystem();
+  let result: boolean;
+  if (action === 'start') result = await system.start();
+  else if (action === 'stop') result = await system.stop();
+  else if (action === 'pause') { system.pause(); result = true; }
+  else if (action === 'resume') { system.resume(); result = true; }
+  else return failure('Unknown queue control action', 400);
+  audit({ level: 'info', category: 'action', event: `queue_${action}`, actor: req.user.username, details: { result } });
+  return success({ success: result, action, state: system.getState() });
 }
 
-/**
- * GET /api/unified-queue/triggers
- * Get all registered triggers and their next run times
- */
-export async function handleGetTriggers(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const queueSystem = getQueueSystem();
-    const triggers = queueSystem.triggers.getTriggers();
-
-    const triggerList = Array.from(triggers.entries()).map(([id, state]) => ({
-      id,
-      type: state.config.type,
-      enabled: state.config.enabled,
-      priority: state.config.priority,
-      lastRun: state.lastRun?.toISOString(),
-      nextRun: state.nextRun?.toISOString(),
-      runCount: state.runCount,
-      errorCount: state.errorCount,
-      // Type-specific config
-      interval: state.config.interval,
-      schedule: state.config.schedule,
-      inactivityThreshold: state.config.inactivityThreshold,
-    }));
-
-    return success({
-      success: true,
-      triggers: triggerList,
-      nextTriggers: queueSystem.getState().nextTriggers,
-    });
-  } catch (error) {
-    console.error('[unified-queue] Error getting triggers:', error);
-    return failure((error as Error).message);
-  }
+export async function handleGetTriggers(): Promise<UnifiedResponse> {
+  const system = getQueueSystem();
+  const triggers = [...system.triggers.getTriggers().entries()].map(([id, state]) => ({
+    id,
+    type: state.config.type,
+    enabled: state.config.enabled,
+    priority: state.config.priority,
+    lastRun: state.lastRun?.toISOString(),
+    nextRun: state.nextRun?.toISOString(),
+    runCount: state.runCount,
+    errorCount: state.errorCount,
+    interval: state.config.interval,
+    schedule: state.config.schedule,
+    inactivityThreshold: state.config.inactivityThreshold,
+  }));
+  return success({ success: true, triggers, nextTriggers: system.getState().nextTriggers });
 }
 
-/**
- * POST /api/unified-queue/activity
- * Record user activity (pauses queue temporarily)
- */
 export async function handleRecordActivity(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const authError = requireUser(req.user);
-    if (authError) return authError;
-
-    const queueSystem = getQueueSystem();
-    queueSystem.recordActivity(req.user.username);
-
-    return success({
-      success: true,
-      lastActivity: queueSystem.getState().lastActivity,
-    });
-  } catch (error) {
-    console.error('[unified-queue] Error recording activity:', error);
-    return failure((error as Error).message);
-  }
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const system = getQueueSystem();
+  system.recordActivity(req.user.username);
+  return success({ success: true, lastActivity: system.getState().lastActivity });
 }
 
-/**
- * GET /api/queue/lane-control
- */
-export async function handleGetQueueLaneControl(): Promise<UnifiedResponse> {
-  try {
-    const system = getQueueSystem();
-    const state = system.getState();
-
-    return success({
-      success: true,
-      lanes: {
-        'local-llm': {
-          ...state.lanes['local-llm'],
-          paused: system.isLanePaused('local-llm'),
-        },
-        'vector-index': {
-          ...state.lanes['vector-index'],
-          paused: system.isLanePaused('vector-index'),
-        },
-        'remote-llm': {
-          ...state.lanes['remote-llm'],
-          paused: system.isLanePaused('remote-llm'),
-        },
-      },
-      pausedLanes: system.getPausedLanes(),
-    });
-  } catch (error) {
-    console.error('[queue/lane-control] Error:', error);
-    return failure((error as Error).message);
-  }
-}
-
-/**
- * POST /api/queue/lane-control
- */
-export async function handleUpdateQueueLaneControl(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const body = (req.body || {}) as { lane?: string; action?: 'pause' | 'resume' };
-    const { lane, action } = body;
-
-    if (!VALID_LANES.includes(lane as LaneId)) {
-      return failure(`Invalid lane: ${lane}. Must be one of: ${VALID_LANES.join(', ')}`, 400);
-    }
-
-    if (action !== 'pause' && action !== 'resume') {
-      return failure('Invalid action. Must be "pause" or "resume"', 400);
-    }
-
-    const system = getQueueSystem();
-    const laneId = lane as ResourceLaneId;
-
-    if (action === 'pause') {
-      system.pauseLane(laneId);
-    } else {
-      system.resumeLane(laneId);
-    }
-
-    return success({
-      success: true,
-      lane,
-      action,
-      paused: system.isLanePaused(laneId),
-    });
-  } catch (error) {
-    console.error('[queue/lane-control] Error:', error);
-    return failure((error as Error).message);
-  }
-}
-
-/**
- * GET /api/queue/metrics
- */
-export async function handleGetQueueMetrics(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const hours = parseInt(req.query?.hours || '24', 10);
-    const lane = req.query?.lane as LaneId | undefined;
-    const metrics = getAllLaneMetrics();
-    const history = lane
-      ? { [lane]: getThroughputHistory(lane, hours) }
-      : {
-          'local-llm': getThroughputHistory('local-llm', hours),
-          'vector-index': getThroughputHistory('vector-index', hours),
-          'remote-llm': getThroughputHistory('remote-llm', hours),
-        };
-
-    return success({
-      success: true,
-      metrics: {
-        lastUpdated: metrics.lastUpdated,
-        lanes: metrics.lanes,
-        history,
-        lastHour: getLastHourSummary(),
-      },
-    });
-  } catch (error) {
-    console.error('[queue/metrics] Error:', error);
-    return failure((error as Error).message);
-  }
-}
-
-/**
- * GET /api/queue-stream
- */
 export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedResponse> {
-  if (!req.user.isAuthenticated) {
-    async function* errorStream(): AsyncIterable<string> {
-      yield `data: ${JSON.stringify({ type: 'error', error: 'Not authenticated' })}\n\n`;
-    }
-
-    return {
-      status: 200,
-      stream: errorStream(),
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    };
-  }
-
-  async function* generateStream(): AsyncIterable<string> {
-    let isClosed = false;
-    const eventQueue: string[] = [];
-    const queueManager = getQueueManager();
-
-    const sendEvent = (data: object) => {
-      if (isClosed) return;
-      eventQueue.push(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
+  if (!req.user.isAuthenticated) return failure('Authentication required', 401);
+  async function* stream(): AsyncIterable<string> {
+    const manager = getQueueManager();
+    const pending: string[] = [];
+    let wake: (() => void) | undefined;
     const listener = (event: QueueEvent) => {
-      if (isClosed) return;
-      console.log(`[queue-stream] Forwarding event: ${event.type}`);
-      sendEvent(event);
+      pending.push(sse({ type: event.type, event, snapshot: queueSnapshot(req.user) }));
+      wake?.();
+      wake = undefined;
     };
-
-    queueManager.addEventListener(listener);
-
+    manager.addEventListener(listener);
     try {
-      yield `data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`;
-
-      while (!isClosed) {
-        while (eventQueue.length > 0) {
-          yield eventQueue.shift()!;
-        }
-
-        if (req.signal?.aborted) {
-          isClosed = true;
-          break;
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 250));
+      yield sse({ type: 'snapshot', snapshot: queueSnapshot(req.user), timestamp: new Date().toISOString() });
+      while (!req.signal?.aborted) {
+        while (pending.length > 0) yield pending.shift()!;
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, 15_000);
+          wake = () => { clearTimeout(timer); resolve(); };
+          req.signal?.addEventListener('abort', wake, { once: true });
+        });
+        if (pending.length === 0 && !req.signal?.aborted) yield ': heartbeat\n\n';
       }
     } finally {
-      console.log('[queue-stream] Client disconnected');
-      isClosed = true;
-      queueManager.removeEventListener(listener);
+      wake?.();
+      manager.removeEventListener(listener);
+    }
+  }
+  return { status: 200, stream: stream(), headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } };
+}
+
+function terminalStreamEvent(task: QueuedTask): string {
+  if (task.state === 'completed') return sse({ type: 'queued_task_completed', data: { taskId: task.id } });
+  return sse({ type: 'error', data: { message: task.error?.message || task.cancellationReason || `Work ${task.state}` } });
+}
+
+export async function handleQueueTaskStream(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return failure('Authentication required', 401);
+  const taskId = req.params?.id;
+  if (!taskId) return failure('Missing task id', 400);
+  const initialTask = getQueueManager().getTask(taskId);
+  if (!initialTask || !canReadTask(initialTask, req.user)) return failure('Work item not found', 404);
+  const streamTaskId = taskId;
+
+  async function* stream(): AsyncIterable<string> {
+    const manager = getQueueManager();
+    const pending: string[] = [];
+    let wake: (() => void) | undefined;
+    const listener = (event: QueueEvent) => {
+      if (event.taskId !== streamTaskId) return;
+      if (event.type === 'task_output' && typeof event.details?.chunk === 'string') pending.push(event.details.chunk);
+      else if (event.type === 'task_started') pending.push(sse({ type: 'queued_task_started', data: { taskId: streamTaskId } }));
+      else if (event.type === 'task_completed') pending.push(sse({ type: 'queued_task_completed', data: { taskId: streamTaskId } }));
+      else if (event.type === 'task_failed' || event.type === 'task_cancelled' || event.type === 'task_expired') {
+        const task = manager.getTask(streamTaskId);
+        if (task) pending.push(terminalStreamEvent(task));
+      }
+      wake?.();
+      wake = undefined;
+    };
+    manager.addEventListener(listener);
+    try {
+      for (const chunk of manager.getOutput(streamTaskId)) yield chunk;
+      let task = manager.getTask(streamTaskId);
+      if (!task) return;
+      if (task.state === 'queued' || task.state === 'waiting') {
+        const position = Math.max(1, manager.getAllTasks().filter(item => item.state === 'queued' || item.state === 'waiting').findIndex(item => item.id === streamTaskId) + 1);
+        yield sse({ type: 'queued', data: { taskId: streamTaskId, position, resource: task.resource } });
+      } else if (task.state === 'leased' && manager.getOutput(streamTaskId).length === 0) {
+        yield sse({ type: 'queued_task_started', data: { taskId: streamTaskId } });
+      } else if (taskStatus(task) === 'completed' || taskStatus(task) === 'failed') {
+        yield terminalStreamEvent(task);
+        return;
+      }
+
+      while (!req.signal?.aborted) {
+        while (pending.length > 0) yield pending.shift()!;
+        task = manager.getTask(streamTaskId);
+        if (!task || taskStatus(task) === 'completed' || taskStatus(task) === 'failed') return;
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, 15_000);
+          wake = () => { clearTimeout(timer); resolve(); };
+          req.signal?.addEventListener('abort', wake, { once: true });
+        });
+        if (pending.length === 0 && !req.signal?.aborted) yield ': heartbeat\n\n';
+      }
+    } finally {
+      wake?.();
+      manager.removeEventListener(listener);
     }
   }
 
-  return {
-    status: 200,
-    stream: generateStream(),
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  };
+  return { status: 200, stream: stream(), headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } };
 }

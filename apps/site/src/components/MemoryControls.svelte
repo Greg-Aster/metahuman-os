@@ -45,12 +45,22 @@
   // ============================================================================
   // Generic Agent Runner with Options
   // ============================================================================
+  function agentOptionArgs(options: Record<string, any>): string[] {
+    const args: string[] = []
+    if (options.dryRun) args.push('--dry-run')
+    if (options.verbose) args.push('--verbose')
+    if (options.minLength !== undefined) args.push('--min-length', String(options.minLength))
+    if (options.similarity !== undefined) args.push('--similarity', String(options.similarity))
+    if (options.temperature !== undefined) args.push('--temperature', String(options.temperature))
+    return args
+  }
+
   async function runAgent(name: string, options: Record<string, any> = {}): Promise<boolean> {
     try {
-      const res = await apiFetch('/api/agent', {
+      const res = await apiFetch('/api/agents/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName: name, options })
+        body: JSON.stringify({ agent: name, args: agentOptionArgs(options) })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to start agent')

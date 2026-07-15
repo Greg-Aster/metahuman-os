@@ -48,7 +48,7 @@ export const InnerDialogueCaptureNode: NodeDefinition = defineNode({
       type: 'text',
       default: '',
       label: 'Source',
-      description: 'Source identifier (e.g., lizard-brain, dreamer, reflector)',
+      description: 'Source identifier (e.g., operator-policy, dreamer, reflector)',
     },
     role: {
       type: 'text',

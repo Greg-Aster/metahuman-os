@@ -280,16 +280,16 @@
   async function runOrganizerAgent() {
     agentStatus = 'Starting agent...';
     try {
-      const res = await apiFetch('/api/agent', {
+      const res = await apiFetch('/api/agents/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName: 'organizer' }),
+        body: JSON.stringify({ agent: 'organizer' }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Failed to start agent');
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.message || 'Failed to start agent');
       }
-      agentStatus = data.message;
+      agentStatus = data.pid ? `Organizer started with PID ${data.pid}` : (data.message || 'Organizer start requested');
     } catch (e) {
       agentStatus = (e as Error).message;
     } finally {

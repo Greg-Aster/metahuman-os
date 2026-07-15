@@ -6,7 +6,6 @@
  *
  * Provides:
  * - Cloud GPU providers (RunPod Serverless, HuggingFace Inference)
- * - Request queuing for scaling (Redis-based)
  * - Cold start handling and progress reporting
  * - Multi-user storage utilities
  *
@@ -23,9 +22,6 @@ export * from './provider-bridge.js';
 
 // Providers - Cloud GPU inference (low-level, use bridge instead)
 export * from './providers/index.js';
-
-// Queue - Request queuing for scaling
-export * from './queue/index.js';
 
 // Scaling - Cold start handling, metrics
 export * from './scaling/index.js';

@@ -41,6 +41,7 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'map', type: 'object', optional: true, description: 'Optional graph-supplied map data' },
     { name: 'visual', type: 'object', optional: true, description: 'Optional graph-supplied visual frame' },
     { name: 'visuals', type: 'array', optional: true, description: 'Optional graph-supplied visual frames' },
+    { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
@@ -83,13 +84,16 @@ export const environmentContextBuilderNode = defineNode({
     const map = isRecord(inputs.map)
       ? inputs.map as EnvironmentMapData
       : observation.map ?? null;
-    const images = coerceVisualFrames(inputs.visual ?? observation.visual, inputs.visuals ?? observation.visuals);
+    const visualFrames = coerceVisualFrames(inputs.visual ?? observation.visual, inputs.visuals ?? observation.visuals);
+    const images = Array.isArray(inputs.images)
+      ? inputs.images.filter(part => isRecord(part) && part.type === 'image_url')
+      : [];
     const effectiveObservation: EnvironmentObservation = {
       ...observation,
       ...(location ? { location } : {}),
       ...(map ? { map } : {}),
-      ...(images[0] ? { visual: images[0] } : {}),
-      ...(images.length ? { visuals: images } : {}),
+      ...(visualFrames[0] ? { visual: visualFrames[0] } : {}),
+      ...(visualFrames.length ? { visuals: visualFrames } : {}),
     };
 
     const systemPrompt = String(properties?.systemPrompt ?? '');
@@ -100,7 +104,12 @@ export const environmentContextBuilderNode = defineNode({
 
     return {
       message,
-      messages: [{ role: 'user', content: message }],
+      messages: [{
+        role: 'user',
+        content: images.length
+          ? [{ type: 'text', text: message }, ...images]
+          : message,
+      }],
       context: {
         kind: 'environment',
         observation: effectiveObservation,

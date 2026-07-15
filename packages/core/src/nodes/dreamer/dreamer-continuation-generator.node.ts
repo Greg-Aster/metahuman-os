@@ -8,14 +8,12 @@ import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { scheduler } from '../../agent-scheduler.js';
 import { appendDreamToBuffer, appendReasoningToBuffer } from '../../conversation-buffer.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 function markBackgroundActivity() {
   try { recordSystemActivity(); } catch {}
-  try { scheduler.recordActivity(); } catch {}
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are continuing a surreal dream sequence. You only see the previous dream fragment - use it as inspiration,

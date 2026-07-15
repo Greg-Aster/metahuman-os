@@ -4,6 +4,7 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
+import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../connection-pool';
 
 // Types
 interface AuditStreamEvent {
@@ -48,7 +49,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
   const { getCurrentMode, getReasoningDepth, getConversationSessionId, getReasoningStagesCount } = options;
 
   // State
-  let auditStream: EventSource | null = null;
+  let auditHandle: ConnectionHandle | null = null;
 
   // Svelte stores for reactive state
   const trace = writable<string[]>([]);
@@ -67,28 +68,34 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    * Ensure audit stream is connected
    */
   function ensureAuditStream(): void {
-    if (auditStream && auditStream.readyState !== EventSource.CLOSED) {
+    if (auditHandle && auditHandle.getStatus() !== 'closed') {
       return;
     }
-    if (auditStream) {
-      auditStream.close();
-      auditStream = null;
-    }
 
-    auditStream = new EventSource('/api/monitor/stream');
-    auditStream.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data) as AuditStreamEvent;
-        handleAuditTrace(parsed);
-      } catch (err) {
-        console.warn('[thinking-trace] Failed to parse audit event', err);
-      }
-    };
-    auditStream.onerror = (err) => {
-      console.warn('[thinking-trace] Audit stream disconnected', err);
-      auditStream?.close();
-      auditStream = null;
-    };
+    auditHandle = connectionPool.request({
+      id: 'thinking-trace-stream',
+      name: 'Thinking Trace Stream',
+      url: '/api/monitor/stream',
+      priority: ConnectionPriority.LOW,
+      viewDependency: 'chat',
+      defer: true,
+      onMessage: (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as AuditStreamEvent;
+          handleAuditTrace(parsed);
+        } catch (err) {
+          console.warn('[thinking-trace] Failed to parse audit event', err);
+        }
+      },
+      onError: (err) => {
+        console.warn('[thinking-trace] Audit stream disconnected', err);
+      },
+    });
+  }
+
+  function pauseTelemetry(): void {
+    auditHandle?.close();
+    auditHandle = null;
   }
 
   /**
@@ -233,6 +240,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     active.set(false);
     placeholderActive.set(false);
     trace.set([]);
+    pauseTelemetry();
   }
 
   /**
@@ -274,10 +282,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    * Cleanup function to call on component unmount
    */
   function cleanup(): void {
-    if (auditStream) {
-      auditStream.close();
-      auditStream = null;
-    }
+    pauseTelemetry();
   }
 
   return {
@@ -296,6 +301,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     setActive,
     appendTrace,
     getTrace,
+    pauseTelemetry,
     cleanup,
   };
 }

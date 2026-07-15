@@ -146,6 +146,11 @@
     ]
   },
 
+  "environment": {
+    "description": "Embodied environment mode uses its cognitive graph directly without the layered response pipeline",
+    "layers": []
+  },
+
   "_comments": {
     "searchDepth": "shallow=4, normal=8, deep=16 memory results",
     "validationLevel": "none, selective (safety only), full (all checks)",

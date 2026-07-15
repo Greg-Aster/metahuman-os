@@ -6,50 +6,279 @@
 import fs, { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
+import {
+  bootEntryForDescriptor,
+  buildAgentDescriptor,
+  defaultSchedulerAgentConfig,
+  DESCRIPTORS,
+  ENVIRONMENT_BRIDGE_FIELDS,
+  readSchedulerConfig,
+  SCHEDULER_AGENT_FIELDS,
+  updateEnvironmentBridgeVariable,
+  writeSchedulerConfig,
+} from './agent-monitor-descriptors.js';
+import {
+  getAgentFailures,
+  isProcessRunning,
+  readRegistry,
+  writeRegistry,
+} from './agent-monitor-registry.js';
+import {
+  getEnvironmentActionSubscriberCount,
+  summarizeEnvironmentBridgeState,
+} from './environment-interface/index.js';
+import type {
+  AgentDataPanel,
+  AgentDescriptor,
+  AgentError,
+  AgentFailureEntry,
+  AgentLog,
+  AgentMonitorCard,
+  AgentMonitorSnapshot,
+  AgentRunMetrics,
+  AgentStatus,
+  AgentVariableDescriptor,
+  SchedulerConfigFile,
+} from './agent-monitor-types.js';
+
+export {
+  clearAgentFailure,
+  getAgentFailures,
+  getRunningAgents,
+  isAgentRunning,
+  recordAgentFailure,
+  registerAgent,
+  stopAgent,
+  stopAllAgents,
+  unregisterAgent,
+} from './agent-monitor-registry.js';
+
+export type {
+  AgentBootEntry,
+  AgentDataPanel,
+  AgentDescriptor,
+  AgentError,
+  AgentFailureEntry,
+  AgentKind,
+  AgentLog,
+  AgentMonitorCard,
+  AgentMonitorSnapshot,
+  AgentRunMetrics,
+  AgentStatus,
+  AgentVariableApplyMode,
+  AgentVariableDescriptor,
+  AgentVariableType,
+} from './agent-monitor-types.js';
 
 const LOG_PREFIX = '[agent-monitor]';
 
-export interface AgentStatus {
-  name: string;
-  pid?: number;
-  status: 'running' | 'stopped' | 'error';
-  startedAt?: string;
-  lastActivity?: string;
-  uptime?: number; // seconds
-  errors?: string[];
-}
-
-export interface AgentRunMetrics {
-  agent: string;
-  totalRuns: number;
-  successfulRuns: number;
-  failedRuns: number;
-  lastRun?: string;
-  lastError?: string;
-  recentActivity: {
-    last5m: number;
-    last1h: number;
-    today: number;
-  };
-  successRate: {
-    last5m: number;
-    last1h: number;
-    overall: number;
+function monitorCardForAgent(name: string, descriptor: AgentDescriptor, status?: AgentStatus): AgentMonitorCard {
+  const metrics = getAgentMetrics(name);
+  return {
+    name,
+    displayName: descriptor.name,
+    description: descriptor.description,
+    kind: descriptor.kind,
+    status: status?.status ?? 'stopped',
+    pid: status?.pid,
+    uptime: status?.uptime,
+    startedAt: status?.startedAt,
+    lastActivity: status?.lastActivity,
+    metrics,
+    errors: status?.errors ?? [],
   };
 }
 
-interface AgentRegistry {
-  [agentName: string]: {
-    pid: number;
-    startTime: string;
+function monitorCardForFailure(failure: AgentFailureEntry, descriptor: AgentDescriptor): AgentMonitorCard {
+  const metrics = getAgentMetrics(failure.agent);
+  return {
+    name: failure.agent,
+    displayName: descriptor.name,
+    description: descriptor.description,
+    kind: descriptor.kind,
+    status: 'error',
+    pid: failure.pid,
+    lastActivity: failure.timestamp,
+    metrics: {
+      ...metrics,
+      failedRuns: Math.max(metrics.failedRuns, 1),
+      lastRun: metrics.lastRun ?? failure.timestamp,
+      lastError: failure.error,
+    },
+    errors: [failure.error, failure.stderr].filter(Boolean) as string[],
   };
 }
 
-export interface AgentLog {
-  timestamp: string;
-  level: 'info' | 'warn' | 'error';
-  message: string;
-  agent: string;
+function latestTaskFromLogs(logs: AgentLog[]): string | undefined {
+  return logs.slice().reverse().find(log => log.level !== 'error')?.message;
+}
+
+function errorFromLog(log: AgentLog): AgentError {
+  return {
+    timestamp: log.timestamp,
+    agent: log.agent,
+    message: log.message,
+    source: 'audit',
+  };
+}
+
+function errorFromFailure(failure: AgentFailureEntry): AgentError {
+  return {
+    timestamp: failure.timestamp,
+    agent: failure.agent,
+    message: failure.error,
+    source: failure.source,
+    pid: failure.pid,
+    exitCode: failure.exitCode,
+    stderr: failure.stderr,
+    stdout: failure.stdout,
+  };
+}
+
+function variableValue(descriptor: AgentDescriptor, key: string): string | number | boolean | string[] | null | undefined {
+  return descriptor.variables.find(variable => variable.key === key)?.value;
+}
+
+function environmentBridgeReadiness(
+  lifecycle: AgentMonitorCard['status'],
+  descriptor: AgentDescriptor,
+  errors: string[] = [],
+): Pick<AgentDataPanel, 'readiness' | 'dependencyHealth' | 'latestTask'> {
+  const summary = summarizeEnvironmentBridgeState();
+  const activeSessions = summary.sessions.filter(session => session.status === 'connected');
+  const streamCount = getEnvironmentActionSubscriberCount();
+  const tokenConfigured = Boolean(process.env.MH_ENVIRONMENT_BRIDGE_TOKEN?.trim());
+  const adapterTokenConfigured = Boolean(process.env.MH_ENVIRONMENT_ADAPTER_TOKEN?.trim());
+
+  if (lifecycle === 'error') {
+    return {
+      readiness: 'failed',
+      dependencyHealth: 'failed',
+      latestTask: errors.find(Boolean) || 'Robot Bridge failed.',
+    };
+  }
+
+  if (lifecycle !== 'running') {
+    return {
+      readiness: 'not-ready',
+      dependencyHealth: 'unavailable',
+      latestTask: 'Environment Bridge agent is stopped.',
+    };
+  }
+
+  if (!tokenConfigured || !adapterTokenConfigured) {
+    return {
+      readiness: 'not-ready',
+      dependencyHealth: 'missing',
+      latestTask: 'Configure both environment bridge tokens and restart MetaHuman OS.',
+    };
+  }
+
+  if (!summary.enabled) {
+    return {
+      readiness: 'not-ready',
+      dependencyHealth: 'configured',
+      latestTask: 'Robot Bridge is disabled.',
+    };
+  }
+
+  if (activeSessions.length === 0) {
+    return {
+      readiness: 'not-ready',
+      dependencyHealth: 'connecting',
+      latestTask: 'Waiting for an environment adapter observation and action stream.',
+    };
+  }
+
+  if (streamCount === 0) {
+    return {
+      readiness: 'not-ready',
+      dependencyHealth: 'connecting',
+      latestTask: `Received ${activeSessions.length} robot session(s); waiting for an action stream.`,
+    };
+  }
+
+  return {
+    readiness: 'ready',
+    dependencyHealth: 'ok',
+    latestTask: `${activeSessions.length} robot session(s) connected with ${streamCount} action stream(s).`,
+  };
+}
+
+function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor): AgentDataPanel {
+  const logs = card.name === 'environment-bridge' ? [] : getAgentLogs(card.name, 80);
+  const errors = logs.filter(log => log.level === 'error').slice(-10).map(errorFromLog);
+  const bridgeStatus = card.name === 'environment-bridge'
+    ? environmentBridgeReadiness(card.status, descriptor, [...card.errors, ...errors.map(error => error.message)])
+    : undefined;
+  return {
+    agentId: card.name,
+    displayName: descriptor.name,
+    description: descriptor.description,
+    kind: descriptor.kind,
+    lifecycle: card.status,
+    pid: card.pid,
+    uptime: card.uptime,
+    readiness: bridgeStatus?.readiness ?? (card.status === 'running' ? 'ready' : card.status === 'error' ? 'failed' : 'unknown'),
+    dependencyHealth: bridgeStatus?.dependencyHealth ?? (card.errors.length > 0 ? 'failed' : 'unknown'),
+    latestTask: bridgeStatus?.latestTask ?? latestTaskFromLogs(logs),
+    variables: descriptor.variables,
+    logs,
+    errors,
+  };
+}
+
+function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor, failure: AgentFailureEntry): AgentDataPanel {
+  const logs = getAgentLogs(card.name, 80);
+  const failureLog: AgentLog = {
+    timestamp: failure.timestamp,
+    level: 'error',
+    message: failure.stderr || failure.error,
+    agent: failure.agent,
+  };
+  const bridgeStatus = card.name === 'environment-bridge'
+    ? environmentBridgeReadiness('error', descriptor, [failure.error, failure.stderr ?? ''])
+    : undefined;
+  return {
+    agentId: card.name,
+    displayName: descriptor.name,
+    description: descriptor.description,
+    kind: descriptor.kind,
+    lifecycle: 'error',
+    pid: card.pid,
+    readiness: bridgeStatus?.readiness ?? 'failed',
+    dependencyHealth: bridgeStatus?.dependencyHealth ?? 'failed',
+    latestTask: bridgeStatus?.latestTask ?? failure.error,
+    variables: descriptor.variables,
+    logs: [...logs, failureLog].slice(-80),
+    errors: [errorFromFailure(failure)],
+  };
+}
+
+function hasRunnableAgentSource(id: string): boolean {
+  const servicePath = path.join(systemPaths.brain, 'services', `${id}.ts`);
+  const modularCli = path.join(systemPaths.agents, id, 'cli.ts');
+  const modularIndex = path.join(systemPaths.agents, id, 'index.ts');
+  const legacyPath = path.join(systemPaths.agents, `${id}.ts`);
+  return [servicePath, modularCli, modularIndex, legacyPath].some(candidate => fs.existsSync(candidate));
+}
+
+function isTrackableAgent(id: string): boolean {
+  return Boolean(DESCRIPTORS[id]) || hasRunnableAgentSource(id);
+}
+
+function normalizedAgentIds(schedulerConfig: SchedulerConfigFile): string[] {
+  const registry = readRegistry();
+  const failures = getAgentFailures();
+  return [...new Set([
+    ...Object.keys(DESCRIPTORS),
+    ...listAvailableAgents(),
+    ...Object.keys(schedulerConfig.agents ?? {}),
+    ...Object.keys(registry),
+    ...failures.map(failure => failure.agent),
+  ])]
+    .filter(isTrackableAgent)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -97,7 +326,11 @@ export function getAgentLogs(agentName?: string, limit = 50): AgentLog[] {
 
   const lines = fs.readFileSync(auditFile, 'utf8').trim().split('\n');
   const logs: AgentLog[] = [];
-  const knownAgents = new Set(listAvailableAgents());
+  const knownAgents = new Set([
+    ...Object.keys(DESCRIPTORS),
+    ...Object.keys(readRegistry()).filter(isTrackableAgent),
+    ...getAgentFailures().map(failure => failure.agent).filter(isTrackableAgent),
+  ]);
 
   for (const line of lines) {
     if (!line) continue;
@@ -162,11 +395,12 @@ export function getAgentStats(agentName: string): {
     );
   };
 
-  const isComplete = (m: string) => {
+  const isComplete = (m: string, level: AgentLog['level']) => {
     const s = m.toLowerCase();
     return (
       s === 'agent_completed' ||
       s === 'agent_cycle_completed' ||
+      (s === 'agent_stopped' && level !== 'error') ||
       s.includes('generated new insight') ||
       s.includes('triggering') ||
       s.includes('triggered') ||
@@ -186,84 +420,20 @@ export function getAgentStats(agentName: string): {
   };
 
   const started = logs.filter(l => isStart(l.message)).length;
-  const completed = logs.filter(l => isComplete(l.message)).length;
+  const completed = logs.filter(l => isComplete(l.message, l.level)).length;
   const failed = logs.filter(l => isFail(l.message, l.level)).length;
+  const successfulRuns = DESCRIPTORS[agentName]?.kind === 'one-shot'
+    ? Math.min(started, completed)
+    : completed;
 
   const lastRunLog = logs.filter(l => isStart(l.message)).slice(-1)[0];
 
   return {
     totalRuns: started,
-    successfulRuns: completed,
+    successfulRuns,
     failedRuns: failed,
     lastRun: lastRunLog?.timestamp,
   };
-}
-
-/**
- * Agent registry path
- */
-const getRegistryPath = () => path.join(systemPaths.logs, 'agents', 'running.json');
-
-/**
- * Read agent registry
- */
-function readRegistry(): AgentRegistry {
-  const registryPath = getRegistryPath();
-  if (!fs.existsSync(registryPath)) {
-    return {};
-  }
-  try {
-    return JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-  } catch (error) {
-    console.warn(`${LOG_PREFIX} Failed to read agent registry:`, (error as Error).message);
-    return {};
-  }
-}
-
-/**
- * Write agent registry
- */
-function writeRegistry(registry: AgentRegistry): void {
-  const registryPath = getRegistryPath();
-  const dir = path.dirname(registryPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
-}
-
-/**
- * Register a running agent
- */
-export function registerAgent(name: string, pid: number): void {
-  const registry = readRegistry();
-  registry[name] = {
-    pid,
-    startTime: new Date().toISOString(),
-  };
-  writeRegistry(registry);
-}
-
-/**
- * Unregister an agent
- */
-export function unregisterAgent(name: string): void {
-  const registry = readRegistry();
-  delete registry[name];
-  writeRegistry(registry);
-}
-
-/**
- * Check if a process is running
- */
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0); // Signal 0 checks if process exists
-    return true;
-  } catch (error) {
-    // Process doesn't exist or access denied - both mean not running
-    return false;
-  }
 }
 
 /**
@@ -272,13 +442,16 @@ function isProcessRunning(pid: number): boolean {
 export function getAgentStatuses(): AgentStatus[] {
 
   const registry = readRegistry();
-  const availableAgents = listAvailableAgents();
+  const availableAgents = [...new Set([
+    ...Object.keys(DESCRIPTORS),
+    ...Object.keys(registry).filter(isTrackableAgent),
+  ])];
   const statuses: AgentStatus[] = [];
 
   // Clean up stale entries
-  const cleanRegistry: AgentRegistry = {};
+  const cleanRegistry: Record<string, { pid: number; startTime: string }> = {};
   for (const [name, info] of Object.entries(registry)) {
-    if (isProcessRunning(info.pid)) {
+    if (isTrackableAgent(name) && isProcessRunning(info.pid)) {
       cleanRegistry[name] = info;
     }
   }
@@ -316,44 +489,17 @@ export function getAgentStatuses(): AgentStatus[] {
         registryInfo = { pid: lockInfo.pid, startTime: lockInfo.startTime };
       }
     }
-    const logs = getAgentLogs(name, 100);
-
     let status: AgentStatus['status'] = 'stopped';
-    let lastActivity: string | undefined;
+    const logs = getAgentLogs(name, 100);
+    let lastActivity = logs.slice(-1)[0]?.timestamp;
     let uptime: number | undefined;
-
-    // Helpers to classify events
-    const isComplete = (m: string) => {
-      const s = m?.toLowerCase?.() || '';
-      return (
-        s === 'agent_completed' ||
-        s === 'agent_cycle_completed' ||
-        s.includes('generated new insight') ||
-        s.includes('triggered') ||
-        s.includes('finished') ||
-        s.includes('completed')
-      );
-    };
 
     if (registryInfo && isProcessRunning(registryInfo.pid)) {
       status = 'running';
       const startTime = new Date(registryInfo.startTime).getTime();
       uptime = Math.floor((Date.now() - startTime) / 1000);
 
-      // Find last activity from logs
-      const recentLogs = logs.slice(-10);
-      if (recentLogs.length > 0) {
-        lastActivity = recentLogs[recentLogs.length - 1].timestamp;
-      }
-    } else if (logs.length > 0) {
-      // Reset error state as soon as a successful completion occurs
-      const significant = logs.filter(l => l.level === 'error' || isComplete(l.message));
-      const lastSig = significant[significant.length - 1];
-      if (lastSig && lastSig.level === 'error') {
-        status = 'error';
-      } else {
-        status = 'stopped';
-      }
+      lastActivity = logs.slice(-1)[0]?.timestamp ?? registryInfo.startTime;
     }
 
     statuses.push({
@@ -363,104 +509,11 @@ export function getAgentStatuses(): AgentStatus[] {
       startedAt: registryInfo?.startTime,
       lastActivity,
       uptime,
-      errors: logs.filter(l => l.level === 'error').slice(-3).map(l => l.message),
+      errors: [],
     });
   }
 
   return statuses;
-}
-
-/**
- * Check if an agent is currently running
- */
-export function isAgentRunning(name: string): boolean {
-  const registry = readRegistry();
-  const info = registry[name];
-  if (!info) return false;
-  return isProcessRunning(info.pid);
-}
-
-/**
- * Get all currently running agents
- */
-export function getRunningAgents(): Array<{ name: string; pid: number; startTime: string }> {
-  const registry = readRegistry();
-  const running: Array<{ name: string; pid: number; startTime: string }> = [];
-
-  for (const [name, info] of Object.entries(registry)) {
-    if (isProcessRunning(info.pid)) {
-      running.push({
-        name,
-        pid: info.pid,
-        startTime: info.startTime,
-      });
-    }
-  }
-
-  return running;
-}
-
-/**
- * Stop a running agent
- */
-export function stopAgent(name: string, force = false): { success: boolean; message: string; pid?: number } {
-  const registry = readRegistry();
-  const info = registry[name];
-
-  if (!info) {
-    return { success: false, message: `Agent '${name}' is not in the registry` };
-  }
-
-  if (!isProcessRunning(info.pid)) {
-    // Clean up stale entry
-    unregisterAgent(name);
-    return { success: false, message: `Agent '${name}' is not running (cleaned up stale entry)` };
-  }
-
-  try {
-    process.kill(info.pid, force ? 'SIGKILL' : 'SIGTERM');
-    unregisterAgent(name);
-    return {
-      success: true,
-      message: `Sent ${force ? 'SIGKILL' : 'SIGTERM'} to ${name}`,
-      pid: info.pid,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Failed to stop ${name}: ${(error as Error).message}`,
-      pid: info.pid,
-    };
-  }
-}
-
-/**
- * Stop all running agents
- * Returns summary of stopped agents
- */
-export function stopAllAgents(force = false): {
-  stopped: string[];
-  failed: string[];
-  total: number;
-} {
-  const running = getRunningAgents();
-  const stopped: string[] = [];
-  const failed: string[] = [];
-
-  for (const agent of running) {
-    const result = stopAgent(agent.name, force);
-    if (result.success) {
-      stopped.push(agent.name);
-    } else {
-      failed.push(agent.name);
-    }
-  }
-
-  return {
-    stopped,
-    failed,
-    total: running.length,
-  };
 }
 
 /**
@@ -486,11 +539,12 @@ export function getAgentMetrics(agentName: string): AgentRunMetrics {
     );
   };
 
-  const isComplete = (m: string) => {
+  const isComplete = (m: string, level: AgentLog['level']) => {
     const s = m.toLowerCase();
     return (
       s === 'agent_completed' ||
       s === 'agent_cycle_completed' ||
+      (s === 'agent_stopped' && level !== 'error') ||
       s.includes('generated new insight') ||
       s.includes('triggering') ||
       s.includes('triggered') ||
@@ -511,15 +565,18 @@ export function getAgentMetrics(agentName: string): AgentRunMetrics {
 
   // Calculate metrics
   const totalStarts = logs.filter(l => isStart(l.message)).length;
-  const totalCompleted = logs.filter(l => isComplete(l.message)).length;
+  const totalCompleted = logs.filter(l => isComplete(l.message, l.level)).length;
   const totalFailed = logs.filter(l => isFail(l.message, l.level)).length;
+  const successfulRuns = DESCRIPTORS[agentName]?.kind === 'one-shot'
+    ? Math.min(totalStarts, totalCompleted)
+    : totalCompleted;
 
   const last5mStarts = last5m.filter(l => isStart(l.message)).length;
-  const last5mCompleted = last5m.filter(l => isComplete(l.message)).length;
+  const last5mCompleted = last5m.filter(l => isComplete(l.message, l.level)).length;
   const last5mFailed = last5m.filter(l => isFail(l.message, l.level)).length;
 
   const last1hStarts = last1h.filter(l => isStart(l.message)).length;
-  const last1hCompleted = last1h.filter(l => isComplete(l.message)).length;
+  const last1hCompleted = last1h.filter(l => isComplete(l.message, l.level)).length;
   const last1hFailed = last1h.filter(l => isFail(l.message, l.level)).length;
 
   const lastRunLog = logs.filter(l => isStart(l.message)).slice(-1)[0];
@@ -528,7 +585,7 @@ export function getAgentMetrics(agentName: string): AgentRunMetrics {
   const result: AgentRunMetrics = {
     agent: agentName,
     totalRuns: totalStarts,
-    successfulRuns: totalCompleted,
+    successfulRuns,
     failedRuns: totalFailed,
     lastRun: lastRunLog?.timestamp,
     lastError: lastErrorLog?.message,
@@ -545,4 +602,151 @@ export function getAgentMetrics(agentName: string): AgentRunMetrics {
   };
 
   return result;
+}
+
+export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
+  const schedulerConfig = readSchedulerConfig();
+  const statuses = getAgentStatuses();
+  const statusByName = new Map(statuses.map(status => [status.name, status]));
+  const failures = getAgentFailures();
+  const failureByName = new Map(failures.map(failure => [failure.agent, failure]));
+  const cards: AgentMonitorCard[] = [];
+  const descriptors = new Map<string, AgentDescriptor>();
+
+  for (const id of normalizedAgentIds(schedulerConfig)) {
+    const descriptor = buildAgentDescriptor(id, schedulerConfig.agents?.[id]);
+    descriptors.set(id, descriptor);
+    cards.push(monitorCardForAgent(id, descriptor, statusByName.get(id)));
+  }
+
+  const runningAgents = cards
+    .filter(card => card.status === 'running')
+    .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
+  const recentCompletions = cards
+    .filter(card => card.kind === 'one-shot'
+      && card.status === 'stopped'
+      && card.metrics.successfulRuns > 0
+      && !failureByName.has(card.name))
+    .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? ''))
+    .slice(0, 10);
+  const recentFailures = failures
+    .map(failure => {
+      const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, schedulerConfig.agents?.[failure.agent]);
+      descriptors.set(failure.agent, descriptor);
+      return monitorCardForFailure(failure, descriptor);
+    })
+    .filter(card => !runningAgents.some(agent => agent.name === card.name));
+  const runningNames = new Set(runningAgents.map(card => card.name));
+  const startableAgents = cards
+    .filter(card => !runningNames.has(card.name))
+    .map(card => descriptors.get(card.name)!)
+    .filter(descriptor => descriptor.startable)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const bootAgents = [...descriptors.values()]
+    .filter(descriptor => descriptor.bootEligible)
+    .map(bootEntryForDescriptor)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const agentData: Record<string, AgentDataPanel> = {};
+  for (const card of cards) {
+    const descriptor = descriptors.get(card.name);
+    if (descriptor) {
+      const failure = failureByName.get(card.name);
+      agentData[card.name] = failure && card.status !== 'running'
+        ? dataPanelForFailure(monitorCardForFailure(failure, descriptor), descriptor, failure)
+        : dataPanelForAgent(card, descriptor);
+    }
+  }
+
+  for (const failure of failures) {
+    if (agentData[failure.agent]) continue;
+    const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, schedulerConfig.agents?.[failure.agent]);
+    const card = monitorCardForFailure(failure, descriptor);
+    agentData[failure.agent] = dataPanelForFailure(card, descriptor, failure);
+  }
+
+  return {
+    timestamp: new Date().toISOString(),
+    runningAgents,
+    recentCompletions,
+    recentFailures,
+    startableAgents,
+    bootAgents,
+    agentData,
+  };
+}
+
+function coerceAgentVariable(value: unknown, descriptor: AgentVariableDescriptor): string | number | boolean | string[] | null {
+  if (descriptor.type === 'toggle') {
+    return Boolean(value);
+  }
+  if (descriptor.type === 'number' || descriptor.type === 'port') {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${descriptor.label} must be a number`);
+    }
+    return Math.floor(parsed);
+  }
+  if (descriptor.type === 'multiselect') {
+    return Array.isArray(value) ? value.map(item => String(item)) : [];
+  }
+  if (descriptor.type === 'url') {
+    const text = String(value ?? '').trim();
+    if (text) {
+      new URL(text);
+    }
+    return text;
+  }
+  if (descriptor.type === 'readonly' || descriptor.type === 'secretRef') {
+    throw new Error(`${descriptor.label} cannot be edited here`);
+  }
+  return String(value ?? '').trim();
+}
+
+function findVariableDescriptor(agentName: string, key: string): AgentVariableDescriptor | undefined {
+  const schedulerConfig = readSchedulerConfig();
+  const descriptor = buildAgentDescriptor(agentName, schedulerConfig.agents?.[agentName]);
+  return descriptor.variables.find(variable => variable.key === key);
+}
+
+export function setAgentVariable(agentName: string, key: string, rawValue: unknown): AgentDataPanel {
+  const variable = findVariableDescriptor(agentName, key);
+  if (!variable || !variable.writable) {
+    throw new Error(`Agent variable is not editable: ${agentName}.${key}`);
+  }
+
+  const value = coerceAgentVariable(rawValue, variable);
+
+  if (agentName === 'environment-bridge' && ENVIRONMENT_BRIDGE_FIELDS.has(key)) {
+    updateEnvironmentBridgeVariable(key, value);
+  } else {
+    if (!SCHEDULER_AGENT_FIELDS.has(key)) {
+      throw new Error(`Agent variable is not editable: ${agentName}.${key}`);
+    }
+    const config = readSchedulerConfig();
+    const descriptor = buildAgentDescriptor(agentName, config.agents?.[agentName]);
+    const agent = config.agents?.[agentName] ?? defaultSchedulerAgentConfig(agentName, descriptor.kind);
+    if (!agent) {
+      throw new Error(`Agent is not present in scheduler config: ${agentName}`);
+    }
+    const schedulerUpdates: Record<string, unknown> = { [key]: value };
+    if (key === 'runOnBoot' && value === true) {
+      schedulerUpdates.enabled = true;
+    }
+    config.agents = {
+      ...config.agents,
+      [agentName]: {
+        ...agent,
+        ...schedulerUpdates,
+      },
+    };
+    writeSchedulerConfig(config);
+  }
+
+  const snapshot = getAgentMonitorSnapshot();
+  const panel = snapshot.agentData[agentName];
+  if (!panel) {
+    throw new Error(`Agent data unavailable after update: ${agentName}`);
+  }
+  return panel;
 }

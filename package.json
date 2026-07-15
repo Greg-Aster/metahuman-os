@@ -28,6 +28,8 @@
 	"scripts": {
 		"postinstall": "node scripts/postinstall.mjs",
 		"validate:graphs": "tsx scripts/validate-graphs.ts",
+		"validate:agent-monitor": "tsx scripts/validate-agent-monitor.ts",
+		"validate:security-routes": "tsx scripts/validate-security-routes.ts",
 		"validate:node-defaults": "tsx scripts/validate-node-defaults.ts",
 		"audit:graph-executors": "tsx scripts/audit-graph-executors.ts",
 		"check:architecture": "tsx scripts/check-architecture.ts",

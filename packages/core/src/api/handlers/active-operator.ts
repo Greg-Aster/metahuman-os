@@ -10,28 +10,17 @@ import { audit } from '../../audit.js';
 import {
   getModeController,
   loadActiveOperatorConfig,
-  loadActiveOperatorMetrics,
-  loadScratchpad,
-  loadQueueState,
-  getCostSummary,
-  getErrorStatus,
-  getActiveOperatorServiceStatus,
-  saveActiveOperatorConfig,
   updateActiveOperatorConfig,
-  clearScratchpad,
-  resetActiveOperatorMetrics,
-  resetErrorCounter,
-  startActiveOperatorService,
-  stopActiveOperatorService,
-  toggleActiveOperatorService,
   loadPendingProposals,
   updateProposalStatus,
   runSelfHealing,
   getPendingApprovals,
   resolveApproval,
 } from '../../active-operator/index.js';
+import { getQueueManager, getQueueSystem } from '../../queue/index.js';
+import type { AutonomyMode } from '../../queue/types.js';
 
-type ControlAction = 'start' | 'stop' | 'toggle' | 'emergency-stop' | 'reset';
+type ControlAction = 'start' | 'stop' | 'toggle' | 'set-mode' | 'emergency-stop' | 'reset';
 
 function jsonError(error: unknown): UnifiedResponse {
   return {
@@ -53,76 +42,41 @@ function authRequired(): UnifiedResponse {
 export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> {
   try {
     const config = loadActiveOperatorConfig();
-    const metrics = loadActiveOperatorMetrics();
-    const scratchpad = loadScratchpad();
-    const queueState = loadQueueState() || [];
-    const costSummary = getCostSummary();
-    const errorStatus = getErrorStatus();
-
-    let modeStatus;
-    try {
-      const controller = getModeController();
-      modeStatus = controller.getStatus();
-    } catch {
-      modeStatus = {
-        mode: config.enabled ? 'active' : 'passive',
-        isExecuting: false,
-        queueLength: queueState.length,
-        lastActivityAt: new Date().toISOString(),
-        health: 'healthy',
-      };
-    }
-
-    const serviceStatus = getActiveOperatorServiceStatus();
+    const controller = getModeController();
+    const modeStatus = controller.getStatus();
+    const manager = getQueueManager();
+    const system = getQueueSystem();
+    const activeWork = manager.getAllTasks();
 
     return {
       status: 200,
       data: {
-        enabled: config.enabled,
-        isRunning: serviceStatus.isRunning,
         mode: modeStatus.mode,
         isExecuting: modeStatus.isExecuting,
-        currentTask: serviceStatus.currentTask || modeStatus.currentTask || null,
-        consecutiveTasks: serviceStatus.consecutiveTasks,
-        username: serviceStatus.username,
+        currentTask: modeStatus.currentTask || null,
+        consecutiveTasks: modeStatus.policy.consecutiveAutonomousWork,
         health: modeStatus.health,
         healthMessage: modeStatus.healthMessage,
-
+        policy: modeStatus.policy,
         queue: {
-          length: queueState.length,
-          tasks: queueState.slice(0, 10),
-          hasUserMessages: queueState.some((task) => task.type === 'user_message'),
+          length: activeWork.length,
+          tasks: activeWork.slice(0, 10).map(task => ({
+            id: task.id,
+            type: task.type,
+            handler: task.handler,
+            state: task.state,
+            priority: task.priority,
+            source: task.source,
+            createdAt: task.createdAt,
+          })),
+          hasUserMessages: activeWork.some(task => task.type === 'user_message'),
         },
-
-        metrics: {
-          totalTasksExecuted: metrics.totalTasksExecuted,
-          tasksByType: metrics.tasksByType,
-          successRate: metrics.totalTasksExecuted > 0
-            ? `${((metrics.successCount / metrics.totalTasksExecuted) * 100).toFixed(1)}%`
-            : 'N/A',
-          averageDurationMs: Math.round(metrics.averageDurationMs),
-          startedAt: metrics.startedAt,
-        },
-
-        cost: costSummary,
-
-        errors: errorStatus,
-
-        scratchpad: {
-          cycleNumber: scratchpad.cycleNumber,
-          entriesCount: scratchpad.entries.length,
-          recentEntries: scratchpad.entries.slice(-5),
-          lastDecision: scratchpad.lastDecision,
-          activitySummary: scratchpad.activitySummary,
-        },
-
         config: {
-          decisionModel: config.decisionModel,
+          autonomyMode: config.autonomyMode,
           cooldownMs: config.cooldownMs,
           maxConsecutiveTasks: config.maxConsecutiveTasks,
-          enabledTaskTypes: config.enabledTaskTypes,
-          enableSelfHealing: config.enableSelfHealing,
-          energyBudget: config.energyBudget,
+          maxEvaluationsPerHour: config.maxEvaluationsPerHour,
+          userPresenceCooldownMs: config.userPresenceCooldownMs,
         },
       },
     };
@@ -163,17 +117,24 @@ export async function handleUpdateActiveOperatorConfig(req: UnifiedRequest): Pro
       };
     }
 
-    const body = req.body || {};
-
-    if (body.enabled !== undefined && body.enabledTaskTypes !== undefined) {
-      saveActiveOperatorConfig(body);
-    } else {
-      updateActiveOperatorConfig(body);
+    const input = { ...(req.body || {}) };
+    const body = {
+      autonomyMode: input.autonomyMode,
+      cooldownMs: input.cooldownMs,
+      maxConsecutiveTasks: input.maxConsecutiveTasks,
+      maxEvaluationsPerHour: input.maxEvaluationsPerHour,
+      userPresenceCooldownMs: input.userPresenceCooldownMs,
+    };
+    const requestedMode = body.autonomyMode as AutonomyMode | undefined;
+    if (requestedMode && !['reactive', 'semi', 'full'].includes(requestedMode)) {
+      return { status: 400, error: 'autonomyMode must be reactive, semi, or full' };
     }
+    const config = updateActiveOperatorConfig(body);
+    if (requestedMode) await getModeController().setMode(requestedMode, req.user.username);
 
     return {
       status: 200,
-      data: loadActiveOperatorConfig(),
+      data: { ...config, autonomyMode: getModeController().mode },
     };
   } catch (error) {
     console.error('[active-operator/config] POST error:', error);
@@ -200,71 +161,72 @@ export async function handleActiveOperatorControl(req: UnifiedRequest): Promise<
     const body = req.body || {};
     const action = body.action as ControlAction;
 
-    if (!action || !['start', 'stop', 'toggle', 'emergency-stop', 'reset'].includes(action)) {
+    if (!action || !['start', 'stop', 'toggle', 'set-mode', 'emergency-stop', 'reset'].includes(action)) {
       return {
         status: 400,
-        error: 'Invalid action. Use: start, stop, toggle, emergency-stop, reset',
+        error: 'Invalid action. Use: start, stop, toggle, set-mode, emergency-stop, reset',
       };
     }
 
     let result: { success: boolean; mode: string; message: string };
+    const controller = getModeController();
 
     switch (action) {
       case 'start': {
-        const startResult = await startActiveOperatorService(req.user.username);
-        updateActiveOperatorConfig({ enabled: startResult.success });
+        await controller.setMode('full', req.user.username);
         result = {
-          success: startResult.success,
-          mode: startResult.success ? 'active' : 'passive',
-          message: startResult.message,
+          success: true,
+          mode: 'full',
+          message: 'Full autonomy enabled',
         };
         break;
       }
 
       case 'stop': {
-        const stopResult = await stopActiveOperatorService();
-        updateActiveOperatorConfig({ enabled: false });
+        await controller.setMode('reactive', req.user.username);
         result = {
-          success: stopResult.success,
-          mode: 'passive',
-          message: stopResult.message,
+          success: true,
+          mode: 'reactive',
+          message: 'Reactive mode enabled',
         };
         break;
       }
 
       case 'toggle': {
-        const toggleResult = await toggleActiveOperatorService(req.user.username);
-        updateActiveOperatorConfig({ enabled: toggleResult.mode === 'active' });
+        const mode = await controller.toggleMode(req.user.username);
         result = {
-          success: toggleResult.success,
-          mode: toggleResult.mode,
-          message: toggleResult.message,
+          success: true,
+          mode,
+          message: `${mode} mode enabled`,
         };
         break;
       }
 
+      case 'set-mode': {
+        const mode = body.mode as AutonomyMode;
+        if (!['reactive', 'semi', 'full'].includes(mode)) {
+          return { status: 400, error: 'mode must be reactive, semi, or full' };
+        }
+        await controller.setMode(mode, req.user.username);
+        result = { success: true, mode, message: `${mode} mode enabled` };
+        break;
+      }
+
       case 'emergency-stop': {
-        const controller = getModeController();
-        controller.emergencyStop();
-        await stopActiveOperatorService();
-        updateActiveOperatorConfig({ enabled: false });
+        await controller.emergencyStop(req.user.username);
         result = {
           success: true,
-          mode: 'passive',
+          mode: 'reactive',
           message: 'Active Operator emergency stopped',
         };
         break;
       }
 
       case 'reset': {
-        await stopActiveOperatorService();
-        clearScratchpad();
-        resetActiveOperatorMetrics();
-        resetErrorCounter();
-        updateActiveOperatorConfig({ enabled: false });
+        await controller.reset(req.user.username);
         result = {
           success: true,
-          mode: 'passive',
+          mode: 'reactive',
           message: 'Active Operator reset to initial state',
         };
         break;
@@ -273,7 +235,7 @@ export async function handleActiveOperatorControl(req: UnifiedRequest): Promise<
       default:
         result = {
           success: false,
-          mode: 'passive',
+          mode: 'reactive',
           message: 'Unknown action',
         };
     }

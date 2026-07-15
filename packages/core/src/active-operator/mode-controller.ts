@@ -1,380 +1,145 @@
 /**
- * Mode Controller for Active Operator
+ * Active Operator autonomy-mode controller.
  *
- * Manages switching between passive and active operator modes:
- * - Passive: Timer-based scheduler triggers agents on schedules
- * - Active: LLM-controlled continuous decision loop
- *
- * The controller ensures safe transitions and state cleanup.
+ * It owns no queue and executes no task. It only enables configured timer
+ * admission and the bounded full-autonomy policy producer.
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { audit } from '../audit.js';
-import type { OperatorMode, OperatorStatus } from './types.js';
-import {
-  loadConfig,
-  saveConfig,
-  loadMetrics,
-  loadScratchpad,
-  clearScratchpad,
-  resetMetrics,
-  loadQueueState,
-  clearAllState,
-} from './state-persister.js';
-import { UnifiedQueue } from './unified-queue.js';
+import { ensureQueueSystemStarted, getQueueManager } from '../queue/index.js';
+import type { AutonomyMode } from '../queue/types.js';
+import { readLastActiveUsername } from '../system-activity.js';
+import { getOperatorPolicyService } from './operator-policy-service.js';
+import { loadConfig, saveConfig } from './state-persister.js';
 
-/**
- * Events emitted by the mode controller.
- */
-export interface ModeControllerEvents {
-  /** Emitted when mode changes */
-  modeChanged: (mode: OperatorMode) => void;
-  /** Emitted when operator starts */
-  started: () => void;
-  /** Emitted when operator stops */
-  stopped: () => void;
-  /** Emitted on error */
-  error: (error: Error) => void;
-}
-
-/**
- * Mode Controller
- *
- * Central control point for the Active Operator system.
- * Handles mode switching, lifecycle, and coordination.
- */
 export class ModeController extends EventEmitter {
-  private _mode: OperatorMode = 'passive';
-  private _isRunning: boolean = false;
-  private _queue: UnifiedQueue | null = null;
-  private _shutdownRequested: boolean = false;
+  private currentMode: AutonomyMode;
+  private applying = false;
 
   constructor() {
     super();
-    this.loadInitialState();
-  }
-
-  /**
-   * Load initial state from config.
-   */
-  private loadInitialState(): void {
     const config = loadConfig();
-    this._mode = config.enabled ? 'active' : 'passive';
+    this.currentMode = config.autonomyMode;
   }
 
-  /**
-   * Get current mode.
-   */
-  get mode(): OperatorMode {
-    return this._mode;
+  get mode(): AutonomyMode {
+    return this.currentMode;
   }
 
-  /**
-   * Check if active mode is enabled.
-   */
   get isActive(): boolean {
-    return this._mode === 'active';
+    return this.currentMode === 'full';
   }
 
-  /**
-   * Check if operator is currently running.
-   */
   get isRunning(): boolean {
-    return this._isRunning;
+    return getOperatorPolicyService().isRunning();
   }
 
-  /**
-   * Check if shutdown was requested.
-   */
   get shutdownRequested(): boolean {
-    return this._shutdownRequested;
+    return !getOperatorPolicyService().isRunning();
   }
 
-  /**
-   * Get the queue instance.
-   */
-  get queue(): UnifiedQueue | null {
-    return this._queue;
-  }
-
-  /**
-   * Switch to active mode.
-   * This enables the LLM-controlled continuous thinking system.
-   */
-  async activateActiveMode(): Promise<void> {
-    if (this._mode === 'active') {
-      console.log('[mode-controller] Already in active mode');
-      return;
-    }
-
-    console.log('[mode-controller] Switching to ACTIVE mode...');
-
-    // Update config
+  async applyConfiguredMode(username?: string): Promise<AutonomyMode> {
     const config = loadConfig();
-    config.enabled = true;
-    saveConfig(config);
-
-    // Initialize queue
-    this._queue = new UnifiedQueue({
-      initialQueue: loadQueueState() || [],
-    });
-
-    // Clear scratchpad for fresh start
-    clearScratchpad();
-
-    this._mode = 'active';
-    this._shutdownRequested = false;
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'active_operator_mode_changed',
-      actor: 'mode-controller',
-      details: {
-        previousMode: 'passive',
-        newMode: 'active',
-      },
-    });
-
-    this.emit('modeChanged', 'active');
-    console.log('[mode-controller] Active mode ENABLED');
+    const mode = config.autonomyMode;
+    await this.applyMode(mode, username || readLastActiveUsername() || 'system', false);
+    return mode;
   }
 
-  /**
-   * Switch to passive mode.
-   * This returns to timer-based scheduler operation.
-   */
-  async activatePassiveMode(): Promise<void> {
-    if (this._mode === 'passive') {
-      console.log('[mode-controller] Already in passive mode');
-      return;
-    }
-
-    console.log('[mode-controller] Switching to PASSIVE mode...');
-
-    // Request shutdown if running
-    if (this._isRunning) {
-      this._shutdownRequested = true;
-      // Wait for current task to complete (up to 30 seconds)
-      await this.waitForShutdown(30000);
-    }
-
-    // Update config
-    const config = loadConfig();
-    config.enabled = false;
-    saveConfig(config);
-
-    this._mode = 'passive';
-    this._queue = null;
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'active_operator_mode_changed',
-      actor: 'mode-controller',
-      details: {
-        previousMode: 'active',
-        newMode: 'passive',
-      },
-    });
-
-    this.emit('modeChanged', 'passive');
-    console.log('[mode-controller] Passive mode ENABLED');
+  async setMode(mode: AutonomyMode, username: string): Promise<void> {
+    if (!['reactive', 'semi', 'full'].includes(mode)) throw new Error(`Invalid autonomy mode: ${mode}`);
+    await this.applyMode(mode, username, true);
   }
 
-  /**
-   * Toggle between modes.
-   */
-  async toggleMode(): Promise<OperatorMode> {
-    if (this._mode === 'active') {
-      await this.activatePassiveMode();
-    } else {
-      await this.activateActiveMode();
-    }
-    return this._mode;
-  }
-
-  /**
-   * Start the operator (called when entering active mode).
-   */
-  start(): void {
-    if (this._isRunning) {
-      console.log('[mode-controller] Operator already running');
-      return;
-    }
-
-    if (this._mode !== 'active') {
-      throw new Error('Cannot start operator in passive mode');
-    }
-
-    this._isRunning = true;
-    this._shutdownRequested = false;
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'active_operator_started',
-      actor: 'mode-controller',
-      details: {},
-    });
-
-    this.emit('started');
-    console.log('[mode-controller] Operator STARTED');
-  }
-
-  /**
-   * Stop the operator.
-   */
-  stop(): void {
-    if (!this._isRunning) {
-      console.log('[mode-controller] Operator already stopped');
-      return;
-    }
-
-    this._shutdownRequested = true;
-    this._isRunning = false;
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'active_operator_stopped',
-      actor: 'mode-controller',
-      details: {},
-    });
-
-    this.emit('stopped');
-    console.log('[mode-controller] Operator STOPPED');
-  }
-
-  /**
-   * Emergency stop - immediately halt all operations.
-   */
-  emergencyStop(): void {
-    console.log('[mode-controller] EMERGENCY STOP requested');
-
-    this._shutdownRequested = true;
-    this._isRunning = false;
-
-    audit({
-      category: 'system',
-      level: 'warn',
-      event: 'active_operator_emergency_stop',
-      actor: 'mode-controller',
-      details: {},
-    });
-
-    this.emit('stopped');
-  }
-
-  /**
-   * Wait for shutdown to complete.
-   */
-  private async waitForShutdown(timeoutMs: number): Promise<void> {
-    const startTime = Date.now();
-    while (this._isRunning && Date.now() - startTime < timeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    if (this._isRunning) {
-      console.warn('[mode-controller] Shutdown timeout - forcing stop');
-      this._isRunning = false;
+  private async applyMode(mode: AutonomyMode, username: string, persist: boolean): Promise<void> {
+    if (this.applying) throw new Error('Autonomy mode transition already in progress');
+    this.applying = true;
+    const previousMode = this.currentMode;
+    try {
+      const system = await ensureQueueSystemStarted();
+      system.setProactiveScheduling(mode === 'semi' || mode === 'full');
+      const config = loadConfig();
+      if (mode === 'full') {
+        getOperatorPolicyService().start(username, {
+          cooldownMs: config.cooldownMs,
+          maxConsecutiveTasks: config.maxConsecutiveTasks,
+          maxEvaluationsPerHour: config.maxEvaluationsPerHour,
+          userPresenceCooldownMs: config.userPresenceCooldownMs,
+        });
+      } else {
+        getOperatorPolicyService().stop();
+      }
+      this.currentMode = mode;
+      if (persist) {
+        saveConfig({ ...config, autonomyMode: mode });
+      }
+      audit({
+        category: 'system',
+        level: 'info',
+        event: 'active_operator_mode_changed',
+        actor: 'mode-controller',
+        details: { previousMode, newMode: mode },
+      });
+      this.emit('modeChanged', mode);
+    } finally {
+      this.applying = false;
     }
   }
 
-  /**
-   * Get current operator status.
-   */
-  getStatus(): OperatorStatus {
-    const metrics = loadMetrics();
-    const scratchpad = loadScratchpad();
+  async toggleMode(username = 'system'): Promise<AutonomyMode> {
+    await this.setMode(this.currentMode === 'full' ? 'reactive' : 'full', username);
+    return this.currentMode;
+  }
 
+  async start(username = 'system'): Promise<void> {
+    await this.setMode('full', username);
+  }
+
+  async stop(username = 'system'): Promise<void> {
+    await this.setMode('reactive', username);
+  }
+
+  async emergencyStop(username = 'system'): Promise<void> {
+    getOperatorPolicyService().stop();
+    const manager = getQueueManager();
+    for (const task of manager.getAllTasks()) {
+      if (task.source === 'autonomy') manager.cancel(task.id, 'Active Operator emergency stop');
+    }
+    const { enqueueConnectedEnvironmentStops } = await import('../environment-interface/store.js');
+    enqueueConnectedEnvironmentStops(username);
+    await this.setMode('reactive', username);
+    audit({ category: 'system', level: 'warn', event: 'active_operator_emergency_stop', actor: username });
+  }
+
+  getStatus() {
+    const manager = getQueueManager();
+    const currentTask = manager.getAllTasks().find(task => task.handler === 'operator.policy' && task.state === 'leased');
     return {
-      mode: this._mode,
-      isExecuting: this._isRunning,
-      currentTask: undefined, // Will be set by executor
-      queueLength: this._queue?.length || 0,
-      lastActivityAt: scratchpad.entries.length > 0
-        ? scratchpad.entries[scratchpad.entries.length - 1].timestamp
-        : new Date().toISOString(),
-      metrics,
-      health: this.getHealthStatus(metrics),
-      healthMessage: this.getHealthMessage(metrics),
+      mode: this.currentMode,
+      isExecuting: Boolean(currentTask),
+      currentTask: currentTask || undefined,
+      queueLength: manager.getAllTasks().length,
+      lastActivityAt: manager.getHistory()[0]?.completedAt || new Date().toISOString(),
+      health: getOperatorPolicyService().isRunning() || this.currentMode !== 'full' ? 'healthy' as const : 'degraded' as const,
+      healthMessage: this.currentMode === 'full' && !getOperatorPolicyService().isRunning()
+        ? 'Full autonomy policy service is not running'
+        : undefined,
+      policy: getOperatorPolicyService().getStatus(),
     };
   }
 
-  /**
-   * Determine health status based on metrics.
-   */
-  private getHealthStatus(metrics: typeof loadMetrics extends () => infer R ? R : never): 'healthy' | 'degraded' | 'error' {
-    if (metrics.consecutiveErrors >= 10) {
-      return 'error';
-    }
-    if (metrics.consecutiveErrors >= 3) {
-      return 'degraded';
-    }
-    return 'healthy';
-  }
-
-  /**
-   * Get health message.
-   */
-  private getHealthMessage(metrics: typeof loadMetrics extends () => infer R ? R : never): string | undefined {
-    if (metrics.consecutiveErrors >= 10) {
-      return `Critical: ${metrics.consecutiveErrors} consecutive errors. Last: ${metrics.lastError}`;
-    }
-    if (metrics.consecutiveErrors >= 3) {
-      return `Warning: ${metrics.consecutiveErrors} consecutive errors`;
-    }
-    return undefined;
-  }
-
-  /**
-   * Reset operator state (for debugging/testing).
-   */
-  reset(): void {
-    console.log('[mode-controller] Resetting operator state...');
-
-    if (this._isRunning) {
-      this.stop();
-    }
-
-    clearAllState();
-    this._queue = null;
-    this._mode = 'passive';
-
-    // Update config
-    const config = loadConfig();
-    config.enabled = false;
-    saveConfig(config);
-
-    console.log('[mode-controller] Reset complete');
+  async reset(username = 'system'): Promise<void> {
+    await this.setMode('reactive', username);
   }
 }
 
-// Singleton instance
-let modeControllerInstance: ModeController | null = null;
+let instance: ModeController | null = null;
 
-/**
- * Get the mode controller singleton.
- */
 export function getModeController(): ModeController {
-  if (!modeControllerInstance) {
-    modeControllerInstance = new ModeController();
-  }
-  return modeControllerInstance;
+  if (!instance) instance = new ModeController();
+  return instance;
 }
 
-/**
- * Check if active operator mode is enabled.
- */
-export function isActiveOperatorEnabled(): boolean {
-  const config = loadConfig();
-  return config.enabled;
-}
-
-/**
- * Quick mode check without full controller initialization.
- */
-export function getOperatorMode(): OperatorMode {
-  const config = loadConfig();
-  return config.enabled ? 'active' : 'passive';
+export function getOperatorMode(): AutonomyMode {
+  return loadConfig().autonomyMode;
 }

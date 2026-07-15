@@ -137,20 +137,6 @@ Lightweight agent for syncing only memories. Used on login for quick pull operat
 ./bin/mh agent run memory-sync -- --user=greggles
 ```
 
-### update-check
-
-**Location:** `brain/agents/update-check.ts`
-
-Checks for application updates and optionally downloads them.
-
-```bash
-# Check for updates
-./bin/mh agent run update-check
-
-# Specify server
-./bin/mh agent run update-check -- --server=https://mh.example.com
-```
-
 ## UI Integration
 
 ### SyncManager Component
@@ -226,7 +212,6 @@ The sync system writes state files for UI polling:
 | File | Agent | Contents |
 |------|-------|----------|
 | `logs/run/profile-sync-state.json` | profile-sync | Current phase, progress, results |
-| `logs/run/update-state.json` | update-check | Update availability, versions |
 | `logs/run/memory-sync-state.json` | memory-sync | Memory sync progress |
 
 Example state file:
@@ -316,7 +301,7 @@ curl -X POST https://mh.example.com/api/auth/login \
 
 Only agents listed in `ALLOWED_AGENTS` can be triggered via API:
 - Location: `apps/site/src/pages/api/agents/run.ts`
-- Current list: `profile-sync`, `memory-sync`, `update-check`, `organizer`, `reflector`, etc.
+- Current list: `profile-sync`, `memory-sync`, `organizer`, `reflector`, etc.
 
 ## Architecture Notes
 
@@ -336,6 +321,5 @@ The following client-side functions have been replaced by agents:
 |-----------------|-------------|----------|
 | `syncFromRemoteServer()` | `profile-sync` agent | `lib/client/profile-sync.ts` (deprecated) |
 | `performPullOnlySync()` | `memory-sync --pull-only` | `lib/client/profile-sync.ts` (deprecated) |
-| `checkForUpdates()` | `update-check` agent | `lib/client/app-update.ts` (deprecated) |
 
 The legacy functions still exist but are no longer called from the main application flow.

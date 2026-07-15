@@ -194,12 +194,10 @@ main() {
   echo
   log "Bootstrap complete."
   echo "Next:"
-  echo "  1) Start Sleep Service once (keeps running): ./bin/mh agent run sleep-service"
+  echo "  1) Open Adaptation in the UI and choose Run Full Cycle Now"
   echo "     - Optional auto-load: export METAHUMAN_AUTO_OLLAMA_CREATE=1"
-  echo "  2) Or kick it now from the UI: Adaptation → Run Full Cycle Now"
-  echo "  3) Watch audit stream; Active Adapter flips to loaded when model is created"
+  echo "  2) Watch the audit stream; Active Adapter flips to loaded when the model is created"
   echo
 }
 
 main "$@"
-

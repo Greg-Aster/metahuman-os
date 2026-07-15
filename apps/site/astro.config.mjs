@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
+const exposureMode = process.env.MH_EXPOSURE_MODE === 'shared' ? 'shared' : 'local';
+const sharedHosts = (process.env.MH_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean);
+const allowedHosts = exposureMode === 'shared'
+  ? ['localhost', '127.0.0.1', ...sharedHosts]
+  : ['localhost', '127.0.0.1'];
 
 /**
  * Custom Vite plugin to externalize @metahuman/core only for CLIENT builds
@@ -48,7 +56,7 @@ export default defineConfig({
     mode: 'standalone'
   }),
   server: {
-    host: true,
+    host: exposureMode === 'shared' ? true : '127.0.0.1',
   },
   output: 'server',
   vite: {
@@ -96,12 +104,7 @@ export default defineConfig({
       },
     },
     server: {
-      allowedHosts: [
-        'localhost',
-        '127.0.0.1',
-        'mh.dndiy.org',
-        '.dndiy.org' // Allow all subdomains
-      ],
+      allowedHosts,
       hmr: process.env.DISABLE_HMR === 'true' ? false : true,
       watch: {
         // Exclude agent-modified dirs to prevent 14,000+ reads/sec (80-90% CPU)

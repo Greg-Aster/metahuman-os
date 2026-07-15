@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { bigBrotherTerminal, bigBrotherTerminalOpened } from '../stores/bigBrotherTerminal';
   import { apiFetch } from '../lib/client/api-config';
+  import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import DebugDashboard from './DebugDashboard.svelte';
 
   interface TerminalTab {
@@ -20,7 +21,7 @@
   let bigBrotherTabId: string | null = null;
   let servicesTabId: string | null = null;
   let eventBusTabId: string | null = null;
-  let terminalEventsSource: EventSource | null = null;
+  let terminalEventsHandle: ConnectionHandle | null = null;
 
   // Subscribe to Big Brother terminal requests
   const unsubscribe = bigBrotherTerminal.subscribe(state => {
@@ -274,34 +275,40 @@
       console.warn('[TerminalManager] Could not check Claude session status:', error);
     }
 
-    // Subscribe to Big Brother terminal events for auto-open
+    // Subscribe to Big Brother terminal events without consuming a connection
+    // outside the shared pool used by the rest of the chat shell.
     try {
-      terminalEventsSource = new EventSource('/api/big-brother/terminal-events');
+      terminalEventsHandle = connectionPool.request({
+        id: 'terminal-events-stream',
+        name: 'Terminal Events Stream',
+        url: '/api/big-brother/terminal-events',
+        priority: ConnectionPriority.LOW,
+        viewDependency: 'chat',
+        defer: true,
+        onMessage: (event) => {
+          try {
+            const data = JSON.parse(event.data);
 
-      terminalEventsSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
+            if (data.type === 'open_tab' || data.type === 'terminal_ready') {
+              console.log('[TerminalManager] Big Brother terminal event:', data.type);
 
-          if (data.type === 'open_tab' || data.type === 'terminal_ready') {
-            console.log('[TerminalManager] Big Brother terminal event:', data.type);
-
-            // Auto-open Big Brother tab if not already open
-            if (!bigBrotherTabId) {
-              openBigBrotherTerminal(data.port || 3099, data.url || 'http://localhost:3099');
-            } else {
-              // Switch to Big Brother tab
-              activeTabId = bigBrotherTabId;
-              updatePersistedState();
+              // Auto-open Big Brother tab if not already open
+              if (!bigBrotherTabId) {
+                openBigBrotherTerminal(data.port || 3099, data.url || 'http://localhost:3099');
+              } else {
+                // Switch to Big Brother tab
+                activeTabId = bigBrotherTabId;
+                updatePersistedState();
+              }
             }
+          } catch (e) {
+            console.warn('[TerminalManager] Failed to parse terminal event:', e);
           }
-        } catch (e) {
-          console.warn('[TerminalManager] Failed to parse terminal event:', e);
-        }
-      };
-
-      terminalEventsSource.onerror = () => {
-        console.warn('[TerminalManager] Terminal events SSE connection error');
-      };
+        },
+        onError: () => {
+          console.warn('[TerminalManager] Terminal events SSE connection error');
+        },
+      });
     } catch (error) {
       console.warn('[TerminalManager] Could not connect to terminal events:', error);
     }
@@ -313,10 +320,8 @@
     unsubscribe();
 
     // Close SSE connection
-    if (terminalEventsSource) {
-      terminalEventsSource.close();
-      terminalEventsSource = null;
-    }
+    terminalEventsHandle?.close();
+    terminalEventsHandle = null;
     
     // Save current tab state for restoration
     if (typeof localStorage !== 'undefined') {

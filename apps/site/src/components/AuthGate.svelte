@@ -2,27 +2,75 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl } from '../lib/client/api-config';
+  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl, isMobileApp } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
 
-  // Simple localStorage for session (same concept as cookies on web)
-  // NO IndexedDB complexity - just store the session ID
-  function getStoredSession(): { sessionId: string; username: string } | null {
-    try {
-      const stored = localStorage.getItem('mh_session');
-      return stored ? JSON.parse(stored) : null;
-    } catch {
-      return null;
-    }
-  }
-
   function storeSession(sessionId: string, username: string): void {
+    if (!isMobileApp()) return;
     localStorage.setItem('mh_session', JSON.stringify({ sessionId, username }));
   }
 
   function clearStoredSession(): void {
     localStorage.removeItem('mh_session');
+  }
+
+  let handlingAuthFailure = false;
+  let apiActionNotice: { state: 'pending' | 'success' | 'error'; message: string } | null = null;
+  let apiActionNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function clearServerSessionCookie(): Promise<void> {
+    try {
+      await fetch(`${getApiBaseUrl()}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } catch (err) {
+      console.warn('[AuthGate] Failed to clear server session cookie:', err);
+    }
+  }
+
+  async function handleApiAuthFailure(event: Event): Promise<void> {
+    const detail = (event as CustomEvent<{ status?: number; path?: string; payload?: unknown }>).detail;
+    if (handlingAuthFailure || !isAuthenticated) return;
+
+    handlingAuthFailure = true;
+    console.warn('[AuthGate] API auth failure detected:', detail);
+    clearStoredSession();
+    await clearServerSessionCookie();
+
+    error = detail?.status === 403
+      ? 'Your current session does not have permission for that action. Log in as the owner to continue.'
+      : 'Your session expired or became invalid. Please log in again.';
+    view = 'login';
+    isAuthenticated = false;
+    isCheckingAuth = false;
+    handlingAuthFailure = false;
+  }
+
+  function handleApiAction(event: Event): void {
+    const detail = (event as CustomEvent<{
+      state?: 'pending' | 'success' | 'error';
+      message?: string;
+    }>).detail;
+    if (!detail?.state || !detail.message) return;
+
+    if (apiActionNoticeTimer) {
+      clearTimeout(apiActionNoticeTimer);
+      apiActionNoticeTimer = null;
+    }
+
+    apiActionNotice = {
+      state: detail.state,
+      message: detail.message,
+    };
+
+    if (detail.state !== 'pending') {
+      apiActionNoticeTimer = setTimeout(() => {
+        apiActionNotice = null;
+        apiActionNoticeTimer = null;
+      }, detail.state === 'success' ? 2200 : 6000);
+    }
   }
 
   let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = 'splash';
@@ -672,8 +720,15 @@
 
   onMount(() => {
     console.log('[AuthGate] Component mounted, starting auth check');
+    window.addEventListener('mh:api-auth-failure', handleApiAuthFailure);
+    window.addEventListener('mh:api-action', handleApiAction);
     checkAuth();
     loadBootData();
+    return () => {
+      window.removeEventListener('mh:api-auth-failure', handleApiAuthFailure);
+      window.removeEventListener('mh:api-action', handleApiAction);
+      if (apiActionNoticeTimer) clearTimeout(apiActionNoticeTimer);
+    };
   });
 </script>
 
@@ -1172,7 +1227,7 @@
                   id="sync-server"
                   type="url"
                   bind:value={syncServerUrl}
-                  placeholder="https://mh.dndiy.org"
+                  placeholder="https://your-metahuman-server.example"
                   disabled={syncLoading}
                   class="w-full py-2 px-3 rounded-md border border-white/20 bg-white/5 text-white text-sm [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:border-black/20 [html:not(.dark)_&]:text-gray-900"
                 />
@@ -1378,6 +1433,28 @@
   <!-- User is authenticated - render main app -->
   <!-- Children are ONLY mounted when user is logged in -->
   <slot />
+  {#if apiActionNotice}
+    <div
+      class="fixed right-5 bottom-5 z-[10001] max-w-[360px] rounded-lg border px-4 py-3 text-sm shadow-xl backdrop-blur-md
+             {apiActionNotice.state === 'pending'
+               ? 'border-blue-400/40 bg-blue-950/90 text-blue-100'
+               : apiActionNotice.state === 'success'
+                 ? 'border-emerald-400/40 bg-emerald-950/90 text-emerald-100'
+                 : 'border-red-400/40 bg-red-950/90 text-red-100'}"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="flex items-center gap-2">
+        <span class="inline-block h-2 w-2 rounded-full
+                    {apiActionNotice.state === 'pending'
+                      ? 'bg-blue-300 animate-pulse'
+                      : apiActionNotice.state === 'success'
+                        ? 'bg-emerald-300'
+                        : 'bg-red-300'}"></span>
+        <span>{apiActionNotice.message}</span>
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
