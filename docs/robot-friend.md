@@ -301,11 +301,7 @@ Update `packages/core/src/api/handlers/runtime-mode.ts` so:
 - disabling headless calls `exitHeadlessMode(actor, claimedBy)`
 - direct config writes remain a lower-level helper, not the public API behavior
 
-Also reconcile the contradictory comments/code around `headless-watcher`:
-
-- `runtime-mode.ts` says no watcher is needed
-- `brain/services/headless-watcher.ts` exists but warns it is deprecated
-- `packages/cli/src/mh-new.ts` still references `headless-watcher`
+The former `headless-watcher` service has been removed. Headless transitions are now owned by `packages/core/src/runtime-mode.ts`, and disabling headless mode resumes agents from the Boot Manager configuration.
 
 ### Phase 3: General local-network server mode
 

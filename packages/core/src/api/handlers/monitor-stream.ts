@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
 import { streamResponse } from '../types.js';
-import { getAgentMetrics, getAgentStatuses, listAvailableAgents } from '../../agent-monitor.js';
+import { getAgentMonitorSnapshot } from '../../agent-monitor.js';
+import { subscribeEnvironmentBridgeState } from '../../environment-interface/index.js';
 import { systemPaths } from '../../path-builder.js';
 
 function sse(data: Record<string, unknown>): string {
@@ -24,11 +25,8 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
   const queue: string[] = [];
   let wake: (() => void) | undefined;
   let closed = false;
-
-  let currentDay = new Date().toISOString().split('T')[0];
-  let auditFile = path.join(systemPaths.logs, 'audit', `${currentDay}.ndjson`);
-  let lastPosition = 0;
-  let fileExists = fs.existsSync(auditFile);
+  let debounceTimer: NodeJS.Timeout | undefined;
+  const watchers: fs.FSWatcher[] = [];
 
   const push = (data: Record<string, unknown>) => {
     if (closed) return;
@@ -43,115 +41,47 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
     wake = undefined;
   };
 
-  const sendMetricsUpdate = () => {
+  const sendSnapshot = () => {
     if (closed) return;
     try {
-      const statuses = getAgentStatuses();
-      const agents = listAvailableAgents();
-
-      if (agents.length === 0) {
-        console.warn('[monitor/stream] No agents found by listAvailableAgents()');
-        console.warn('[monitor/stream] systemPaths.agents:', systemPaths.agents);
-        console.warn('[monitor/stream] agents dir exists:', fs.existsSync(systemPaths.agents));
-      }
-
-      const agentMetrics = agents.map((name) => {
-        const status = statuses.find((item) => item.name === name);
-        const metrics = getAgentMetrics(name);
-
-        return {
-          name,
-          status: status?.status || 'stopped',
-          pid: status?.pid,
-          uptime: status?.uptime,
-          lastActivity: status?.lastActivity,
-          metrics: {
-            totalRuns: metrics.totalRuns,
-            successfulRuns: metrics.successfulRuns,
-            failedRuns: metrics.failedRuns,
-            lastRun: metrics.lastRun,
-            lastError: metrics.lastError,
-            recentActivity: metrics.recentActivity,
-            successRate: metrics.successRate,
-          },
-          errors: status?.errors || [],
-        };
-      });
+      const snapshot = getAgentMonitorSnapshot();
 
       push({
-        type: 'metrics',
-        timestamp: new Date().toISOString(),
-        agents: agentMetrics,
+        type: 'snapshot',
+        ...snapshot,
+        agents: snapshot.runningAgents,
       });
     } catch (error) {
-      console.error('Error computing metrics:', error);
+      console.error('Error computing agent monitor snapshot:', error);
     }
   };
 
-  const readNewLines = () => {
-    const newDay = new Date().toISOString().split('T')[0];
-    if (newDay !== currentDay) {
-      currentDay = newDay;
-      auditFile = path.join(systemPaths.logs, 'audit', `${currentDay}.ndjson`);
-      lastPosition = 0;
-      fileExists = fs.existsSync(auditFile);
+  const scheduleSnapshot = () => {
+    if (closed) return;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
     }
+    debounceTimer = setTimeout(sendSnapshot, 100);
+  };
 
-    if (!fileExists) {
-      fileExists = fs.existsSync(auditFile);
-      if (!fileExists) return;
-    }
-
+  const watchPath = (target: string) => {
     try {
-      const stats = fs.statSync(auditFile);
-      if (stats.size <= lastPosition) return;
-
-      const auditStream = fs.createReadStream(auditFile, {
-        start: lastPosition,
-        encoding: 'utf8',
-      });
-
-      let buffer = '';
-      let hasAgentEvent = false;
-
-      auditStream.on('data', (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const entry = JSON.parse(line);
-            if (
-              entry.event?.includes('agent_') ||
-              entry.details?.agent ||
-              entry.actor?.includes('agent') ||
-              entry.actor?.includes('-service')
-            ) {
-              hasAgentEvent = true;
-            }
-          } catch {
-            // Ignore malformed audit lines.
-          }
-        }
-      });
-
-      auditStream.on('end', () => {
-        lastPosition = stats.size;
-        if (hasAgentEvent) sendMetricsUpdate();
-      });
-    } catch {
-      fileExists = false;
-      lastPosition = 0;
+      if (!fs.existsSync(target)) return;
+      watchers.push(fs.watch(target, scheduleSnapshot));
+    } catch (error) {
+      console.warn('[monitor/stream] Watch failed:', target, (error as Error).message);
     }
   };
 
   push({ type: 'connected' });
-  sendMetricsUpdate();
+  sendSnapshot();
+  const unsubscribeBridgeState = subscribeEnvironmentBridgeState(scheduleSnapshot);
 
-  const auditInterval = setInterval(readNewLines, 30000);
-  const metricsInterval = setInterval(sendMetricsUpdate, 30000);
+  watchPath(path.join(systemPaths.logs, 'agents'));
+  watchPath(path.join(systemPaths.run, 'locks'));
+  watchPath(path.join(systemPaths.logs, 'audit'));
+  watchPath(path.join(systemPaths.root, 'etc', 'agents.json'));
+
   signal?.addEventListener('abort', close, { once: true });
 
   try {
@@ -165,8 +95,13 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
       yield queue.shift()!;
     }
   } finally {
-    clearInterval(auditInterval);
-    clearInterval(metricsInterval);
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    unsubscribeBridgeState();
+    for (const watcher of watchers) {
+      watcher.close();
+    }
     signal?.removeEventListener('abort', close);
     close();
   }

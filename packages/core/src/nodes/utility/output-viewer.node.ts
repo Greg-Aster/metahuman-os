@@ -15,6 +15,41 @@ interface ViewerEntry {
   summary: string;
 }
 
+const DEFAULT_MAX_SUMMARY_CHARS = 1200;
+
+function truncate(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
+}
+
+function summarizeData(value: unknown, maxChars = DEFAULT_MAX_SUMMARY_CHARS): string {
+  if (value === null || value === undefined) {
+    return '(empty)';
+  }
+
+  if (typeof value === 'string') {
+    return truncate(value, maxChars);
+  }
+
+  if (typeof value !== 'object') {
+    return truncate(String(value), maxChars);
+  }
+
+  const seen = new WeakSet<object>();
+  try {
+    return truncate(JSON.stringify(value, (_key, nested) => {
+      if (nested && typeof nested === 'object') {
+        if (seen.has(nested)) {
+          return '[Circular]';
+        }
+        seen.add(nested);
+      }
+      return nested;
+    }), maxChars);
+  } catch (error) {
+    return truncate(`[unserializable: ${(error as Error).message}]`, maxChars);
+  }
+}
+
 const execute: NodeExecutor = async (inputs, context) => {
   // Get iteration from context (injected by graph executor)
   const iteration = context._graphExecutorIteration ?? 1;
@@ -28,18 +63,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     : Array.isArray(inputData) ? 'array'
     : typeof inputData;
 
-  // Create a summary based on data type
-  let summary = '';
-  if (inputData === null || inputData === undefined) {
-    summary = '(empty)';
-  } else if (typeof inputData === 'string') {
-    summary = inputData.length > 100 ? `${inputData.substring(0, 100)}...` : inputData;
-  } else if (typeof inputData === 'object') {
-    const keys = Object.keys(inputData);
-    summary = `{${keys.slice(0, 5).join(', ')}${keys.length > 5 ? '...' : ''}}`;
-  } else {
-    summary = String(inputData);
-  }
+  const summary = summarizeData(inputData);
 
   // Build the entry
   const entry: ViewerEntry = {
@@ -87,6 +111,8 @@ export const OutputViewerNode: NodeDefinition = defineNode({
     { name: 'currentEntry', type: 'object', description: 'Current iteration entry' },
     { name: 'history', type: 'array', description: 'All entries across iterations' },
     { name: 'iteration', type: 'number', description: 'Current iteration number' },
+    { name: 'dataType', type: 'string', description: 'Type of the viewed data' },
+    { name: 'summary', type: 'string', description: 'Console-friendly data preview' },
     { name: 'entryCount', type: 'number', description: 'Total entries recorded' },
   ],
   properties: {},

@@ -45,6 +45,7 @@ interface PooledConnection {
   openedAt: number;
   lastActivityAt: number;
   request: ConnectionRequest;
+  managerId: string;
 }
 
 export interface PoolStatus {
@@ -93,6 +94,7 @@ class ConnectionPoolManager {
   private listeners = new Set<(status: PoolStatus) => void>();
   private activeView: string = 'chat';
   private enabled = true;
+  private suspended = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -116,6 +118,13 @@ class ConnectionPoolManager {
       return new ConnectionHandle(request.id, this, true);
     }
 
+    if (this.suspended) {
+      console.log(`[pool] Deferring ${request.name} while pool is suspended`);
+      this.queuedRequests.set(request.id, request);
+      this.notifyListeners();
+      return new ConnectionHandle(request.id, this, true);
+    }
+
     if (request.viewDependency && request.viewDependency !== this.activeView) {
       console.log(`[pool] Deferring ${request.name} - view ${request.viewDependency} not active (current: ${this.activeView})`);
       this.queuedRequests.set(request.id, request);
@@ -135,7 +144,7 @@ class ConnectionPoolManager {
 
     if (victim) {
       console.log(`[pool] Preempting ${victim.name} (priority ${victim.priority}) for ${request.name} (priority ${request.priority})`);
-      this.close(victim.id);
+      this.close(victim.id, false);
       return this.allocate(request);
     }
 
@@ -150,7 +159,7 @@ class ConnectionPoolManager {
     const oldest = this.findOldestConnection();
     if (oldest) {
       console.warn(`[pool] Closing oldest connection: ${oldest.name}`);
-      this.close(oldest.id);
+      this.close(oldest.id, false);
     }
     return this.allocate(request);
   }
@@ -169,6 +178,7 @@ class ConnectionPoolManager {
       openedAt: Date.now(),
       lastActivityAt: Date.now(),
       request,
+      managerId: '',
     };
 
     source.onopen = () => {
@@ -191,7 +201,7 @@ class ConnectionPoolManager {
     this.activeConnections.set(request.id, connection);
 
     // Register with global connection manager for monitoring
-    connectionManager.register(request.name, request.url, source);
+    connection.managerId = connectionManager.register(request.name, request.url, source);
 
     console.log(`[pool] Allocated ${request.name} (${this.activeConnections.size}/${this.maxConnections})`);
     this.notifyListeners();
@@ -211,15 +221,16 @@ class ConnectionPoolManager {
     return new ConnectionHandle(request.id, this, false);
   }
 
-  close(id: string): void {
+  close(id: string, processQueue = true): void {
     const connection = this.activeConnections.get(id);
     if (connection) {
       console.log(`[pool] Closing ${connection.name}`);
       connection.source.close();
+      connectionManager.unregister(connection.managerId);
       connection.request.onClose?.();
       this.activeConnections.delete(id);
       this.notifyListeners();
-      this.processQueue();
+      if (processQueue && !this.suspended) this.processQueue();
       return;
     }
 
@@ -233,11 +244,39 @@ class ConnectionPoolManager {
 
   closeAll(): void {
     console.log(`[pool] Closing all ${this.activeConnections.size} connections`);
-    for (const [id] of this.activeConnections) {
-      this.close(id);
+    for (const id of [...this.activeConnections.keys()]) {
+      this.close(id, false);
     }
     this.queuedRequests.clear();
     this.notifyListeners();
+  }
+
+  suspend(): void {
+    if (this.suspended) return;
+    this.suspended = true;
+    console.log(`[pool] Suspending ${this.activeConnections.size} background connections`);
+
+    for (const [id, connection] of [...this.activeConnections.entries()]) {
+      connection.source.close();
+      connectionManager.unregister(connection.managerId);
+      connection.request.onClose?.();
+      this.activeConnections.delete(id);
+      this.queuedRequests.set(id, connection.request);
+    }
+
+    this.notifyListeners();
+  }
+
+  resume(): void {
+    if (!this.suspended) return;
+    this.suspended = false;
+    console.log(`[pool] Resuming with ${this.queuedRequests.size} queued connections`);
+    this.processQueue();
+    this.notifyListeners();
+  }
+
+  isSuspended(): boolean {
+    return this.suspended;
   }
 
   setActiveView(view: string): void {
@@ -273,6 +312,7 @@ class ConnectionPoolManager {
   }
 
   private processQueue(): void {
+    if (this.suspended) return;
     if (this.activeConnections.size >= this.maxConnections) {
       return;
     }

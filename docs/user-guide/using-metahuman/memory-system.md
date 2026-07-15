@@ -147,7 +147,7 @@ MetaHuman's memory system includes 12 specialized modules:
 - `intelligent-memory-retrieval.ts` - Smart semantic search with relevance ranking
 - `function-memory.ts` - Remember function calls and tool usage
 - `vector-index.ts` - Vector embeddings for semantic search
-- `vector-index-queue.ts` - Background indexing queue
+- `queue/execution-engine.ts` - Coordinator-owned `vector.append-event` index executor
 - `embeddings.ts` - Generate vector embeddings via Ollama
 - `context-builder.ts` - Build conversation context from memories
 

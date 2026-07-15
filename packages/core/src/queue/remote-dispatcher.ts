@@ -63,12 +63,12 @@ export class RemoteDispatcher {
         const operatorConfig = loadFreshOperatorConfig(task.username);
         // Build proper EscalationRequest from task payload
         const request: EscalationRequest = {
-          goal: task.payload.goal || '',
-          stuckReason: task.payload.stuckReason || task.payload.failureReason || 'unknown',
-          errorType: task.payload.errorType || null,
-          scratchpad: task.payload.scratchpad || [],
-          context: task.payload.context || {},
-          suggestions: task.payload.suggestions || [],
+          goal: task.input.goal || '',
+          stuckReason: task.input.stuckReason || task.input.failureReason || 'unknown',
+          errorType: task.input.errorType || null,
+          scratchpad: task.input.scratchpad || [],
+          context: task.input.context || {},
+          suggestions: task.input.suggestions || [],
         };
         return escalateToBigBrother(request, operatorConfig);
       },
@@ -110,7 +110,7 @@ export class RemoteDispatcher {
       taskId: task.id,
       provider,
       startedAt: new Date().toISOString(),
-      timeoutMs: task.payload.timeoutMs || this.defaultTimeoutMs,
+      timeoutMs: task.input.timeoutMs || this.defaultTimeoutMs,
     };
     this.queueManager.trackRemoteTask(handle);
 
@@ -184,8 +184,8 @@ export class RemoteDispatcher {
    */
   private getProviderForTask(task: QueuedTask): RemoteProvider {
     // Check payload for explicit provider
-    if (task.payload.provider) {
-      return task.payload.provider as RemoteProvider;
+    if (task.input.provider) {
+      return task.input.provider as RemoteProvider;
     }
 
     // Map task types to providers
@@ -219,7 +219,7 @@ export class RemoteDispatcher {
       if (suggestion.action === 'run_agent') {
         followUpTasks.push({
           type: suggestion.agentType as any,
-          payload: suggestion.params || {},
+          input: suggestion.params || {},
           username: task.username,
           priority: 'high',
           metadata: { triggeredBy: 'big-brother', originalTaskId: task.id },
@@ -258,7 +258,7 @@ export class RemoteDispatcher {
     }
 
     // Determine endpoint (default or tier-specific)
-    const tier = task.payload.tier || 'default';
+    const tier = task.input.tier || 'default';
     const endpoint = config.endpoints?.[tier] || config.endpoints?.default;
     if (!endpoint) {
       throw new Error(`RunPod endpoint not configured for tier: ${tier}`);
@@ -272,7 +272,7 @@ export class RemoteDispatcher {
         'Authorization': `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        input: task.payload.input || task.payload,
+        input: task.input.input || task.input,
       }),
     });
 
@@ -292,8 +292,8 @@ export class RemoteDispatcher {
       success: response.status === 'COMPLETED',
       output: response.output,
       durationMs: 0,
-      updateBuffer: task.payload.updateBuffer ?? true,
-      saveMemory: task.payload.saveMemory ?? false,
+      updateBuffer: task.input.updateBuffer ?? true,
+      saveMemory: task.input.saveMemory ?? false,
     };
   }
 
@@ -307,8 +307,8 @@ export class RemoteDispatcher {
       throw new Error('OpenAI not configured (missing OPENAI_API_KEY environment variable)');
     }
 
-    const model = task.payload.model || 'gpt-4-turbo-preview';
-    const messages = task.payload.messages || [];
+    const model = task.input.model || 'gpt-4-turbo-preview';
+    const messages = task.input.messages || [];
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -319,8 +319,8 @@ export class RemoteDispatcher {
       body: JSON.stringify({
         model,
         messages,
-        temperature: task.payload.temperature ?? 0.7,
-        max_tokens: task.payload.max_tokens ?? 2048,
+        temperature: task.input.temperature ?? 0.7,
+        max_tokens: task.input.max_tokens ?? 2048,
       }),
     });
 
@@ -342,7 +342,7 @@ export class RemoteDispatcher {
       success: true,
       output: response,
       durationMs: 0,
-      updateBuffer: task.payload.updateBuffer ?? true,
+      updateBuffer: task.input.updateBuffer ?? true,
     };
   }
 }

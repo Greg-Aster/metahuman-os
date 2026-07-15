@@ -38,10 +38,10 @@ export type FileCategory =
 
 export type MemorySubcategory = 'episodic' | 'semantic' | 'procedural' | 'tasks' | 'inbox' | 'agency'
 export type ConfigSubcategory = 'persona' | 'etc' | 'sessions' | 'desires'
-export type VoiceSubcategory = 'training-data' | 'models' | 'cache'
+export type VoiceSubcategory = 'inbox' | 'transcripts' | 'archive' | 'training-data' | 'models' | 'cache'
 export type TrainingSubcategory = 'datasets' | 'adapters' | 'runs' | 'models'
 export type OutputSubcategory = 'fine-tuned-models' | 'drafts' | 'artifacts' | 'cache'
-export type StateSubcategory = 'agency' | 'curiosity' | 'sessions' | 'lizard-brain'
+export type StateSubcategory = 'agency' | 'curiosity' | 'sessions' | 'operator-policy'
 
 /**
  * Storage request for routing
@@ -188,7 +188,9 @@ export function resolvePath(request: StorageRequest): StorageResponse {
         : path.join(profileRoot, 'memory', subcategory || 'episodic')
       break
     case 'voice':
-      categoryPath = path.join(profileRoot, subcategory || 'training-data')
+      categoryPath = subcategory === 'inbox' || subcategory === 'transcripts' || subcategory === 'archive'
+        ? path.join(profileRoot, 'memory', 'audio', subcategory)
+        : path.join(profileRoot, subcategory || 'training-data')
       break
     case 'config':
       if (subcategory === 'persona') {

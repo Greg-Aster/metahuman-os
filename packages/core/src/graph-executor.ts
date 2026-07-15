@@ -598,7 +598,8 @@ function getOutputPathNodes(routerId: string, graph: SvelteFlowGraph, backEdges:
 export async function executeGraph(
   graph: SvelteFlowGraph,
   contextData: Record<string, any>,
-  eventHandler?: ExecutionEventHandler
+  eventHandler?: ExecutionEventHandler,
+  signal?: AbortSignal,
 ): Promise<GraphExecutionState> {
   const executionState = new Map<string, NodeExecutionState>();
   const graphState: GraphExecutionState = {
@@ -660,6 +661,7 @@ export async function executeGraph(
     console.log(`[GraphExecutor] Total nodes to execute: ${executionQueue.length}`);
 
     while (executionQueue.length > 0) {
+      if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
       const nodeId = executionQueue.shift()!;
       const node = graph.nodes.find(n => n.id === nodeId);
       const nodeType = node?.data.nodeType || 'unknown';
@@ -688,6 +690,7 @@ export async function executeGraph(
 
       // Execute the node
       await executeNode(nodeId, graph, executionState, nodeContext, eventHandler);
+      if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
       console.log(`[GraphExecutor] <<< Completed node ${nodeId} (${nodeType})`);
 
       // Check if this node is a conditional_router or feedback_router

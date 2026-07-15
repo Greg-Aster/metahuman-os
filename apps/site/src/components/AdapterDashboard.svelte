@@ -305,18 +305,9 @@
     }
   }
 
-  async function runNightProcessorNow() {
+  async function runSleepWorkflow() {
     try {
-      await sendAction('runNightProcessor', {});
-      alert('Night processor started (transcriber + audio-organizer).');
-    } catch (err) {
-      alert((err as Error).message);
-    }
-  }
-
-  async function startSleepService() {
-    try {
-      await sendAction('startSleepService', {});
+      await sendAction('runSleepWorkflow', {});
       alert('Sleep service started in background. It will run nightly.');
     } catch (err) {
       alert((err as Error).message);
@@ -697,8 +688,7 @@
     <div class="flex flex-wrap gap-2 mt-4">
       <button class="btn-sm" on:click={runBuilderNow}>Run Builder Now</button>
       <button class="btn-sm" on:click={runDreamerNow}>Run Dreamer</button>
-      <button class="btn-sm" on:click={runNightProcessorNow}>Run Night Processor</button>
-      <button class="btn-sm" on:click={startSleepService}>Start Sleep Service</button>
+      <button class="btn-sm" on:click={runSleepWorkflow}>Queue Sleep Workflow</button>
       <button class="btn-sm" on:click={runFullCycleNow}>Run Full Cycle Now</button>
       <button class="btn-sm" on:click={exportConversationsNow}>Export Conversations</button>
       <button class="btn-sm bg-gradient-to-r from-violet-600 to-blue-500 text-white border-transparent font-semibold hover:from-violet-700 hover:to-blue-600" on:click={mergeHistoricalAdapters}>🔀 Merge Historical Adapters</button>
@@ -1046,7 +1036,7 @@
     {:else if datasets.length === 0}
       <div class="p-4 text-center text-gray-500">
         <div class="font-semibold mb-1">No datasets available</div>
-        <p class="muted">Run sleep-service or adapter-builder to generate instruction pairs.</p>
+        <p class="muted">Run adapter-builder to generate instruction pairs.</p>
       </div>
     {:else}
       <table class="w-full border-collapse text-[0.95rem] mt-4">

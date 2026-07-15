@@ -124,15 +124,34 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
+        let closed = false;
         try {
           for await (const chunk of result.stream!) {
-            controller.enqueue(encoder.encode(chunk));
+            if (closed || request.signal.aborted) break;
+            try {
+              controller.enqueue(encoder.encode(chunk));
+            } catch (err) {
+              closed = true;
+              if (!(err instanceof TypeError && String(err.message).includes('Controller is already closed'))) {
+                console.error('[astro-adapter] Stream enqueue error:', err);
+              }
+              break;
+            }
           }
         } catch (err) {
-          console.error('[astro-adapter] Stream error:', err);
+          if (!(err instanceof TypeError && String(err.message).includes('Controller is already closed'))) {
+            console.error('[astro-adapter] Stream error:', err);
+          }
         } finally {
-          controller.close();
+          if (!closed) {
+            try {
+              controller.close();
+            } catch {}
+          }
         }
+      },
+      cancel() {
+        (result.stream as AsyncIterator<string> | undefined)?.return?.();
       },
     });
 
@@ -171,22 +190,6 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
 
   return response;
 };
-
-/**
- * Create an Astro handler for a specific HTTP method.
- * Useful when you only want to handle specific methods.
- */
-export function createAstroHandler(allowedMethods?: string[]): AstroAPIRoute {
-  return async (context: AstroAPIContext) => {
-    if (allowedMethods && !allowedMethods.includes(context.request.method)) {
-      return new Response(
-        JSON.stringify({ error: `Method ${context.request.method} not allowed` }),
-        { status: 405, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-    return astroHandler(context);
-  };
-}
 
 // Re-export for convenience
 export { handleHttpRequest, buildUnifiedRequest } from './http.js';

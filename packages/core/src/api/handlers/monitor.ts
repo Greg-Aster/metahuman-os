@@ -8,11 +8,10 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import {
-  listAvailableAgents,
   getAgentLogs,
+  getAgentMonitorSnapshot,
   getAgentStats,
-  getAgentStatuses,
-  getAgentMetrics,
+  setAgentVariable,
 } from '../../agent-monitor.js';
 
 /**
@@ -31,37 +30,11 @@ export async function handleGetMonitor(req: UnifiedRequest): Promise<UnifiedResp
 
     switch (view) {
       case 'overview': {
-        const agents = listAvailableAgents();
-        const statuses = getAgentStatuses();
-        const recentLogs = getAgentLogs(undefined, 50);
-
-        // Build comprehensive metrics for each agent
-        const agentMetrics = agents.map((name) => {
-          const status = statuses.find((s) => s.name === name);
-          const metrics = getAgentMetrics(name);
-
-          return {
-            name,
-            status: status?.status || 'stopped',
-            pid: status?.pid,
-            uptime: status?.uptime,
-            lastActivity: status?.lastActivity,
-            metrics: {
-              totalRuns: metrics.totalRuns,
-              successfulRuns: metrics.successfulRuns,
-              failedRuns: metrics.failedRuns,
-              lastRun: metrics.lastRun,
-              lastError: metrics.lastError,
-              recentActivity: metrics.recentActivity,
-              successRate: metrics.successRate,
-            },
-            errors: status?.errors || [],
-          };
-        });
-
+        const snapshot = getAgentMonitorSnapshot();
         return successResponse({
-          agents: agentMetrics,
-          recentLogs,
+          ...snapshot,
+          agents: snapshot.runningAgents,
+          recentLogs: getAgentLogs(undefined, 50),
         });
       }
 
@@ -91,5 +64,31 @@ export async function handleGetMonitor(req: UnifiedRequest): Promise<UnifiedResp
   } catch (error) {
     console.error('[monitor] GET error:', error);
     return { status: 500, error: (error as Error).message };
+  }
+}
+
+export async function handleSetMonitorAgentVariable(req: UnifiedRequest): Promise<UnifiedResponse> {
+  try {
+    if (!req.user.isAuthenticated) {
+      return { status: 401, error: 'Authentication required' };
+    }
+
+    if (req.user.role !== 'owner') {
+      return { status: 403, error: 'Owner permission required' };
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    const agent = typeof body.agent === 'string' ? body.agent.trim() : '';
+    const key = typeof body.key === 'string' ? body.key.trim() : '';
+
+    if (!agent || !key) {
+      return { status: 400, error: 'agent and key are required' };
+    }
+
+    const agentData = setAgentVariable(agent, key, body.value);
+    return successResponse({ success: true, agentData });
+  } catch (error) {
+    console.error('[monitor] Agent variable update failed:', error);
+    return { status: 400, error: (error as Error).message };
   }
 }

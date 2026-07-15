@@ -5,7 +5,6 @@
 
   export let input: string = '';
   export let loading: boolean = false;
-  export let messageQueue: string[] = []; // FIFO queue of messages waiting to be sent
 
   // Auto-expanding textarea
   let textareaElement: HTMLTextAreaElement;
@@ -183,20 +182,6 @@
     </div>
   {/if}
 
-  <!-- Queued messages indicator (shows FIFO queue of messages waiting to be sent) -->
-  {#if messageQueue.length > 0}
-    <div class="queued-indicator flex items-center gap-2 px-3 py-2 bg-amber-500/10 dark:bg-amber-500/20 rounded-lg mb-2">
-      <span class="queued-icon text-base">⏳</span>
-      <span class="text-sm text-amber-600 dark:text-amber-400">
-        {#if messageQueue.length === 1}
-          Queued: "{messageQueue[0].substring(0, 40)}{messageQueue[0].length > 40 ? '...' : ''}"
-        {:else}
-          {messageQueue.length} messages queued (next: "{messageQueue[0].substring(0, 25)}...")
-        {/if}
-      </span>
-    </div>
-  {/if}
-
   <!-- Interim transcript preview (shows words as you speak in native mode) -->
   {#if interimTranscript}
     <div class="interim-transcript flex items-center gap-2 px-3 py-2 bg-blue-500/10 dark:bg-blue-500/20 rounded-lg mb-2">
@@ -216,7 +201,7 @@
       bind:value={input}
       on:keypress={handleKeyPress}
       on:input={adjustTextareaHeight}
-      placeholder={loading ? "Type next message (will queue)..." : "Message your MetaHuman..."}
+      placeholder="Message your MetaHuman..."
       rows="1"
       class="chat-input {loading ? 'queuing' : ''}"
     />
@@ -297,10 +282,10 @@
         {/if}
       </button>
       <button
-        class="send-btn {loading && input.trim() ? 'queuing' : ''}"
+        class="send-btn"
         on:click={handleSend}
         disabled={!input.trim()}
-        title={loading && input.trim() ? 'Queue message' : 'Send message'}
+        title="Send message"
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
@@ -351,22 +336,6 @@
 
   :global(.dark) .curiosity-reply {
     border-left-color: #a78bfa;
-  }
-
-  /* Queued message indicator */
-  .queued-indicator {
-    animation: queued-pulse 2s ease-in-out infinite;
-  }
-  .queued-icon {
-    animation: hourglass 1.5s ease-in-out infinite;
-  }
-  @keyframes queued-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
-  }
-  @keyframes hourglass {
-    0%, 100% { transform: rotate(0deg); }
-    50% { transform: rotate(180deg); }
   }
 
   /* Interim transcript animations */

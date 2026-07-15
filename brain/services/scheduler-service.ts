@@ -4,9 +4,8 @@
  *
  * Background service for system maintenance tasks.
  *
- * NOTE: Agent scheduling is now handled by TriggerManager in the unified queue system.
- * The old AgentScheduler is deprecated - TriggerManager starts automatically when
- * Active Operator starts via service-manager.ts → queueSystem.startTriggersOnly().
+ * Work admission is owned by TriggerManager inside the core work coordinator.
+ * This process does not admit, order, or execute agent work.
  *
  * This service now only handles:
  * - Health checks (stale lock cleanup)
@@ -78,10 +77,7 @@ async function main() {
     return;
   }
 
-  // NOTE: Old AgentScheduler is deprecated
-  // Agent scheduling is now handled by TriggerManager in the unified queue system
-  // TriggerManager starts automatically when Active Operator starts
-  console.log('[scheduler-service] Started (maintenance mode - agent triggers handled by TriggerManager)');
+  console.log('[scheduler-service] Started (maintenance only; work admission is coordinator-owned)');
 
   // Start periodic health check
   healthCheckTimer = setInterval(performHealthCheck, HEALTH_CHECK_INTERVAL_MS);
@@ -101,9 +97,6 @@ async function main() {
   preloadEmbeddingModel().catch((err) => {
     console.error('[scheduler-service] Failed to preload embedding model:', err);
   });
-
-  // NOTE: Config file watching is now handled by TriggerManager
-  // in the unified queue system (packages/core/src/queue/trigger-manager.ts)
 
   // Graceful shutdown
   const shutdown = () => {

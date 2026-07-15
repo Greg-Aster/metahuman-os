@@ -31,13 +31,13 @@ import {
   switchBackend,
   getActiveBackend,
   listAvailableAgents,
+  getAgentMonitorSnapshot,
   getAgentLogs,
   getAgentStats,
-  registerAgent,
-  unregisterAgent,
   isAgentRunning,
   getRunningAgents,
   stopAgent,
+  startAgentProcess,
   buildMemoryIndex,
   queryIndex,
   getIndexStatus,
@@ -82,17 +82,6 @@ function getDefaultUsername(): string {
 function getCliPaths() {
   return getProfilePaths(getDefaultUsername());
 }
-
-const agentScriptOverrides: Record<string, string> = {
-  curiosity: 'curiosity-service.ts',
-};
-
-// Map service names to their locations in brain/services/
-const serviceOverrides: Record<string, string> = {
-  'scheduler-service': 'services/scheduler-service.ts',
-  'headless-watcher': 'services/headless-watcher.ts',
-  'sleep-service': 'services/sleep-service.ts',
-};
 
 function ensureInitialized(): void {
   const profilePaths = getCliPaths();
@@ -274,32 +263,23 @@ function status(): void {
   }
 }
 
-function startServices(options: { restart?: boolean; force?: boolean } = {}): void {
+async function startServices(options: { restart?: boolean; force?: boolean } = {}): Promise<void> {
   const restart = options.restart !== undefined ? options.restart : true;
   const force = options.force ?? false;
   // NOTE: Don't call ensureInitialized() here - the web server should start
   // regardless of whether any user's profile is available. Users will see
   // the AuthGate login screen if not authenticated.
 
-  // Always start headless-watcher (it manages other agents based on mode)
-  const alwaysStart = ['headless-watcher'];
-
-  // Only start these agents if NOT in headless mode
-  // NOTE: Most agents are managed by scheduler-service via etc/agents.json
-  // Only start essential standalone services here
-  const conditionalAgents = [
-    'scheduler-service',  // Timer bus - manages organizer, curiosity, etc.
-    'audio-organizer'     // Audio processing service
-  ];
-
-  // Check headless mode for conditional agents
+  const bootAgents = getAgentMonitorSnapshot().bootAgents
+    .filter(agent => agent.enabled && agent.runOnBoot)
+    .map(agent => agent.agentId);
   const defaults = isHeadless()
-    ? alwaysStart
-    : [...alwaysStart, ...conditionalAgents];
+    ? []
+    : [...new Set(bootAgents)];
 
   if (isHeadless()) {
-    console.log('⚠️  Headless mode active - starting watcher only');
-    console.log('   Other agents will resume when headless mode is disabled');
+    console.log('⚠️  Headless mode active - no boot-managed agents started');
+    console.log('   Boot-managed agents will resume when headless mode is disabled');
   }
 
   const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -324,90 +304,21 @@ function startServices(options: { restart?: boolean; force?: boolean } = {}): vo
     }
   }
 
-  const spawnAgent = (agentName: string) => {
-    // Resolve agent/service path based on type
-    let agentPath: string;
-
-    if (serviceOverrides[agentName]) {
-      // Services in brain/services/
-      agentPath = `${systemPaths.brain}/${serviceOverrides[agentName]}`;
-    } else {
-      // Check for modular agent (brain/agents/<name>/cli.ts) first
-      const modularPath = `${systemPaths.brain}/agents/${agentName}/cli.ts`;
-      const legacyPath = `${systemPaths.brain}/agents/${agentScriptOverrides[agentName] ?? `${agentName}.ts`}`;
-
-      if (fs.existsSync(modularPath)) {
-        agentPath = modularPath;
-      } else {
-        agentPath = legacyPath;
-      }
-    }
-
-    if (!fs.existsSync(agentPath)) {
-      console.warn(`Skipping ${agentName}: not found at ${agentPath}`);
-      return;
-    }
-
-    // Check if already running using unified registry
-    if (isAgentRunning(agentName)) {
-      console.log(`• ${agentName} already running`);
-      return;
-    }
-
+  const spawnAgent = async (agentName: string) => {
     console.log(`• Starting ${agentName}...`);
-    // Use bootstrap wrapper to establish user context for agents
-    const bootstrapPath = `${systemPaths.brain}/scripts/_bootstrap.ts`;
-    const child = spawn('tsx', [bootstrapPath, agentName], {
-      detached: true,
-      stdio: 'ignore',
-      cwd: systemPaths.root,
-      env: {
-        ...process.env,
-        NODE_PATH: [
-          `${systemPaths.root}/node_modules`,
-          `${systemPaths.root}/packages/cli/node_modules`,
-          `${systemPaths.root}/apps/site/node_modules`,
-        ].join(':'),
-      },
+    const result = await startAgentProcess(agentName, {
+      actor: 'system',
+      source: 'cli/start',
+      useBootstrap: true,
     });
-
-    // Register in running.json FIRST (before potential early exit)
-    if (child.pid) {
-      registerAgent(agentName, child.pid);
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'agent_started',
-        details: { agent: agentName, pid: child.pid },
-        actor: 'system',
-      });
+    if (result.alreadyRunning) {
+      console.log(`• ${agentName} already running`);
+    } else if (!result.started) {
+      console.warn(`Skipping ${agentName}: ${result.error || 'failed to start'}`);
     }
-
-    // Attach event handlers BEFORE unref() to catch events while parent runs
-    child.on('close', (code: number) => {
-      if (code !== 0) console.error(`Agent ${agentName} exited with code ${code}`);
-      audit({
-        level: code === 0 ? 'info' : 'error',
-        category: 'system',
-        event: 'agent_stopped',
-        details: { agent: agentName, exitCode: code },
-        actor: 'system',
-      });
-      unregisterAgent(agentName);
-    });
-
-    child.on('error', (err: Error) => {
-      console.error(`Failed to start ${agentName}: ${err.message}`);
-      unregisterAgent(agentName);
-    });
-
-    // IMPORTANT: unref() AFTER event handlers are attached
-    // Events will still work while parent process is alive
-    child.unref();
   };
 
-  defaults.forEach(spawnAgent);
+  await Promise.all(defaults.map(spawnAgent));
   console.log('Background services started (if not already running).');
 }
 
@@ -1307,7 +1218,7 @@ For more information, see DESIGN.md and ARCHITECTURE.md
 `.trim());
 }
 
-  function agent(args: string[]): void {
+  async function agent(args: string[]): Promise<void> {
   ensureInitialized();
   const subcommand = args[0];
 
@@ -1336,68 +1247,25 @@ For more information, see DESIGN.md and ARCHITECTURE.md
         process.exit(1);
       }
 
-      // Support both flat file (name.ts) and directory (name/index.ts) patterns
-      let agentPath = `${systemPaths.brain}/agents/${agentName}.ts`;
-      if (!fs.existsSync(agentPath)) {
-        agentPath = `${systemPaths.brain}/agents/${agentName}/index.ts`;
-      }
+      console.log(`Spawning agent: ${agentName}...`);
+      const result = await startAgentProcess(agentName, {
+        actor: 'system',
+        source: 'cli/agent/run',
+        useBootstrap: true,
+        detached: false,
+        waitForMs: 5000,
+      });
 
-      if (!fs.existsSync(agentPath)) {
-        console.error(`Agent not found: ${agentName}`);
-        console.error(`  Checked: ${systemPaths.brain}/agents/${agentName}.ts`);
-        console.error(`  Checked: ${systemPaths.brain}/agents/${agentName}/index.ts`);
+      if (result.alreadyRunning) {
+        console.error(`Agent '${agentName}' is already running. Use: mh agent stop ${agentName}`);
         process.exit(1);
       }
-
-      console.log(`Spawning agent: ${agentName}...`);
-
-      // Use bootstrap wrapper to establish user context for agents
-      const bootstrapPath = `${systemPaths.brain}/scripts/_bootstrap.ts`;
-      const child = spawn('tsx', [bootstrapPath, agentName], {
-        stdio: 'inherit',
-        cwd: systemPaths.root,
-        env: {
-          ...process.env,
-          // Ensure workspace module resolution for agents outside a package context
-          NODE_PATH: [
-            `${systemPaths.root}/node_modules`,
-            `${systemPaths.root}/packages/cli/node_modules`,
-            `${systemPaths.root}/apps/site/node_modules`,
-          ].join(':'),
-        },
-      });
-
-      // Register agent in running.json
-      if (child.pid) {
-        registerAgent(agentName, child.pid);
-
-        audit({
-          level: 'info',
-          category: 'system',
-          event: 'agent_started',
-          details: { agent: agentName, pid: child.pid },
-          actor: 'system',
-        });
+      if (!result.started) {
+        console.error(`Failed to start agent '${agentName}': ${result.error || 'unknown error'}`);
+        if (result.stderr) console.error(result.stderr);
+        process.exit(1);
       }
-
-      child.on('error', (err: Error) => {
-        console.error(`Failed to start agent: ${err.message}`);
-        unregisterAgent(agentName);
-      });
-
-      child.on('close', (code: number) => {
-        if (code !== 0) {
-          console.error(`Agent ${agentName} exited with code ${code}`);
-        }
-        audit({
-          level: code === 0 ? 'info' : 'error',
-          category: 'system',
-          event: 'agent_stopped',
-          details: { agent: agentName, exitCode: code },
-          actor: 'system',
-        });
-        unregisterAgent(agentName);
-      });
+      console.log(result.pid ? `Agent '${agentName}' started with PID ${result.pid}` : `Agent '${agentName}' started`);
       break;
     }
 
@@ -1695,7 +1563,7 @@ function audioCmd(args: string[]): void {
       console.log(`✓ Copied ${copied.length} audio file(s) to inbox: ${getCliPaths().audioInbox}`);
       console.log('\n💡 Next steps:');
       console.log('   1. Start the transcriber: mh agent run transcriber');
-      console.log('   2. Or wait for nightly processing (if sleep-service is running)');
+      console.log('   2. Or queue the configured Sleep Workflow from System Controls');
 
       // Audit the ingestion
       auditDataChange({
@@ -2360,7 +2228,7 @@ async function main() {
       case 'start': {
         const restart = args.includes('--restart') || args.includes('-r') || args.length === 0;
         const force = args.includes('--force') || args.includes('-f');
-        startServices({ restart, force });
+        await startServices({ restart, force });
         break;
       }
       case 'init':
@@ -2388,7 +2256,7 @@ async function main() {
         await chat();
         break;
       case 'agent':
-        agent(args);
+        await agent(args);
         break;
       case 'ingest':
         ingestCmd(args);

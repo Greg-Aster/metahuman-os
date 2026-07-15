@@ -103,9 +103,29 @@ export const rightSidebarOpen = writable<boolean>(savedRightSidebar);
 
 // Auto-persist rightSidebarOpen to localStorage
 if (typeof localStorage !== 'undefined') {
+  let rightSidebarPreferenceReady = false;
   rightSidebarOpen.subscribe(open => {
+    if (!rightSidebarPreferenceReady) {
+      rightSidebarPreferenceReady = true;
+      return;
+    }
     try {
       localStorage.setItem('rightSidebarOpen', String(open));
+    } catch {}
+  });
+}
+
+const savedSystemCoderDisabled = typeof localStorage !== 'undefined'
+  ? localStorage.getItem('mh_system_coder_disabled')
+  : null;
+
+// Hidden by default; users can re-enable it from System -> Settings.
+export const systemCoderDisabled = writable<boolean>(savedSystemCoderDisabled !== 'false');
+
+if (typeof localStorage !== 'undefined') {
+  systemCoderDisabled.subscribe(disabled => {
+    try {
+      localStorage.setItem('mh_system_coder_disabled', String(disabled));
     } catch {}
   });
 }

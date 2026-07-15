@@ -4,6 +4,7 @@ export type EnvironmentActionType =
   | 'jump'
   | 'interact'
   | 'stop'
+  | 'robotCommand'
   | 'sendText';
 
 export interface EnvironmentCapabilities {
@@ -106,7 +107,7 @@ export interface EnvironmentMapData {
 export interface EnvironmentFeedback {
   id: string;
   timestamp: string;
-  type: 'accepted' | 'rejected' | 'completed' | 'failed' | 'status';
+  type: 'accepted' | 'rejected' | 'completed' | 'cancelled' | 'expired' | 'failed' | 'status';
   message: string;
   actionId?: string;
   data?: Record<string, unknown>;
@@ -127,19 +128,6 @@ export interface EnvironmentObservation {
   feedback?: EnvironmentFeedback[];
 }
 
-export interface EnvironmentConnectionConfig {
-  id: string;
-  adapter: string;
-  enabled: boolean;
-  url: string;
-  hostName?: string;
-  roomName?: string;
-  graphName?: string;
-  createdAt: string;
-  updatedAt: string;
-  metadata?: Record<string, unknown>;
-}
-
 export interface EnvironmentAction {
   id: string;
   sessionId?: string;
@@ -148,23 +136,31 @@ export interface EnvironmentAction {
   text?: string;
   vector?: { x?: number; y?: number; z?: number };
   direction?: 'forward' | 'back' | 'left' | 'right';
+  command?: string;
+  units?: number;
   amount?: number;
   durationMs?: number;
   target?: string;
   metadata?: Record<string, unknown>;
 }
 
-export interface QueuedEnvironmentAction extends EnvironmentAction {
-  status: 'queued' | 'dispatched' | 'completed' | 'failed' | 'rejected';
+export interface EnvironmentCommandWork extends EnvironmentAction {
+  status: 'pending' | 'dispatched' | 'accepted' | 'cancelled' | 'expired' | 'failed' | 'rejected';
   dispatchedAt?: string;
   completedAt?: string;
   result?: EnvironmentFeedback;
+  correlationId?: string;
 }
 
 export interface EnvironmentActionQueueOptions {
   allowedActions?: EnvironmentActionType[];
   maxDurationMs?: number;
   defaultDurationMs?: number;
+  sessionId?: string;
+  username?: string;
+  source?: 'user' | 'system' | 'timer' | 'autonomy' | 'environment';
+  correlationId?: string;
+  idempotencyKey?: string;
 }
 
 export interface EnvironmentSessionState {
@@ -181,9 +177,7 @@ export interface EnvironmentSessionState {
 export interface EnvironmentBridgeState {
   enabled: boolean;
   updatedAt: string;
-  connections: Record<string, EnvironmentConnectionConfig>;
   sessions: Record<string, EnvironmentSessionState>;
-  queuedActions: QueuedEnvironmentAction[];
   feedback: EnvironmentFeedback[];
 }
 
@@ -191,6 +185,6 @@ export interface EnvironmentBridgeSummary {
   enabled: boolean;
   updatedAt: string;
   sessionCount: number;
-  queuedActionCount: number;
+  pendingCommandCount: number;
   sessions: EnvironmentSessionState[];
 }

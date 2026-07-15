@@ -5,7 +5,7 @@
   import InputArea from './chat/InputArea.svelte';
   import MessageList from './chat/MessageList.svelte';
   import ApprovalPrompt from './ApprovalPrompt.svelte';
-  // OperatorProposalPrompt removed - proposals now shown inline in LizardBrainCard
+  // Operator proposals are rendered inline by OperatorProposalCard.
   import TerminalManager from './TerminalManager.svelte';
   import { canUseOperator, currentMode } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
@@ -16,10 +16,10 @@
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
   import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/client/composables/useMessages';
   // Offline support
-  import { healthStatus, isConnected, forceHealthCheck } from '../lib/client/server-health';
+  import { forceHealthCheck } from '../lib/client/server-health';
   import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
-  import { apiEventSource, apiFetch, isMobileApp } from '../lib/client/api-config';
+  import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import {
     buildConversationParams,
     buildResponsePipelineRequestBody,
@@ -47,6 +47,9 @@
   let claudeSessionChecking = false;
   let chatResponseHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
+  let activeChatTaskId: string | null = null;
+  let reconcilingChatTaskId: string | null = null;
+  let queuedChatStreams = new Map<string, EventSource>();
   let innerDialogueHandle: ConnectionHandle | null = null;
   let innerDialogueStream: EventSource | null = null;
   let ttsQueueHandle: ConnectionHandle | null = null;
@@ -71,14 +74,17 @@
 
   // Compute display mode based on selected views
   // 'combined' = show all messages, 'conversation' = only chat, 'inner' = only reflections/dreams
+  let displayMode: 'conversation' | 'inner' | 'combined' = 'combined';
   $: displayMode = (selectedViews.has('conversation') && selectedViews.has('inner'))
     ? 'combined'
     : selectedViews.has('inner')
       ? 'inner'
       : 'conversation';
 
-  // Legacy mode for compatibility - keep message mode tied to chat buffers
-  $: mode = displayMode as 'conversation' | 'inner';
+  // Displaying both buffers must not turn a normal user message into inner
+  // dialogue. Only an explicitly inner-only view submits to the inner buffer.
+  let mode: 'conversation' | 'inner' = 'conversation';
+  $: mode = displayMode === 'inner' ? 'inner' : 'conversation';
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
   // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
@@ -97,9 +103,6 @@
   let activeOperatorLoading = false;
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
-  // Message queue - FIFO array for typed messages while LLM is processing
-  // Supports multiple queued messages that will be sent in order
-  let messageQueue: string[] = [];
 
   // Initialize TTS composable
   const ttsApi = useTTS();
@@ -143,16 +146,9 @@
       const autoSend = get(mic.isContinuousMode) || get(mic.isConversationMode);
 
       if (autoSend) {
-        // If LLM is busy (thinking or responding), queue the message in FIFO queue
-        if (loading) {
-          messageQueue = [...messageQueue, transcript]; // Add to unified FIFO queue
-          console.log('[chat-queue] LLM busy, queued voice message #' + messageQueue.length + ':', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
-        } else {
-          // LLM idle, send immediately
-          console.log('[chat-mic] Transcribed & sending:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
-          input = transcript;
-          void sendMessage();
-        }
+        console.log('[chat-mic] Transcribed & sending:', transcript.substring(0, 50) + (transcript.length > 50 ? '...' : ''));
+        input = transcript;
+        void sendMessage();
       } else {
         // Single input mode: put transcript in input field for user to review/edit
         // APPEND to existing input if there's already text (allows multiple voice inputs)
@@ -492,6 +488,8 @@
     const aggressiveCleanup = () => {
       console.log('[chat] Page unload - force closing ALL connections');
       chatResponseStream?.close();
+      queuedChatStreams.forEach(stream => stream.close());
+      queuedChatStreams.clear();
       innerDialogueStream?.close();
       disconnectAllBufferStreams();
       disconnectTTSQueueStream();
@@ -751,6 +749,18 @@
     }
   }
 
+  function pausePassiveChatStreams() {
+    // Suspend the shared pool first so closing one stream cannot immediately
+    // promote another queued background stream into the freed browser slot.
+    suppressTTSQueueCloseNotice = true;
+    connectionPool.suspend();
+    disconnectAllBufferStreams();
+    disconnectTTSQueueStream();
+    disconnectProposalsStream();
+    thinkingTraceApi.pauseTelemetry();
+    suppressTTSQueueCloseNotice = false;
+  }
+
   function restorePassiveChatStreams() {
     if (!isComponentMounted || (typeof document !== 'undefined' && document.hidden)) {
       return;
@@ -758,6 +768,8 @@
 
     connectMultipleBufferStreams();
     connectTTSQueueStream();
+    connectProposalsStream();
+    connectionPool.resume();
   }
 
   function handleTTSItems(items: Array<{ text?: string; mode?: string; source?: string }>) {
@@ -776,6 +788,8 @@
     // Clean up event listeners and streams
     visibilityCleanup?.();
     chatResponseStream?.close();
+    queuedChatStreams.forEach(stream => stream.close());
+    queuedChatStreams.clear();
     disconnectAllBufferStreams();
     disconnectTTSQueueStream();
     disconnectProposalsStream(); // Clean up proposals SSE stream
@@ -783,6 +797,11 @@
     ttsApi.cleanup();
     thinkingTraceApi.cleanup();
     unsubscribeYolo();
+
+    // A navigation can destroy the chat while a foreground request has the
+    // shared pool suspended. Release the suspension so streams owned by the
+    // next view are allowed to connect.
+    connectionPool.resume();
 
     // Clean up IntersectionObserver (moved from async onMount which doesn't work for cleanup)
     if (scrollObserver) {
@@ -855,7 +874,152 @@
       thinkingTraceApi.stop();
     } finally {
       loading = false;
+      restorePassiveChatStreams();
     }
+  }
+
+  async function enqueueUserMessageTask(input: Record<string, any>) {
+    const res = await apiFetch('/api/unified-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'user_message',
+        priority: 'critical',
+        input,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Failed to enqueue message (${res.status})`);
+    }
+    return data.task as { id: string };
+  }
+
+  async function getQueuedTaskStatus(taskId: string): Promise<{
+    status: 'queued' | 'running' | 'completed' | 'failed';
+    error?: string;
+  }> {
+    const res = await apiFetch(`/api/unified-queue/tasks/${encodeURIComponent(taskId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || !data.task?.status) {
+      throw new Error(data.error || `Could not read queued task status (${res.status})`);
+    }
+    return data.task;
+  }
+
+  async function reconcileQueuedChatTask(taskId: string): Promise<void> {
+    if (reconcilingChatTaskId === taskId) return;
+    reconcilingChatTaskId = taskId;
+    let statusFailures = 0;
+
+    try {
+      while (activeChatTaskId === taskId && loading) {
+        try {
+          const task = await getQueuedTaskStatus(taskId);
+          statusFailures = 0;
+
+          if (task.status === 'completed') {
+            activeChatTaskId = null;
+            await fetchAllSelectedBuffers();
+            thinkingTraceApi.stop();
+            reasoningStages = [];
+            loading = false;
+            restorePassiveChatStreams();
+            return;
+          }
+
+          if (task.status === 'failed') {
+            activeChatTaskId = null;
+            thinkingTraceApi.stop();
+            reasoningStages = [];
+            loading = false;
+            messagesApi.pushMessage('system', `Error: ${task.error || 'Queued message failed'}`);
+            restorePassiveChatStreams();
+            return;
+          }
+
+          thinkingTraceApi.setActive(true);
+          thinkingTraceApi.setStatusLabel(task.status === 'running'
+            ? '⚙️ Server is processing your message...'
+            : '⏳ Message is queued...');
+        } catch (error) {
+          statusFailures++;
+          console.warn('[chat] Could not reconcile queued task:', error);
+          thinkingTraceApi.setActive(true);
+          thinkingTraceApi.setStatusLabel('🔄 Reconnecting to message status...');
+
+          if (statusFailures === 3) {
+            thinkingTraceApi.appendTrace('The server accepted the message, but live status is temporarily unavailable.', 15);
+          }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } finally {
+      if (reconcilingChatTaskId === taskId) {
+        reconcilingChatTaskId = null;
+      }
+    }
+  }
+
+  function openQueuedBackgroundStream(taskId: string, userMessage: string, queuedMode: 'conversation' | 'inner') {
+    const stream = apiEventSource(`/api/unified-queue/tasks/${encodeURIComponent(taskId)}/stream`);
+    queuedChatStreams.set(taskId, stream);
+
+    const close = () => {
+      stream.close();
+      queuedChatStreams.delete(taskId);
+    };
+
+    stream.onmessage = (event) => {
+      try {
+        const { type, data } = parseConversationStreamEvent(event.data);
+        if (type === 'queued_task_started') {
+          messagesApi.pushMessage('user', userMessage);
+          loading = true;
+          thinkingTraceApi.setActive(true);
+          thinkingTraceApi.setStatusLabel('Queued message started');
+          thinkingTraceApi.setTrace([`Queued task ${taskId} started`]);
+        } else if (type === 'queued') {
+          thinkingTraceApi.setActive(true);
+          thinkingTraceApi.setStatusLabel(`Queued behind ${Math.max(0, Number(data.position || 1) - 1)} task(s)`);
+        } else if (type === 'progress' && data?.message) {
+          thinkingTraceApi.setActive(true);
+          thinkingTraceApi.appendTrace(String(data.message), 15);
+        } else if (type === 'reasoning') {
+          if (queuedMode === 'inner') {
+            messagesApi.pushMessage('reasoning', typeof data === 'string' ? data : String(data?.content || ''));
+          }
+        } else if (type === 'answer') {
+          thinkingTraceApi.stop();
+          messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
+          void speakAssistantResponse(data?.tts?.text || data.response, data?.tts?.itemId ? `conversation-answer:${data.tts.itemId}` : 'conversation-answer');
+          loading = false;
+          close();
+          restorePassiveChatStreams();
+        } else if (type === 'error') {
+          thinkingTraceApi.stop();
+          messagesApi.pushMessage('system', `Error: ${data?.message || 'Queued message failed'}`);
+          loading = false;
+          close();
+          restorePassiveChatStreams();
+        } else if (type === 'queued_task_completed') {
+          close();
+        }
+      } catch (err) {
+        messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process queued response.'}`);
+        loading = false;
+        close();
+        restorePassiveChatStreams();
+      }
+    };
+
+    stream.onerror = () => {
+      messagesApi.pushMessage('system', 'Error: Queued message stream disconnected.');
+      loading = false;
+      close();
+      restorePassiveChatStreams();
+    };
   }
 
   /**
@@ -1099,10 +1263,10 @@
 
       const requestBody = buildResponsePipelineRequestBody(message, cardType, cardData, responseBufferId);
 
-      // Step 2: Send request (no automatic timeout - user has cancel button)
-      console.log('[response-pipeline] Step 2: Sending POST to /api/response-pipeline');
-      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 2: Sending to server...`, 10);
-      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Waiting for response...`, 10);
+      // Step 2: Enqueue request (no automatic timeout - user has cancel button)
+      console.log('[response-pipeline] Step 2: Queueing response pipeline task');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 2: Queueing response...`, 10);
+      thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Waiting for queued response...`, 10);
 
       // Start heartbeat to show the system is alive
       heartbeatInterval = setInterval(() => {
@@ -1112,60 +1276,83 @@
         thinkingTraceApi.appendTrace(`[${timestamp()}] ⏱️  Still processing... (${elapsed}s elapsed)`, 5);
       }, 10000); // Every 10 seconds
 
-      let response: Response;
-      try {
-        response = await apiFetch('/api/response-pipeline', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-          signal: abortController.signal, // Enable cancellation
-        });
+      const task = await enqueueUserMessageTask({
+        kind: 'response-pipeline',
+        responsePipeline: requestBody,
+      });
 
-        // Mark connection as established once we get a response
-        connectionEstablished = true;
-      } catch (fetchError) {
-        // Check if this was a user-initiated cancellation
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          thinkingTraceApi.appendTrace(`[${timestamp()}] ⏸️  Request cancelled by user`, 10);
-          messagesApi.pushMessage('system', '⏸️ **Request Cancelled**\n\nYou cancelled the response pipeline request.');
-          thinkingTraceApi.stop();
-          return; // Exit gracefully
-        }
+      const result: any = await new Promise((resolve, reject) => {
+        const stream = apiEventSource(`/api/unified-queue/tasks/${encodeURIComponent(task.id)}/stream`);
+        queuedChatStreams.set(task.id, stream);
 
-        throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Unknown fetch error'}`);
-      }
+        const cleanup = () => {
+          stream.close();
+          queuedChatStreams.delete(task.id);
+          abortController.signal.removeEventListener('abort', onAbort);
+        };
 
-      console.log('[response-pipeline] Step 3: Got response', {
-        status: response.status,
-        ok: response.ok,
+        const onAbort = () => {
+          cleanup();
+          const error = new Error('Request cancelled by user');
+          error.name = 'AbortError';
+          reject(error);
+        };
+
+        abortController.signal.addEventListener('abort', onAbort, { once: true });
+
+        stream.onopen = () => {
+          connectionEstablished = true;
+          thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Queue stream connected`, 10);
+        };
+
+        stream.onmessage = (event) => {
+          try {
+            const { type, data } = parseConversationStreamEvent(event.data);
+
+            if (type === 'queued_task_started') {
+              connectionEstablished = true;
+              thinkingTraceApi.setStatusLabel(`📝 Processing ${cardType} response...`);
+              thinkingTraceApi.appendTrace(`[${timestamp()}] Queued task started`, 10);
+            } else if (type === 'queued') {
+              const ahead = Math.max(0, Number(data.position || 1) - 1);
+              thinkingTraceApi.setStatusLabel(`Queued behind ${ahead} task(s)`);
+              thinkingTraceApi.appendTrace(`[${timestamp()}] Waiting in queue: position ${data.position || '?'}`, 5);
+            } else if (type === 'progress') {
+              connectionEstablished = true;
+              if (data?.message) {
+                thinkingTraceApi.appendTrace(`[${timestamp()}] ${data.message}`, 5);
+              }
+            } else if (type === 'answer') {
+              cleanup();
+              resolve({
+                success: true,
+                response: data.response,
+                responseBufferId: data.responseBufferId,
+                actionTaken: data.actionTaken,
+                pipelineTriggered: data.pipelineTriggered,
+                nextStatus: data.nextStatus,
+                executionTimeMs: data.executionTime,
+              });
+            } else if (type === 'error') {
+              cleanup();
+              reject(new Error(data?.message || 'Response pipeline failed'));
+            }
+          } catch (streamError) {
+            cleanup();
+            reject(streamError);
+          }
+        };
+
+        stream.onerror = () => {
+          cleanup();
+          reject(new Error('Queued response pipeline stream disconnected'));
+        };
+      });
+
+      console.log('[response-pipeline] Step 3: Queued response received', {
         elapsed: Date.now() - startTime,
       });
-      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 3: Response received (${response.status})`, 10);
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        let errorData: any = {};
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { error: errorText || `Server error: ${response.status}` };
-        }
-        console.error('[response-pipeline] Server error:', { status: response.status, error: errorData });
-        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Server error: ${response.status}`, 10);
-        throw new Error(errorData.error || `Pipeline failed with status ${response.status}`);
-      }
-
-      // Step 4: Parse response
-      console.log('[response-pipeline] Step 4: Parsing JSON response');
-      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 4: Parsing response...`, 10);
-
-      let result: any;
-      try {
-        result = await response.json();
-      } catch (parseErr) {
-        console.error('[response-pipeline] Failed to parse response JSON:', parseErr);
-        throw new Error('Server returned invalid JSON response');
-      }
+      thinkingTraceApi.appendTrace(`[${timestamp()}] Step 3: Queued response received`, 10);
 
       const elapsed = Date.now() - startTime;
       console.log('[response-pipeline] Step 5: Processing result', {
@@ -1262,6 +1449,14 @@
       thinkingTraceApi.stop();
     } catch (err) {
       const elapsed = Date.now() - startTime;
+
+      if (err instanceof Error && err.name === 'AbortError') {
+        thinkingTraceApi.appendTrace(`[${timestamp()}] ⏸️  Request cancelled by user`, 10);
+        messagesApi.pushMessage('system', '⏸️ **Request Cancelled**\n\nYou cancelled the response pipeline request.');
+        thinkingTraceApi.stop();
+        return;
+      }
+
       console.error('[response-pipeline] FATAL ERROR:', err);
       console.error('[response-pipeline] Error details:', {
         name: err instanceof Error ? err.name : 'unknown',
@@ -1295,24 +1490,14 @@
     // Already processing a send - ignore
     if (sendInProgress) return;
 
-    // LLM is busy - queue this message for later (FIFO)
-    if (loading) {
-      const msg = input.trim();
-      messageQueue = [...messageQueue, msg]; // Add to end of queue
-      console.log('[chat-queue] LLM busy, queued message #' + messageQueue.length + ':', msg.substring(0, 50) + (msg.length > 50 ? '...' : ''));
-      input = ''; // Clear input so user knows it's queued
-      return;
-    }
-
     sendInProgress = true;
 
-    let connected = get(isConnected);
-
-    // On mobile or if connection status is uncertain, do a quick health check
-    if (isMobileApp() || !connected) {
-      const healthResult = await forceHealthCheck();
-      connected = healthResult.connected;
-    }
+    // Health checks are ordinary fetches and need an available browser
+    // connection. Free background SSE slots before consulting connectivity;
+    // otherwise a saturated page can falsely route a healthy server to offline.
+    pausePassiveChatStreams();
+    const healthResult = await forceHealthCheck();
+    const connected = healthResult.connected;
 
     // If offline, use UnifiedChat with tier selection
     if (!connected) {
@@ -1324,6 +1509,7 @@
     // Check LLM backend status before sending (only when online)
     if (!backendApi.isReady()) {
       sendInProgress = false; // Reset guard on early return
+      restorePassiveChatStreams();
       const backend = get(activeBackend);
       const msg = backend === 'vllm'
         ? 'Cannot send message: vLLM server is not running. Please start vLLM from Settings → Backend.'
@@ -1388,6 +1574,37 @@
       return;
     }
 
+    if (loading) {
+      try {
+        const llm_opts = readLlmOptions();
+        const params = buildConversationParams({
+          message: userMessage,
+          mode,
+          sessionId: $conversationSessionId,
+          reasoningDepth,
+          yoloMode,
+          llmOptions: llm_opts,
+          replyTo: {
+            questionId: replyToQuestionId || undefined,
+            content: replyToContent || undefined,
+            desireId: replyToDesireId || undefined,
+            desireTitle: replyToDesireTitle || undefined,
+          },
+        });
+        const task = await enqueueUserMessageTask({
+          kind: 'persona-chat',
+          personaChat: Object.fromEntries(params.entries()),
+        });
+        openQueuedBackgroundStream(task.id, userMessage, mode);
+      } catch (err) {
+        input = userMessage;
+        messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Could not queue message.'}`);
+      } finally {
+        sendInProgress = false;
+      }
+      return;
+    }
+
     messagesApi.pushMessage('user', userMessage);
 
     loading = true;
@@ -1422,10 +1639,10 @@
         yoloMode,
         llmOptions: llm_opts,
         replyTo: {
-          questionId: replyToQuestionId,
-          content: replyToContent,
-          desireId: replyToDesireId,
-          desireTitle: replyToDesireTitle,
+          questionId: replyToQuestionId || undefined,
+          content: replyToContent || undefined,
+          desireId: replyToDesireId || undefined,
+          desireTitle: replyToDesireTitle || undefined,
         },
       });
       console.log('[sendMessage] Step 4: Created URLSearchParams');
@@ -1443,53 +1660,12 @@
         console.log('[reply-to] Replying to message:', replyToContent.substring(0, 100));
       }
 
-      console.log('[sendMessage] Step 5: Setting up chat request');
-      console.log('[sendMessage] URL:', `/api/persona_chat?${params.toString()}`);
-      thinkingTraceApi.appendTrace(`[${timestamp()}] 🌐 Opening connection to /api/persona_chat`, 15);
+      console.log('[sendMessage] Step 5: Queueing chat request');
+      thinkingTraceApi.appendTrace(`[${timestamp()}] 🌐 Queueing message`, 15);
 
-      // CRITICAL: Close ALL EventSource connections FIRST to free browser connection slots
-      // Browsers limit concurrent connections per-origin (typically 6 for HTTP/1.1)
-      // If all slots are full, fetch() will hang forever in the browser's request queue
-      // SYMPTOMS: No CPU, no network, just infinite pending - exactly what you experienced
-      console.log('[sendMessage] ========== CONNECTION CLEANUP START ==========');
-      console.log('[sendMessage] Reason: Prevent browser connection limit exhaustion');
-      console.log('[sendMessage] Closing all EventSource connections to free slots...');
-
-      let closedCount = closeEventSourceConnections('[sendMessage]', [
-        {
-          name: 'chatResponseStream',
-          source: chatResponseStream,
-          clear: () => {
-            chatResponseStream = null;
-          },
-        },
-        {
-          name: 'innerDialogueStream',
-          source: innerDialogueStream,
-          clear: () => {
-            innerDialogueStream = null;
-          },
-        },
-      ]);
-
-      try {
-        disconnectAllBufferStreams();
-        console.log('[sendMessage] → Closed buffer streams');
-        closedCount++;
-      } catch (e) {
-        console.error('[sendMessage] ❌ Error closing buffer streams:', e);
-      }
-
-      try {
-        disconnectTTSQueueStream();
-        console.log('[sendMessage] → Closed TTS queue stream');
-        closedCount++;
-      } catch (e) {
-        console.error('[sendMessage] ❌ Error closing TTS queue stream:', e);
-      }
-
-      console.log(`[sendMessage] ✅ Closed ${closedCount} connections`);
-      console.log('[sendMessage] ========== CONNECTION CLEANUP COMPLETE ==========');
+      // This is idempotent: the pool was suspended before the health check and
+      // remains suspended through auth, enqueue, and foreground stream setup.
+      pausePassiveChatStreams();
 
       // PRE-FLIGHT AUTH CHECK: Verify session is valid before opening EventSource
       // This prevents silent hangs when session cookie is stale/mismatched
@@ -1501,7 +1677,7 @@
         // Progress notifications (same as response pipeline)
         let notificationShown = false;
         const authProgressInterval = setInterval(() => {
-          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          const elapsed = Math.floor((Date.now() - msgStartTime) / 1000);
           console.log(`[sendMessage] ⏳ Still waiting for auth check... (${elapsed}s)`);
           thinkingTraceApi.appendTrace(`[${timestamp()}] ⏳ Still checking session... (${elapsed}s)`, 10);
 
@@ -1598,7 +1774,12 @@
         chatResponseStream = null;
       }
 
-      chatResponseStream = apiEventSource(`/api/persona_chat?${params.toString()}`);
+      const task = await enqueueUserMessageTask({
+        kind: 'persona-chat',
+        personaChat: Object.fromEntries(params.entries()),
+      });
+      activeChatTaskId = task.id;
+      chatResponseStream = apiEventSource(`/api/unified-queue/tasks/${encodeURIComponent(task.id)}/stream`);
       console.log('[sendMessage] Step 6: EventSource created!');
       thinkingTraceApi.appendTrace(`[${timestamp()}] 🔌 EventSource created, waiting for server...`, 15);
       thinkingTraceApi.setStatusLabel('🔌 Connecting...');
@@ -1606,29 +1787,34 @@
       // Track connection time for user visibility
       const connectStart = Date.now();
       let connectionTimer: ReturnType<typeof setInterval> | null = null;
-      let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
+      let connectionFallbackTimer: ReturnType<typeof setTimeout> | null = null;
       let connectionEstablished = false;
 
-      // CONNECTION TIMEOUT: If no data received within 30s, abort and show error
-      connectionTimeout = setTimeout(() => {
-        if (!connectionEstablished && chatResponseStream) {
-          console.error('[EventSource] Connection timeout - no data received in 30s');
-          chatResponseStream.close();
-          if (connectionTimer) clearInterval(connectionTimer);
-          thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ CONNECTION TIMEOUT after 30s`, 15);
-          thinkingTraceApi.appendTrace(`[${timestamp()}] This usually means your session is invalid - try refreshing and logging in again`, 15);
-          thinkingTraceApi.setStatusLabel('⏱️ Timeout - Session Issue?');
-          loading = false;
-          // Show error to user
-          const errorMsg = {
-            id: crypto.randomUUID(),
-            role: 'system' as const,
-            content: '⚠️ **Connection Timeout**\n\nNo response received from server after 30 seconds. This usually indicates a session issue.\n\n**Try:** Refresh the page and log in again.',
-            timestamp: Date.now(),
-          };
-          messages.update(m => [...m, errorMsg]);
+      const clearConnectionTracking = () => {
+        if (connectionTimer) {
+          clearInterval(connectionTimer);
+          connectionTimer = null;
         }
-      }, 30000);
+        if (connectionFallbackTimer) {
+          clearTimeout(connectionFallbackTimer);
+          connectionFallbackTimer = null;
+        }
+      };
+
+      // If the browser cannot acquire an SSE connection promptly, stop waiting
+      // on that transport and follow the server-owned task by status instead.
+      // The task continues independently, so this cannot duplicate the message.
+      connectionFallbackTimer = setTimeout(() => {
+        if (!connectionEstablished && activeChatTaskId === task.id) {
+          console.warn('[EventSource] Live stream delayed; switching to task reconciliation');
+          chatResponseStream?.close();
+          chatResponseStream = null;
+          clearConnectionTracking();
+          thinkingTraceApi.appendTrace(`[${timestamp()}] Live response delayed; following accepted task ${task.id}`, 15);
+          thinkingTraceApi.setStatusLabel('🔄 Following accepted message...');
+          void reconcileQueuedChatTask(task.id);
+        }
+      }, 8000);
 
       // Start timer to show elapsed time WITH timestamps
       connectionTimer = setInterval(() => {
@@ -1639,7 +1825,10 @@
 
       chatResponseStream.onopen = () => {
         connectionEstablished = true;
-        if (connectionTimeout) clearTimeout(connectionTimeout);
+        if (connectionFallbackTimer) {
+          clearTimeout(connectionFallbackTimer);
+          connectionFallbackTimer = null;
+        }
         console.log('[EventSource] Connection opened!');
         if (connectionTimer) clearInterval(connectionTimer);
         const elapsed = Math.floor((Date.now() - connectStart) / 1000);
@@ -1647,18 +1836,12 @@
         thinkingTraceApi.setStatusLabel('⚡ Connected - Executing graph...');
       };
 
-      chatResponseStream.onerror = (err) => {
-        console.error('[EventSource] Connection error:', err);
-        if (connectionTimer) clearInterval(connectionTimer);
-        const elapsed = Math.floor((Date.now() - connectStart) / 1000);
-        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ CONNECTION ERROR after ${elapsed}s`, 15);
-        thinkingTraceApi.appendTrace(`[${timestamp()}] Check server terminal for errors`, 15);
-        thinkingTraceApi.setStatusLabel('⚠️ Connection Failed');
-      };
-
       chatResponseStream.onmessage = (event) => {
         connectionEstablished = true;
-        if (connectionTimeout) clearTimeout(connectionTimeout);
+        if (connectionFallbackTimer) {
+          clearTimeout(connectionFallbackTimer);
+          connectionFallbackTimer = null;
+        }
         if (connectionTimer) clearInterval(connectionTimer);
         console.log('[EventSource] onmessage fired, raw event.data:', event.data.substring(0, 200));
         thinkingTraceApi.appendTrace(`[${timestamp()}] 📥 Received server event`, 15);
@@ -1728,11 +1911,15 @@
             }
           } else if (type === 'cancelled') {
             // Request was cancelled by user
+            clearConnectionTracking();
+            activeChatTaskId = null;
             thinkingTraceApi.stop();
             messagesApi.pushMessage('system', data.message || '⏸️ Request cancelled');
             loading = false;
             reasoningStages = [];
             chatResponseStream?.close();
+            chatResponseStream = null;
+            restorePassiveChatStreams();
           } else if (type === 'reasoning') {
             thinkingTraceApi.stop();
             if (typeof data === 'string') {
@@ -1754,6 +1941,8 @@
               reasoningStages = [...reasoningStages, stageObj];
             }
           } else if (type === 'answer') {
+            clearConnectionTracking();
+            activeChatTaskId = null;
             thinkingTraceApi.stop();
             if (reasoningStages.length > 0) {
               // Only persist reasoning to messages in inner dialogue mode
@@ -1775,6 +1964,7 @@
 
             loading = false;
             chatResponseStream?.close();
+            chatResponseStream = null;
             restorePassiveChatStreams();
           } else if (type === 'system_message') {
             // System status message (e.g., summarization progress)
@@ -1782,6 +1972,8 @@
               messagesApi.pushMessage('system', data.content);
             }
           } else if (type === 'error') {
+            clearConnectionTracking();
+            activeChatTaskId = null;
             // Display the actual error message from the server
             const errorMessage = data.message || 'Unknown error occurred';
             const suggestion = data.suggestion || '';
@@ -1802,55 +1994,66 @@
             loading = false;
             reasoningStages = [];
             chatResponseStream?.close();
+            chatResponseStream = null;
             restorePassiveChatStreams();
             return; // Don't throw, we handled it
           }
           // Note: Big Brother output is streamed to System Terminal's Big Brother tab via WebSocket
         } catch (err) {
           console.error('Chat stream error:', err);
+          clearConnectionTracking();
+          activeChatTaskId = null;
           messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process server response.'}`);
           thinkingTraceApi.stop();
           loading = false;
           reasoningStages = [];
           chatResponseStream?.close();
+          chatResponseStream = null;
           restorePassiveChatStreams();
         }
       };
 
       chatResponseStream.onerror = async (err) => {
+        if (activeChatTaskId !== task.id) return;
         console.error('[EventSource] onerror fired! Error:', err);
         console.error('[EventSource] ReadyState:', chatResponseStream?.readyState);
+        clearConnectionTracking();
         chatResponseStream?.close();
+        chatResponseStream = null;
 
         // Force a health check to get accurate connection status
         const healthResult = await forceHealthCheck();
 
-        // If server is offline, fallback to UnifiedChat
+        // Once the server has accepted the queued message, never resubmit it
+        // through another tier: that can create a duplicate answer. Reconcile
+        // the accepted task when possible and let buffers resync after restart.
         if (!healthResult.connected) {
-          console.log('[EventSource] Server confirmed offline, falling back to UnifiedChat');
-          // Remove the user message we just added (will be re-added by sendMessageOffline)
-          const currentMessages = get(messages);
-          if (currentMessages.length > 0 && currentMessages[currentMessages.length - 1].role === 'user') {
-            messages.set(currentMessages.slice(0, -1));
-          }
-          // Restore input and try offline
-          input = userMessage;
+          console.log('[EventSource] Server went offline after accepting queued message');
+          activeChatTaskId = null;
           thinkingTraceApi.stop();
           loading = false;
           reasoningStages = [];
-          await sendMessageOffline();
+          messagesApi.pushMessage('system', 'The server accepted your message, but the live connection was lost. Its saved result will appear when the server reconnects.');
+          restorePassiveChatStreams();
           return;
         }
 
-        messagesApi.pushMessage('system', 'Error: Connection to the server was lost. Try again or check server status.');
-        thinkingTraceApi.stop();
-        loading = false;
-        reasoningStages = [];
-        restorePassiveChatStreams();
+        thinkingTraceApi.setActive(true);
+        thinkingTraceApi.setStatusLabel('🔄 Reconnecting to accepted message...');
+        thinkingTraceApi.appendTrace('Live response stream disconnected; the server task is still running.', 15);
+        void reconcileQueuedChatTask(task.id);
       };
 
     } catch (err) {
       console.error('Chat setup error:', err);
+      if (activeChatTaskId) {
+        thinkingTraceApi.setActive(true);
+        thinkingTraceApi.setStatusLabel('🔄 Following accepted message...');
+        thinkingTraceApi.appendTrace('The live response could not open; checking the accepted server task.', 15);
+        void reconcileQueuedChatTask(activeChatTaskId);
+        sendInProgress = false;
+        return;
+      }
       messagesApi.pushMessage('system', 'Error: Could not send message.');
       thinkingTraceApi.stop();
       loading = false;
@@ -2261,8 +2464,7 @@
       const res = await apiFetch('/api/active-operator/status');
       if (res.ok) {
         const status = await res.json();
-        // Use isRunning for actual live state, not config.enabled
-        activeOperatorEnabled = status.isRunning ?? false;
+        activeOperatorEnabled = status.mode === 'full';
       }
     } catch (error) {
       console.error('[active-operator] Failed to load status:', error);
@@ -2326,15 +2528,6 @@
 
   function checkBackendStatus() {
     backendApi.checkStatus();
-  }
-
-  // Watch for LLM completion and auto-send queued messages (unified FIFO queue for both voice and text)
-  $: if (!loading && messageQueue.length > 0) {
-    const msg = messageQueue[0]; // Get first message (FIFO)
-    messageQueue = messageQueue.slice(1); // Remove from queue
-    console.log('[chat-queue] LLM finished, sending next queued message (' + messageQueue.length + ' remaining):', msg.substring(0, 50) + (msg.length > 50 ? '...' : ''));
-    input = msg;
-    void sendMessage();
   }
 
   // Terminal resize handlers
@@ -2624,14 +2817,13 @@
     console.log('[chat] Approval change detected');
   }} />
 
-  <!-- Operator proposals now displayed inline in LizardBrainCard -->
+  <!-- Operator proposals are displayed inline by OperatorProposalCard. -->
 
   <!-- Input Area -->
   <div class="input-container">
     <InputArea
       bind:input
       {loading}
-      {messageQueue}
       selectedMessage={$selectedMessage}
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}

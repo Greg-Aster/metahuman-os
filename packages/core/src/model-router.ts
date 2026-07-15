@@ -14,13 +14,14 @@ import { ollama } from './ollama.js';
 import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js';
 import { loadBackendConfig } from './llm-backend.js';
 import { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
+import type { ProviderMessageContent } from './providers/types.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
 
 export interface RouterMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: ProviderMessageContent;
 }
 
 export interface RouterCallOptions {

@@ -86,14 +86,14 @@ Last 7 days: +87 memories
 - **boredom-maintenance**: Activity-based reflection triggering
 - **curiosity-service**: User-facing questions
 - **inner-curiosity**: Self-directed questions
-- **sleep-service**: Dream scheduling
+- **sleep-workflow**: Coordinator-owned nightly dream and persona-review work
 - **ingestor**: File inbox processing
 - **audio-organizer**: Audio transcription and organization
 
 **Actions:**
 - Start/stop agents
 - View detailed logs
-- Monitor processing queues
+- Monitor coordinator work items and terminal history
 
 ### Model Information
 

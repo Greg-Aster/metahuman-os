@@ -13,24 +13,84 @@ import { defineMiddleware } from 'astro:middleware';
 import { withUserContext as runWithUserContext } from '@metahuman/core/context';
 import { validateSession } from '@metahuman/core/sessions';
 import { getUser } from '@metahuman/core/users';
+import { claimWorkCoordinatorOwnership, ensureQueueSystemStarted } from '@metahuman/core/queue';
+import { getModeController } from '@metahuman/core/active-operator/mode';
 
-// CORS headers for mobile app cross-origin requests
-// When the mobile app loads from file:// and calls https://mh.dndiy.org/api/*
-// IMPORTANT: Access-Control-Allow-Origin cannot be '*' when using credentials
-// We must echo back the request's Origin header for credentials to work
-function getCorsHeaders(origin: string | null): Record<string, string> {
+// Astro loads the middleware module as part of the maintained server entrypoint.
+// Start system work coordination here once, independently of UI page visits.
+claimWorkCoordinatorOwnership();
+void ensureQueueSystemStarted()
+  .then(() => getModeController().applyConfiguredMode())
+  .catch(error => {
+    console.error('[server-boot] Work coordinator failed to start:', error);
+  });
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function stripPort(host: string): string {
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return (end >= 0 ? host.slice(1, end) : host.slice(1)).toLowerCase();
+  }
+  return host.split(':')[0].toLowerCase();
+}
+
+function isLoopbackHost(host: string): boolean {
+  const name = stripPort(host);
+  return name === 'localhost' || name === '127.0.0.1' || name === '::1';
+}
+
+function allowedOrigins(): Set<string> {
+  return new Set((process.env.MH_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean));
+}
+
+function isCorsAllowed(origin: string | null, host: string | null, method: string): boolean {
+  if (!origin) return true;
+
+  const mode = process.env.MH_EXPOSURE_MODE === 'shared' ? 'shared' : 'local';
+  const requestHost = host || '';
+
+  if (origin === 'null') {
+    return mode === 'local' && isLoopbackHost(requestHost) && !MUTATING_METHODS.has(method.toUpperCase());
+  }
+
+  let originHost = '';
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+
+  if (originHost === requestHost) return true;
+
+  if (mode === 'local') {
+    return isLoopbackHost(originHost) && isLoopbackHost(requestHost);
+  }
+
+  return allowedOrigins().has(origin);
+}
+
+function getCorsHeaders(origin: string | null, host: string | null, method: string): Record<string, string> {
+  if (!isCorsAllowed(origin, host, method)) {
+    return {};
+  }
+
   return {
-    // Echo back origin (or use 'null' for file:// requests)
-    // This is required when Access-Control-Allow-Credentials is true
-    'Access-Control-Allow-Origin': origin || 'null',
+    ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Cookie, Authorization',
     'Access-Control-Allow-Credentials': 'true',
+    'Vary': 'Origin',
   };
 }
 
-function addCorsHeaders(response: Response, origin: string | null): Response {
-  const corsHeaders = getCorsHeaders(origin);
+function addCorsHeaders(response: Response, origin: string | null, host: string | null, method: string): Response {
+  const corsHeaders = getCorsHeaders(origin, host, method);
+  if (Object.keys(corsHeaders).length === 0) return response;
+
   const newHeaders = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeaders)) {
     newHeaders.set(key, value);
@@ -50,10 +110,22 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Get Origin header for CORS (mobile app sends 'null' from file://)
   const origin = context.request.headers.get('Origin');
-  const corsHeaders = getCorsHeaders(origin);
+  const host = context.request.headers.get('Host');
+  const preflightMethod = context.request.headers.get('Access-Control-Request-Method');
+  const corsMethod = context.request.method === 'OPTIONS' && preflightMethod
+    ? preflightMethod
+    : context.request.method;
+  const corsHeaders = getCorsHeaders(origin, host, corsMethod);
 
   // Handle CORS preflight (OPTIONS) requests
   if (context.request.method === 'OPTIONS') {
+    if (origin && Object.keys(corsHeaders).length === 0) {
+      return new Response(JSON.stringify({ error: 'CORS origin is not allowed' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response(null, {
       status: 204,
       headers: corsHeaders,
@@ -64,7 +136,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   try {
     const response = await processRequest(context, next);
     // Add CORS headers to all API responses
-    return addCorsHeaders(response, origin);
+    return addCorsHeaders(response, origin, host, context.request.method);
   } catch (error) {
     // Convert auth errors to proper HTTP responses
     const errorMessage = (error as Error).message;

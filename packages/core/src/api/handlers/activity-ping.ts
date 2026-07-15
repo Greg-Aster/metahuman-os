@@ -7,6 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
+import { recordSystemActivity } from '../../system-activity.js';
 
 /**
  * POST /api/activity-ping - Update activity timestamp
@@ -18,13 +19,7 @@ export async function handleActivityPing(req: UnifiedRequest): Promise<UnifiedRe
     // Get username for activity tracking (enables user-specific agent triggers)
     const username = user.isAuthenticated ? user.username : undefined;
 
-    // Try to record scheduler activity (may not be available on mobile)
-    try {
-      const { scheduler } = await import('../../agent-scheduler.js');
-      scheduler.recordActivity(username);
-    } catch {
-      // Scheduler not available, skip
-    }
+    recordSystemActivity(Date.now(), username);
 
     return successResponse({
       message: 'Activity updated',

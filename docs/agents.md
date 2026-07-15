@@ -1,6 +1,6 @@
 # Autonomous Agents
 
-MetaHuman OS includes 27 autonomous agents that run in the background. Configuration: `etc/agents.json`
+MetaHuman OS exposes maintained autonomous agents through the Agent Monitor and Boot Manager. Configuration: `etc/agents.json`
 
 ## Agent List
 
@@ -11,7 +11,7 @@ MetaHuman OS includes 27 autonomous agents that run in the background. Configura
 | `curiosity-service` | Asks questions in chat (user-facing) |
 | `inner-curiosity` | Self-directed Q&A (saves as `inner_dialogue`) |
 | `dreamer` | Creates surreal dreams from memory fragments |
-| `night-pipeline` | Manages dream generation and sleep-time processing |
+| `sleep-workflow` | Coordinator workflow that admits bounded dream and persona-review children |
 | `ingestor` | Converts inbox files into episodic memories |
 | `desire-generator` | Generates desires from system inputs (agency system) |
 | `desire-planner` | Plans execution steps for approved desires |
@@ -19,7 +19,6 @@ MetaHuman OS includes 27 autonomous agents that run in the background. Configura
 | `desire-outcome-reviewer` | Reviews desire execution outcomes |
 | `curator` | Curates memories for training dataset preparation |
 | `psychoanalyzer` | Analyzes behavioral patterns and psychological trends |
-| `babysitter` | Monitors system health and resource usage |
 | `audio-organizer` | Processes audio files into structured memories |
 | `transcriber` | Transcribes audio to text |
 | `auto-indexer` | Maintains vector embeddings index automatically |
@@ -32,7 +31,6 @@ MetaHuman OS includes 27 autonomous agents that run in the background. Configura
 | `digest` | Generates daily/weekly digests |
 | `desire-explorer` | Explores desire space for new opportunities |
 | `curiosity-researcher` | Researches answers to curiosity questions |
-| `update-check` | Checks for system updates |
 | `coder` | Auto-generates code fixes and improvements |
 
 ## Key Agents
@@ -44,5 +42,5 @@ MetaHuman OS includes 27 autonomous agents that run in the background. Configura
 
 ## Configuration
 
-- `etc/agents.json` - Scheduling and triggers
+- `etc/agents.json` - Producer schedules and triggers; execution remains coordinator-owned
 - `etc/curiosity.json` - Curiosity agent settings

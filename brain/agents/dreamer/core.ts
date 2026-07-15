@@ -22,7 +22,6 @@ import {
   systemPaths,
   audit,
   recordSystemActivity,
-  scheduler,
   getTargetUser,
   withUserContext,
   runGraph,
@@ -72,10 +71,6 @@ export interface UserDreamerStats {
 function markBackgroundActivity() {
   try {
     recordSystemActivity();
-  } catch {}
-
-  try {
-    scheduler.recordActivity();
   } catch {}
 }
 

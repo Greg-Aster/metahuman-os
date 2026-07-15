@@ -1,32 +1,65 @@
-/**
- * Mobile agent scheduler compatibility helpers.
- *
- * Concrete brain agent registrations live above core. Core owns only the
- * scheduler primitives and accepts registrations injected by an app/brain
- * integration layer.
- */
+/** In-process mobile executors attached to the sole work coordinator. */
 
-import {
-  mobileScheduler,
-  type MobileAgentRegistration,
-} from './mobile-scheduler.js';
+import path from 'node:path';
+import { ensureQueueSystemStarted, getQueueSystem } from '../queue/queue-system.js';
+import { claimWorkCoordinatorOwnership } from '../queue/work-submission.js';
 
-export function registerMobileAgents(agents: MobileAgentRegistration[] = []): void {
+export type MobileAgentPriority = 'low' | 'normal' | 'high';
+
+export interface MobileAgentContext {
+  username?: string;
+  profileRoot: string;
+  dataDir: string;
+  signal?: AbortSignal;
+}
+
+export interface MobileAgentRegistration {
+  id: string;
+  name: string;
+  run: (context: MobileAgentContext) => Promise<void>;
+  usesLLM?: boolean;
+  priority?: MobileAgentPriority;
+  intervalSeconds?: number;
+}
+
+const registeredAgentIds = new Set<string>();
+
+export async function initializeMobileAgents(
+  dataDir: string,
+  username = '',
+  agents: MobileAgentRegistration[] = [],
+): Promise<void> {
+  claimWorkCoordinatorOwnership();
+  const system = await ensureQueueSystemStarted();
   for (const agent of agents) {
-    mobileScheduler.register(agent);
+    const handlerId = `agent.${agent.id}`;
+    system.engine.registerHandler(handlerId, async (task, context) => {
+      await agent.run({
+        username: task.username || username,
+        profileRoot: path.join(dataDir, 'profiles', task.username || username || 'default'),
+        dataDir,
+        signal: context.signal,
+      });
+      return { agentId: agent.id };
+    });
+    system.triggers.registerTrigger({
+      id: agent.id,
+      enabled: true,
+      type: agent.intervalSeconds ? 'interval' : 'manual',
+      priority: agent.priority ?? 'normal',
+      usesLLM: agent.usesLLM ?? true,
+      interval: agent.intervalSeconds,
+      maxRetries: 1,
+    });
+    registeredAgentIds.add(agent.id);
   }
 }
 
-export function initializeMobileAgents(
-  dataDir: string,
-  username?: string,
-  agents: MobileAgentRegistration[] = [],
-): void {
-  mobileScheduler.initialize(dataDir, username);
-  registerMobileAgents(agents);
-  mobileScheduler.start();
-}
-
 export function stopMobileAgents(): void {
-  mobileScheduler.stop();
+  const system = getQueueSystem();
+  for (const agentId of registeredAgentIds) {
+    system.engine.unregisterHandler(`agent.${agentId}`);
+    system.triggers.unregisterTrigger(agentId);
+  }
+  registeredAgentIds.clear();
 }

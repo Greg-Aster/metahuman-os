@@ -25,8 +25,8 @@ export function getCardComponent(message: ChatMessage): CardComponent {
 
   // Reflection messages - check dialogueSource for specificity
   if (role === 'reflection') {
-    if (meta?.dialogueSource === 'lizard-brain') {
-      return 'LizardBrainCard';
+    if (meta?.dialogueSource === 'operator-policy' || meta?.type === 'operator_proposal') {
+      return 'OperatorProposalCard';
     }
     if (meta?.dialogueSource === 'agency-system') {
       return 'AgencyCard';
@@ -54,8 +54,8 @@ export function getCardComponent(message: ChatMessage): CardComponent {
 
   // System messages - check dialogueSource for special handling
   if (role === 'system') {
-    if (meta?.dialogueSource === 'lizard-brain') {
-      return 'LizardBrainCard';
+    if (meta?.dialogueSource === 'operator-policy' || meta?.type === 'operator_proposal') {
+      return 'OperatorProposalCard';
     }
     if (meta?.dialogueSource === 'agency-system') {
       return 'AgencyCard';

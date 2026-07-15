@@ -26,8 +26,6 @@ import {
   sseData,
 } from '../../graph-runtime.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
-import { scheduler } from '../../agent-scheduler.js';
-import { isActiveOperatorEnabled } from '../../active-operator/index.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { appendToUserBuffer } from '../../conversation-buffer.js';
 // Early buffer save added - saves user message BEFORE graph to survive timeouts
@@ -513,15 +511,9 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
 
   console.log(`[persona-chat] mode=${mode}, cognitiveMode=${cognitiveMode}, user=${user.username}`);
 
-  // Record user activity for agent scheduler (so agents know which user to run for)
+  // Record user activity for proactive-admission and pause policies.
   if (isAuthenticated && user.username) {
-    scheduler.recordActivity(user.username);
-
-    // If Active Operator is enabled, record activity so it knows to pause background tasks
-    // and prioritize user interactions
-    if (isActiveOperatorEnabled()) {
-      recordSystemActivity(Date.now(), user.username);
-    }
+    recordSystemActivity(Date.now(), user.username);
 
     // Record user message for pause manager (conversation detection)
     // This tells the Active Operator to pause when user is actively conversing

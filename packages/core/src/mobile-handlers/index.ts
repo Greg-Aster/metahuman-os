@@ -23,14 +23,13 @@ export { listRoutes } from '../api/router.js';
 export type { MobileUserContext } from './types.js';
 export { successResponse, errorResponse } from './types.js';
 
-// Mobile scheduler (still needed for running agents locally)
-export * from './mobile-scheduler.js';
-
-// Mobile agents (in-process versions of key agents)
+// Mobile agents register in-process executors with the core coordinator.
 export {
-  registerMobileAgents,
   initializeMobileAgents,
   stopMobileAgents,
+  type MobileAgentContext,
+  type MobileAgentPriority,
+  type MobileAgentRegistration,
 } from './mobile-agents.js';
 
 // Local model service (Transformers.js) lifecycle management

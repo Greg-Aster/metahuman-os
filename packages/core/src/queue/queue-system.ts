@@ -1,441 +1,294 @@
 /**
- * Queue System Facade
- *
- * Main entry point for the unified queue system.
- * Wires together all components:
- * - UnifiedQueueManager (queue with lanes)
- * - ExecutionEngine (main loop)
- * - TriggerManager (agent scheduling)
- * - RemoteDispatcher (non-blocking remote calls)
- *
- * Usage:
- *   const system = new QueueSystem();
- *   await system.start();
- *   // ... system runs in background
- *   await system.stop();
+ * Work coordinator lifecycle facade.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { UnifiedQueueManager } from './unified-queue-manager.js';
+import { UnifiedQueueManager, getQueueManager } from './unified-queue-manager.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { TriggerManager } from './trigger-manager.js';
 import { RemoteDispatcher } from './remote-dispatcher.js';
-import { QueueConfig, TaskInput, QueuedTask, QueueEvent, PersistedQueueState } from './types.js';
+import type {
+  PersistedQueueState,
+  QueueConfig,
+  QueueEvent,
+  QueueLifecycleState,
+  QueuedTask,
+  TaskInput,
+} from './types.js';
 import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 import {
-  loadQueueState,
-  clearQueueState,
-  loadCurrentTask,
-  clearCurrentTask,
-  shouldRestoreState,
   auditRecovery,
+  clearQueueState,
   createDebouncedSaver,
   createImmediateSaver,
+  loadQueueState,
   persistQueueState,
+  shouldRestoreState,
 } from './queue-persister.js';
-
-// ============================================================================
-// Queue System Configuration
-// ============================================================================
+import { isWorkCoordinatorOwner } from './work-submission.js';
 
 interface QueueSystemConfig {
   enabled: boolean;
-  autoStart: boolean;
 }
 
-const DEFAULT_CONFIG: QueueSystemConfig = {
-  enabled: true,
-  autoStart: false,
-};
+const DEFAULT_CONFIG: QueueSystemConfig = { enabled: true };
 
-// ============================================================================
-// Queue System
-// ============================================================================
+function parseQueueConfig(value: unknown): QueueConfig {
+  if (!value || typeof value !== 'object') throw new Error('queue.json must contain an object');
+  const raw = value as Record<string, any>;
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new Error('queue.json enabled must be a boolean');
+  }
+  if (!raw.lanes || typeof raw.lanes !== 'object') throw new Error('queue.json lanes are required');
+  for (const laneId of ['local-llm', 'vector-index', 'remote-llm'] as const) {
+    const lane = raw.lanes[laneId];
+    if (!lane || !Number.isInteger(lane.maxConcurrent) || lane.maxConcurrent < 1) {
+      throw new Error(`queue.json lanes.${laneId}.maxConcurrent must be a positive integer`);
+    }
+  }
+  const staleTaskTimeoutMs = raw.execution?.staleTaskTimeoutMs;
+  if (staleTaskTimeoutMs !== undefined && (!Number.isFinite(staleTaskTimeoutMs) || staleTaskTimeoutMs < 0)) {
+    throw new Error('queue.json execution.staleTaskTimeoutMs must be a non-negative number');
+  }
+  const maxAttempts = raw.execution?.maxAttempts;
+  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+    throw new Error('queue.json execution.maxAttempts must be a positive integer');
+  }
+  return {
+    enabled: raw.enabled ?? true,
+    lanes: {
+      'local-llm': { ...raw.lanes['local-llm'], id: 'local-llm' },
+      'vector-index': { ...raw.lanes['vector-index'], id: 'vector-index' },
+      'remote-llm': { ...raw.lanes['remote-llm'], id: 'remote-llm' },
+    },
+    execution: { staleTaskTimeoutMs, maxAttempts },
+  };
+}
 
 export class QueueSystem extends EventEmitter {
-  private config: QueueSystemConfig;
+  private readonly config: QueueSystemConfig;
   private queueConfig: QueueConfig | null = null;
-
-  // Components
-  private queueManager: UnifiedQueueManager;
-  private executionEngine: ExecutionEngine;
-  private triggerManager: TriggerManager;
-  private remoteDispatcher: RemoteDispatcher;
-
-  // State
-  private running: boolean = false;
-  private initialized: boolean = false;
+  private readonly queueManager: UnifiedQueueManager;
+  private readonly executionEngine: ExecutionEngine;
+  private readonly triggerManager: TriggerManager;
+  private readonly remoteDispatcher: RemoteDispatcher;
+  private lifecycle: QueueLifecycleState = 'stopped';
+  private initialized = false;
+  private proactiveScheduling = false;
+  private lastError?: string;
   private immediateSave?: () => void;
+  private startPromise: Promise<boolean> | null = null;
 
-  constructor(config?: Partial<QueueSystemConfig>) {
+  constructor(config: Partial<QueueSystemConfig> = {}) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
-
-    // Initialize components
-    this.queueManager = new UnifiedQueueManager();
-    this.executionEngine = new ExecutionEngine({
-      loopIntervalMs: 100,
-      onTaskComplete: (task, success, result) => {
-        this.emit('taskComplete', { task, success, result });
-      },
-      onError: (error, task) => {
-        this.emit('error', { error, task });
-      },
-    });
+    this.queueManager = getQueueManager();
+    this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000 }, this.queueManager);
     this.triggerManager = new TriggerManager(this.queueManager);
     this.remoteDispatcher = new RemoteDispatcher(this.queueManager);
-
-    // Wire up event forwarding
-    this.queueManager.addEventListener((event) => {
-      this.emit('queue', event);
-    });
+    this.queueManager.addEventListener(event => this.emit('queue', event));
   }
 
-  /**
-   * Get the config file path
-   */
   private get configPath(): string {
     return path.join(systemPaths.etc, 'queue.json');
   }
 
-  /**
-   * Load configuration from etc/queue.json
-   */
+  private setLifecycle(lifecycle: QueueLifecycleState, error?: string): void {
+    this.lifecycle = lifecycle;
+    this.lastError = error;
+    this.emit('lifecycle', { lifecycle, error });
+  }
+
   loadConfig(): boolean {
     try {
-      if (!fs.existsSync(this.configPath)) {
-        console.warn('[QueueSystem] No queue.json found, using defaults');
-        return false;
-      }
-
-      const data = fs.readFileSync(this.configPath, 'utf-8');
-      this.queueConfig = JSON.parse(data);
-
+      if (!fs.existsSync(this.configPath)) throw new Error(`Queue configuration not found: ${this.configPath}`);
+      this.queueConfig = parseQueueConfig(JSON.parse(fs.readFileSync(this.configPath, 'utf8')));
+      this.queueManager.configure(this.queueConfig);
       audit({
         level: 'info',
         category: 'system',
         event: 'queue_config_loaded',
         actor: 'queue_system',
-        details: {
-          enabled: this.queueConfig?.enabled,
-        },
+        details: { enabled: this.queueConfig.enabled },
       });
-
       return true;
     } catch (error) {
-      console.error('[QueueSystem] Failed to load config:', error);
+      this.queueConfig = null;
+      this.setLifecycle('degraded', (error as Error).message);
+      console.error('[QueueSystem] Invalid queue configuration:', error);
       return false;
     }
   }
 
-  /**
-   * Initialize the queue system (load configs, wire components)
-   */
-  async initialize(): Promise<boolean> {
-    if (this.initialized) {
-      return true;
-    }
+  initialize(): boolean {
+    if (this.initialized) return true;
+    if (!this.loadConfig()) return false;
 
     try {
-      // Load configurations
-      this.loadConfig();
       this.triggerManager.loadConfig();
-
-      // Restore persisted state if available and not too old
       if (shouldRestoreState()) {
-        const persistedState = loadQueueState();
-        if (persistedState) {
-          this.queueManager.importState(persistedState);
-
-          // Check for crashed task
-          const crashedTask = loadCurrentTask();
-          const tasksRestored = this.queueManager.getAllTasks().length;
-
+        const state = loadQueueState();
+        if (state) {
+          this.queueManager.importState(state);
+          persistQueueState(this.queueManager.exportState());
           auditRecovery(
-            tasksRestored,
-            persistedState.inFlightRemote?.length || 0,
-            crashedTask?.task.id
+            this.queueManager.getAllTasks().length,
+            state.inFlightRemote?.length || 0,
+            state.items?.find(task => task.error?.code === 'restart_recovery')?.id,
           );
-
-          console.log(`[QueueSystem] Restored ${tasksRestored} queued tasks from disk`);
-
-          // Clear the current task file - crashed task was lost
-          if (crashedTask) {
-            console.log(`[QueueSystem] Found crashed task: ${crashedTask.task.type} (${crashedTask.task.id})`);
-            clearCurrentTask();
-          }
         }
       }
 
-      // Set up debounced persistence callback
-      const debouncedSave = createDebouncedSaver(() => this.queueManager.exportState());
+      const onPersistenceError = (error: Error) => {
+        this.setLifecycle('degraded', error.message);
+        this.emit('error', { error });
+      };
+      const debouncedSave = createDebouncedSaver(
+        () => this.queueManager.exportState(),
+        onPersistenceError,
+      );
       this.queueManager.setOnQueueChange(() => {
         debouncedSave();
         this.emit('stateChange', this.getState());
       });
-
-      // Store immediate saver for shutdown
       this.immediateSave = createImmediateSaver(() => this.queueManager.exportState());
-
       this.initialized = true;
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'queue_system_initialized',
-        actor: 'queue_system',
-      });
-
-      console.log('[QueueSystem] Initialized');
+      audit({ level: 'info', category: 'system', event: 'queue_system_initialized', actor: 'queue_system' });
       return true;
     } catch (error) {
-      console.error('[QueueSystem] Failed to initialize:', error);
+      this.setLifecycle('degraded', (error as Error).message);
+      console.error('[QueueSystem] Initialization failed:', error);
       return false;
     }
   }
 
-  /**
-   * Start the queue system
-   */
   async start(): Promise<boolean> {
-    if (this.running) {
-      console.warn('[QueueSystem] Already running');
-      return false;
-    }
-
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    if (this.queueConfig && !this.queueConfig.enabled) {
-      console.log('[QueueSystem] Disabled in config, not starting');
-      return false;
-    }
-
+    if (this.lifecycle === 'running' || this.lifecycle === 'paused') return true;
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.startInternal();
     try {
-      // Start components
+      return await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async startInternal(): Promise<boolean> {
+    this.setLifecycle('starting');
+    if (!this.initialize()) return false;
+    if (!this.config.enabled || this.queueConfig?.enabled === false) {
+      this.setLifecycle('stopped');
+      return false;
+    }
+    try {
       this.executionEngine.start();
-      this.triggerManager.start();
-
-      this.running = true;
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'queue_system_started',
-        actor: 'queue_system',
-      });
-
-      console.log('[QueueSystem] Started');
+      if (this.proactiveScheduling) this.triggerManager.start();
+      this.setLifecycle('running');
+      audit({ level: 'info', category: 'system', event: 'queue_system_started', actor: 'queue_system' });
       this.emit('started');
       return true;
     } catch (error) {
-      console.error('[QueueSystem] Failed to start:', error);
+      this.setLifecycle('degraded', (error as Error).message);
+      this.emit('error', { error });
       return false;
     }
   }
 
-  /**
-   * Stop the queue system
-   */
   async stop(): Promise<boolean> {
-    if (!this.running) {
-      console.warn('[QueueSystem] Not running');
-      return false;
-    }
-
+    if (this.lifecycle === 'stopped') return true;
+    this.setLifecycle('stopping');
     try {
-      // Stop components
-      await this.executionEngine.stop();
       this.triggerManager.stop();
-
-      // Save state immediately before shutdown
-      if (this.immediateSave) {
-        this.immediateSave();
-        console.log('[QueueSystem] Queue state persisted to disk');
-      }
-
-      this.running = false;
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'queue_system_stopped',
-        actor: 'queue_system',
-      });
-
-      console.log('[QueueSystem] Stopped');
+      await this.executionEngine.stop();
+      this.immediateSave?.();
+      this.setLifecycle('stopped');
+      audit({ level: 'info', category: 'system', event: 'queue_system_stopped', actor: 'queue_system' });
       this.emit('stopped');
       return true;
     } catch (error) {
-      console.error('[QueueSystem] Failed to stop:', error);
+      this.setLifecycle('degraded', (error as Error).message);
+      this.emit('error', { error });
       return false;
     }
   }
 
-  /**
-   * Start only the TriggerManager (not ExecutionEngine).
-   * Use this when another component (e.g., Active Operator) handles execution.
-   * TriggerManager will enqueue tasks, but won't execute them.
-   */
-  async startTriggersOnly(): Promise<boolean> {
-    if (this.running) {
-      console.warn('[QueueSystem] Already running');
-      return false;
-    }
-
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    if (this.queueConfig && !this.queueConfig.enabled) {
-      console.log('[QueueSystem] Disabled in config, not starting');
-      return false;
-    }
-
-    try {
-      // Only start TriggerManager, NOT ExecutionEngine
-      // This allows external execution loops (like Active Operator) to handle tasks
-      this.triggerManager.start();
-
-      this.running = true;
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'queue_system_triggers_started',
-        actor: 'queue_system',
-        details: { mode: 'triggers-only' },
-      });
-
-      console.log('[QueueSystem] Started (triggers only - execution handled externally)');
-      this.emit('started', { mode: 'triggers-only' });
-      return true;
-    } catch (error) {
-      console.error('[QueueSystem] Failed to start triggers:', error);
-      return false;
-    }
+  setProactiveScheduling(enabled: boolean): void {
+    this.proactiveScheduling = enabled;
+    if (!this.isRunning()) return;
+    if (enabled) this.triggerManager.start();
+    else this.triggerManager.stop();
   }
 
-  /**
-   * Pause processing (queue still accepts tasks)
-   */
+  isProactiveSchedulingEnabled(): boolean {
+    return this.proactiveScheduling;
+  }
+
   pause(): void {
     this.queueManager.pause();
-    this.triggerManager.pauseAll();
-    this.emit('paused');
+    this.setLifecycle('paused');
   }
 
-  /**
-   * Resume processing
-   */
   resume(): void {
     this.queueManager.resume();
-    this.triggerManager.resumeAll();
-    this.emit('resumed');
+    this.setLifecycle('running');
   }
 
-  /**
-   * Pause a specific lane
-   */
-  pauseLane(laneId: 'local-llm' | 'vector-index' | 'remote-llm'): void {
-    this.queueManager.pauseLane(laneId);
-    this.emit('lanePaused', { lane: laneId });
-  }
-
-  /**
-   * Resume a specific lane
-   */
-  resumeLane(laneId: 'local-llm' | 'vector-index' | 'remote-llm'): void {
-    this.queueManager.resumeLane(laneId);
-    this.emit('laneResumed', { lane: laneId });
-  }
-
-  /**
-   * Check if a specific lane is paused
-   */
-  isLanePaused(laneId: 'local-llm' | 'vector-index' | 'remote-llm'): boolean {
-    return this.queueManager.isLanePaused(laneId);
-  }
-
-  /**
-   * Get all paused lanes
-   */
-  getPausedLanes(): string[] {
-    return this.queueManager.getPausedLanes();
-  }
-
-  /**
-   * Enqueue a task
-   */
   enqueue(input: TaskInput): QueuedTask {
+    if (!this.initialize()) {
+      throw new Error(this.lastError || 'Work coordinator is not configured');
+    }
     return this.queueManager.enqueue(input);
   }
 
-  /**
-   * Enqueue a user message (critical priority)
-   */
-  enqueueUserMessage(
-    message: string,
-    username: string,
-    options?: Partial<TaskInput>
-  ): QueuedTask {
+  enqueueUserMessage(message: string, username: string, options?: Partial<TaskInput>): QueuedTask {
+    if (!this.initialize()) {
+      throw new Error(this.lastError || 'Work coordinator is not configured');
+    }
     return this.queueManager.enqueueUserMessage(message, username, options);
   }
 
-  /**
-   * Manually trigger an agent
-   */
   triggerAgent(agentId: string, username?: string): string | null {
     return this.triggerManager.triggerManual(agentId, username);
   }
 
-  /**
-   * Record user activity (pauses queue temporarily)
-   */
   recordActivity(username?: string): void {
     this.triggerManager.recordActivity(username);
   }
 
-  /**
-   * Get queue statistics
-   */
   getStats() {
     return this.queueManager.getStats();
   }
 
-  /**
-   * Get all tasks across all lanes
-   */
   getAllTasks(): QueuedTask[] {
     return this.queueManager.getAllTasks();
   }
 
-  /**
-   * Get system state (for API/dashboard)
-   */
   getState() {
     return {
-      running: this.running,
-      paused: this.queueManager.isPaused(),
+      lifecycle: this.lifecycle,
+      running: this.lifecycle === 'running' || this.lifecycle === 'paused',
+      paused: this.lifecycle === 'paused',
+      degraded: this.lifecycle === 'degraded',
+      error: this.lastError,
+      proactiveScheduling: this.proactiveScheduling,
       stats: this.queueManager.getStats(),
-      lanes: {
+      tasks: this.queueManager.getAllTasks(),
+      history: this.queueManager.getHistory(),
+      handlers: this.executionEngine.getHandlerIds(),
+      resourceCapacity: {
         'local-llm': this.queueManager.getLaneStatus('local-llm'),
         'vector-index': this.queueManager.getLaneStatus('vector-index'),
         'remote-llm': this.queueManager.getLaneStatus('remote-llm'),
       },
       inFlightRemote: this.queueManager.getInFlightRemote(),
-      nextTriggers: this.triggerManager.getNextTriggers(),
+      nextTriggers: this.proactiveScheduling ? this.triggerManager.getNextTriggers() : [],
       lastActivity: this.triggerManager.getLastActivity(),
     };
   }
 
-  /**
-   * Access to underlying components (for advanced use)
-   */
   get queue(): UnifiedQueueManager {
     return this.queueManager;
   }
@@ -452,33 +305,39 @@ export class QueueSystem extends EventEmitter {
     return this.remoteDispatcher;
   }
 
-  /**
-   * Check if system is running
-   */
+  getLifecycleState(): QueueLifecycleState {
+    return this.lifecycle;
+  }
+
   isRunning(): boolean {
-    return this.running;
+    return this.lifecycle === 'running' || this.lifecycle === 'paused';
   }
 }
 
-// Singleton instance
 let instance: QueueSystem | null = null;
 
-/**
- * Get the singleton QueueSystem instance
- */
 export function getQueueSystem(): QueueSystem {
-  if (!instance) {
-    instance = new QueueSystem();
-  }
+  if (!instance) instance = new QueueSystem();
   return instance;
 }
 
-/**
- * Reset the singleton (for testing)
- */
-export function resetQueueSystem(): void {
-  if (instance?.isRunning()) {
-    instance.stop();
+export async function ensureQueueSystemStarted(): Promise<QueueSystem> {
+  if (!isWorkCoordinatorOwner()) {
+    throw new Error('This process is not the work-coordinator owner; submit work through the coordinator service endpoint');
   }
+  const system = getQueueSystem();
+  const started = await system.start();
+  if (!started) {
+    const state = system.getState();
+    throw new Error(state.error || `Work coordinator failed to start (${state.lifecycle})`);
+  }
+  return system;
+}
+
+export function resetQueueSystem(): void {
+  if (instance) void instance.stop();
   instance = null;
 }
+
+export { clearQueueState };
+export type { PersistedQueueState, QueueEvent };

@@ -1,28 +1,7 @@
 {
-  "enabled": true,
-  "decisionModel": "default",
-  "energyBudget": {
-    "enabled": false,
-    "tokensPerHour": 0
-  },
-  "enabledTaskTypes": [
-    "user_message",
-    "memory_curate",
-    "training_curate",
-    "index_build",
-    "reflect",
-    "curiosity",
-    "inner_curiosity",
-    "dream",
-    "desire_generate",
-    "desire_advance",
-    "desire_execute",
-    "desire_review",
-    "psychoanalyze"
-  ],
-  "cooldownMs": 5000,
-  "maxConsecutiveTasks": 20,
-  "enableSelfHealing": true,
-  "stuckTimeoutMs": 300000,
-  "maxConsecutiveErrors": 10
+  "autonomyMode": "reactive",
+  "cooldownMs": 30000,
+  "maxConsecutiveTasks": 5,
+  "maxEvaluationsPerHour": 12,
+  "userPresenceCooldownMs": 60000
 }

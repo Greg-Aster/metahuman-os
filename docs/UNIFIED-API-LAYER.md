@@ -26,7 +26,7 @@ The Unified API Layer provides a single, framework-agnostic API that works for b
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Unified Router                              │
 │  - Path matching (exact + regex)                                │
-│  - Security guards (owner, writeMode, operatorMode)             │
+│  - Security guards (owner-only route guard)                     │
 │  - Parameter extraction                                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -63,10 +63,9 @@ packages/core/src/api/
 │   ├── cognitive-mode.ts # /api/cognitive-mode
 │   └── conversation.ts   # /api/conversation-buffer
 └── adapters/
+    ├── astro.ts          # Maintained Astro HTTP adapter
+    ├── http.ts           # Shared HTTP request/session adapter
     └── mobile.ts         # Mobile message bridge adapter
-
-apps/site/src/lib/server/
-└── api-adapter.ts        # Astro HTTP adapter
 ```
 
 ## Types
@@ -132,32 +131,19 @@ import {
 
 ```typescript
 // apps/site/src/pages/api/capture.ts
-import { createAstroHandler } from '../../lib/server/api-adapter';
+import { astroHandler } from '@metahuman/core/api/adapters/astro';
 
-// requiresAuth = true means 401 if not authenticated
-export const POST = createAstroHandler(true);
+export const POST = astroHandler;
 ```
 
 ### Creating an Astro Route (Multiple Methods)
 
 ```typescript
 // apps/site/src/pages/api/tasks.ts
-import { createAstroHandlers } from '../../lib/server/api-adapter';
+import { astroHandler } from '@metahuman/core/api/adapters/astro';
 
-export const { GET, POST } = createAstroHandlers({
-  GET: false,   // Public
-  POST: true,   // Requires auth
-});
-```
-
-### Catch-All Route
-
-```typescript
-// apps/site/src/pages/api/[...path].ts
-import { createCatchAllHandler } from '../../lib/server/api-adapter';
-
-// Routes all requests through unified router
-export const ALL = createCatchAllHandler();
+export const GET = astroHandler;
+export const POST = astroHandler;
 ```
 
 ### Adding a New Unified Handler
@@ -220,8 +206,6 @@ Routes can specify security guards:
 
 Available guards:
 - `owner` - User must have role 'owner'
-- `writeMode` - Blocks in emulation mode
-- `operatorMode` - Blocks in emulation mode and for non-owners
 
 ## Mobile Adapter
 
@@ -286,8 +270,8 @@ export const POST = handler;
 
 **After (Unified):**
 ```typescript
-import { createAstroHandler } from '../../lib/server/api-adapter';
-export const POST = createAstroHandler(true);
+import { astroHandler } from '@metahuman/core/api/adapters/astro';
+export const POST = astroHandler;
 ```
 
 The handler logic moves to `packages/core/src/api/handlers/memories.ts`.

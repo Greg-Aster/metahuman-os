@@ -14,12 +14,18 @@ LOG_DIR="$REPO_ROOT/logs"
 # Store general runtime logs under logs/.
 RUN_LOG_DIR="$LOG_DIR/run"
 # Store launcher and PID-style runtime logs under logs/run/.
+START_LOCK_FILE="$RUN_LOG_DIR/start.lock"
+# Prevent overlapping launcher instances with a kernel lock that survives PID namespaces.
+START_LOCK_FD=9
+# Keep the lock on a dedicated file descriptor for the lifetime of this launcher.
 SERVER_LOG="$LOG_DIR/server.log"
 # Mirror web server output into this file for the in-app service console.
 STARTED=false
 # Track whether this script has started services and should clean them up.
 CLEANING_UP=false
 # Prevent the shutdown handler from running more than once.
+START_LOCK_HELD=false
+# Track whether this launcher owns the startup lock.
 
 RED='\033[0;31m'
 # Terminal color for errors.
@@ -97,6 +103,51 @@ matching_repo_pids() {
       echo "$pid"
     fi
   done
+}
+
+release_start_lock() {
+  if [ "$START_LOCK_HELD" != true ]; then
+    return
+  fi
+
+  flock -u "$START_LOCK_FD" 2>/dev/null || true
+  exec 9>&-
+  START_LOCK_HELD=false
+}
+
+acquire_start_lock() {
+  local legacy_pid=""
+
+  if ! command_exists flock; then
+    print_error "The flock command is required for safe MetaHuman startup locking"
+    exit 1
+  fi
+
+  # Migrate the older PID-directory lock only after the HTTP preflight has
+  # established that no MetaHuman web server is responding.
+  if [ -d "$START_LOCK_FILE" ]; then
+    legacy_pid="$(cat "$START_LOCK_FILE/pid" 2>/dev/null || true)"
+    if [ -n "$legacy_pid" ]; then
+      print_warning "Removing legacy MetaHuman startup lock (recorded PID $legacy_pid)"
+    else
+      print_warning "Removing legacy MetaHuman startup lock"
+    fi
+    rm -f "$START_LOCK_FILE/pid"
+    if ! rmdir "$START_LOCK_FILE" 2>/dev/null; then
+      print_error "Legacy startup lock contains unexpected files: $START_LOCK_FILE"
+      exit 1
+    fi
+  fi
+
+  exec 9>"$START_LOCK_FILE"
+  if ! flock -n "$START_LOCK_FD"; then
+    exec 9>&-
+    print_error "Another MetaHuman OS launcher is starting or running"
+    print_warning "Use ./stop.sh before starting another MetaHuman OS launcher"
+    exit 1
+  fi
+
+  START_LOCK_HELD=true
 }
 
 kill_pids() {
@@ -198,6 +249,7 @@ cleanup() {
   # Stop child services when this launcher exits after startup began.
   if [ "$STARTED" != true ] || [ "$CLEANING_UP" = true ]; then
     # Do nothing before services start or during repeated signal handling.
+    release_start_lock
     return
   fi
 
@@ -232,6 +284,7 @@ cleanup() {
   } >> "$RUN_LOG_DIR/startup-shutdown.log" 2>&1
   # Report completion even if there was nothing left to stop.
   print_status "MetaHuman services stopped"
+  release_start_lock
 }
 
 trap cleanup EXIT
@@ -272,6 +325,9 @@ if [ -f "$ENV_FILE" ]; then
   # Stop auto-exporting newly assigned variables.
 fi
 
+export PORT="${PORT:-4321}"
+# Resolve the web port before lock and listener checks.
+
 if ! command_exists node; then
   # The production server is a Node process, so Node is mandatory.
   print_error "Node.js is required to start MetaHuman OS"
@@ -311,24 +367,43 @@ fi
 mkdir -p "$LOG_DIR" "$RUN_LOG_DIR"
 # Ensure log folders exist before background launchers or cleanup write logs.
 
-if command_exists lsof && lsof -n -i :4321 -sTCP:LISTEN >/dev/null 2>&1; then
+if command_exists curl && curl --max-time 2 --silent --show-error --output /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+  # A direct HTTP response is more reliable than lsof in constrained runtimes.
+  print_error "MetaHuman OS is already responding on port $PORT"
+  print_warning "Use ./stop.sh before starting another server"
+  exit 1
+fi
+
+acquire_start_lock
+# Refuse overlapping launcher instances before starting background services.
+
+if command_exists lsof && lsof -n -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   # Refuse to start if another process already owns the web port.
-  print_error "Port 4321 is already in use"
-  lsof -n -i :4321 -sTCP:LISTEN
+  print_error "Port $PORT is already in use"
+  lsof -n -i ":$PORT" -sTCP:LISTEN
   # Show the process currently listening on the web port.
   exit 1
 fi
 
 print_status "Starting background services"
 # Announce the non-blocking service trigger.
-"$REPO_ROOT/bin/start-services" --background >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1 &
+(exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1 &
 # Start services through the existing service script and return immediately.
 STARTED=true
 # Mark that cleanup should run when this launcher exits.
 
 print_status "Starting web server"
 # Announce the foreground web server.
-print_status "Web interface: http://localhost:4321"
+export MH_EXPOSURE_MODE="${MH_EXPOSURE_MODE:-local}"
+if [ "$MH_EXPOSURE_MODE" = "shared" ]; then
+  export HOST="${HOST:-0.0.0.0}"
+  print_warning "Shared exposure mode enabled; configure MH_ALLOWED_HOSTS and MH_ALLOWED_ORIGINS for browser access"
+else
+  export HOST="${HOST:-127.0.0.1}"
+fi
+
+print_status "Exposure mode: $MH_EXPOSURE_MODE"
+print_status "Web interface: http://localhost:$PORT"
 # Show the URL without opening a browser automatically.
 print_warning "Use ./stop.sh to stop MetaHuman services"
 # Tell the operator how to stop everything if not using Ctrl+C.
@@ -337,5 +412,5 @@ echo
 
 cd "$REPO_ROOT/apps/site"
 # Run the server from the site package directory.
-node "$SERVER_ENTRY" 2>&1 | tee "$SERVER_LOG"
+(exec 9>&-; node "$SERVER_ENTRY" 2>&1) | (exec 9>&-; tee "$SERVER_LOG")
 # Start the web server in the foreground and mirror output to logs/server.log.

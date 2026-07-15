@@ -7,7 +7,7 @@ export { default as BaseMessageCard } from './BaseMessageCard.svelte';
 export { default as UserMessageCard } from './UserMessageCard.svelte';
 export { default as AssistantMessageCard } from './AssistantMessageCard.svelte';
 export { default as ReflectionCard } from './ReflectionCard.svelte';
-export { default as LizardBrainCard } from './LizardBrainCard.svelte';
+export { default as OperatorProposalCard } from './OperatorProposalCard.svelte';
 export { default as AgencyCard } from './AgencyCard.svelte';
 export { default as DreamCard } from './DreamCard.svelte';
 export { default as CuriosityCard } from './CuriosityCard.svelte';
@@ -18,7 +18,7 @@ export { default as SystemMessageCard } from './SystemMessageCard.svelte';
 import UserMessageCard from './UserMessageCard.svelte';
 import AssistantMessageCard from './AssistantMessageCard.svelte';
 import ReflectionCard from './ReflectionCard.svelte';
-import LizardBrainCard from './LizardBrainCard.svelte';
+import OperatorProposalCard from './OperatorProposalCard.svelte';
 import AgencyCard from './AgencyCard.svelte';
 import DreamCard from './DreamCard.svelte';
 import CuriosityCard from './CuriosityCard.svelte';
@@ -32,7 +32,7 @@ export const cardComponents: Record<CardComponent, typeof SvelteComponent> = {
   UserMessageCard,
   AssistantMessageCard,
   ReflectionCard,
-  LizardBrainCard,
+  OperatorProposalCard,
   AgencyCard,
   DreamCard,
   CuriosityCard,

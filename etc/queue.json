@@ -1,124 +1,27 @@
 {
   "$schema": "https://metahuman.dev/schemas/queue.json",
-  "version": "1.0.0",
-  "description": "Unified Queue System Configuration - Manages all LLM and agent tasks with resource-aware scheduling",
+  "version": "2.0.0",
+  "description": "Single MetaHuman work coordinator resource and recovery limits",
   "enabled": true,
-
   "lanes": {
     "local-llm": {
-      "description": "Local LLM backends (vLLM, Ollama, llama.cpp) - GPU-bound, sequential execution",
+      "description": "Local LLM capacity",
       "maxConcurrent": 1,
-      "cooldownMs": 2000,
-      "backends": ["vllm", "ollama", "llama-cpp"],
-      "taskTypes": [
-        "user_message",
-        "memory_curate",
-        "reflect",
-        "curiosity",
-        "inner_curiosity",
-        "dream",
-        "desire_generate",
-        "psychoanalyze",
-        "generic"
-      ]
+      "cooldownMs": 2000
     },
     "vector-index": {
-      "description": "Vector index operations (local-models embeddings) - CPU-bound, bypass queue",
+      "description": "Vector index capacity",
       "maxConcurrent": 10,
-      "bypassQueue": true,
-      "endpoint": "http://localhost:4324",
-      "taskTypes": [
-        "index_build",
-        "semantic_search"
-      ]
+      "cooldownMs": 0
     },
     "remote-llm": {
-      "description": "Remote LLM providers - non-blocking, callbacks on completion",
+      "description": "Remote LLM capacity",
       "maxConcurrent": 5,
-      "callbackTimeoutMs": 300000,
-      "providers": {
-        "runpod": {
-          "enabled": true,
-          "description": "RunPod serverless GPU inference"
-        },
-        "big-brother": {
-          "enabled": true,
-          "description": "Claude CLI for complex reasoning tasks"
-        },
-        "openai": {
-          "enabled": false,
-          "description": "OpenAI API fallback"
-        },
-        "anthropic": {
-          "enabled": false,
-          "description": "Anthropic API fallback"
-        }
-      },
-      "taskTypes": [
-        "big_brother_escalation",
-        "runpod_inference",
-        "desire_execute",
-        "code_analyze"
-      ]
+      "cooldownMs": 0
     }
   },
-
-  "priorities": {
-    "critical": {
-      "description": "Immediate execution, bypass queue if possible",
-      "maxWaitMs": 0
-    },
-    "high": {
-      "description": "User-initiated tasks, minimal wait",
-      "maxWaitMs": 5000
-    },
-    "normal": {
-      "description": "Standard priority tasks",
-      "maxWaitMs": 30000
-    },
-    "low": {
-      "description": "Background tasks, can wait",
-      "maxWaitMs": 300000
-    },
-    "background": {
-      "description": "Lowest priority, infinite patience",
-      "maxWaitMs": null
-    }
-  },
-
   "execution": {
-    "loopIntervalMs": 100,
     "staleTaskTimeoutMs": 600000,
-    "maxRetries": 3,
-    "retryDelayMs": 5000,
-    "cleanupIntervalMs": 60000
-  },
-
-  "activity": {
-    "pauseOnUserActivity": true,
-    "resumeDelaySeconds": 60,
-    "activityCheckIntervalMs": 30000
-  },
-
-  "quietHours": {
-    "enabled": false,
-    "start": "22:00",
-    "end": "08:00"
-  },
-
-  "callbacks": {
-    "chainExecution": true,
-    "updateBuffer": true,
-    "saveMemory": true,
-    "memoryTypes": {
-      "big-brother": "inner_dialogue",
-      "runpod": "llm_response"
-    }
-  },
-
-  "metrics": {
-    "enabled": true,
-    "retentionHours": 24,
-    "aggregationIntervalMs": 60000
+    "maxAttempts": 3
   }
 }

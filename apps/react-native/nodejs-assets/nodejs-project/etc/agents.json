@@ -46,18 +46,18 @@
       "maxRetries": 2,
       "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)"
     },
-    "night-pipeline": {
-      "id": "night-pipeline",
+    "sleep-workflow": {
+      "id": "sleep-workflow",
       "enabled": true,
       "type": "time-of-day",
       "priority": "low",
-      "agentPath": "night-pipeline.ts",
+      "agentPath": "coordinator:workflow.sleep",
       "usesLLM": true,
       "schedule": "02:00",
       "runOnBoot": false,
       "autoRestart": false,
       "maxRetries": 1,
-      "comment": "Runs nightly processing: dreamer, audio backlog, LoRA training (orchestrated by sleep-service.ts)"
+      "comment": "Queues bounded dream and persona-review children through the work coordinator."
     },
     "reflector": {
       "id": "reflector",
@@ -198,19 +198,6 @@
       "autoRestart": false,
       "maxRetries": 2,
       "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags."
-    },
-    "update-check": {
-      "id": "update-check",
-      "enabled": true,
-      "type": "interval",
-      "priority": "low",
-      "agentPath": "update-check.ts",
-      "usesLLM": false,
-      "interval": 86400,
-      "runOnBoot": true,
-      "autoRestart": false,
-      "maxRetries": 1,
-      "comment": "Checks for software updates daily. Desktop: git fetch/compare. Mobile: checks server for new APK. Saves state to logs/run/update-state.json for UI."
     }
   }
 }

@@ -141,8 +141,14 @@ export interface RouteDefinition {
   /** Whether this route requires authentication */
   requiresAuth?: boolean;
 
-  /** Security guard (e.g., 'owner', 'writeMode', 'operatorMode') */
-  guard?: 'owner' | 'writeMode' | 'operatorMode';
+  /** Explicitly allow unauthenticated access, mainly for auth bootstrap or external bridge ingestion. */
+  public?: boolean;
+
+  /** Required explanation when public is used on a mutating route. */
+  publicReason?: string;
+
+  /** Security guard for routes that need stronger privileges than authentication. */
+  guard?: 'owner';
 }
 
 // ============================================================================

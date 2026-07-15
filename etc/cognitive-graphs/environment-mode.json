@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Environment Mode",
-  "description": "Rudimentary environment bridge chat graph. Reads the latest environment observation, builds an environment prompt, generates a response, streams it to chat, and queues parsed environment actions.",
+  "description": "Environment bridge conversation and action graph. Reads the active observation, asks the model for a reply plus semantic actions, streams the reply, and queues supported actions for the connected adapter.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-07-02",
+  "last_modified": "2026-07-14",
   "nodes": [
     {
       "id": "2",
@@ -13,13 +13,13 @@
         "x": 80,
         "y": 150
       },
+      "width": 240,
+      "height": 120,
       "data": {
         "label": "Environment Observation",
         "nodeType": "environment_observation",
         "properties": {}
-      },
-      "width": 240,
-      "height": 120
+      }
     },
     {
       "id": "10",
@@ -28,13 +28,28 @@
         "x": 360,
         "y": 80
       },
+      "width": 260,
+      "height": 130,
       "data": {
-        "label": "Megameal Interpreter",
-        "nodeType": "megameal_interpreter",
+        "label": "Environment Instruction Interpreter",
+        "nodeType": "environment_instruction_interpreter",
         "properties": {}
+      }
+    },
+    {
+      "id": "11",
+      "type": "environmentNode",
+      "position": {
+        "x": 360,
+        "y": 290
       },
       "width": 260,
-      "height": 130
+      "height": 130,
+      "data": {
+        "label": "Environment Image Input",
+        "nodeType": "environment_image_input",
+        "properties": {}
+      }
     },
     {
       "id": "3",
@@ -43,34 +58,34 @@
         "x": 700,
         "y": 80
       },
+      "width": 280,
+      "height": 140,
       "data": {
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
           "systemPrompt": ""
         }
-      },
-      "width": 280,
-      "height": 140
+      }
     },
     {
       "id": "4",
-      "type": "modelNode",
+      "type": "llmNode",
       "position": {
         "x": 1050,
         "y": 90
       },
+      "width": 220,
+      "height": 120,
       "data": {
         "label": "Environment LLM",
         "nodeType": "model_router",
         "properties": {
           "role": "persona",
-          "temperature": 0.55,
-          "maxTokens": 1024
+          "maxTokens": 1024,
+          "temperature": 0.55
         }
-      },
-      "width": 220,
-      "height": 120
+      }
     },
     {
       "id": "5",
@@ -79,13 +94,13 @@
         "x": 1340,
         "y": 90
       },
+      "width": 220,
+      "height": 110,
       "data": {
         "label": "Thinking Stripper",
         "nodeType": "thinking_stripper",
         "properties": {}
-      },
-      "width": 220,
-      "height": 110
+      }
     },
     {
       "id": "6",
@@ -94,26 +109,25 @@
         "x": 1630,
         "y": 10
       },
+      "width": 240,
+      "height": 120,
       "data": {
         "label": "Parse Environment Action",
         "nodeType": "environment_action_parser",
-        "properties": {
-          "textFallback": true,
-          "naturalMovementFallback": true
-        }
-      },
-      "width": 240,
-      "height": 120
+        "properties": {}
+      }
     },
     {
       "id": "8",
       "type": "environmentNode",
       "position": {
-        "x": 1930,
-        "y": 20
+        "x": 1920,
+        "y": 150
       },
+      "width": 240,
+      "height": 110,
       "data": {
-        "label": "Queue Environment Action",
+        "label": "Environment Bridge Out",
         "nodeType": "environment_send_action",
         "properties": {
           "allowedActions": [
@@ -121,14 +135,13 @@
             "jump",
             "interact",
             "stop",
+            "robotCommand",
             "sendText"
           ],
           "maxDurationMs": 5000,
           "defaultDurationMs": 750
         }
-      },
-      "width": 240,
-      "height": 110
+      }
     },
     {
       "id": "9",
@@ -137,6 +150,8 @@
         "x": 700,
         "y": 250
       },
+      "width": 260,
+      "height": 130,
       "data": {
         "label": "Optional Map Context",
         "nodeType": "environment_map_input",
@@ -145,9 +160,52 @@
           "locationJson": "",
           "coordinateSystem": ""
         }
+      }
+    },
+    {
+      "id": "node-1783475676613",
+      "type": "genericNode",
+      "position": {
+        "x": 2265,
+        "y": 45
       },
-      "width": 260,
-      "height": 130
+      "data": {
+        "nodeType": "cognitive/output_viewer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 2220,
+        "y": 260
+      },
+      "width": 180,
+      "height": 60,
+      "data": {
+        "label": "Stream Conversation",
+        "nodeType": "stream_writer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "13",
+      "type": "outputNode",
+      "position": {
+        "x": 2470,
+        "y": 260
+      },
+      "width": 280,
+      "height": 148,
+      "data": {
+        "label": "Environment Chat",
+        "nodeType": "cognitive/chat_view",
+        "properties": {
+          "mode": "direct",
+          "maxMessages": 5
+        }
+      }
     }
   ],
   "edges": [
@@ -157,9 +215,10 @@
       "target": "10",
       "sourceHandle": "observation",
       "targetHandle": "observation",
+      "type": "default",
       "data": {
         "type": "object",
-        "comment": "Latest raw Megameal observation"
+        "comment": "Latest raw environment observation"
       }
     },
     {
@@ -168,9 +227,34 @@
       "target": "3",
       "sourceHandle": "observation",
       "targetHandle": "observation",
+      "type": "default",
       "data": {
         "type": "object",
-        "comment": "Filtered Megameal observation"
+        "comment": "Normalized environment observation"
+      }
+    },
+    {
+      "id": "e-2-visual-11-visual",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Latest camera still"
+      }
+    },
+    {
+      "id": "e-2-visuals-11-visuals",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Available camera stills"
       }
     },
     {
@@ -179,9 +263,10 @@
       "target": "3",
       "sourceHandle": "instruction",
       "targetHandle": "instruction",
+      "type": "default",
       "data": {
         "type": "string",
-        "comment": "Filtered player text from Megameal"
+        "comment": "Normalized environment instruction"
       }
     },
     {
@@ -190,6 +275,7 @@
       "target": "3",
       "sourceHandle": "map",
       "targetHandle": "map",
+      "type": "default",
       "data": {
         "type": "object",
         "comment": "Optional authored or generated map context"
@@ -201,6 +287,7 @@
       "target": "3",
       "sourceHandle": "location",
       "targetHandle": "location",
+      "type": "default",
       "data": {
         "type": "object",
         "comment": "Optional authored or generated location context"
@@ -212,6 +299,7 @@
       "target": "4",
       "sourceHandle": "messages",
       "targetHandle": "messages",
+      "type": "default",
       "data": {
         "type": "array",
         "comment": "Prompt-ready model messages"
@@ -223,6 +311,7 @@
       "target": "5",
       "sourceHandle": "response",
       "targetHandle": "response",
+      "type": "default",
       "data": {
         "type": "llm_response",
         "comment": "LLM response with possible thinking blocks"
@@ -234,6 +323,7 @@
       "target": "6",
       "sourceHandle": "response",
       "targetHandle": "response",
+      "type": "default",
       "data": {
         "type": "string",
         "comment": "Parse response into environment actions"
@@ -245,6 +335,7 @@
       "target": "6",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
+      "type": "default",
       "data": {
         "type": "string",
         "comment": "Default environment session"
@@ -256,9 +347,10 @@
       "target": "6",
       "sourceHandle": "instruction",
       "targetHandle": "instruction",
+      "type": "default",
       "data": {
         "type": "string",
-        "comment": "Original Megameal instruction for movement fallback"
+        "comment": "Narrow semantic fallback for direct robot commands"
       }
     },
     {
@@ -267,6 +359,7 @@
       "target": "8",
       "sourceHandle": "actions",
       "targetHandle": "actions",
+      "type": "default",
       "data": {
         "type": "array",
         "comment": "Queue parsed actions for adapter"
@@ -278,10 +371,55 @@
       "target": "8",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
+      "type": "default",
       "data": {
         "type": "string",
         "comment": "Target active environment session"
       }
+    },
+    {
+      "id": "e-6-response-8-response",
+      "source": "6",
+      "target": "8",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Pass conversational response through bridge delivery checks"
+      }
+    },
+    {
+      "id": "e-8-response-12-response",
+      "source": "8",
+      "target": "12",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Stream conversation or adapter delivery warning"
+      }
+    },
+    {
+      "id": "e-12-output-13-message",
+      "source": "12",
+      "target": "13",
+      "sourceHandle": "output",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Display Environment Mode reply in chat"
+      }
+    },
+    {
+      "id": "xy-edge__6actions-node-1783475676613data",
+      "source": "6",
+      "target": "node-1783475676613",
+      "sourceHandle": "actions",
+      "targetHandle": "data",
+      "data": {}
     }
   ]
 }

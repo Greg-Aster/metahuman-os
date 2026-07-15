@@ -293,23 +293,22 @@ export function useOllamaStatus() {
   const activeBackend = writable<'ollama' | 'vllm'>('ollama');
 
   /**
-   * Check backend status from boot endpoint
+   * Check backend status without triggering boot-time service work.
    */
   async function checkStatus(): Promise<void> {
     try {
-      const response = await apiFetch('/api/boot');
+      const response = await apiFetch('/api/llm-backend/status');
       if (!response.ok) return;
 
       const data = await response.json();
-      // Use backendStatus (backend-aware) instead of ollamaStatus
-      const status = data.backendStatus || data.ollamaStatus;
+      const status = data.active;
       if (status) {
-        running.set(status.running);
-        hasModels.set(status.hasModels);
-        modelCount.set(status.modelCount || 0);
-        error.set(status.error || null);
-        if (status.activeBackend) {
-          activeBackend.set(status.activeBackend);
+        running.set(Boolean(status.running));
+        hasModels.set(Boolean(status.model));
+        modelCount.set(status.model ? 1 : 0);
+        error.set(status.running ? null : status.reason || 'Backend is not running');
+        if (status.resolvedBackend === 'ollama' || status.resolvedBackend === 'vllm') {
+          activeBackend.set(status.resolvedBackend);
         }
       }
     } catch (e) {

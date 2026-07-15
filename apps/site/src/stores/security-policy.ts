@@ -1,9 +1,10 @@
 /**
  * Security Policy Store
  *
- * Manages the current security policy state for the UI.
+ * Manages the current security policy capability display for the UI.
  * Fetches policy from /api/security/policy and makes it available
- * to all components via Svelte stores.
+ * to components via Svelte stores. The API router is the enforcement owner;
+ * this store must not be treated as a security boundary.
  */
 
 import { writable, derived } from 'svelte/store';
@@ -42,17 +43,17 @@ export const policyError = writable<string | null>(null);
 // Derived stores for common checks
 export const isReadOnly = derived(
   policyStore,
-  ($policy) => $policy ? !$policy.canWriteMemory : true
+  ($policy) => $policy ? !$policy.canWriteMemory : false
 );
 
 export const canUseOperator = derived(
   policyStore,
-  ($policy) => $policy?.canUseOperator ?? false
+  ($policy) => $policy?.canUseOperator ?? true
 );
 
 export const canWriteMemory = derived(
   policyStore,
-  ($policy) => $policy?.canWriteMemory ?? false
+  ($policy) => $policy?.canWriteMemory ?? true
 );
 
 export const isOwner = derived(
@@ -91,37 +92,8 @@ export async function fetchSecurityPolicy(): Promise<void> {
   } catch (error) {
     console.error('[security-policy] Failed to fetch policy:', error);
     policyError.set((error as Error).message);
-
-    // Set safe defaults (most restrictive)
-    policyStore.set({
-      canWriteMemory: false,
-      canUseOperator: false,
-      canChangeMode: false,
-      canChangeTrust: false,
-      canAccessTraining: false,
-      canFactoryReset: false,
-      role: 'anonymous',
-      mode: 'emulation',
-    });
+    policyStore.set(null);
   } finally {
     policyLoading.set(false);
   }
-}
-
-/**
- * Start polling for policy updates
- * @param intervalMs Polling interval in milliseconds (default: 30s)
- * @returns Cleanup function to stop polling
- */
-export function startPolicyPolling(intervalMs: number = 30000): () => void {
-  // Initial fetch
-  fetchSecurityPolicy();
-
-  // Set up polling
-  const interval = setInterval(() => {
-    fetchSecurityPolicy();
-  }, intervalMs);
-
-  // Return cleanup function
-  return () => clearInterval(interval);
 }

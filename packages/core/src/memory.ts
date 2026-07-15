@@ -65,11 +65,11 @@ import crypto from 'node:crypto';
 import { generateId, timestamp } from './paths.js';
 import { systemPaths } from './path-builder.js';
 import { storageClient } from './storage-client.js';
-import { appendEventToIndex, getIndexStatus } from './vector-index.js';
+import { submitCoordinatorWork } from './queue/work-submission.js';
 import { audit, auditDataChange } from './audit.js';
 import { getUserContext } from './context.js';
 import type { CognitiveModeId } from './cognitive-mode.js';
-import { scheduleIndexUpdate } from './vector-index-queue.js';
+import { canWriteMemory, type EventType } from './memory-policy.js';
 import { appendToolToCache } from './recent-tools-cache.js';
 import { validateEvent } from './memory-validation.js';
 import {
@@ -197,7 +197,7 @@ export interface EpisodicEventMetadata {
 
   // Display properties for Inner Dialogue UI
   displayColor?: string;         // Color for inner dialogue text (e.g., '#22c55e' for green)
-  dialogueSource?: string;       // Source identifier (e.g., 'lizard-brain', 'dreamer', 'reflector', 'curiosity')
+  dialogueSource?: string;       // Source identifier (e.g., 'operator-policy', 'dreamer', 'reflector', 'curiosity')
 
   // Legacy fields (maintain backward compatibility)
   processed?: boolean;           // Organizer agent processed flag
@@ -534,38 +534,31 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
     ).catch(() => {});
   }
 
-  if (ctx?.userId && ctx.profilePaths?.state) {
-    scheduleIndexUpdate(
-      ctx.userId,
-      cognitiveMode,
-      {
-        id: event.id,
-        timestamp: event.timestamp,
-        content: event.content,
-        tags: event.tags,
-        entities: event.entities,
-        path: filepath,
-        type: event.type || 'observation'
-      },
-      { statePath: ctx.profilePaths.state }
-    );
-  } else {
+  if (canWriteMemory(cognitiveMode, (event.type || 'observation') as EventType)) {
     try {
-      const status = getIndexStatus();
-      if (status && 'exists' in status && status.exists) {
-        void appendEventToIndex({
+      void submitCoordinatorWork({
+        type: 'index_update',
+        handler: 'vector.append-event',
+        resource: 'vector-index',
+        source: 'system',
+        username: ctx?.username || ctx?.userId || 'system',
+        priority: 'normal',
+        idempotencyKey: `memory-index:${event.id}`,
+        maxAttempts: 3,
+        input: {
           id: event.id,
           timestamp: event.timestamp,
           content: event.content,
           tags: event.tags,
           entities: event.entities,
           path: filepath,
-        }).catch((err) => {
-          console.warn(`${LOG_PREFIX} Failed to append event to index:`, err);
-        });
-      }
+        },
+        metadata: { producer: 'memory-capture' },
+      }).catch(error => {
+        console.warn(`${LOG_PREFIX} Failed to hand index work to the server coordinator:`, error);
+      });
     } catch (error) {
-      console.warn(`${LOG_PREFIX} Failed to check index status:`, error);
+      console.warn(`${LOG_PREFIX} Failed to create index work submission:`, error);
     }
   }
 

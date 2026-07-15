@@ -38,17 +38,6 @@ services:
       - NODE_ENV=development
     command: ["pnpm", "--filter", "@metahuman/site", "dev", "--host", "0.0.0.0"]
 
-  # Agents - Mount source for development
-  agents:
-    volumes:
-      - ./packages/core/src:/app/packages/core/src
-      - ./brain:/app/brain
-      - ./etc:/app/etc
-      - ./logs:/app/logs
-    environment:
-      - NODE_ENV=development
-    command: ["npx", "tsx", "watch", "packages/core/src/agent-scheduler.ts"]
-
   # Big Brother - Mount source for development
   big-brother:
     volumes:

@@ -5,9 +5,25 @@
  * Both core (Ollama) and server (RunPod, HuggingFace) implement this.
  */
 
+export interface ProviderTextContentPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ProviderImageContentPart {
+  type: 'image_url';
+  image_url: {
+    url: string;
+    detail?: 'auto' | 'low' | 'high';
+  };
+}
+
+export type ProviderContentPart = ProviderTextContentPart | ProviderImageContentPart;
+export type ProviderMessageContent = string | ProviderContentPart[];
+
 export interface ProviderMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: ProviderMessageContent;
 }
 
 export interface ProviderOptions {

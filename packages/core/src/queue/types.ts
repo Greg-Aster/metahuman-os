@@ -1,16 +1,13 @@
 /**
- * Unified Queue System - Type Definitions
+ * Work coordinator contracts.
  *
- * Resource-aware queue with three lanes:
- * - local-llm: Sequential execution (GPU contention)
- * - vector-index: Always available (CPU, bypass queue)
- * - remote-llm: Non-blocking (fire and callback)
+ * A work item has one durable lifecycle. Resources constrain capacity; they do
+ * not own ordering or lifecycle.
  */
 
-// Resource lane identifiers
 export type ResourceLaneId = 'local-llm' | 'vector-index' | 'remote-llm';
+export type WorkResource = ResourceLaneId | 'environment' | 'system' | string;
 
-// Priority levels (lower number = higher priority)
 export type Priority = 'critical' | 'high' | 'normal' | 'low' | 'background';
 
 export const PRIORITY_VALUES: Record<Priority, number> = {
@@ -21,35 +18,53 @@ export const PRIORITY_VALUES: Record<Priority, number> = {
   background: 4,
 };
 
-// All task types in the system
+export type WorkState =
+  | 'queued'
+  | 'leased'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+  | 'needs_review';
+
+export type QueueLifecycleState =
+  | 'starting'
+  | 'running'
+  | 'paused'
+  | 'degraded'
+  | 'stopping'
+  | 'stopped';
+
+export type WorkSource = 'user' | 'system' | 'timer' | 'autonomy' | 'environment';
+export type AutonomyMode = 'reactive' | 'semi' | 'full';
+export type WorkCognitiveMode = 'dual' | 'agent' | 'emulation' | 'environment';
+
 export type TaskType =
-  // User-facing
   | 'user_message'
-  // Memory operations
-  | 'memory_curate'    // organizer: enriches memories with tags/entities
-  | 'training_curate'  // curator: prepares memories for LLM training
+  | 'memory_curate'
+  | 'training_curate'
   | 'index_build'
+  | 'index_update'
   | 'semantic_search'
-  // Cognitive agents
   | 'reflect'
   | 'curiosity'
   | 'inner_curiosity'
   | 'dream'
   | 'psychoanalyze'
-  // Agency system
   | 'desire_generate'
   | 'desire_execute'
-  // Remote/escalation
   | 'big_brother_escalation'
   | 'runpod_inference'
   | 'code_analyze'
-  // Generic
+  | 'environment_command'
+  | 'environment_observation'
+  | 'sleep_workflow'
+  | 'operator_policy'
   | 'custom'
   | 'generic';
 
-// Task-to-lane mapping
 export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
-  // Local LLM lane (sequential, GPU)
   user_message: 'local-llm',
   memory_curate: 'local-llm',
   training_curate: 'local-llm',
@@ -61,96 +76,141 @@ export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
   psychoanalyze: 'local-llm',
   custom: 'local-llm',
   generic: 'local-llm',
-
-  // Vector index lane (always available, CPU)
+  sleep_workflow: 'local-llm',
+  operator_policy: 'local-llm',
+  environment_command: 'remote-llm',
+  environment_observation: 'local-llm',
   index_build: 'vector-index',
+  index_update: 'vector-index',
   semantic_search: 'vector-index',
-
-  // Remote LLM lane (non-blocking)
   big_brother_escalation: 'remote-llm',
   runpod_inference: 'remote-llm',
   desire_execute: 'remote-llm',
   code_analyze: 'remote-llm',
 };
 
-// Default priorities by task type
 export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
   user_message: 'critical',
+  environment_command: 'normal',
+  environment_observation: 'high',
   desire_execute: 'high',
+  big_brother_escalation: 'high',
   memory_curate: 'normal',
   training_curate: 'normal',
   index_build: 'normal',
+  index_update: 'normal',
   semantic_search: 'normal',
   reflect: 'normal',
   curiosity: 'normal',
+  runpod_inference: 'normal',
+  custom: 'normal',
+  generic: 'normal',
   inner_curiosity: 'low',
   dream: 'low',
   desire_generate: 'low',
   psychoanalyze: 'low',
-  big_brother_escalation: 'high',
-  runpod_inference: 'normal',
+  sleep_workflow: 'background',
+  operator_policy: 'background',
   code_analyze: 'background',
-  custom: 'normal',
-  generic: 'normal',
 };
 
-// Task input (what callers provide)
+export const DEFAULT_HANDLERS: Record<TaskType, string> = {
+  user_message: 'chat.persona',
+  memory_curate: 'agent.organizer',
+  training_curate: 'agent.curator',
+  index_build: 'vector.index-build',
+  index_update: 'vector.append-event',
+  semantic_search: 'vector.semantic-search',
+  reflect: 'agent.reflector',
+  curiosity: 'agent.curiosity-service',
+  inner_curiosity: 'agent.inner-curiosity',
+  dream: 'agent.dreamer',
+  psychoanalyze: 'agent.psychoanalyzer',
+  desire_generate: 'agent.desire-generator',
+  desire_execute: 'agent.desire-executor',
+  big_brother_escalation: 'remote.big-brother',
+  runpod_inference: 'remote.runpod',
+  code_analyze: 'agent.coder',
+  environment_command: 'environment.command',
+  environment_observation: 'environment.observation',
+  sleep_workflow: 'workflow.sleep',
+  operator_policy: 'operator.policy',
+  custom: 'custom',
+  generic: 'generic',
+};
+
+export interface WorkError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
 export interface TaskInput {
   type: TaskType;
-  payload: Record<string, any>;
+  handler?: string;
+  resource?: WorkResource;
+  source?: WorkSource;
+  input: Record<string, any>;
   username: string;
   priority?: Priority;
+  cognitiveMode?: WorkCognitiveMode;
+  notBefore?: string;
   deadline?: string;
+  parentTaskId?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  maxAttempts?: number;
   callbackHandler?: string;
   metadata?: Record<string, any>;
 }
 
-// Queued task (enriched with system fields)
 export interface QueuedTask {
   id: string;
   type: TaskType;
+  handler: string;
+  state: WorkState;
   priority: Priority;
-  resourceLane: ResourceLaneId;
-  queuedAt: string;
-  payload: Record<string, any>;
+  source: WorkSource;
   username: string;
-
-  // Retry handling
-  retryCount: number;
-  maxRetries: number;
-
-  // Optional fields
+  cognitiveMode?: WorkCognitiveMode;
+  resource: WorkResource;
+  createdAt: string;
+  notBefore?: string;
   deadline?: string;
-  estimatedDurationMs?: number;
-  callbackHandler?: string;
-  metadata?: Record<string, any>;
-
-  // Execution tracking
+  parentTaskId?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  attempt: number;
+  maxAttempts: number;
+  input: Record<string, any>;
+  result?: Record<string, any>;
+  error?: WorkError;
+  waitingReason?: string;
+  wakeAt?: string;
+  leaseOwner?: string;
+  cancellationRequestedAt?: string;
+  cancellationReason?: string;
   startedAt?: string;
   completedAt?: string;
-  error?: string;
+  callbackHandler?: string;
+  metadata?: Record<string, any>;
+  output?: string[];
+
 }
 
-// Resource lane configuration
 export interface LaneConfig {
-  id: ResourceLaneId;
+  id?: ResourceLaneId;
+  description?: string;
   maxConcurrent: number;
-  cooldownMs: number;
-  bypassQueue?: boolean;
-  backends?: string[];
-  providers?: string[];
-  callbackTimeoutMs?: number;
+  cooldownMs?: number;
 }
 
-// Resource lane runtime state
 export interface ResourceLane {
-  config: LaneConfig;
+  config: LaneConfig & { id: ResourceLaneId; cooldownMs: number };
   currentRunning: number;
   lastExecutionAt?: string;
-  tasks: QueuedTask[];
 }
 
-// Remote task handle (for in-flight tracking)
 export interface RemoteTaskHandle {
   taskId: string;
   provider: string;
@@ -159,14 +219,11 @@ export interface RemoteTaskHandle {
   abortController?: AbortController;
 }
 
-// Remote task result (returned by callbacks)
 export interface RemoteResult {
   taskId: string;
   success: boolean;
   output: any;
   durationMs: number;
-
-  // Chain triggers
   followUpTasks?: TaskInput[];
   updateBuffer?: boolean;
   saveMemory?: boolean;
@@ -174,76 +231,43 @@ export interface RemoteResult {
   memoryTags?: string[];
 }
 
-// Trigger types (from agents.json)
-export type TriggerType = 'interval' | 'activity' | 'time-of-day' | 'event';
-
-// Trigger configuration
-export interface TriggerConfig {
-  id: string;
-  type: TriggerType;
-  taskType: TaskType;
-  priority?: Priority;
-  enabled: boolean;
-
-  // Type-specific
-  intervalMs?: number;
-  inactivityMs?: number;
-  timeOfDay?: string;
-  eventName?: string;
-
-  // Lane override (usually auto-detected)
-  lane?: ResourceLaneId;
-}
-
-// Queue configuration (etc/queue.json)
 export interface QueueConfig {
   enabled: boolean;
-  lanes: {
-    'local-llm': LaneConfig;
-    'vector-index': LaneConfig;
-    'remote-llm': LaneConfig;
-  };
-  triggers: Record<string, TriggerConfig>;
-  priorities: Record<Priority, { maxWaitMs: number | null }>;
-  defaults: {
-    maxRetries: number;
-    defaultTimeoutMs: number;
+  lanes: Record<ResourceLaneId, LaneConfig>;
+  execution?: {
+    staleTaskTimeoutMs?: number;
+    maxAttempts?: number;
   };
 }
 
-// Queue state (for persistence)
 export interface QueueState {
-  lanes: {
-    'local-llm': QueuedTask[];
-    'vector-index': QueuedTask[];
-    'remote-llm': QueuedTask[];
-  };
+  items?: QueuedTask[];
+  history?: QueuedTask[];
   inFlightRemote: RemoteTaskHandle[];
   lastUpdated: string;
 }
 
-// Persisted queue state (for disk storage with versioning)
 export interface PersistedQueueState extends QueueState {
   savedAt: string;
   version: number;
 }
 
-// Current task being executed (for crash recovery)
-export interface PersistedCurrentTask {
-  task: QueuedTask;
-  startedAt: string;
-  lane: ResourceLaneId;
-}
-
-// Queue events (for observability)
 export type QueueEventType =
   | 'task_enqueued'
   | 'task_started'
+  | 'task_waiting'
+  | 'task_output'
   | 'task_completed'
   | 'task_failed'
   | 'task_retried'
+  | 'task_cancel_requested'
+  | 'task_cancelled'
+  | 'task_expired'
+  | 'task_reordered'
+  | 'task_deleted'
   | 'remote_dispatched'
   | 'remote_callback'
+  | 'lane_cleared'
   | 'lane_blocked'
   | 'lane_unblocked';
 
@@ -255,5 +279,4 @@ export interface QueueEvent {
   details?: Record<string, any>;
 }
 
-// Queue listener callback
 export type QueueEventListener = (event: QueueEvent) => void;

@@ -3,7 +3,9 @@
 # MetaHuman OS Shutdown Script
 # This script cleanly stops all MetaHuman OS services and processes
 
-set -e
+# Shutdown is best-effort: one stubborn service must not prevent later process,
+# PID-file, and launcher-lock cleanup from running.
+set -uo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -310,6 +312,18 @@ kill_repo_process_pattern "mh start --no-restart" "MetaHuman Start Command"
 kill_repo_process_pattern "src/mh-new.ts start --no-restart" "MetaHuman Start Command Launcher"
 kill_repo_process_pattern "mh vllm start" "vLLM Start Command"
 kill_repo_process_pattern "src/mh-new.ts vllm start" "vLLM Start Command Launcher"
+
+# New launchers use a kernel flock, which is released automatically when their
+# process exits. Remove only the legacy PID-directory format after shutdown.
+LEGACY_START_LOCK_DIR="$REPO_ROOT/logs/run/start.lock"
+if [ -d "$LEGACY_START_LOCK_DIR" ]; then
+    rm -f "$LEGACY_START_LOCK_DIR/pid"
+    if rmdir "$LEGACY_START_LOCK_DIR" 2>/dev/null; then
+        print_status "Legacy startup lock removed"
+    else
+        print_warning "Legacy startup lock contains unexpected files: $LEGACY_START_LOCK_DIR"
+    fi
+fi
 
 # Clean up stale PID files
 echo "Cleaning up stale PID files..."

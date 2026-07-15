@@ -1,33 +1,23 @@
 /**
- * Trigger Manager
+ * Configured proactive work producer.
  *
- * Manages all agent triggers:
- * - Interval-based (runs every X seconds)
- * - Time-of-day (runs at specific time)
- * - Activity-based (runs after X seconds of inactivity)
- * - Event-based (triggered by external events)
- *
- * When triggers fire, tasks are enqueued via UnifiedQueueManager.
- * Replaces the trigger logic from AgentScheduler.
+ * This component owns timers only. It cannot pause, order, claim, or execute
+ * coordinator work.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { UnifiedQueueManager } from './unified-queue-manager.js';
-import { TaskType, Priority, TaskInput } from './types.js';
+import type { Priority, TaskInput, TaskType } from './types.js';
 import { systemPaths } from '../path-builder.js';
 import { storageClient } from '../storage-client.js';
 import { audit } from '../audit.js';
 import {
-  recordSystemActivity,
-  readSystemActivityTimestamp,
   readLastActiveUsername,
+  readSystemActivityTimestamp,
+  recordSystemActivity,
 } from '../system-activity.js';
-
-// ============================================================================
-// Type Definitions
-// ============================================================================
 
 export type TriggerType = 'interval' | 'time-of-day' | 'event' | 'activity' | 'manual';
 
@@ -38,64 +28,42 @@ export interface AgentTriggerConfig {
   priority: 'low' | 'normal' | 'high';
   agentPath?: string;
   usesLLM?: boolean;
-
-  // Interval-based config
-  interval?: number; // Seconds
-
-  // Time-of-day config
-  schedule?: string; // HH:MM format
-
-  // Activity-based config
-  inactivityThreshold?: number; // Seconds
-
-  // Event-based config
+  interval?: number;
+  schedule?: string;
+  inactivityThreshold?: number;
   eventPattern?: string;
-  debounce?: number; // Seconds
-
-  // Behavior
+  debounce?: number;
   runOnBoot?: boolean;
   autoRestart?: boolean;
   maxRetries?: number;
-
-  // Probabilistic triggering
-  probability?: number; // 0.0 to 1.0 - chance the trigger actually fires (default: 1.0)
-  jitterMs?: number; // Random delay variance in milliseconds (default: 0)
-
-  // Pause category - determines if Active Operator should wait for this agent
-  pauseCategory?: 'interactive' | 'background'; // 'interactive' pauses for user, 'background' never pauses
-
-  // Conditions
-  conditions?: {
-    requiresSleepMode?: boolean;
-    [key: string]: any;
-  };
+  probability?: number;
+  jitterMs?: number;
+  pauseCategory?: 'interactive' | 'background';
+  conditions?: { requiresSleepMode?: boolean; [key: string]: any };
 }
 
 export interface TriggerManagerConfig {
   version: string;
   globalSettings: {
     pauseAll: boolean;
-    quietHours?: {
-      enabled: boolean;
-      start: string; // HH:MM
-      end: string; // HH:MM
-    };
-    pauseQueueOnActivity: boolean;
-    activityResumeDelay: number; // Seconds
+    quietHours?: { enabled: boolean; start: string; end: string };
+    pauseQueueOnActivity?: boolean;
+    activityResumeDelay?: number;
+    [key: string]: unknown;
   };
   agents: Record<string, AgentTriggerConfig>;
 }
 
-interface TriggerState {
+export interface TriggerState {
   config: AgentTriggerConfig;
   timerId?: NodeJS.Timeout;
   lastRun?: Date;
   nextRun?: Date;
   runCount: number;
   errorCount: number;
+  lastAdmissionKey?: string;
 }
 
-// Map agent IDs to task types
 const AGENT_TASK_MAP: Record<string, TaskType> = {
   organizer: 'memory_curate',
   curator: 'training_curate',
@@ -104,796 +72,316 @@ const AGENT_TASK_MAP: Record<string, TaskType> = {
   'curiosity-researcher': 'inner_curiosity',
   'inner-curiosity': 'inner_curiosity',
   dreamer: 'dream',
-  'night-pipeline': 'dream',
+  'sleep-workflow': 'sleep_workflow',
   psychoanalyzer: 'psychoanalyze',
   'desire-generator': 'desire_generate',
   'desire-executor': 'desire_execute',
-  'desire-planner': 'desire_generate',
-  'desire-outcome-reviewer': 'desire_generate',
   'auto-indexer': 'index_build',
 };
 
-// ============================================================================
-// Trigger Manager
-// ============================================================================
-
 export class TriggerManager extends EventEmitter {
-  private queueManager: UnifiedQueueManager;
   private config: TriggerManagerConfig | null = null;
-  private triggers: Map<string, TriggerState> = new Map();
-  private running: boolean = false;
-
-  // Activity tracking
+  private readonly triggers = new Map<string, TriggerState>();
+  private running = false;
   private activityTimer?: NodeJS.Timeout;
-  private lastActivity: Date = new Date();
+  private lastActivity = new Date();
   private lastActiveUsername: string | null = null;
 
-  // Queue pause for user activity
-  private queuePaused: boolean = false;
-  private queueResumeTimer?: NodeJS.Timeout;
-
-  constructor(queueManager: UnifiedQueueManager) {
+  constructor(
+    private readonly queueManager: UnifiedQueueManager,
+    config?: TriggerManagerConfig,
+  ) {
     super();
-    this.queueManager = queueManager;
+    if (config) this.configure(config);
   }
 
-  /**
-   * Get config file path
-   */
-  private get configPath(): string {
-    const result = storageClient.resolvePath({
-      category: 'config',
-      subcategory: 'etc',
-      relativePath: 'agents.json',
+  configure(config: TriggerManagerConfig): void {
+    this.config = config;
+    this.triggers.clear();
+    for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+      this.triggers.set(agentId, {
+        config: { ...agentConfig, id: agentConfig.id || agentId },
+        runCount: 0,
+        errorCount: 0,
+      });
+    }
+  }
+
+  registerTrigger(config: AgentTriggerConfig): void {
+    const existing = this.triggers.get(config.id);
+    if (existing?.timerId) clearTimeout(existing.timerId);
+    this.triggers.set(config.id, {
+      config: { ...config },
+      runCount: existing?.runCount ?? 0,
+      errorCount: existing?.errorCount ?? 0,
     });
-    return result.success && result.path
-      ? result.path
-      : path.join(systemPaths.etc, 'agents.json');
+    if (this.running && config.enabled && config.type !== 'manual') this.schedule(config.id);
   }
 
-  // ==========================================================================
-  // Configuration Management
-  // ==========================================================================
+  unregisterTrigger(agentId: string): void {
+    const existing = this.triggers.get(agentId);
+    if (existing?.timerId) clearTimeout(existing.timerId);
+    this.triggers.delete(agentId);
+  }
 
-  /**
-   * Load configuration from etc/agents.json
-   */
+  private get configPath(): string {
+    const resolved = storageClient.resolvePath({ category: 'config', subcategory: 'etc', relativePath: 'agents.json' });
+    return resolved.success && resolved.path ? resolved.path : path.join(systemPaths.etc, 'agents.json');
+  }
+
   loadConfig(): boolean {
     try {
-      if (!fs.existsSync(this.configPath)) {
-        console.warn('[TriggerManager] No agents.json found, using defaults');
-        this.config = this.getDefaultConfig();
-        return false;
-      }
-
-      const data = fs.readFileSync(this.configPath, 'utf-8');
-      this.config = JSON.parse(data);
-
+      if (!fs.existsSync(this.configPath)) throw new Error(`Trigger configuration not found: ${this.configPath}`);
+      const parsed = JSON.parse(fs.readFileSync(this.configPath, 'utf8')) as TriggerManagerConfig;
+      if (!parsed.agents || !parsed.globalSettings) throw new Error('agents.json is missing agents or globalSettings');
+      this.configure(parsed);
       audit({
         level: 'info',
         category: 'system',
         event: 'trigger_config_loaded',
         actor: 'trigger_manager',
-        details: {
-          agentCount: this.config ? Object.keys(this.config.agents).length : 0,
-          pauseAll: this.config?.globalSettings.pauseAll ?? false,
-        },
+        details: { agentCount: this.triggers.size, pauseAll: parsed.globalSettings.pauseAll },
       });
-
       return true;
     } catch (error) {
       console.error('[TriggerManager] Failed to load config:', error);
-      this.config = this.getDefaultConfig();
+      this.config = { version: '1.0.0', globalSettings: { pauseAll: false }, agents: {} };
+      this.triggers.clear();
       return false;
     }
   }
 
-  /**
-   * Get default configuration
-   */
-  private getDefaultConfig(): TriggerManagerConfig {
-    return {
-      version: '1.0.0',
-      globalSettings: {
-        pauseAll: false,
-        quietHours: {
-          enabled: false,
-          start: '22:00',
-          end: '08:00',
-        },
-        pauseQueueOnActivity: true,
-        activityResumeDelay: 60,
-      },
-      agents: {},
-    };
-  }
-
-  /**
-   * Reload configuration (hot reload support)
-   */
   reloadConfig(): boolean {
-    const wasRunning = this.running;
-
-    if (wasRunning) {
-      this.stop();
-    }
-
-    const success = this.loadConfig();
-
-    if (wasRunning) {
-      this.start();
-    }
-
-    return success;
+    const restart = this.running;
+    if (restart) this.stop();
+    const loaded = this.loadConfig();
+    if (restart) this.start();
+    return loaded;
   }
 
-  // ==========================================================================
-  // Lifecycle Management
-  // ==========================================================================
-
-  /**
-   * Start the trigger manager
-   */
   start(): boolean {
-    try {
-      if (this.running) {
-        console.warn('[TriggerManager] Already running');
-        return false;
-      }
-
-      if (!this.config) {
-        this.loadConfig();
-      }
-
-      // Initialize trigger states from config
-      if (this.config) {
-        for (const [agentId, agentConfig] of Object.entries(this.config.agents)) {
-          this.triggers.set(agentId, {
-            config: agentConfig,
-            runCount: 0,
-            errorCount: 0,
-          });
-        }
-      }
-
-      this.running = true;
-      this.syncLastActivityFromDisk();
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'trigger_manager_started',
-        actor: 'trigger_manager',
-        details: {
-          triggerCount: this.triggers.size,
-          pauseAll: this.config?.globalSettings.pauseAll,
-        },
-      });
-
-      // Schedule all enabled triggers
-      for (const [agentId, state] of this.triggers.entries()) {
-        if (state.config.enabled && state.config.type !== 'manual') {
-          this.scheduleTrigger(agentId);
-        }
-      }
-
-      // Start activity monitoring
-      this.startActivityMonitoring();
-
-      console.log(`[TriggerManager] Started with ${this.triggers.size} triggers`);
-      return true;
-    } catch (error) {
-      console.error('[TriggerManager] Failed to start:', error);
-      return false;
+    if (this.running) return true;
+    if (!this.config) this.loadConfig();
+    this.running = true;
+    this.syncLastActivityFromDisk();
+    for (const [agentId, state] of this.triggers) {
+      if (state.config.enabled && state.config.type !== 'manual') this.schedule(agentId);
     }
+    this.activityTimer = setInterval(() => this.evaluateActivityTriggers(), 30_000);
+    this.activityTimer.unref?.();
+    audit({ level: 'info', category: 'system', event: 'trigger_manager_started', actor: 'trigger_manager', details: { triggerCount: this.triggers.size } });
+    return true;
   }
 
-  /**
-   * Stop the trigger manager
-   */
   stop(): boolean {
-    try {
-      if (!this.running) {
-        console.warn('[TriggerManager] Not running');
-        return false;
-      }
-
-      this.running = false;
-
-      // Clear all timers
-      for (const [agentId, state] of this.triggers.entries()) {
-        if (state.timerId) {
-          clearTimeout(state.timerId);
-          state.timerId = undefined;
-        }
-      }
-
-      // Stop activity monitoring
-      if (this.activityTimer) {
-        clearInterval(this.activityTimer);
-        this.activityTimer = undefined;
-      }
-
-      // Clear resume timer
-      if (this.queueResumeTimer) {
-        clearTimeout(this.queueResumeTimer);
-        this.queueResumeTimer = undefined;
-      }
-
-      this.queuePaused = false;
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'trigger_manager_stopped',
-        actor: 'trigger_manager',
-      });
-
-      console.log('[TriggerManager] Stopped');
-      return true;
-    } catch (error) {
-      console.error('[TriggerManager] Failed to stop:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Pause all triggers
-   */
-  pauseAll(): void {
-    if (this.config) {
-      this.config.globalSettings.pauseAll = true;
-    }
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'triggers_paused_all',
-      actor: 'trigger_manager',
-    });
-  }
-
-  /**
-   * Resume all triggers
-   */
-  resumeAll(): void {
-    if (this.config) {
-      this.config.globalSettings.pauseAll = false;
-    }
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'triggers_resumed_all',
-      actor: 'trigger_manager',
-    });
-  }
-
-  // ==========================================================================
-  // Trigger Scheduling
-  // ==========================================================================
-
-  /**
-   * Schedule a trigger based on its type
-   */
-  private scheduleTrigger(agentId: string): void {
-    const state = this.triggers.get(agentId);
-    if (!state || !state.config.enabled) return;
-
-    // Clear existing timer
-    if (state.timerId) {
-      clearTimeout(state.timerId);
+    this.running = false;
+    for (const state of this.triggers.values()) {
+      if (state.timerId) clearTimeout(state.timerId);
       state.timerId = undefined;
+      state.nextRun = undefined;
     }
-
-    switch (state.config.type) {
-      case 'interval':
-        this.scheduleInterval(agentId);
-        break;
-
-      case 'time-of-day':
-        this.scheduleTimeOfDay(agentId);
-        break;
-
-      case 'event':
-        // Event-based triggers are handled via triggerEvent()
-        console.log(
-          `[TriggerManager] Agent ${agentId} registered for event: ${state.config.eventPattern}`
-        );
-        break;
-
-      case 'activity':
-        // Activity-based triggers are checked by activity monitor
-        console.log(
-          `[TriggerManager] Agent ${agentId} registered for inactivity: ${state.config.inactivityThreshold}s`
-        );
-        break;
-
-      case 'manual':
-        // Manual triggers are only fired via triggerManual()
-        break;
-
-      default:
-        console.warn(
-          `[TriggerManager] Unknown trigger type for ${agentId}: ${state.config.type}`
-        );
-    }
+    if (this.activityTimer) clearInterval(this.activityTimer);
+    this.activityTimer = undefined;
+    audit({ level: 'info', category: 'system', event: 'trigger_manager_stopped', actor: 'trigger_manager' });
+    return true;
   }
 
-  /**
-   * Schedule interval-based trigger
-   */
-  private scheduleInterval(agentId: string): void {
-    const state = this.triggers.get(agentId);
-    if (!state || !state.config.interval) return;
+  pauseAll(): void {
+    if (this.config) this.config.globalSettings.pauseAll = true;
+  }
 
-    const delay = state.config.runOnBoot ? 1000 : state.config.interval * 1000;
+  resumeAll(): void {
+    if (this.config) this.config.globalSettings.pauseAll = false;
+  }
+
+  private schedule(agentId: string): void {
+    const state = this.triggers.get(agentId);
+    if (!state || !this.running || !state.config.enabled) return;
+    if (state.timerId) clearTimeout(state.timerId);
+
+    let delay: number | undefined;
+    if (state.config.type === 'interval' && state.config.interval) {
+      delay = state.config.runOnBoot && !state.lastRun ? 1_000 : state.config.interval * 1_000;
+    } else if (state.config.type === 'time-of-day' && state.config.schedule) {
+      const [hours, minutes] = state.config.schedule.split(':').map(Number);
+      if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return;
+      const next = new Date();
+      next.setHours(hours, minutes, 0, 0);
+      if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+      delay = next.getTime() - Date.now();
+    } else {
+      return;
+    }
+
     state.nextRun = new Date(Date.now() + delay);
-
     state.timerId = setTimeout(() => {
       this.fireTrigger(agentId);
-
-      // Reschedule for next interval
-      if (state.config.enabled && this.running) {
-        this.scheduleInterval(agentId);
-      }
+      this.schedule(agentId);
     }, delay);
-
-    console.log(`[TriggerManager] Agent ${agentId} scheduled in ${delay / 1000}s`);
+    state.timerId.unref?.();
   }
 
-  /**
-   * Schedule time-of-day trigger
-   */
-  private scheduleTimeOfDay(agentId: string): void {
-    const state = this.triggers.get(agentId);
-    if (!state || !state.config.schedule) return;
-
-    // Parse schedule (HH:MM format)
-    const [hours, minutes] = state.config.schedule.split(':').map(Number);
-    if (isNaN(hours) || isNaN(minutes)) {
-      console.error(
-        `[TriggerManager] Invalid schedule format for ${agentId}: ${state.config.schedule}`
-      );
-      return;
-    }
-
-    // Calculate next run time
-    const now = new Date();
-    const nextRun = new Date();
-    nextRun.setHours(hours, minutes, 0, 0);
-
-    // If time has already passed today, schedule for tomorrow
-    if (nextRun <= now) {
-      nextRun.setDate(nextRun.getDate() + 1);
-    }
-
-    const delay = nextRun.getTime() - now.getTime();
-    state.nextRun = nextRun;
-
-    state.timerId = setTimeout(() => {
-      this.fireTrigger(agentId);
-
-      // Reschedule for next day
-      if (state.config.enabled && this.running) {
-        this.scheduleTimeOfDay(agentId);
-      }
-    }, delay);
-
-    console.log(`[TriggerManager] Agent ${agentId} scheduled for ${nextRun.toLocaleString()}`);
+  private idempotencyKey(agentId: string, state: TriggerState, now: number): string {
+    if (state.config.type === 'activity') return `activity:${agentId}:${this.lastActivity.toISOString()}`;
+    if (state.config.type === 'time-of-day') return `time-of-day:${agentId}:${new Date(now).toISOString().slice(0, 10)}`;
+    const intervalMs = Math.max(1_000, (state.config.interval || 60) * 1_000);
+    return `interval:${agentId}:${Math.floor(now / intervalMs)}`;
   }
 
-  // ==========================================================================
-  // Trigger Firing
-  // ==========================================================================
-
-  /**
-   * Fire a trigger - enqueue task to the queue manager
-   */
-  private fireTrigger(agentId: string): void {
-    const state = this.triggers.get(agentId);
-    if (!state) return;
-
-    // Check if scheduler is paused
-    if (this.config?.globalSettings.pauseAll) {
-      console.log(`[TriggerManager] Agent ${agentId} skipped (triggers paused)`);
-      return;
-    }
-
-    // Check if in quiet hours
-    if (this.isQuietHours()) {
-      console.log(`[TriggerManager] Agent ${agentId} skipped (quiet hours)`);
-      return;
-    }
-
-    // Check conditions
-    if (!this.checkConditions(state.config)) {
-      console.log(`[TriggerManager] Agent ${agentId} skipped (conditions not met)`);
-      return;
-    }
-
-    // Probabilistic firing: skip if probability check fails
-    // Default probability is 1.0 (always fire)
-    const probability = state.config.probability ?? 1.0;
-    if (probability < 1.0) {
-      const roll = Math.random();
-      if (roll > probability) {
-        console.log(`[TriggerManager] Agent ${agentId} skipped (probability: ${probability}, rolled: ${roll.toFixed(3)})`);
-
-        audit({
-          level: 'info',
-          category: 'action',
-          event: 'trigger_probability_skip',
-          actor: 'trigger_manager',
-          details: {
-            agentId,
-            probability,
-            roll,
-          },
-        });
-
-        return;
-      }
-    }
-
-    // Apply jitter delay if configured
-    const jitterMs = state.config.jitterMs ?? 0;
-    if (jitterMs > 0) {
-      const jitterDelay = Math.floor(Math.random() * jitterMs);
-      console.log(`[TriggerManager] Agent ${agentId} firing with ${jitterDelay}ms jitter`);
-
-      setTimeout(() => {
-        this.executeFireTrigger(agentId, state);
-      }, jitterDelay);
-
-      return;
-    }
-
-    // No jitter - fire immediately
-    this.executeFireTrigger(agentId, state);
+  private proactivePriority(configured: AgentTriggerConfig['priority']): Priority {
+    return configured === 'low' ? 'background' : 'low';
   }
 
-  /**
-   * Execute the actual trigger firing (after probability check and jitter)
-   */
-  private executeFireTrigger(agentId: string, state: TriggerState): void {
-    // Create task input
-    const taskType = this.getTaskTypeForAgent(agentId);
-    const priority = this.mapPriority(state.config.priority);
-    const username = this.lastActiveUsername || readLastActiveUsername() || 'system';
-
+  private enqueueAgent(
+    agentId: string,
+    state: TriggerState,
+    triggerType: TriggerType,
+    username: string,
+    now = Date.now(),
+  ): string | null {
+    const admissionKey = triggerType === 'manual' ? undefined : this.idempotencyKey(agentId, state, now);
+    if (admissionKey && state.lastAdmissionKey === admissionKey) return null;
     const taskInput: TaskInput = {
-      type: taskType,
-      priority,
-      payload: {
+      type: AGENT_TASK_MAP[agentId] || 'generic',
+      handler: agentId === 'sleep-workflow' ? 'workflow.sleep' : `agent.${agentId}`,
+      source: triggerType === 'manual' ? 'user' : 'timer',
+      priority: triggerType === 'manual' ? state.config.priority : this.proactivePriority(state.config.priority),
+      input: {
         agentId,
-        agentPath: state.config.agentPath,
-        triggeredBy: state.config.type,
+        configuredAgentPath: state.config.agentPath,
+        triggeredBy: triggerType,
         usesLLM: state.config.usesLLM ?? true,
       },
       username,
-      metadata: {
-        source: 'trigger_manager',
-        triggerType: state.config.type,
-        runCount: state.runCount + 1,
-      },
+      maxAttempts: Math.max(1, (state.config.maxRetries ?? 0) + 1),
+      idempotencyKey: admissionKey,
+      metadata: { producer: 'trigger-manager', triggerType },
     };
-
-    // Enqueue the task
     const task = this.queueManager.enqueue(taskInput);
-
-    // Update state
-    state.lastRun = new Date();
-    state.runCount++;
-
+    state.lastAdmissionKey = admissionKey;
+    state.lastRun = new Date(now);
+    state.runCount += 1;
+    this.emit('trigger', { agentId, taskId: task.id, taskType: task.type });
     audit({
       level: 'info',
       category: 'action',
       event: 'trigger_fired',
       actor: 'trigger_manager',
-      details: {
-        agentId,
-        taskId: task.id,
-        taskType,
-        triggerType: state.config.type,
-        runCount: state.runCount,
-      },
+      details: { agentId, taskId: task.id, handler: task.handler, triggerType, runCount: state.runCount },
     });
-
-    console.log(`[TriggerManager] Trigger fired: ${agentId} → task ${task.id}`);
-
-    // Emit event for external listeners
-    this.emit('trigger', { agentId, taskId: task.id, taskType });
-  }
-
-  /**
-   * Manually trigger an agent (for 'manual' type agents)
-   */
-  triggerManual(agentId: string, username?: string): string | null {
-    const state = this.triggers.get(agentId);
-    if (!state) {
-      console.warn(`[TriggerManager] Unknown agent: ${agentId}`);
-      return null;
-    }
-
-    const taskType = this.getTaskTypeForAgent(agentId);
-    const priority = this.mapPriority(state.config.priority);
-
-    const taskInput: TaskInput = {
-      type: taskType,
-      priority,
-      payload: {
-        agentId,
-        agentPath: state.config.agentPath,
-        triggeredBy: 'manual',
-        usesLLM: state.config.usesLLM ?? true,
-      },
-      username: username || this.lastActiveUsername || 'system',
-      metadata: {
-        source: 'trigger_manager',
-        triggerType: 'manual',
-      },
-    };
-
-    const task = this.queueManager.enqueue(taskInput);
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'trigger_manual',
-      actor: 'trigger_manager',
-      details: {
-        agentId,
-        taskId: task.id,
-        username: taskInput.username,
-      },
-    });
-
     return task.id;
   }
 
-  /**
-   * Trigger an event-based agent
-   */
-  triggerEvent(eventName: string, data?: any): string[] {
-    const triggeredTasks: string[] = [];
+  private fireTrigger(agentId: string): string | null {
+    const state = this.triggers.get(agentId);
+    if (!state || !this.running || !state.config.enabled || this.config?.globalSettings.pauseAll) return null;
+    if (this.isQuietHours() || !this.checkConditions(state.config)) return null;
+    if (Math.random() > (state.config.probability ?? 1)) return null;
+    const username = this.lastActiveUsername || readLastActiveUsername() || 'system';
+    const now = Date.now();
+    const enqueue = () => this.enqueueAgent(agentId, state, state.config.type, username, now);
+    if ((state.config.jitterMs || 0) > 0) {
+      const timer = setTimeout(enqueue, Math.floor(Math.random() * state.config.jitterMs!));
+      timer.unref?.();
+      return null;
+    }
+    return enqueue();
+  }
 
-    for (const [agentId, state] of this.triggers.entries()) {
-      if (
-        state.config.type === 'event' &&
-        state.config.enabled &&
-        state.config.eventPattern
-      ) {
-        // Simple pattern matching (could be enhanced with regex)
-        if (
-          eventName === state.config.eventPattern ||
-          eventName.includes(state.config.eventPattern)
-        ) {
-          const taskId = this.triggerManual(agentId);
-          if (taskId) {
-            triggeredTasks.push(taskId);
-          }
-        }
+  triggerManual(agentId: string, username?: string): string | null {
+    const state = this.triggers.get(agentId);
+    if (!state) return null;
+    return this.enqueueAgent(agentId, state, 'manual', username || this.lastActiveUsername || 'system');
+  }
+
+  triggerEvent(eventName: string, _data?: any): string[] {
+    const taskIds: string[] = [];
+    for (const [agentId, state] of this.triggers) {
+      if (!this.running || state.config.type !== 'event' || !state.config.enabled || !state.config.eventPattern) continue;
+      if (eventName === state.config.eventPattern || eventName.includes(state.config.eventPattern)) {
+        const taskId = this.enqueueAgent(
+          agentId,
+          state,
+          'event',
+          this.lastActiveUsername || readLastActiveUsername() || 'system',
+        );
+        if (taskId) taskIds.push(taskId);
       }
     }
-
-    return triggeredTasks;
+    return taskIds;
   }
 
-  // ==========================================================================
-  // Activity Monitoring
-  // ==========================================================================
-
-  /**
-   * Start activity monitoring
-   */
-  private startActivityMonitoring(): void {
-    // Check every 30 seconds
-    this.activityTimer = setInterval(() => {
-      this.syncLastActivityFromDisk();
-      const now = Date.now();
-      const inactiveSeconds = (now - this.lastActivity.getTime()) / 1000;
-
-      // Check all activity-based triggers
-      for (const [agentId, state] of this.triggers.entries()) {
-        if (
-          state.config.type === 'activity' &&
-          state.config.enabled &&
-          state.config.inactivityThreshold
-        ) {
-          const threshold = state.config.inactivityThreshold;
-          const secondsSinceRun = state.lastRun
-            ? (now - state.lastRun.getTime()) / 1000
-            : Number.POSITIVE_INFINITY;
-
-          if (inactiveSeconds >= threshold && secondsSinceRun >= threshold) {
-            this.fireTrigger(agentId);
-          }
-        }
-      }
-
-      // Check if we should resume the queue
-      if (this.queuePaused) {
-        const requiredInactivity = this.config?.globalSettings.activityResumeDelay || 60;
-        if (inactiveSeconds >= requiredInactivity) {
-          this.resumeQueue();
-        }
-      }
-    }, 30000);
+  evaluateActivityTriggers(now = Date.now()): string[] {
+    if (!this.running) return [];
+    this.syncLastActivityFromDisk();
+    const inactiveSeconds = (now - this.lastActivity.getTime()) / 1_000;
+    const taskIds: string[] = [];
+    for (const [agentId, state] of this.triggers) {
+      if (state.config.type !== 'activity' || !state.config.enabled || !state.config.inactivityThreshold) continue;
+      if (inactiveSeconds < state.config.inactivityThreshold) continue;
+      const taskId = this.fireTrigger(agentId);
+      if (taskId) taskIds.push(taskId);
+    }
+    return taskIds;
   }
 
-  /**
-   * Record user activity
-   */
   recordActivity(username?: string): void {
     this.lastActivity = new Date();
     this.lastActiveUsername = username || null;
     recordSystemActivity(this.lastActivity.getTime(), username);
-
-    // Pause queue on user activity if configured
-    if (this.config?.globalSettings.pauseQueueOnActivity && !this.queuePaused) {
-      this.pauseQueue();
-    }
-
-    // Emit activity event
     this.emit('activity', { timestamp: this.lastActivity, username });
   }
 
-  /**
-   * Pause the queue due to user activity
-   */
-  private pauseQueue(): void {
-    if (this.queuePaused) return;
-
-    this.queuePaused = true;
-    this.queueManager.pause();
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'queue_paused_activity',
-      actor: 'trigger_manager',
-    });
-
-    console.log('[TriggerManager] Queue paused (user activity detected)');
-  }
-
-  /**
-   * Resume the queue after inactivity
-   */
-  private resumeQueue(): void {
-    if (!this.queuePaused) return;
-
-    this.queuePaused = false;
-    this.queueManager.resume();
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'queue_resumed_inactivity',
-      actor: 'trigger_manager',
-    });
-
-    console.log('[TriggerManager] Queue resumed (user inactive)');
-  }
-
-  /**
-   * Sync last activity from disk
-   */
   private syncLastActivityFromDisk(): void {
-    const persisted = readSystemActivityTimestamp();
-    if (persisted && persisted > this.lastActivity.getTime()) {
-      this.lastActivity = new Date(persisted);
-    }
-
-    const username = readLastActiveUsername();
-    if (username) {
-      this.lastActiveUsername = username;
-    }
+    const timestamp = readSystemActivityTimestamp();
+    if (timestamp && timestamp > this.lastActivity.getTime()) this.lastActivity = new Date(timestamp);
+    this.lastActiveUsername = readLastActiveUsername() || this.lastActiveUsername;
   }
 
-  // ==========================================================================
-  // Helper Methods
-  // ==========================================================================
-
-  /**
-   * Get task type for an agent
-   */
-  private getTaskTypeForAgent(agentId: string): TaskType {
-    return AGENT_TASK_MAP[agentId] || 'generic';
-  }
-
-  /**
-   * Map priority string to Priority type
-   */
-  private mapPriority(priority: 'low' | 'normal' | 'high'): Priority {
-    return priority as Priority;
-  }
-
-  /**
-   * Check if currently in quiet hours
-   */
   private isQuietHours(): boolean {
-    if (!this.config?.globalSettings.quietHours?.enabled) return false;
-
+    const quiet = this.config?.globalSettings.quietHours;
+    if (!quiet?.enabled) return false;
     const now = new Date();
-    const currentTime = now.getHours() * 60 + now.getMinutes();
-
-    const { start, end } = this.config.globalSettings.quietHours;
-    const [startH, startM] = start.split(':').map(Number);
-    const [endH, endM] = end.split(':').map(Number);
-
-    const startTime = startH * 60 + startM;
-    const endTime = endH * 60 + endM;
-
-    // Handle overnight quiet hours (e.g., 22:00 - 08:00)
-    if (startTime > endTime) {
-      return currentTime >= startTime || currentTime < endTime;
-    } else {
-      return currentTime >= startTime && currentTime < endTime;
-    }
+    const current = now.getHours() * 60 + now.getMinutes();
+    const [startHour, startMinute] = quiet.start.split(':').map(Number);
+    const [endHour, endMinute] = quiet.end.split(':').map(Number);
+    const start = startHour * 60 + startMinute;
+    const end = endHour * 60 + endMinute;
+    return start > end ? current >= start || current < end : current >= start && current < end;
   }
 
-  /**
-   * Check agent conditions
-   */
   private checkConditions(config: AgentTriggerConfig): boolean {
-    if (!config.conditions) return true;
-
-    // Check sleep mode condition
-    if (config.conditions.requiresSleepMode) {
-      // TODO: Implement sleep mode detection
-      return true;
+    if (config.conditions?.requiresSleepMode) {
+      // Sleep mode is admitted through an explicit workflow in its migration phase.
+      return false;
     }
-
     return true;
   }
 
-  // ==========================================================================
-  // Query Methods
-  // ==========================================================================
-
-  /**
-   * Get all triggers
-   */
   getTriggers(): Map<string, TriggerState> {
     return new Map(this.triggers);
   }
 
-  /**
-   * Get trigger state
-   */
   getTriggerState(agentId: string): TriggerState | null {
     return this.triggers.get(agentId) || null;
   }
 
-  /**
-   * Get next scheduled triggers
-   */
   getNextTriggers(): Array<{ agentId: string; nextRun: Date }> {
-    return Array.from(this.triggers.entries())
-      .filter(([_, state]) => state.nextRun)
-      .map(([id, state]) => ({
-        agentId: id,
-        nextRun: state.nextRun!,
-      }))
-      .sort((a, b) => a.nextRun.getTime() - b.nextRun.getTime());
+    return [...this.triggers.entries()]
+      .filter((entry): entry is [string, TriggerState & { nextRun: Date }] => Boolean(entry[1].nextRun))
+      .map(([agentId, state]) => ({ agentId, nextRun: state.nextRun }))
+      .sort((left, right) => left.nextRun.getTime() - right.nextRun.getTime());
   }
 
-  /**
-   * Check if queue is paused due to activity
-   */
   isQueuePaused(): boolean {
-    return this.queuePaused;
+    return false;
   }
 
-  /**
-   * Get last activity info
-   */
   getLastActivity(): { timestamp: Date; username: string | null } {
-    return {
-      timestamp: this.lastActivity,
-      username: this.lastActiveUsername,
-    };
+    return { timestamp: this.lastActivity, username: this.lastActiveUsername };
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 }

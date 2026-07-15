@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../packages/core/src/path-builder.js';
+import { eventBus } from '../packages/core/src/infrastructure/event-bus/client.js';
 import { getAllNodes, getAllSchemas, getNodeSchema } from '../packages/core/src/nodes/index.js';
 import { materializeNodeProperties } from '../packages/core/src/nodes/types.js';
 
@@ -83,7 +84,13 @@ async function main(): Promise<void> {
   console.log('Node defaults validation passed');
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    eventBus.disconnect();
+    process.exit(0);
+  })
+  .catch((error) => {
+    eventBus.disconnect();
+    console.error(error);
+    process.exit(1);
+  });

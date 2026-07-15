@@ -1,266 +1,265 @@
-import {
-  audit,
-  type EnvironmentConnectionConfig,
-  getEnvironmentBridgeStatePath,
-  listEnvironmentConnections,
-  readEnvironmentBridgeState,
-  setEnvironmentBridgeEnabled,
-  summarizeEnvironmentBridgeState,
-  upsertEnvironmentConnection,
-} from '@metahuman/core';
-import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
-import { startMegamealBridgeAdapter } from './adapters/megameal.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import WebSocket from 'ws';
+import { ROOT } from '@metahuman/core/paths';
 
-export interface EnvironmentBridgeAgentOptions {
-  enabled?: boolean;
-  adapter?: string;
-  username?: string;
-  url?: string;
-  roomName?: string;
-  graphName?: string;
-  persist?: boolean;
-  signal?: AbortSignal;
+const LOG_PREFIX = '[environment-bridge]';
+const PROTOCOL_VERSION = 1;
+const RECONNECT_DELAY_MS = 2_000;
+const MAX_MESSAGE_BYTES = 256 * 1024;
+
+interface BridgeConfig {
+  adapterUrl: string;
+  adapterToken: string;
+  coreUrl: string;
+  serviceToken: string;
+  graph: string;
+  username: string;
 }
 
-const USERNAME_PATTERN = /^[a-zA-Z0-9_-]{1,50}$/;
-const ADAPTER_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
+interface SchedulerConfig {
+  agents?: Record<string, Record<string, unknown>>;
+}
 
-function stringValue(value: unknown): string {
+function configValue(config: Record<string, unknown>, key: string): string {
+  const value = config[key];
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function argValue(args: string[], ...names: string[]): string {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    for (const name of names) {
-      if (arg === name) {
-        return stringValue(args[index + 1]);
-      }
-      if (arg.startsWith(`${name}=`)) {
-        return stringValue(arg.slice(name.length + 1));
-      }
-    }
-  }
-  return '';
-}
+function readConfig(): BridgeConfig {
+  let scheduler: SchedulerConfig = {};
+  try {
+    scheduler = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'etc', 'agents.json'), 'utf8'),
+    ) as SchedulerConfig;
+  } catch {}
+  const agent = scheduler.agents?.['environment-bridge'] ?? {};
+  const adapterUrl = process.env.MH_ENVIRONMENT_ADAPTER_URL?.trim()
+    || configValue(agent, 'adapterUrl');
+  const graph = process.env.MH_ENVIRONMENT_GRAPH?.trim()
+    || configValue(agent, 'graph')
+    || 'environment';
+  const adapterToken = process.env.MH_ENVIRONMENT_ADAPTER_TOKEN?.trim() || '';
+  const serviceToken = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN?.trim() || '';
+  const coreUrl = process.env.MH_ENVIRONMENT_CORE_URL?.trim()
+    || 'http://127.0.0.1:4321';
+  const username = process.env.MH_TRIGGER_USERNAME?.trim() || '';
 
-function readOptions(args: string[], rawOptions: Record<string, unknown> | undefined = {}): EnvironmentBridgeAgentOptions {
-  const adapter = stringValue(rawOptions.adapter) || argValue(args, '--adapter');
-  const username = stringValue(rawOptions.username) || argValue(args, '--username', '--user');
-  const url = stringValue(rawOptions.url) || argValue(args, '--url');
-  const roomName = stringValue(rawOptions.roomName) || argValue(args, '--room', '--room-name');
-  const graphName = stringValue(rawOptions.graphName) || argValue(args, '--graph', '--graph-name');
+  if (!adapterUrl) throw new Error('Environment adapter URL is not configured');
+  const parsed = new URL(adapterUrl);
+  if (!['ws:', 'wss:'].includes(parsed.protocol)) {
+    throw new Error('Environment adapter URL must use ws:// or wss://');
+  }
+  if (!adapterToken) throw new Error('MH_ENVIRONMENT_ADAPTER_TOKEN is not configured');
+  if (!serviceToken) throw new Error('MH_ENVIRONMENT_BRIDGE_TOKEN is not configured');
+  if (!username) throw new Error('Environment bridge requires an owner user context');
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(graph)) {
+    throw new Error('Environment graph name is invalid');
+  }
+
   return {
-    enabled: args.includes('--disable') ? false : rawOptions.enabled !== false,
-    adapter: adapter || undefined,
-    username: username || undefined,
-    url: url || undefined,
-    roomName: roomName || undefined,
-    graphName: graphName || undefined,
+    adapterUrl: parsed.toString(),
+    adapterToken,
+    coreUrl: new URL(coreUrl).toString().replace(/\/$/, ''),
+    serviceToken,
+    graph,
+    username,
   };
 }
 
-function normalizeUrl(rawUrl: string): string | undefined {
-  try {
-    return new URL(rawUrl).toString();
-  } catch {
-    return undefined;
-  }
-}
-
-function environmentIdForUrl(adapter: string, rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    return `${adapter}:${url.origin}/`;
-  } catch {
-    return `${adapter}:${rawUrl}`;
-  }
-}
-
-function configureConnection(options: {
-  adapter: string;
-  url: string;
-  roomName?: string;
-  graphName?: string;
-  username?: string;
-  enabled: boolean;
-}): EnvironmentConnectionConfig {
-  const environmentId = environmentIdForUrl(options.adapter, options.url);
-  return upsertEnvironmentConnection({
-    id: environmentId,
-    adapter: options.adapter,
-    url: options.url,
-    roomName: options.roomName,
-    graphName: options.graphName || 'environment-mode',
-    enabled: options.enabled,
-    metadata: {
-      ...(options.username ? { modelUsername: options.username } : {}),
-    },
-  });
-}
-
-function resolveConnection(options: EnvironmentBridgeAgentOptions): EnvironmentConnectionConfig | undefined {
-  const explicitUrl = Boolean(options.url);
-  const url = options.url ? normalizeUrl(options.url) : undefined;
-  if (explicitUrl && !url) {
-    throw new Error(`Invalid environment bridge URL: ${options.url}`);
-  }
-  if (url) {
-    if (!options.adapter) {
-      throw new Error('Environment bridge adapter is required when a URL is provided.');
+function waitForAbort(signal: AbortSignal, milliseconds: number): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, milliseconds);
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
     }
-    return configureConnection({
-      adapter: options.adapter,
-      url,
-      roomName: options.roomName,
-      graphName: options.graphName,
-      username: options.username,
-      enabled: options.enabled !== false,
-    });
-  }
-  return undefined;
-}
-
-function defaultConnection(options: EnvironmentBridgeAgentOptions): EnvironmentConnectionConfig | undefined {
-  const adapter = options.adapter ?? 'megameal';
-  if (adapter !== 'megameal') {
-    return undefined;
-  }
-
-  return configureConnection({
-    adapter,
-    url: options.url ?? 'http://localhost:4322/',
-    roomName: options.roomName,
-    graphName: options.graphName,
-    username: options.username,
-    enabled: options.enabled !== false,
+    signal.addEventListener('abort', finish, { once: true });
   });
 }
 
-function validateUsername(username: string | undefined): void {
-  if (!username) {
-    return;
-  }
-  if (!USERNAME_PATTERN.test(username)) {
-    throw new Error(`Invalid environment bridge username: ${username}`);
-  }
-}
-
-function validateAdapter(adapter: string | undefined): void {
-  if (!adapter) {
-    return;
-  }
-  if (!ADAPTER_PATTERN.test(adapter)) {
-    throw new Error(`Invalid environment bridge adapter: ${adapter}`);
-  }
-}
-
-export async function runEnvironmentBridgeAgent(options: EnvironmentBridgeAgentOptions = {}): Promise<AgentResult> {
-  const start = Date.now();
-  const enabled = options.enabled !== false;
-  validateUsername(options.username);
-  validateAdapter(options.adapter);
-  const connection = enabled ? resolveConnection(options) ?? defaultConnection(options) : undefined;
-  setEnvironmentBridgeEnabled(enabled);
-  const state = readEnvironmentBridgeState();
-  const summary = summarizeEnvironmentBridgeState(state);
-  const observedConnections = enabled ? listEnvironmentConnections({ enabledOnly: true }).length : 0;
-
-  audit({
-    level: 'info',
-    category: 'system',
-    event: enabled ? 'environment_bridge_agent_started' : 'environment_bridge_agent_stopped',
-    details: {
-      mode: 'event-driven',
-      enabled,
-      sessions: summary.sessionCount,
-      queuedActions: summary.queuedActionCount,
-      observedConnections,
-      environmentId: connection?.id,
-      adapter: connection?.adapter,
-      graphName: connection?.graphName,
+async function postJson(
+  config: BridgeConfig,
+  route: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(`${config.coreUrl}${route}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.serviceToken}`,
+      'Content-Type': 'application/json',
+      'X-MetaHuman-Environment-User': config.username,
+      'X-MetaHuman-Environment-Graph': config.graph,
     },
-    actor: options.username,
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30_000),
   });
+  if (!response.ok) {
+    throw new Error(`MetaHuman environment API failed (${response.status}): ${await response.text()}`);
+  }
+}
 
-  console.log(
-    `[environment-bridge] mode=event-driven enabled=${summary.enabled} environmentId=${connection?.id ?? 'none'} adapter=${connection?.adapter ?? 'none'} sessions=${summary.sessionCount} queued=${summary.queuedActionCount} observedConnections=${observedConnections}`,
-  );
+async function consumeActionStream(
+  config: BridgeConfig,
+  sessionId: string,
+  websocket: WebSocket,
+  signal: AbortSignal,
+): Promise<void> {
+  const url = new URL('/api/environment-bridge/stream', config.coreUrl);
+  url.searchParams.set('sessionId', sessionId);
+  url.searchParams.set('limit', '32');
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${config.serviceToken}`,
+    },
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`Environment action stream failed (${response.status})`);
+  }
 
-  if (enabled && connection?.adapter === 'megameal') {
-    const runtime = startMegamealBridgeAdapter({
-      connection,
-      username: options.username,
-      signal: options.signal,
-    });
-
-    try {
-      await runtime.ready;
-      if (options.persist !== false) {
-        await waitForStop(options.signal, runtime.stop);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (!signal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+      const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+      const rawData = block.match(/^data:\s*(.+)$/m)?.[1];
+      if (event !== 'actions' || !rawData) continue;
+      const data = JSON.parse(rawData) as { actions?: unknown[] };
+      for (const action of data.actions ?? []) {
+        if (!action || typeof action !== 'object') continue;
+        websocket.send(JSON.stringify({
+          type: 'environment.action',
+          version: PROTOCOL_VERSION,
+          action,
+        }));
       }
-    } finally {
-      await runtime.stop();
-      setEnvironmentBridgeEnabled(false);
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'environment_bridge_agent_stopped',
-        details: {
-          mode: 'event-driven',
-          environmentId: connection.id,
-          adapter: connection.adapter,
-          durationMs: Date.now() - start,
-        },
-        actor: options.username,
+    }
+  }
+}
+
+async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<void> {
+  const websocket = new WebSocket(config.adapterUrl, {
+    maxPayload: MAX_MESSAGE_BYTES,
+    perMessageDeflate: false,
+  });
+  const localAbort = new AbortController();
+  const abort = () => {
+    localAbort.abort();
+    websocket.close(1000, 'environment bridge stopping');
+  };
+  signal.addEventListener('abort', abort, { once: true });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      websocket.once('open', resolve);
+      websocket.once('error', reject);
+    });
+    websocket.send(JSON.stringify({
+      type: 'bridge.connect',
+      version: PROTOCOL_VERSION,
+      token: config.adapterToken,
+    }));
+
+    let actionStream: Promise<void> | undefined;
+    let pendingFeedback: Record<string, unknown> | undefined;
+    await new Promise<void>((resolve, reject) => {
+      websocket.on('message', (raw) => {
+        void (async () => {
+          const encoded = raw.toString();
+          if (Buffer.byteLength(encoded) > MAX_MESSAGE_BYTES) {
+            throw new Error('Environment adapter message exceeds its size limit');
+          }
+          const message = JSON.parse(encoded) as Record<string, unknown>;
+          if (message.type === 'bridge.ready') {
+            const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+            if (!sessionId) throw new Error('Environment adapter omitted sessionId');
+            const observation = message.observation;
+            if (observation && typeof observation === 'object') {
+              await postJson(config, '/api/environment-bridge/observation', observation as Record<string, unknown>);
+            }
+            if (!actionStream) {
+              actionStream = consumeActionStream(config, sessionId, websocket, localAbort.signal)
+                .catch((error) => {
+                  if (!localAbort.signal.aborted) reject(error);
+                });
+            }
+            console.log(`${LOG_PREFIX} ready session=${sessionId} adapter=${config.adapterUrl}`);
+            return;
+          }
+          if (message.type === 'environment.observation') {
+            const observation = message.observation;
+            if (observation && typeof observation === 'object') {
+              const enriched = { ...(observation as Record<string, unknown>) };
+              if (pendingFeedback) {
+                enriched.feedback = [
+                  ...(Array.isArray(enriched.feedback) ? enriched.feedback : []),
+                  pendingFeedback,
+                ];
+                pendingFeedback = undefined;
+              }
+              await postJson(config, '/api/environment-bridge/observation', enriched);
+            }
+            return;
+          }
+          if (message.type === 'environment.feedback') {
+            const feedback = message.feedback;
+            if (feedback && typeof feedback === 'object') {
+              pendingFeedback = feedback as Record<string, unknown>;
+              await postJson(config, '/api/environment-bridge/action-result', feedback as Record<string, unknown>);
+            }
+          }
+        })().catch(reject);
       });
+      websocket.once('close', () => resolve());
+      websocket.once('error', reject);
+      localAbort.signal.addEventListener('abort', resolve, { once: true });
+    });
+    localAbort.abort();
+    await actionStream;
+  } finally {
+    signal.removeEventListener('abort', abort);
+    localAbort.abort();
+    websocket.removeAllListeners();
+    if (websocket.readyState === WebSocket.OPEN) websocket.close();
+  }
+}
+
+export async function runEnvironmentBridgeAgent(signal: AbortSignal): Promise<void> {
+  const config = readConfig();
+  console.log(`${LOG_PREFIX} starting mode=event-driven adapter=${config.adapterUrl} graph=${config.graph}`);
+  while (!signal.aborted) {
+    try {
+      await connectOnce(config, signal);
+    } catch (error) {
+      if (!signal.aborted) {
+        console.error(`${LOG_PREFIX} connection failed: ${(error as Error).message}`);
+      }
     }
+    if (!signal.aborted) await waitForAbort(signal, RECONNECT_DELAY_MS);
   }
-
-  const finalSummary = summarizeEnvironmentBridgeState(readEnvironmentBridgeState());
-  return {
-    success: true,
-    data: {
-      mode: 'event-driven',
-      summary: finalSummary,
-      statePath: getEnvironmentBridgeStatePath(),
-      connection,
-      observedConnections,
-    },
-    duration: Date.now() - start,
-    itemsProcessed: 0,
-  };
 }
 
-async function waitForStop(signal: AbortSignal | undefined, stop: () => Promise<void>): Promise<void> {
-  if (signal?.aborted) {
-    await stop();
-    return;
+export async function run(): Promise<void> {
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  try {
+    await runEnvironmentBridgeAgent(controller.signal);
+  } finally {
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
   }
-
-  await new Promise<void>((resolve) => {
-    const finish = () => {
-      void stop().finally(resolve);
-    };
-
-    signal?.addEventListener('abort', finish, { once: true });
-    process.once('SIGINT', finish);
-    process.once('SIGTERM', finish);
-  });
-}
-
-export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
-  const options = readOptions(input.args ?? [], input.options as Record<string, unknown> | undefined);
-  options.username = options.username ?? ctx.username;
-  options.signal = ctx.signal;
-  const result = await runEnvironmentBridgeAgent(options);
-  const summary = summarizeEnvironmentBridgeState(readEnvironmentBridgeState());
-  return {
-    ...result,
-    data: {
-      ...(result.data as Record<string, unknown>),
-      actor: ctx.username,
-      summary,
-    },
-  };
 }

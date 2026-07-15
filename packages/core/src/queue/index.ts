@@ -1,16 +1,11 @@
 /**
- * Unified Queue System
+ * Work Coordinator
  *
- * A unified intelligent queue that manages all LLM and agent tasks
- * with resource-aware scheduling and parallel lane execution.
+ * The single MetaHuman OS work coordinator.
  *
  * Features:
- * - Resource lanes (local-llm, vector-index, remote-llm)
- * - Sequential execution for GPU-bound tasks
- * - Parallel execution for non-competing resources
- * - Non-blocking remote dispatch with callbacks
- * - Chain execution (remote results can trigger follow-up tasks)
- * - Activity-based queue pausing
+ * Resource labels constrain concurrency; one ledger owns ordering, lifecycle,
+ * retry, cancellation, persistence, replay, and terminal history.
  *
  * @module queue
  */
@@ -26,33 +21,19 @@ export type { TriggerType, AgentTriggerConfig, TriggerManagerConfig } from './tr
 export { RemoteDispatcher } from './remote-dispatcher.js';
 
 // Facade
-export { QueueSystem, getQueueSystem, resetQueueSystem } from './queue-system.js';
+export { QueueSystem, ensureQueueSystemStarted, getQueueSystem, resetQueueSystem } from './queue-system.js';
+export {
+  authorizeWorkSubmission,
+  claimWorkCoordinatorOwnership,
+  isWorkCoordinatorOwner,
+  submitCoordinatorWork,
+} from './work-submission.js';
 
 // Persistence
 export {
   loadQueueState,
   clearQueueState,
   persistQueueState,
-  saveCurrentTask,
-  loadCurrentTask,
-  clearCurrentTask,
   shouldRestoreState,
   getQueueStateDir,
 } from './queue-persister.js';
-
-// Metrics
-export {
-  type HourlyMetrics,
-  type LaneMetrics,
-  type QueueMetrics,
-  loadMetrics as loadLaneMetrics,
-  clearMetrics as clearLaneMetrics,
-  recordTaskComplete,
-  recordTaskFailed,
-  recordTaskFromTask,
-  getAllLaneMetrics,
-  getLaneMetrics,
-  getThroughputHistory,
-  getLastHourSummary,
-  getLastHourAvgDuration,
-} from './lane-metrics.js';

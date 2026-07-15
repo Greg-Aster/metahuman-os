@@ -75,7 +75,7 @@
     'curiosity-researcher': { name: 'Curiosity Researcher', description: 'Researches pending curiosity questions', icon: '🔍' },
     'inner-curiosity': { name: 'Inner Curiosity', description: 'Self-directed questions answered internally', icon: '🤔' },
     'dreamer': { name: 'Dreamer', description: 'Creates surreal dreams from memory fragments', icon: '🌙' },
-    'night-pipeline': { name: 'Night Pipeline', description: 'Nightly processing: dreams, audio, LoRA training', icon: '🌃' },
+    'sleep-workflow': { name: 'Sleep Workflow', description: 'Queues bounded dream and persona-review work', icon: '🌃' },
     'psychoanalyzer': { name: 'Psychoanalyzer', description: 'Reviews memories with psychotherapist model', icon: '🧠' },
     'desire-generator': { name: 'Desire Generator', description: 'Synthesizes desires from persona goals and memories', icon: '🎯' },
     'desire-executor': { name: 'Desire Executor', description: 'Executes approved desires through operator', icon: '⚡' },
@@ -220,7 +220,7 @@
       'Memory & Reflection': ['organizer', 'curator', 'reflector'],
       'Curiosity': ['curiosity', 'curiosity-researcher', 'inner-curiosity'],
       'Agency': ['desire-generator', 'desire-planner', 'desire-executor', 'desire-outcome-reviewer'],
-      'Nightly': ['night-pipeline', 'dreamer'],
+      'Nightly': ['sleep-workflow', 'dreamer'],
       'Analysis': ['psychoanalyzer'],
     };
   }

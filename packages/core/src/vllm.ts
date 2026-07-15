@@ -18,6 +18,8 @@ import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
+import { resolveVLLMTokenizerReference } from './vllm-tokenizer.js';
+import type { ProviderMessageContent } from './providers/types.js';
 
 const LOG_PREFIX = '[vllm]';
 
@@ -106,7 +108,7 @@ export interface VLLMHealth {
 
 export interface VLLMChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: ProviderMessageContent;
 }
 
 export interface VLLMChatResponse {
@@ -117,6 +119,13 @@ export interface VLLMChatResponse {
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+export function buildVLLMChatMessages(messages: VLLMChatMessage[]): VLLMChatMessage[] {
+  return messages.map(message => ({
+    role: message.role,
+    content: message.content,
+  }));
 }
 
 // ============================================================================
@@ -459,6 +468,25 @@ export class VLLMClient {
     const effectiveModel = config.modelPath || config.model;
     const effectiveLoadFormat = config.loadFormat;
     const servedModelName = config.servedModelName || config.model;
+    let effectiveTokenizer: string | undefined;
+
+    try {
+      const resolvedTokenizer = resolveVLLMTokenizerReference(config.tokenizer);
+      effectiveTokenizer = resolvedTokenizer?.reference;
+      if (resolvedTokenizer?.recoveredFromStaleCachePath) {
+        console.warn(
+          `${LOG_PREFIX} Configured tokenizer cache path no longer exists; ` +
+          `using stable Hugging Face model ID ${effectiveTokenizer}`,
+        );
+      }
+    } catch (error) {
+      return {
+        pid: 0,
+        success: false,
+        error: error instanceof Error ? error.message : 'Invalid vLLM tokenizer configuration',
+      };
+    }
+
     console.log(`${LOG_PREFIX} Input: model=${effectiveModel}, endpoint=${config.endpoint}, gpuUtil=${config.gpuMemoryUtilization}`);
     
     const cacheError = checkModelCacheFileSizeSupport(effectiveModel);
@@ -522,8 +550,8 @@ export class VLLMClient {
       args.push('--load-format', effectiveLoadFormat);
     }
 
-    if (config.tokenizer) {
-      args.push('--tokenizer', config.tokenizer);
+    if (effectiveTokenizer) {
+      args.push('--tokenizer', effectiveTokenizer);
     }
 
     if (config.servedModelName) {
@@ -971,7 +999,7 @@ export class VLLMClient {
 
     const body: Record<string, unknown> = {
       model: options?.model || this.currentModel || 'default',
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      messages: buildVLLMChatMessages(messages),
       max_tokens: options?.maxTokens ?? 2048,
       temperature: options?.temperature ?? 0.7,
       top_p: options?.topP ?? 0.95,
@@ -1059,7 +1087,7 @@ export class VLLMClient {
   ): Promise<void> {
     const body: Record<string, unknown> = {
       model: options?.model || this.currentModel || 'default',
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      messages: buildVLLMChatMessages(messages),
       max_tokens: options?.maxTokens ?? 2048,
       temperature: options?.temperature ?? 0.7,
       stream: true,

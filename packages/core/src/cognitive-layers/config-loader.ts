@@ -142,7 +142,7 @@ export function loadLayerConfigFile(forceReload = false): LayerConfigFile {
 /**
  * Load configuration for specific cognitive mode
  *
- * @param mode - Cognitive mode (dual, agent, emulation)
+ * @param mode - Cognitive mode
  * @param forceReload - Force reload config from file
  * @returns Layer configuration for mode
  */
@@ -195,7 +195,7 @@ export function isLayerEnabled(
  * Validate complete layer configuration file
  *
  * Checks:
- * - All required modes present (dual, agent, emulation)
+ * - All required modes present
  * - Each mode has layers array
  * - Each layer has required fields (name, enabled)
  * - No duplicate layer names per mode
@@ -208,7 +208,7 @@ export function validateLayerConfigFile(config: LayerConfigFile): ValidationResu
   const warnings: string[] = [];
 
   // Check required modes
-  const requiredModes: CognitiveModeId[] = ['dual', 'agent', 'emulation'];
+  const requiredModes: CognitiveModeId[] = ['dual', 'agent', 'emulation', 'environment'];
   for (const mode of requiredModes) {
     if (!config[mode]) {
       errors.push(`Missing configuration for mode '${mode}'`);

@@ -11,7 +11,7 @@ export const environmentBridgeStatusNode = defineNode({
     { name: 'enabled', type: 'boolean', description: 'Whether the bridge is enabled' },
     { name: 'sessions', type: 'array', description: 'Known environment sessions' },
     { name: 'latestSessionId', type: 'string', description: 'Most recently seen session ID' },
-    { name: 'queuedActionCount', type: 'number', description: 'Number of queued actions' },
+    { name: 'pendingCommandCount', type: 'number', description: 'Number of active environment command work items' },
   ],
   description: 'Reads current environment bridge status without creating observations or actions.',
   async execute() {
@@ -24,7 +24,7 @@ export const environmentBridgeStatusNode = defineNode({
       enabled: summary.enabled,
       sessions: summary.sessions,
       latestSessionId: latestSession?.sessionId ?? '',
-      queuedActionCount: summary.queuedActionCount,
+      pendingCommandCount: summary.pendingCommandCount,
     };
   },
 });

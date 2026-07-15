@@ -5,14 +5,12 @@
  * These work identically on web and mobile.
  */
 
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { isRunning as isOllamaRunning, checkOllamaHealth } from '../../ollama.js';
 import { systemPaths } from '../../path-builder.js';
-import { isAgentRunning, registerAgent, unregisterAgent } from '../../agent-monitor.js';
 import { audit } from '../../audit.js';
 import { loadPersonaCore } from '../../identity.js';
 import { isHeadless } from '../../runtime-mode.js';
@@ -70,72 +68,13 @@ export async function handleBoot(req: UnifiedRequest): Promise<UnifiedResponse> 
     };
   }
 
-  const conditionalAgents = ['boredom-service', 'audio-organizer'] as const;
+  // Boot-managed agents are started once by start.sh -> bin/start-services -> mh start.
+  // This UI initialization endpoint must not relaunch completed one-shot agents.
   const started: string[] = [];
   const already: string[] = [];
   const missing: string[] = [];
   const headlessMode = isHeadless();
   const isAuthenticated = user.isAuthenticated;
-  const tsxPath = path.join(systemPaths.root, 'apps', 'site', 'node_modules', '.bin', 'tsx');
-  const agentsToStart = headlessMode ? [] : [...conditionalAgents];
-
-  for (const agentName of agentsToStart) {
-    try {
-      const agentPath = path.join(systemPaths.brain, 'agents', `${agentName}.ts`);
-
-      if (!fs.existsSync(agentPath)) {
-        missing.push(agentName);
-        continue;
-      }
-
-      if (isAgentRunning(agentName)) {
-        already.push(agentName);
-        continue;
-      }
-
-      const child = spawn(tsxPath, [agentPath], {
-        stdio: 'ignore',
-        cwd: systemPaths.root,
-        env: {
-          ...process.env,
-          NODE_PATH: [
-            path.join(systemPaths.root, 'node_modules'),
-            path.join(systemPaths.root, 'packages/cli/node_modules'),
-            path.join(systemPaths.root, 'apps/site/node_modules'),
-          ].join(':'),
-        },
-        detached: true,
-      });
-
-      if (child.pid) {
-        registerAgent(agentName, child.pid);
-        started.push(agentName);
-
-        audit({
-          level: 'info',
-          category: 'system',
-          event: 'agent_started',
-          details: { agent: agentName, pid: child.pid, source: 'api/boot' },
-          actor: 'system',
-        });
-
-        child.unref();
-
-        child.on('close', (code: number) => {
-          audit({
-            level: code === 0 ? 'info' : 'error',
-            category: 'system',
-            event: 'agent_stopped',
-            details: { agent: agentName, exitCode: code, source: 'api/boot' },
-            actor: 'system',
-          });
-          unregisterAgent(agentName);
-        });
-      }
-    } catch {
-      // Continue booting the rest; the response exposes started/already/missing.
-    }
-  }
 
   let localModelServiceStatus: Record<string, unknown> | null = null;
   try {

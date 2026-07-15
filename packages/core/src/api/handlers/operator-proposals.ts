@@ -5,15 +5,12 @@
  * decisions.
  */
 
-import type { QueuedTask, TaskType } from '../../active-operator/index.js';
 import {
-  executeTask,
   getOperatorPendingProposals,
   getPendingPostFeedback,
   getProposal,
   getProposalStats,
   getUserTrustLevel,
-  markProposalExecuted,
   proposalEvents,
   respondToProposal,
   submitImprovementRequest,
@@ -21,6 +18,8 @@ import {
   triggerBigBrotherExecutionReview,
 } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
+import { DEFAULT_HANDLERS, ensureQueueSystemStarted } from '../../queue/index.js';
+import type { TaskType } from '../../queue/types.js';
 import { getSecurityPolicy, SecurityError } from '../../security-policy.js';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 
@@ -29,6 +28,21 @@ type ProposalResponseBody = {
   response?: 'approved' | 'rejected' | 'modified';
   userInput?: string;
 };
+
+const COORDINATED_PROPOSAL_TYPES = new Set<TaskType>([
+  'reflect',
+  'dream',
+  'curiosity',
+  'inner_curiosity',
+  'memory_curate',
+  'training_curate',
+  'index_build',
+  'desire_generate',
+  'desire_execute',
+  'psychoanalyze',
+  'code_analyze',
+  'custom',
+]);
 
 function json(data: Record<string, unknown>, status = 200, headers?: Record<string, string>): UnifiedResponse {
   return { status, data, headers };
@@ -145,6 +159,10 @@ export async function handleRespondToOperatorProposal(req: UnifiedRequest): Prom
       return errorData('Proposal not found', 404);
     }
 
+    if (response === 'approved' && !COORDINATED_PROPOSAL_TYPES.has(proposal.taskType as TaskType)) {
+      return errorData(`Proposal task type is not supported by the work coordinator: ${proposal.taskType}`, 409);
+    }
+
     const updatedProposal = respondToProposal(req.user.username, proposalId, response, userInput);
     if (!updatedProposal) {
       return errorData('Failed to respond to proposal', 500);
@@ -163,52 +181,48 @@ export async function handleRespondToOperatorProposal(req: UnifiedRequest): Prom
       },
     });
 
-    let executionResult: { success: boolean; summary?: string; error?: string } | null = null;
+    let executionResult: { success: boolean; summary?: string; error?: string; taskId?: string } | null = null;
     if (response === 'approved') {
       try {
-        console.log(`[operator-proposals/respond] Executing approved task: ${proposal.taskType}`);
-        const queuedTask: QueuedTask = {
-          id: `proposal-${proposalId}`,
-          type: proposal.taskType as TaskType,
+        const type = proposal.taskType as TaskType;
+        const system = await ensureQueueSystemStarted();
+        const task = system.enqueue({
+          type,
+          handler: DEFAULT_HANDLERS[type],
+          source: 'user',
           priority: 'normal',
-          queuedAt: new Date().toISOString(),
-          payload: {
-            type: proposal.taskType,
-            _reasoning: proposal.reasoning,
-            _userApproved: true,
-            _proposalId: proposalId,
-          } as any,
+          input: {
+            reasoning: proposal.reasoning,
+            userApproved: true,
+            proposalId,
+          },
           username: req.user.username,
-        };
-
-        const result = await executeTask(queuedTask);
+          idempotencyKey: `approved-proposal:${proposalId}`,
+          metadata: { producer: 'operator-proposal-approval' },
+        });
         executionResult = {
-          success: result.success,
-          summary: result.data ? JSON.stringify(result.data).slice(0, 200) : undefined,
-          error: result.error,
+          success: true,
+          taskId: task.id,
+          summary: `Queued as coordinator work ${task.id}`,
         };
-
-        markProposalExecuted(req.user.username, proposalId, executionResult);
 
         audit({
           category: 'action',
-          level: result.success ? 'info' : 'warn',
-          event: 'operator_proposal_executed',
+          level: 'info',
+          event: 'operator_proposal_enqueued',
           actor: req.user.username,
           details: {
             proposalId,
             taskType: proposal.taskType,
-            success: result.success,
-            error: result.error,
+            taskId: task.id,
           },
         });
       } catch (execError) {
-        console.error('[operator-proposals/respond] Task execution error:', execError);
+        console.error('[operator-proposals/respond] Work enqueue error:', execError);
         executionResult = {
           success: false,
           error: (execError as Error).message,
         };
-        markProposalExecuted(req.user.username, proposalId, executionResult);
       }
     }
 

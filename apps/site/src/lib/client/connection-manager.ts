@@ -56,17 +56,17 @@ class ConnectionManager {
     this.connections.set(id, info);
     console.log(`[conn-mgr] Registered: ${name} (${id}) - Total: ${this.connections.size}/${MAX_CONNECTIONS}`);
 
-    // Set up event listeners to track state
-    source.onopen = () => {
+    // Observe state without replacing the owning component's handlers.
+    source.addEventListener('open', () => {
       const conn = this.connections.get(id);
       if (conn) {
         conn.state = 'open';
         conn.lastActivityAt = Date.now();
         this.notifyListeners();
       }
-    };
+    });
 
-    source.onerror = () => {
+    source.addEventListener('error', () => {
       const conn = this.connections.get(id);
       if (conn) {
         conn.state = 'error';
@@ -74,19 +74,14 @@ class ConnectionManager {
         conn.lastActivityAt = Date.now();
         this.notifyListeners();
       }
-    };
+    });
 
-    // Wrap onmessage to track activity
-    const originalOnMessage = source.onmessage;
-    source.onmessage = (event) => {
+    source.addEventListener('message', () => {
       const conn = this.connections.get(id);
       if (conn) {
         conn.lastActivityAt = Date.now();
       }
-      if (originalOnMessage) {
-        originalOnMessage.call(source, event);
-      }
-    };
+    });
 
     this.notifyListeners();
     return id;

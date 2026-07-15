@@ -89,29 +89,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Agents - Autonomous agent scheduler
-  agents:
-    build:
-      context: .
-      dockerfile: docker/agents.Dockerfile
-    volumes:
-      - ./profiles:/app/profiles
-      - ./etc:/app/etc
-      - ./persona:/app/persona
-      - ./brain:/app/brain
-      - ./logs:/app/logs
-    environment:
-      - NODE_ENV=production
-      - METAHUMAN_ROOT=/app
-      - EVENT_BUS_URL=ws://event-bus:3100
-      - OLLAMA_HOST=http://ollama:11434
-    depends_on:
-      event-bus:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-    restart: unless-stopped
-
   # Whisper - Speech-to-text (GPU)
   whisper:
     image: onerahmet/openai-whisper-asr-webservice:latest-gpu

@@ -24,6 +24,7 @@ export interface GraphRunParams {
   graph: SvelteFlowGraph;
   context: Record<string, any>;
   eventHandler?: ExecutionEventHandler;
+  signal?: AbortSignal;
 }
 
 export interface CachedGraphEntry {
@@ -93,7 +94,7 @@ export function namedSse(event: string, data: any): string {
 }
 
 export async function runGraph(params: GraphRunParams): Promise<GraphExecutionState> {
-  return executeGraph(params.graph, params.context, params.eventHandler)
+  return executeGraph(params.graph, params.context, params.eventHandler, params.signal)
 }
 
 export function extractGraphOutput(graphState: GraphExecutionState): Record<string, any> | null {

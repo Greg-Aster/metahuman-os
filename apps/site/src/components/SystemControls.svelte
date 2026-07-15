@@ -117,18 +117,9 @@
     }
   }
 
-  async function runNightProcessorNow() {
+  async function runSleepWorkflow() {
     try {
-      await sendAction('runNightProcessor', {});
-      alert('✅ Night processor started (transcriber + audio-organizer).');
-    } catch (err) {
-      alert('❌ ' + (err as Error).message);
-    }
-  }
-
-  async function startSleepService() {
-    try {
-      await sendAction('startSleepService', {});
+      await sendAction('runSleepWorkflow', {});
       alert('✅ Sleep service started. Will run nightly automation.');
     } catch (err) {
       alert('❌ ' + (err as Error).message);
@@ -211,12 +202,7 @@
         <div class="font-semibold text-sm mb-1">Run Dreamer</div>
         <div class="text-xs text-gray-500">Generate dream memories</div>
       </button>
-      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={runNightProcessorNow} disabled={working}>
-        <div class="text-[2rem] mb-2">🌙</div>
-        <div class="font-semibold text-sm mb-1">Night Processor</div>
-        <div class="text-xs text-gray-500">Transcribe & organize audio</div>
-      </button>
-      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={startSleepService} disabled={working}>
+      <button class="bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-lg py-5 px-4 cursor-pointer transition-all text-center hover:enabled:border-blue-500 hover:enabled:-translate-y-0.5 hover:enabled:shadow-md disabled:opacity-50 disabled:cursor-not-allowed" on:click={runSleepWorkflow} disabled={working}>
         <div class="text-[2rem] mb-2">😴</div>
         <div class="font-semibold text-sm mb-1">Sleep Service</div>
         <div class="text-xs text-gray-500">Start nightly automation</div>
