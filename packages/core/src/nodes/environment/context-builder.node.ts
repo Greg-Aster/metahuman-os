@@ -30,6 +30,23 @@ function coerceVisualFrames(visual: unknown, visuals: unknown): EnvironmentVisua
   });
 }
 
+export function shouldUseEnvironmentImages(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (/\b(?:image|photo|picture|camera|snapshot|visual|frame)\b/.test(normalized)) return true;
+  if (/\b(?:what|which)\s+(?:can\s+)?(?:do\s+)?you\s+see\b/.test(normalized)) return true;
+  if (/\b(?:what(?:'s|\s+is)\s+happening|what\s+is\s+going\s+on)\s+(?:here|nearby|around\s+(?:you|the\s+robot)|in\s+front\s+of\s+(?:you|the\s+robot))\b/.test(normalized)) return true;
+  if (/\b(?:find|locate|spot|look\s+for|search\s+for)\b/.test(normalized)) {
+    return !/\b(?:find\s+out|information|news|facts?|answer|online|internet|web|about)\b/.test(normalized);
+  }
+  if (/\b(?:identify|recognize|describe|inspect|examine)\b.*\b(?:this|that|these|those|object|thing|scene|room|environment|surroundings|in\s+front)\b/.test(normalized)) return true;
+  if (/\b(?:read|count)\b.*\b(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
+  if (/\bwhere\s+(?:is|are)\s+(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
+  if (/\bwhat\s+colou?r\s+(?:is|are)\s+(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
+  return false;
+}
+
 export const environmentContextBuilderNode = defineNode({
   id: 'environment_context_builder',
   name: 'Environment Context Builder',
@@ -63,7 +80,7 @@ export const environmentContextBuilderNode = defineNode({
       rows: 5,
     },
   },
-  description: 'Converts text, state, and visual bridge data into a prompt-ready context message.',
+  description: 'Builds environment context and attaches optional vision only when the instruction is visually grounded.',
   async execute(inputs, _context, properties) {
     const observation = inputs.observation as EnvironmentObservation | undefined;
     if (!observation) {
@@ -97,17 +114,25 @@ export const environmentContextBuilderNode = defineNode({
     };
 
     const systemPrompt = String(properties?.systemPrompt ?? '');
-    const instruction = typeof inputs.instruction === 'string' && inputs.instruction.trim()
-      ? `\n\nTask instruction:\n${inputs.instruction.trim()}`
+    const rawInstruction = typeof inputs.instruction === 'string'
+      ? inputs.instruction.trim()
       : '';
-    const message = `${stringifyEnvironmentObservation(effectiveObservation, systemPrompt)}${instruction}`;
+    const useImages = shouldUseEnvironmentImages(rawInstruction);
+    const selectedImages = useImages ? images : [];
+    const promptObservation = useImages
+      ? effectiveObservation
+      : { ...effectiveObservation, visual: undefined, visuals: undefined };
+    const instruction = rawInstruction
+      ? `\n\nTask instruction:\n${rawInstruction}`
+      : '';
+    const message = `${stringifyEnvironmentObservation(promptObservation, systemPrompt)}${instruction}`;
 
     return {
       message,
       messages: [{
         role: 'user',
-        content: images.length
-          ? [{ type: 'text', text: message }, ...images]
+        content: selectedImages.length
+          ? [{ type: 'text', text: message }, ...selectedImages]
           : message,
       }],
       context: {
@@ -120,10 +145,15 @@ export const environmentContextBuilderNode = defineNode({
         visual: effectiveObservation.visual ?? null,
         visuals: effectiveObservation.visuals ?? [],
         feedback: effectiveObservation.feedback ?? [],
+        imageSelection: {
+          requested: useImages,
+          available: images.length,
+          used: selectedImages.length,
+        },
       },
       location,
       map,
-      images,
+      images: selectedImages,
       availableActions: effectiveObservation.capabilities.actions,
     };
   },

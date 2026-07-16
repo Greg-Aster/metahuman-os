@@ -4,7 +4,7 @@
   "name": "Environment Mode",
   "description": "Environment bridge conversation and action graph. Reads the active observation, asks the model for a reply plus semantic actions, streams the reply, and queues supported actions for the connected adapter.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-07-14",
+  "last_modified": "2026-07-15",
   "nodes": [
     {
       "id": "2",
@@ -258,6 +258,18 @@
       }
     },
     {
+      "id": "e-11-images-3-images",
+      "source": "11",
+      "target": "3",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Validated camera stills for the normally selected model"
+      }
+    },
+    {
       "id": "e-10-instruction-3-instruction",
       "source": "10",
       "target": "3",
@@ -351,6 +363,18 @@
       "data": {
         "type": "string",
         "comment": "Narrow semantic fallback for direct robot commands"
+      }
+    },
+    {
+      "id": "e-10-observation-6-observation",
+      "source": "10",
+      "target": "6",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Adapter capabilities and supported semantic robot commands"
       }
     },
     {

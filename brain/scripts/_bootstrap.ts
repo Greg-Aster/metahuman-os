@@ -35,6 +35,8 @@ async function main() {
     process.exit(1);
   }
 
+  process.env.MH_TRIGGER_USERNAME = owner.username;
+
   const agentPath = resolveAgentExecutablePath(agentName);
   if (!agentPath) {
     console.error(`[bootstrap] Error: Agent file not found: ${agentName}`);

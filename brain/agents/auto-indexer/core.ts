@@ -2,7 +2,7 @@
  * Auto-Indexer Agent — Core Logic
  *
  * Automatically rebuilds vector indexes for semantic search:
- * - Runs nightly via scheduler (or on-demand)
+ * - Runs nightly via Trigger Manager (or on-demand)
  * - Rebuilds the full vector index for each user
  * - Uses Qwen embeddings via llama.cpp (local-models provider)
  * - Does NOT require LLM (embeddings run on CPU, parallel to GPU models)

@@ -306,7 +306,7 @@ Keep cached copies in `profiles/<username>/.cache/encrypted/` that sync from dri
 **Auto-Eject on Idle:**
 
 ```typescript
-// In scheduler-service or new storage-monitor agent
+// In maintenance-service or a dedicated storage-monitor service
 setInterval(() => {
   for (const user of getUsers()) {
     const storage = loadStorageMetadata(user.username);

@@ -1,21 +1,36 @@
 {
-  "activeBackend": "vllm",
+  "activeBackend": "ollama",
   "ollama": {
     "endpoint": "http://localhost:11434",
-    "autoStart": false,
-    "defaultModel": "greggles-2025-12-04:latest"
+    "autoStart": true,
+    "defaultModel": "qwen3.5:9b",
+    "contextWindow": 8192,
+    "maxTokens": 2048,
+    "temperature": 0.7,
+    "topP": 0.9,
+    "topK": 40,
+    "minP": 0,
+    "repeatPenalty": 1.1,
+    "seed": null,
+    "keepAlive": "5m",
+    "enableThinking": false
   },
   "vllm": {
     "endpoint": "http://localhost:8000",
-    "autoStart": true,
-    "model": "greggles-2025-12-04:latest",
-    "loadFormat": "gguf",
-    "tokenizer": "Qwen/Qwen3-14B-AWQ",
+    "autoStart": false,
+    "model": "sanskar003/Qwen3.5-9B-AWQ",
+    "loadFormat": "safetensors",
     "gpuMemoryUtilization": 0.75,
+    "gpuMemoryHeadroomGiB": 1.5,
+    "autoUtilizationMax": 0.95,
     "maxModelLen": 4096,
+    "kvCacheMemoryGiB": null,
+    "cpuOffloadGiB": 0,
+    "kvOffloadingGiB": 0,
+    "kvOffloadingBackend": "native",
     "tensorParallelSize": 1,
-    "dtype": "auto",
-    "quantization": null,
+    "dtype": "float16",
+    "quantization": "compressed-tensors",
     "enforceEager": true,
     "autoUtilization": false,
     "startupTimeoutMs": 240000,
@@ -23,7 +38,8 @@
     "enableThinking": false,
     "frequencyPenalty": 0.3,
     "presencePenalty": 0.3,
-    "repetitionPenalty": 1.15
+    "repetitionPenalty": 1.15,
+    "servedModelName": "sanskar003/Qwen3.5-9B-AWQ"
   },
   "localModels": {
     "enabled": true,
@@ -39,7 +55,7 @@
       "preloadAtStartup": false
     }
   },
-  "preferredLocalBackend": "vllm",
+  "preferredLocalBackend": "ollama",
   "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",
   "description": "LLM backend configuration - controls which local inference engine is used",

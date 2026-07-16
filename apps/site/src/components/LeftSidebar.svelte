@@ -70,6 +70,7 @@
     modelId?: string;
     provider?: string;
     model?: string;
+    capabilities?: string[];
     adapters?: string[];
     baseModel?: string;
     temperature?: number;
@@ -82,12 +83,16 @@
   let taskTotals = { active: 0, inProgress: 0 };
 
   // Persona facet state
-  let activeFacet: string = 'default';
+  let activeFacet: string | null = null;
   let facets: Record<string, any> = {};
   let personaFacetTooltip = '';
+  let personaFacetError: string | null = null;
 
   $: personaFacetTooltip = (() => {
-    const info = facets?.[activeFacet];
+    if (personaFacetError) {
+      return `Persona configuration error\n\n${personaFacetError}\n\nOpen Persona settings to repair facets.json.`;
+    }
+    const info = activeFacet ? facets?.[activeFacet] : undefined;
     const currentLabel =
       activeFacet === 'inactive'
         ? 'Persona disabled'
@@ -323,14 +328,25 @@
     try {
       const response = await apiFetch('/api/persona-facet');
       const data = await response.json();
-      activeFacet = data.activeFacet || 'default';
-      facets = data.facets || {};
+      if (!response.ok || data.error) {
+        throw new Error(data.error || `Failed to load persona facets (HTTP ${response.status})`);
+      }
+      if (typeof data.activeFacet !== 'string' || !data.facets || typeof data.facets !== 'object') {
+        throw new Error('Persona facet response is incomplete');
+      }
+      activeFacet = data.activeFacet;
+      facets = data.facets;
+      personaFacetError = null;
     } catch (error) {
       console.error('Error loading facets:', error);
+      activeFacet = null;
+      facets = {};
+      personaFacetError = (error as Error).message;
     }
   }
 
   async function cyclePersonaFacet() {
+    if (personaFacetError || !activeFacet) return;
     const availableFacets = Object.keys(facets).filter(
       key => facets[key]?.enabled !== false
     );
@@ -369,6 +385,7 @@
     model: string;
     provider: string;
     roles?: string[];
+    capabilities?: string[];
     description: string;
     adapters: string[];
     baseModel?: string | null;
@@ -561,6 +578,7 @@
         modelId: selectedModel.id,
         provider: selectedModel.provider,
         model: selectedModel.model,
+        capabilities: selectedModel.capabilities ?? [],
         adapters: selectedModel.adapters ?? [],
         baseModel: selectedModel.baseModel ?? null,
         temperature: selectedModel.options?.temperature,
@@ -905,6 +923,9 @@
                   {#if info.adapters && info.adapters.length > 0}
                     <span class="adapter-indicator">+LoRA</span>
                   {/if}
+                  {#if info.capabilities?.includes('image')}
+                    <span class="vllm-badge" title="Accepts image input">image</span>
+                  {/if}
                   <span class="dropdown-arrow">▼</span>
                 </button>
               {/if}
@@ -930,6 +951,9 @@
                             {model.model}
                             {#if model.locked}
                               <span class="vllm-badge">loaded</span>
+                            {/if}
+                            {#if model.capabilities?.includes('image')}
+                              <span class="vllm-badge">image</span>
                             {/if}
                           </span>
                         </button>
@@ -1024,6 +1048,9 @@
                           {#if model.provider === 'runpod_serverless' || model.provider === 'huggingface'}
                             <span class="cloud-indicator">☁️</span>
                           {/if}
+                          {#if model.capabilities?.includes('image')}
+                            <span class="vllm-badge">image</span>
+                          {/if}
                           {#if isSuggested}
                             <span class="suggested-indicator">✓</span>
                           {/if}
@@ -1068,11 +1095,17 @@
           <span class="status-label">Persona:</span>
           <span class="status-value">
             <button
-              class="persona-badge persona-facet-{activeFacet} clickable"
+              class="persona-badge persona-facet-{activeFacet || 'error'} clickable"
               title={personaFacetTooltip}
               on:click={cyclePersonaFacet}
+              disabled={Boolean(personaFacetError) || !activeFacet}
+              aria-invalid={Boolean(personaFacetError)}
             >
-              {activeFacet === 'inactive' ? 'inactive' : (facets[activeFacet]?.name || activeFacet)}
+              {personaFacetError
+                ? '⚠ error'
+                : activeFacet === 'inactive'
+                  ? 'inactive'
+                  : (facets[activeFacet || '']?.name || activeFacet || 'loading')}
             </button>
           </span>
         </div>

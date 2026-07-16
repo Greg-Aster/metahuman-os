@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
-
-  type AutonomyMode = 'reactive' | 'semi' | 'full';
+  import { AUTONOMY_MODES, type AutonomyMode } from '../lib/client/active-operator-modes';
 
   let autonomyMode: AutonomyMode = 'reactive';
   let cooldownMs = 30_000;
@@ -13,11 +12,7 @@
   let saving = false;
   let error = '';
 
-  const modes: Array<{ id: AutonomyMode; label: string; description: string }> = [
-    { id: 'reactive', label: 'Reactive', description: 'Only user, system, and environment events create work.' },
-    { id: 'semi', label: 'Semi-autonomous', description: 'Configured timers may add low-priority work.' },
-    { id: 'full', label: 'Fully autonomous', description: 'Timers plus the bounded policy graph may propose one next task.' },
-  ];
+  const modes = AUTONOMY_MODES;
 
   onMount(loadConfig);
 

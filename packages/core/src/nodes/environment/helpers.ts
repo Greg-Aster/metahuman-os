@@ -18,6 +18,7 @@ export interface DirectRobotInstruction {
 export function parseDirectRobotInstruction(
   value: unknown,
   sessionId?: string,
+  supportedRobotCommands?: string[],
 ): DirectRobotInstruction | null {
   if (typeof value !== 'string') return null;
 
@@ -35,7 +36,15 @@ export function parseDirectRobotInstruction(
   const match = instruction.match(
     /^(?:please\s+)?(?:(?:walk|move|go)\s+(forward|forwards|backward|backwards)|turn\s+(left|right))(?:\s+(?:for\s+)?(\d{1,2})\s+(?:steps?|units?))?$/,
   );
-  if (!match) return null;
+  if (!match) {
+    const command = matchAdvertisedRobotCommand(instruction, supportedRobotCommands);
+    return command
+      ? {
+          action: { type: 'robotCommand', command, sessionId },
+          response: `I will ${command}.`,
+        }
+      : null;
+  }
 
   const direction = match[1] ?? match[2];
   const units = match[3] ? Math.max(1, Math.min(10, Number.parseInt(match[3], 10))) : undefined;
@@ -50,6 +59,8 @@ export function parseDirectRobotInstruction(
       ? 'Walking backward.'
       : `Turning ${command}.`;
 
+  if (!robotCommandIsSupported(command, supportedRobotCommands)) return null;
+
   return {
     action: {
       type: 'robotCommand',
@@ -59,6 +70,32 @@ export function parseDirectRobotInstruction(
     },
     response,
   };
+}
+
+function normalizedRobotCommand(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function robotCommandIsSupported(command: string, supportedRobotCommands?: string[]): boolean {
+  if (!supportedRobotCommands?.length) return true;
+  const normalized = normalizedRobotCommand(command);
+  return supportedRobotCommands.some(candidate => normalizedRobotCommand(candidate) === normalized);
+}
+
+function matchAdvertisedRobotCommand(
+  instruction: string,
+  supportedRobotCommands?: string[],
+): string | null {
+  if (!supportedRobotCommands?.length) return null;
+  const phrase = instruction
+    .replace(/^(?:please\s+)?(?:have\s+)?(?:the\s+)?robot\s+/, '')
+    .replace(/^(?:please\s+)?(?:do|perform)\s+(?:a|an|the)?\s*/, '')
+    .replace(/^(?:please\s+)/, '');
+  const normalizedPhrase = normalizedRobotCommand(phrase);
+  const command = supportedRobotCommands.find(candidate => (
+    normalizedRobotCommand(candidate) === normalizedPhrase
+  ));
+  return command?.trim().toLowerCase() || null;
 }
 
 export function stringifyEnvironmentObservation(observation: EnvironmentObservation, systemPrompt: string): string {
@@ -95,13 +132,13 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   }
 
   if (observation.visual) {
-    sections.push(`Visual frame: ${observation.visual.url ?? observation.visual.dataUrl ?? observation.visual.id}`);
+    sections.push(`Visual frame: ${describeVisualFrame(observation.visual)}`);
   }
 
   if (observation.visuals?.length) {
     sections.push([
       'Visual frames:',
-      ...observation.visuals.map(frame => `- ${frame.url ?? frame.dataUrl ?? frame.id}`),
+      ...observation.visuals.map(frame => `- ${describeVisualFrame(frame)}`),
     ].join('\n'));
   }
 
@@ -113,6 +150,12 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   }
 
   sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
+  const robotCommands = observation.capabilities.robotCommands
+    ?.map(command => command.trim())
+    .filter(Boolean);
+  if (robotCommands?.length) {
+    sections.push(`Supported robot commands: ${robotCommands.join(', ')}`);
+  }
   sections.push([
     'Response contract:',
     '- Return exactly one JSON object: {"response":"short conversational reply","actions":[]}.',
@@ -122,11 +165,25 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
     sections.push([
       'Robot command contract:',
       '- A robotCommand contains a semantic command and optional units, never simulator commands or raw servo values.',
+      ...(robotCommands?.length
+        ? ['- Use only a command named in Supported robot commands.']
+        : []),
       '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}]}.',
     ].join('\n'));
   }
 
   return sections.join('\n\n');
+}
+
+function describeVisualFrame(frame: NonNullable<EnvironmentObservation['visual']>): string {
+  const details = [
+    frame.id,
+    frame.mimeType,
+    frame.width && frame.height ? `${frame.width}x${frame.height}` : undefined,
+    frame.source ? `source=${frame.source}` : undefined,
+    frame.altText ? `alt=${frame.altText}` : undefined,
+  ].filter(Boolean);
+  return details.join(', ') || 'image attached';
 }
 
 function extractJsonObject(text: string): unknown {

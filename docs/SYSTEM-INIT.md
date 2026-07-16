@@ -37,7 +37,7 @@ It is used by the System Coder agent to understand the architecture when generat
 ### Overview
 
 MetaHuman OS is an autonomous digital personality extension operating system. It runs on:
-- **Backend**: Node.js 18+ with TypeScript
+- **Backend**: Node.js 22.3+ (22.x) with TypeScript
 - **Frontend**: Astro + Svelte
 - **LLM**: Ollama (local) or vLLM (GPU inference)
 - **Storage**: File-based JSON with profile directories
@@ -144,7 +144,8 @@ metahuman/
 │       └── out/                 # Generated outputs
 │
 ├── etc/                         # System configuration
-│   ├── agents.json              # Agent scheduler config
+│   ├── agents.json              # Trigger Manager finite-work config
+│   ├── services.json            # Persistent service lifecycle config
 │   ├── operator.json            # Operator config
 │   ├── system-coder.json        # System Coder config
 │   ├── cognitive-layers.json    # Pipeline config

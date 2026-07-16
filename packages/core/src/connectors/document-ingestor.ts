@@ -9,14 +9,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as pdfParseModule from 'pdf-parse';
 import * as mammothModule from 'mammoth';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
 import { captureEvent } from '../memory.js';
 
 // Handle ESM/CJS compatibility
-const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 const mammoth = (mammothModule as any).default || mammothModule;
 
 // ============================================================================
@@ -108,21 +106,33 @@ async function extractPdfText(filepath: string): Promise<{
   metadata: Partial<DocumentMetadata>;
 }> {
   const buffer = fs.readFileSync(filepath);
-  const data = await pdfParse(buffer);
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: buffer });
 
-  return {
-    text: data.text,
-    metadata: {
-      pageCount: data.numpages,
-      title: data.info?.Title,
-      author: data.info?.Author,
-      subject: data.info?.Subject,
-      keywords: data.info?.Keywords?.split(',').map((k: string) => k.trim()),
-      creationDate: data.info?.CreationDate,
-      modificationDate: data.info?.ModDate,
-      extractionMethod: 'pdf-parse',
-    },
-  };
+  try {
+    const textResult = await parser.getText();
+    const infoResult = await parser.getInfo();
+    const info = infoResult.info;
+    const keywords = typeof info?.Keywords === 'string'
+      ? info.Keywords.split(',').map((keyword: string) => keyword.trim()).filter(Boolean)
+      : undefined;
+
+    return {
+      text: textResult.text,
+      metadata: {
+        pageCount: textResult.total,
+        title: info?.Title,
+        author: info?.Author,
+        subject: info?.Subject,
+        keywords,
+        creationDate: info?.CreationDate,
+        modificationDate: info?.ModDate,
+        extractionMethod: 'pdf-parse',
+      },
+    };
+  } finally {
+    await parser.destroy();
+  }
 }
 
 /**

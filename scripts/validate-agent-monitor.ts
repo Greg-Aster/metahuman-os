@@ -6,7 +6,7 @@ import {
   getAgentMonitorSnapshot,
   recordAgentFailure,
 } from '@metahuman/core/agent-monitor';
-import { startAgentProcess } from '@metahuman/core';
+import { getAgentCatalogSnapshot, startAgentProcess } from '@metahuman/core';
 import {
   getEnvironmentBridgeStatePath,
   readEnvironmentBridgeState,
@@ -87,9 +87,9 @@ async function withSuppressedConsoleError<T>(callback: () => Promise<T>): Promis
 async function runVariableChecks(): Promise<Check[]> {
   const checks: Check[] = [];
   const bridgeStatePath = getEnvironmentBridgeStatePath();
-  const schedulerConfigPath = path.join(ROOT, 'etc', 'agents.json');
+  const serviceConfigPath = path.join(ROOT, 'etc', 'services.json');
 
-  await withRestoredFiles([bridgeStatePath, schedulerConfigPath], async () => {
+  await withRestoredFiles([bridgeStatePath, serviceConfigPath], async () => {
     const enabledResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
       agent: 'environment-bridge',
       key: 'deliveryEnabled',
@@ -123,12 +123,12 @@ async function runVariableChecks(): Promise<Check[]> {
     ));
 
     const bootResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
-      agent: 'organizer',
-      key: 'runOnBoot',
+      agent: 'maintenance-service',
+      key: 'startOnSystemBoot',
       value: true,
     }));
     const bootData = bootResponse.data as { agentData?: { variables?: Array<{ key: string; value: unknown; applyMode: string }> } } | undefined;
-    const bootVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'runOnBoot');
+    const bootVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'startOnSystemBoot');
     const bootEnabledVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'enabled');
     checks.push(check(
       'boot-manager variable edit persists through monitor API',
@@ -136,7 +136,7 @@ async function runVariableChecks(): Promise<Check[]> {
       `status=${bootResponse.status} value=${String(bootVariable?.value ?? '')}`,
     ));
     checks.push(check(
-      'boot-manager run-on-boot enables agent for startup',
+      'boot-manager start-on-boot enables service for startup',
       bootResponse.status === 200 && bootEnabledVariable?.value === true,
       `status=${bootResponse.status} enabled=${String(bootEnabledVariable?.value ?? '')}`,
     ));
@@ -207,7 +207,7 @@ async function main() {
     failDetails(startableOverlap),
   ));
 
-  for (const expectedStartableAgent of ['coder', 'curator', 'profile-sync']) {
+  for (const expectedStartableAgent of ['curator', 'profile-sync']) {
     checks.push(check(
       `startableAgents includes runnable ${expectedStartableAgent}`,
       snapshot.startableAgents.some(agent => agent.id === expectedStartableAgent),
@@ -215,13 +215,21 @@ async function main() {
     ));
   }
 
+  const coderCatalogEntry = getAgentCatalogSnapshot().agents.find(agent => agent.id === 'coder');
+  checks.push(check(
+    'privileged coder requires explicit catalog registration before Agent Monitor can run it',
+    Boolean(coderCatalogEntry)
+      && snapshot.startableAgents.some(agent => agent.id === 'coder') === coderCatalogEntry?.canRun,
+    `catalogCanRun=${coderCatalogEntry?.canRun} startable=${snapshot.startableAgents.some(agent => agent.id === 'coder')}`,
+  ));
+
   checks.push(check(
     'bootAgents are exposed for System Settings',
     snapshot.bootAgents.length > 0,
     `count=${snapshot.bootAgents.length}`,
   ));
 
-  for (const requiredBootAgent of ['scheduler-service']) {
+  for (const requiredBootAgent of ['maintenance-service']) {
     checks.push(check(
       `bootAgents includes ${requiredBootAgent}`,
       snapshot.bootAgents.some(agent => agent.agentId === requiredBootAgent),
@@ -265,7 +273,7 @@ async function main() {
   ));
 
   const bridgeVariableKeys = new Set(environmentBridge?.variables.map(variable => variable.key) ?? []);
-  for (const key of ['enabled', 'runOnBoot', 'autoRestart', 'adapterUrl', 'graph', 'deliveryEnabled', 'serviceToken', 'adapterToken', 'activeSessions', 'actionStreams', 'connectedRobots', 'lastContact']) {
+  for (const key of ['enabled', 'startOnSystemBoot', 'autoRestart', 'adapterUrl', 'graph', 'deliveryEnabled', 'serviceToken', 'adapterToken', 'activeSessions', 'actionStreams', 'connectedRobots', 'lastContact']) {
     checks.push(check(
       `environment-bridge exposes ${key}`,
       bridgeVariableKeys.has(key),
@@ -336,10 +344,12 @@ async function main() {
   ));
 
   const agentRunner = path.join(ROOT, 'packages', 'core', 'src', 'agent-process-runner.ts');
+  const agentRegistry = path.join(ROOT, 'packages', 'core', 'src', 'agent-monitor-registry.ts');
   const agentResolver = path.join(ROOT, 'packages', 'core', 'src', 'agent-executable-resolver.ts');
   const cli = path.join(ROOT, 'packages', 'cli', 'src', 'mh-new.ts');
   const systemHandler = path.join(ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'system.ts');
   const bootstrap = path.join(ROOT, 'brain', 'scripts', '_bootstrap.ts');
+  const environmentBridgeAgent = path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts');
   const runtimeMode = path.join(ROOT, 'packages', 'core', 'src', 'runtime-mode.ts');
   checks.push(check(
     'shared agent process runner owns spawn lifecycle',
@@ -357,6 +367,20 @@ async function main() {
       && sourceContains(agentRunner, /resolveAgentExecutablePath/)
       && sourceContains(bootstrap, /resolveAgentExecutablePath/)
       && sourceDoesNotContain(bootstrap, /agentScriptOverrides|serviceOverrides|systemPaths\.brain/),
+  ));
+  checks.push(check(
+    'agent child exit cannot unregister a newer process',
+    sourceContains(agentRegistry, /expectedPid/)
+      && sourceContains(agentRunner, /unregisterAgent\(agentName,\s*pid\)/),
+  ));
+  checks.push(check(
+    'user-context bootstrap exports the selected owner to connection agents',
+    sourceContains(bootstrap, /process\.env\.MH_TRIGGER_USERNAME\s*=\s*owner\.username/),
+  ));
+  checks.push(check(
+    'Environment Bridge holds a process-lifetime singleton lock',
+    sourceContains(environmentBridgeAgent, /acquireLock\(['"]agent-environment-bridge['"]\)/)
+      && sourceContains(environmentBridgeAgent, /lock\.release\(\)/),
   ));
   checks.push(check(
     'shared runner has no obsolete outbound bridge diagnosis',

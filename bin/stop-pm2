@@ -71,7 +71,7 @@ pkill -f "ttyd.*3099" 2>/dev/null || true
 # Force kill any remaining processes
 echo "Cleaning up remaining processes..."
 pkill -f "brain/agents" 2>/dev/null || true
-pkill -f "scheduler-service" 2>/dev/null || true
+pkill -f "maintenance-service" 2>/dev/null || true
 pkill -f "audio-organizer" 2>/dev/null || true
 
 # Clean up stale PID files

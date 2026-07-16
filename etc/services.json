@@ -1,0 +1,33 @@
+{
+  "$schema": "https://metahuman.dev/schemas/services.json",
+  "version": "1.0.0",
+  "description": "Persistent service lifecycle configuration",
+  "services": {
+    "environment-bridge": {
+      "id": "environment-bridge",
+      "enabled": true,
+      "type": "manual",
+      "priority": "high",
+      "agentPath": "environment-bridge/index.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": true,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "adapterUrl": "ws://127.0.0.1:8790/environment",
+      "graph": "environment",
+      "comment": "Generic event-driven environment adapter connection."
+    },
+    "maintenance-service": {
+      "id": "maintenance-service",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "services/maintenance-service.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": true,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "comment": "Maintenance-only service for stale-lock health checks, audit-log cleanup, and embedding preload."
+    }
+  }
+}

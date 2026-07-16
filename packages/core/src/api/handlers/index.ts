@@ -48,5 +48,6 @@ export * from './monitor-stream.js';
 export * from './tts-stream.js';
 export * from './addons.js';
 export * from './adapters.js';
+export * from './ollama-loras.js';
 export * from './training.js';
 export * from './operator-proposals.js';

@@ -261,8 +261,8 @@ else
     print_warning "mh CLI not found, stopping agents manually..."
 fi
 
-# Stop scheduler-service specifically (main agent coordinator)
-kill_repo_process_pattern "scheduler-service" "Scheduler Service"
+# Stop the maintenance-only persistent service.
+kill_repo_process_pattern "maintenance-service" "Maintenance Service"
 
 # Stop audio-organizer
 kill_repo_process_pattern "audio-organizer" "Audio Organizer"

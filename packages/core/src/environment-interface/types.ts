@@ -9,6 +9,7 @@ export type EnvironmentActionType =
 
 export interface EnvironmentCapabilities {
   actions: EnvironmentActionType[];
+  robotCommands?: string[];
   text?: boolean;
   movement?: boolean;
   visual?: boolean;

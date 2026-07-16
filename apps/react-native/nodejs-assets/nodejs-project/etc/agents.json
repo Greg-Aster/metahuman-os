@@ -1,23 +1,20 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "revision": 0,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
-  "description": "Central agent scheduler configuration - SYSTEM TEMPLATE",
+  "description": "Finite-work Trigger Manager configuration - packaged mobile template",
   "globalSettings": {
     "pauseAll": false,
+    "timezone": "UTC",
     "quietHours": {
       "enabled": false,
       "start": "22:00",
       "end": "08:00"
-    },
-    "maxConcurrentAgents": 5,
-    "maxConcurrentLLMAgents": 1,
-    "maxConcurrentNonLLMAgents": 10,
-    "pauseQueueOnActivity": true,
-    "activityResumeDelay": 240
+    }
   },
   "agents": {
     "organizer": {
@@ -28,8 +25,7 @@
       "agentPath": "organizer.ts",
       "usesLLM": true,
       "inactivityThreshold": 600,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 3,
       "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM"
     },
@@ -41,8 +37,7 @@
       "agentPath": "curator.ts",
       "usesLLM": true,
       "inactivityThreshold": 600,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)"
     },
@@ -54,8 +49,7 @@
       "agentPath": "coordinator:workflow.sleep",
       "usesLLM": true,
       "schedule": "02:00",
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Queues bounded dream and persona-review children through the work coordinator."
     },
@@ -67,8 +61,7 @@
       "agentPath": "reflector.ts",
       "usesLLM": true,
       "inactivityThreshold": 900,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Activity-based reflections - triggers after 15 min of inactivity"
     },
@@ -80,8 +73,7 @@
       "agentPath": "curiosity-service.ts",
       "usesLLM": true,
       "inactivityThreshold": 900,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json."
     },
@@ -93,8 +85,7 @@
       "agentPath": "curiosity-researcher.ts",
       "usesLLM": true,
       "interval": 3600,
-      "runOnBoot": false,
-      "autoRestart": true,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle."
     },
@@ -106,8 +97,7 @@
       "agentPath": "inner-curiosity.ts",
       "usesLLM": true,
       "interval": 3600,
-      "runOnBoot": false,
-      "autoRestart": true,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat)."
     },
@@ -118,8 +108,7 @@
       "priority": "normal",
       "agentPath": "psychoanalyzer.ts",
       "usesLLM": true,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer"
     },
@@ -131,8 +120,7 @@
       "agentPath": "desire-generator.ts",
       "usesLLM": true,
       "inactivityThreshold": 1800,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and service outputs. Now includes decay, reinforcement, and activation checking (merged from evaluator). Runs after 30 minutes of inactivity."
     },
@@ -144,8 +132,7 @@
       "agentPath": "desire-executor.ts",
       "usesLLM": true,
       "interval": 300,
-      "runOnBoot": false,
-      "autoRestart": true,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes."
     },
@@ -157,8 +144,7 @@
       "agentPath": "desire-planner.ts",
       "usesLLM": true,
       "interval": 300,
-      "runOnBoot": false,
-      "autoRestart": true,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes."
     },
@@ -170,8 +156,7 @@
       "agentPath": "desire-outcome-reviewer.ts",
       "usesLLM": true,
       "interval": 600,
-      "runOnBoot": false,
-      "autoRestart": true,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes."
     },
@@ -182,8 +167,7 @@
       "priority": "high",
       "agentPath": "profile-sync.ts",
       "usesLLM": false,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags."
     },
@@ -194,8 +178,7 @@
       "priority": "normal",
       "agentPath": "memory-sync.ts",
       "usesLLM": false,
-      "runOnBoot": false,
-      "autoRestart": false,
+      "startupPolicy": "skip",
       "maxRetries": 2,
       "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags."
     }

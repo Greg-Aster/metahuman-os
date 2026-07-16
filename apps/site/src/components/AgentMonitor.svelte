@@ -279,7 +279,11 @@
       }
       selectedAgentName = agentName;
       await refreshSnapshot();
-      showFeedback('success', data.pid ? `${agentName} started with PID ${data.pid}` : `${agentName} start requested`);
+      showFeedback('success', data.taskId
+        ? `${agentName} queued as ${data.taskId}`
+        : data.pid
+          ? `${agentName} started with PID ${data.pid}`
+          : `${agentName} start requested`);
     } catch (err) {
       const message = err instanceof DOMException && err.name === 'AbortError'
         ? 'Start request timed out. Monitor refresh will continue; retry when the process state settles.'

@@ -1,14 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, systemPaths } from './path-builder.js';
-
-const agentScriptOverrides: Record<string, string> = {
-  curiosity: 'curiosity-service.ts',
-};
-
-const serviceOverrides: Record<string, string> = {
-  'scheduler-service': 'services/scheduler-service.ts',
-};
+import { getAgentCatalogDefinition, sourceAgentId } from './agent-catalog-definitions.js';
 
 export function resolveTsx(): string {
   const executable = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
@@ -29,16 +22,18 @@ export function buildAgentNodePath(): string {
 }
 
 export function resolveAgentExecutablePath(agentName: string): string | null {
-  if (serviceOverrides[agentName]) {
-    const servicePath = path.join(systemPaths.brain, serviceOverrides[agentName]);
+  const definition = getAgentCatalogDefinition(agentName);
+  if (definition?.servicePath) {
+    const servicePath = path.join(systemPaths.brain, definition.servicePath);
     return fs.existsSync(servicePath) ? servicePath : null;
   }
 
+  const directoryName = sourceAgentId(agentName);
   const candidates = [
-    path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),
-    path.join(systemPaths.brain, 'agents', agentName, `${agentName}.ts`),
-    path.join(systemPaths.brain, 'agents', agentName, 'index.ts'),
-    path.join(systemPaths.brain, 'agents', agentScriptOverrides[agentName] ?? `${agentName}.ts`),
+    path.join(systemPaths.brain, 'agents', directoryName, 'cli.ts'),
+    path.join(systemPaths.brain, 'agents', directoryName, `${directoryName}.ts`),
+    path.join(systemPaths.brain, 'agents', directoryName, 'index.ts'),
+    path.join(systemPaths.brain, 'agents', `${directoryName}.ts`),
   ];
 
   return candidates.find(candidate => fs.existsSync(candidate)) ?? null;

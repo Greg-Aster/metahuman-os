@@ -25,10 +25,13 @@ import {
   vllm,
   loadBackendConfig,
   buildVLLMStartConfig,
+  getAdaptersToLoad,
+  getVllmLoraConfig,
   saveBackendConfig,
   getBackendStatus,
   detectAvailableBackends,
   switchBackend,
+  ensureBackendRunning,
   getActiveBackend,
   listAvailableAgents,
   getAgentMonitorSnapshot,
@@ -60,6 +63,12 @@ import {
   checkLuks,
 } from '@metahuman/core';
 import { verifyRecoveryCode, getRemainingCodes } from '@metahuman/core/recovery-codes';
+import {
+  agentHandlerId,
+  agentTaskType,
+  isPersistentService,
+  submitCoordinatorWork,
+} from '@metahuman/core/queue';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
@@ -76,6 +85,29 @@ function getDefaultUsername(): string {
   } catch {
     return 'default';
   }
+}
+
+async function buildCliVLLMStartConfig(
+  config = loadBackendConfig(),
+  model?: string,
+  gpuMemoryUtilization?: number,
+) {
+  const startConfig = buildVLLMStartConfig(config, model, gpuMemoryUtilization);
+  const loraProfile = getProfilePaths(getUserContext()?.username || getDefaultUsername());
+  const loraConfig = getVllmLoraConfig(loraProfile.etc);
+
+  return {
+    ...startConfig,
+    loraModules: await getAdaptersToLoad(
+      loraProfile.out,
+      loraProfile.etc,
+      startConfig.artifact?.displayName || startConfig.servedModelName || startConfig.model,
+    ),
+    maxLoraRank: loraConfig.maxLoraRank,
+    maxLoras: loraConfig.maxLoras,
+    maxCpuLoras: loraConfig.maxCpuLoras,
+    loraDtype: loraConfig.loraDtype,
+  };
 }
 
 // Get profile paths for current CLI context
@@ -271,7 +303,7 @@ async function startServices(options: { restart?: boolean; force?: boolean } = {
   // the AuthGate login screen if not authenticated.
 
   const bootAgents = getAgentMonitorSnapshot().bootAgents
-    .filter(agent => agent.enabled && agent.runOnBoot)
+    .filter(agent => agent.enabled && agent.startOnSystemBoot)
     .map(agent => agent.agentId);
   const defaults = isHeadless()
     ? []
@@ -310,6 +342,9 @@ async function startServices(options: { restart?: boolean; force?: boolean } = {
       actor: 'system',
       source: 'cli/start',
       useBootstrap: true,
+      detached: true,
+      waitForMs: 5_000,
+      checkLock: true,
     });
     if (result.alreadyRunning) {
       console.log(`• ${agentName} already running`);
@@ -811,7 +846,7 @@ Examples:
         console.log(`Starting vLLM server with model: ${model}...`);
         console.log(`  GPU memory utilization: ${gpuUtil}`);
 
-        const result = await vllm.startServer(buildVLLMStartConfig(config, model, gpuUtil));
+        const result = await vllm.startServer(await buildCliVLLMStartConfig(config, model, gpuUtil));
 
         if (result.success) {
           console.log(`✅ vLLM server started (PID: ${result.pid})`);
@@ -836,7 +871,7 @@ Examples:
         console.log('Restarting vLLM server...');
         await vllm.stopServer();
 
-        const result = await vllm.startServer(buildVLLMStartConfig(config));
+        const result = await vllm.startServer(await buildCliVLLMStartConfig(config));
 
         if (result.success) {
           console.log(`✅ vLLM server restarted (PID: ${result.pid})`);
@@ -870,11 +905,13 @@ Usage: mh backend <subcommand> [options]
 
 Subcommands:
   status              Show current backend status and configuration
+  start               Start the configured backend
   switch <backend>    Switch to a different backend (ollama|vllm)
   detect              Detect available backends on the system
 
 Examples:
   mh backend status
+  mh backend start
   mh backend switch ollama
   mh backend switch vllm
   mh backend detect
@@ -914,6 +951,27 @@ Examples:
         if (config.activeBackend === 'vllm') {
           console.log(`  - [ACTIVE]`);
         }
+        break;
+      }
+
+      case 'start': {
+        const config = loadBackendConfig();
+        console.log(`Starting configured backend: ${config.activeBackend}...`);
+        const shouldPrepareVllm = config.activeBackend === 'vllm'
+          || (config.activeBackend === 'auto' && config.preferredLocalBackend === 'vllm');
+        const result = await ensureBackendRunning({
+          forceStart: true,
+          vllmStartConfig: shouldPrepareVllm
+            ? await buildCliVLLMStartConfig(config)
+            : undefined,
+        });
+
+        if (!result.running) {
+          console.error(`❌ Failed to start ${config.activeBackend}: ${result.error || 'unknown error'}`);
+          process.exit(1);
+        }
+
+        console.log(`✅ Configured backend is running: ${config.activeBackend}`);
         break;
       }
 
@@ -1241,31 +1299,42 @@ For more information, see DESIGN.md and ARCHITECTURE.md
         process.exit(1);
       }
 
-      // Single-instance guard using running.json registry
-      if (isAgentRunning(agentName)) {
-        console.error(`Agent '${agentName}' is already running. Use: mh agent stop ${agentName}`);
-        process.exit(1);
+      if (isPersistentService(agentName)) {
+        if (isAgentRunning(agentName)) {
+          console.error(`Service '${agentName}' is already running. Use: mh agent stop ${agentName}`);
+          process.exit(1);
+        }
+        console.log(`Starting service: ${agentName}...`);
+        const result = await startAgentProcess(agentName, {
+          actor: 'system',
+          source: 'cli/service/run',
+          useBootstrap: true,
+          detached: true,
+          waitForMs: 5000,
+          checkLock: true,
+          readyPattern: /\bstarted\b|\bready\b/i,
+        });
+        if (!result.started) {
+          console.error(`Failed to start service '${agentName}': ${result.error || 'unknown error'}`);
+          process.exit(1);
+        }
+        console.log(result.pid ? `Service '${agentName}' started with PID ${result.pid}` : `Service '${agentName}' started`);
+        break;
       }
 
-      console.log(`Spawning agent: ${agentName}...`);
-      const result = await startAgentProcess(agentName, {
-        actor: 'system',
-        source: 'cli/agent/run',
-        useBootstrap: true,
-        detached: false,
-        waitForMs: 5000,
+      const username = getUserContext()?.username
+        || listUsers().find(user => user.role === 'owner')?.username
+        || 'system';
+      const work = await submitCoordinatorWork({
+        type: agentTaskType(agentName),
+        handler: agentHandlerId(agentName),
+        source: 'user',
+        username,
+        priority: 'normal',
+        input: { agentId: agentName, args: args.slice(2), triggeredBy: 'cli' },
+        metadata: { producer: 'cli-agent-run', agentId: agentName },
       });
-
-      if (result.alreadyRunning) {
-        console.error(`Agent '${agentName}' is already running. Use: mh agent stop ${agentName}`);
-        process.exit(1);
-      }
-      if (!result.started) {
-        console.error(`Failed to start agent '${agentName}': ${result.error || 'unknown error'}`);
-        if (result.stderr) console.error(result.stderr);
-        process.exit(1);
-      }
-      console.log(result.pid ? `Agent '${agentName}' started with PID ${result.pid}` : `Agent '${agentName}' started`);
+      console.log(`Agent '${agentName}' queued as work ${work.id}`);
       break;
     }
 

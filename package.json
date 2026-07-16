@@ -26,8 +26,11 @@
 		"url": "https://github.com/Greg-Aster/metahuman-os.git"
 	},
 	"scripts": {
+		"preinstall": "node scripts/check-node-runtime.mjs",
+		"check:node": "node scripts/check-node-runtime.mjs",
 		"postinstall": "node scripts/postinstall.mjs",
 		"validate:graphs": "tsx scripts/validate-graphs.ts",
+		"smoke:vision": "tsx scripts/smoke-vision.ts",
 		"validate:agent-monitor": "tsx scripts/validate-agent-monitor.ts",
 		"validate:security-routes": "tsx scripts/validate-security-routes.ts",
 		"validate:node-defaults": "tsx scripts/validate-node-defaults.ts",
@@ -48,7 +51,7 @@
 		"studio": "cd apps/code-oss && ./launch.sh",
 		"studio:dev": "cd apps/code-oss && ./launch-dev.sh",
 		"studio:build": "cd apps/code-oss && ./build.sh",
-		"studio:watch": "cd apps/code-oss && bash -c 'source ~/.nvm/nvm.sh && nvm use 22.21.1 && npm run watchd'"
+		"studio:watch": "cd apps/code-oss && bash -c 'source ~/.nvm/nvm.sh && nvm use && npm run watchd'"
 	},
 	"dependencies": {
 		"dotenv": "^17.2.3",
@@ -58,6 +61,10 @@
 		"tsx": "^4.20.6"
 	},
 	"packageManager": "pnpm@10.15.1+sha512.34e538c329b5553014ca8e8f4535997f96180a1d0f614339357449935350d924e22f8614682191264ec33d1462ac21561aff97f6bb18065351c162c7e8f6de67",
+	"engines": {
+		"node": ">=22.3.0 <23",
+		"pnpm": ">=10.15.1 <11"
+	},
 	"devDependencies": {
 		"@types/fs-extra": "^11.0.4",
 		"@types/node-fetch": "^2.6.13",

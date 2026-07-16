@@ -628,8 +628,10 @@ Defines text-to-speech and speech-to-text configuration for the profile. Support
 
 Change providers via the Web UI (Settings → Voice) or by editing `tts.provider` in `voice.json`. The system will automatically route TTS requests to the selected provider, and `./bin/start-voice-server` will launch whichever backing services that profile requires.
 
-### `profiles/<username>/etc/agents.json` - Agent Scheduler Configuration
-Controls the centralized agent scheduler system. This file defines all autonomous agents, their trigger types, and scheduling parameters.
+### `etc/agents.json` - Trigger Manager Configuration
+Defines finite scheduled work, trigger types, admission modes, and timing. The
+API reports this catalog as system-scoped. Persistent service boot/restart
+configuration lives separately in `etc/services.json`.
 
 ```json
 {
@@ -639,7 +641,8 @@ Controls the centralized agent scheduler system. This file defines all autonomou
       "enabled": true,
       "type": "interval",
       "interval": 900,
-      "runOnBoot": false,
+      "startupPolicy": "skip",
+      "allowedModes": ["semi", "full"],
       "agentPath": "brain/agents/reflector.ts"
     },
     "organizer": {
@@ -647,7 +650,8 @@ Controls the centralized agent scheduler system. This file defines all autonomou
       "enabled": true,
       "type": "interval",
       "interval": 60,
-      "runOnBoot": false,
+      "startupPolicy": "skip",
+      "allowedModes": ["semi", "full"],
       "agentPath": "brain/agents/organizer.ts"
     },
     "dreamer": {
@@ -676,7 +680,8 @@ Controls the centralized agent scheduler system. This file defines all autonomou
   - `interval`: For interval-based agents, seconds between runs
   - `schedule`: For time-of-day agents, 24-hour time (e.g., "02:00")
   - `inactivityThreshold`: For activity-based agents, seconds of inactivity before triggering
-  - `runOnBoot`: Whether to run immediately when scheduler starts
+  - `startupPolicy`: `skip`, `run-once`, or `recover-missed` for finite startup admission
+  - `allowedModes`: Active Operator modes in which the trigger may admit work
   - `agentPath`: Path to agent file (relative to project root)
   - `task`: Alternative to agentPath - operator task configuration with goal/audience/autoApprove
 
@@ -687,13 +692,14 @@ Controls the centralized agent scheduler system. This file defines all autonomou
    - Example: `dreamer` runs at 2:00 AM during sleep cycle
 3. **activity**: Runs agent after period of inactivity
    - Example: `boredom-maintenance` triggers after 15 minutes idle
-4. **event** (future): Runs agent when specific system events occur
+4. **event**: Admits work when the configured canonical event pattern occurs
 
-**Hot-Reloading:**
-The scheduler-service watches `profiles/<username>/etc/agents.json` for changes and automatically reloads configuration without restart. This allows you to:
+**Live application:**
+Trigger Manager Settings writes through the core `TriggerConfigService`, which
+validates and atomically applies the new revision without a server restart. This allows you to:
 - Enable/disable agents on the fly
 - Adjust intervals and schedules
-- Add new agents without downtime
+- See matching persisted/runtime revisions and changed next-due times immediately
 
 **Mind-Wandering Configuration:**
 Mind-wandering (reflection triggering) is now configured directly via the web UI (Settings → Boredom Control), which updates the `boredom-maintenance` agent in `etc/agents.json`. The legacy `etc/boredom.json` file is maintained for the `showInChat` setting but is no longer the primary configuration source.

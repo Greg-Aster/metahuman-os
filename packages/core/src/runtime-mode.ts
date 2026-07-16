@@ -169,7 +169,7 @@ export function exitHeadlessMode(actor?: string, claimedBy?: string): void {
  */
 async function startDefaultAgents(actor?: string): Promise<void> {
   const bootAgents = getAgentMonitorSnapshot().bootAgents
-    .filter(agent => agent.enabled && agent.runOnBoot)
+    .filter(agent => agent.enabled && agent.startOnSystemBoot)
     .map(agent => agent.agentId);
 
   console.log('[runtime-mode] Starting configured boot agents...');
@@ -178,6 +178,9 @@ async function startDefaultAgents(actor?: string): Promise<void> {
     actor: actor || 'system',
     source: 'runtime-mode',
     useBootstrap: true,
+    detached: true,
+    waitForMs: 5_000,
+    checkLock: true,
   })));
 
   audit({

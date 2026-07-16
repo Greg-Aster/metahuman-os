@@ -11,11 +11,25 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras, listLocalModelArtifacts } from '../../index.js';
+import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras, listLocalModelArtifacts, ollama } from '../../index.js';
 import { invalidateModelCache } from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
+
+interface AvailableRegistryModel {
+  id: string
+  provider: string
+  model: string
+  roles: string[]
+  capabilities: string[]
+  description: string
+  adapters: string[]
+  baseModel: string | null
+  metadata: Record<string, unknown>
+  options: Record<string, unknown>
+  source: 'user-registry' | 'runtime-discovery'
+}
 
 /**
  * Resolve models.json path for a user
@@ -129,6 +143,17 @@ async function writeModelRegistry(username: string, registry: any) {
 
 const ALL_ROLES = ['persona', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
 
+function normalizeProviderCapabilities(value: unknown): Array<'text' | 'image'> {
+  if (!Array.isArray(value)) return []
+  const capabilities = new Set<'text' | 'image'>()
+  for (const capability of value) {
+    const normalized = String(capability).toLowerCase()
+    if (normalized === 'completion' || normalized === 'text') capabilities.add('text')
+    if (normalized === 'vision' || normalized === 'image') capabilities.add('image')
+  }
+  return [...capabilities]
+}
+
 /**
  * GET /api/model-registry - Get model registry (owner or standard)
  */
@@ -151,12 +176,13 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     const backendStatus = await getBackendStatus();
 
     // Process user registry models - this is the ONLY source of truth
-    const availableModels = Object.entries(registry.models || {})
+    const availableModels: AvailableRegistryModel[] = Object.entries(registry.models || {})
       .map(([id, config]: [string, any]) => ({
         id,
         provider: config.provider,
         model: config.model,
-        roles: Array.from(new Set(config.roles || [])),
+        roles: Array.from(new Set<string>(config.roles || [])),
+        capabilities: Array.from(new Set<string>(config.capabilities || [])),
         description: config.description || '',
         adapters: config.adapters || [],
         baseModel: config.baseModel || null,
@@ -186,6 +212,57 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     const resolvedBackend = backendStatus.resolvedBackend;
     const isVLLMRunning = resolvedBackend === 'vllm';
     const isOllamaRunning = resolvedBackend === 'ollama';
+
+    // vllm.active represents the backend's one loaded/configured model. Overlay
+    // its runtime identity for display without replacing the user's persisted
+    // roles, capabilities, or options.
+    if (activeBackend === 'vllm') {
+      const backendConfig = loadBackendConfig()
+      const configuredModel = backendStatus.model
+        || backendConfig.vllm.servedModelName
+        || backendConfig.vllm.model
+      const activeVllmModel = availableModels.find(model => model.id === 'vllm.active')
+      if (activeVllmModel && configuredModel) {
+        activeVllmModel.model = configuredModel
+        activeVllmModel.description = `Active vLLM backend model: ${configuredModel}`
+      }
+    }
+
+    // Runtime discovery feeds the existing registry UI; it does not become a
+    // second configuration source. A discovered model is persisted only when
+    // the user assigns or edits it through this handler.
+    if (isOllamaRunning) {
+      try {
+        const installed = await ollama.listModels()
+        const discovered = await Promise.all(installed.map(async installedModel => {
+          const details = await ollama.showModel(installedModel.name).catch(() => ({})) as { capabilities?: string[] }
+          return {
+            id: `ollama.${installedModel.name}`,
+            provider: 'ollama',
+            model: installedModel.name,
+            roles: [] as string[],
+            capabilities: normalizeProviderCapabilities(details.capabilities),
+            description: `Installed Ollama model ${installedModel.name}`,
+            adapters: [] as string[],
+            baseModel: null,
+            metadata: { source: 'ollama-runtime-discovery' },
+            options: {},
+            source: 'runtime-discovery' as const,
+          }
+        }))
+
+        for (const model of discovered) {
+          const existing = availableModels.find(candidate => candidate.provider === 'ollama' && candidate.model === model.model)
+          if (existing) {
+            if (model.capabilities.length > 0) existing.capabilities = model.capabilities
+          } else {
+            availableModels.push(model)
+          }
+        }
+      } catch (error) {
+        console.warn('[model-registry] Failed to discover Ollama models:', error)
+      }
+    }
 
     // Local model info - ONLY for vLLM since it runs ONE model at a time
     // Ollama doesn't need this since users can select any model
@@ -320,6 +397,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           provider: 'vllm',
           model: backendConfig.vllm?.model || 'unknown',
           roles: [role],
+          capabilities: [],
           adapters: [],
           description: `vLLM backend model`,
           options: {},
@@ -334,6 +412,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           model: adapterName,  // vLLM routes to LoRA based on model name
           baseModel: backendConfig.vllm?.model,
           roles: [role],
+          capabilities: [],
           adapters: [],
           description: `vLLM LoRA adapter: ${adapterName}`,
           options: {},
@@ -352,6 +431,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           model: adapterName,
           baseModel: baseModel,
           roles: [role],
+          capabilities: [],
           adapters: [],
           description: `LoRA adapter: ${adapterName}`,
           options: {},
@@ -360,10 +440,12 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
       } else if (modelId.startsWith('ollama.')) {
         // Ollama model - runtime discovery
         const inferredName = modelId.replace(/^ollama\./, '');
+        const details = await ollama.showModel(inferredName).catch(() => ({})) as { capabilities?: string[] };
         registry.models[modelId] = {
           provider: 'ollama',
           model: inferredName,
           roles: [role],
+          capabilities: normalizeProviderCapabilities(details.capabilities),
           adapters: [],
           description: `Ollama model ${inferredName}`,
           options: {},
@@ -381,6 +463,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           provider: 'remote-server',
           model: modelName,
           roles: [role],
+          capabilities: [],
           adapters: [],
           description: `Remote server model (${remoteProvider}): ${modelName}`,
           options: {},
@@ -485,13 +568,93 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
     // Allow authenticated users (owner or standard) to modify their own settings
     // Note: isAuthenticated check above already excludes guest/anonymous
 
-    const { globalSettings } = body || {};
+    const registry = readModelRegistry(user.username);
 
-    if (!globalSettings) {
-      return { status: 400, error: 'globalSettings object is required' };
+    const { globalSettings, modelId, capabilities, options } = body || {};
+    if (modelId !== undefined) {
+      if (typeof modelId !== 'string' || !modelId) {
+        return { status: 400, error: 'modelId must be a non-empty string' };
+      }
+      const model = registry.models?.[modelId];
+      if (!model) {
+        return { status: 404, error: `Model ${modelId} is not registered. Assign it to a role before editing its options.` };
+      }
+
+      if (capabilities !== undefined) {
+        if (!Array.isArray(capabilities)
+          || capabilities.some((value: unknown) => value !== 'text' && value !== 'image')) {
+          return { status: 400, error: 'capabilities may contain only text and image' };
+        }
+        model.capabilities = Array.from(new Set(capabilities));
+      }
+
+      if (options !== undefined) {
+        if (!options || typeof options !== 'object' || Array.isArray(options)) {
+          return { status: 400, error: 'options must be an object' };
+        }
+
+        const nextOptions: Record<string, unknown> = {};
+        if (options.contextWindow !== undefined) {
+          if (!Number.isInteger(options.contextWindow) || options.contextWindow < 512) {
+            return { status: 400, error: 'options.contextWindow must be an integer of at least 512' };
+          }
+          nextOptions.contextWindow = options.contextWindow;
+        }
+        if (options.enableThinking !== undefined) {
+          if (typeof options.enableThinking !== 'boolean') {
+            return { status: 400, error: 'options.enableThinking must be a boolean' };
+          }
+          nextOptions.enableThinking = options.enableThinking;
+        }
+        if (options.maxImages !== undefined) {
+          if (!Number.isInteger(options.maxImages) || options.maxImages < 1 || options.maxImages > 16) {
+            return { status: 400, error: 'options.maxImages must be an integer between 1 and 16' };
+          }
+          nextOptions.maxImages = options.maxImages;
+        }
+        if (options.maxImageBytes !== undefined) {
+          if (!Number.isInteger(options.maxImageBytes) || options.maxImageBytes < 1 || options.maxImageBytes > 20 * 1024 * 1024) {
+            return { status: 400, error: 'options.maxImageBytes must be an integer between 1 and 20971520' };
+          }
+          nextOptions.maxImageBytes = options.maxImageBytes;
+        }
+        if (options.allowedImageMimeTypes !== undefined) {
+          if (!Array.isArray(options.allowedImageMimeTypes)
+            || options.allowedImageMimeTypes.length === 0
+            || options.allowedImageMimeTypes.some((value: unknown) => typeof value !== 'string' || !value.startsWith('image/'))) {
+            return { status: 400, error: 'options.allowedImageMimeTypes must contain image MIME types' };
+          }
+          nextOptions.allowedImageMimeTypes = Array.from(new Set(options.allowedImageMimeTypes));
+        }
+
+        model.options = { ...(model.options || {}), ...nextOptions };
+      }
+
+      await writeModelRegistry(user.username, registry);
+      await audit({
+        category: 'data_change',
+        level: 'info',
+        event: 'model_options_updated',
+        action: 'model_options_updated',
+        actor: user.username,
+        userId: user.userId,
+        metadata: { modelId, capabilities: model.capabilities, options: model.options },
+      });
+
+      return successResponse({
+        success: true,
+        message: `Model ${modelId} options updated`,
+        model: {
+          id: modelId,
+          capabilities: model.capabilities || [],
+          options: model.options || {},
+        },
+      });
     }
 
-    const registry = readModelRegistry(user.username);
+    if (!globalSettings) {
+      return { status: 400, error: 'globalSettings or modelId is required' };
+    }
 
     // Merge global settings
     registry.globalSettings = {

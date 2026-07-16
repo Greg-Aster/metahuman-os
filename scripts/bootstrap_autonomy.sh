@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # MetaHuman Autonomy Bootstrap
-# - Installs: Node 18+, pnpm, Ollama (+ base model), whisper.cpp (+ model),
+# - Installs: Node.js 22, pnpm, Ollama (+ base model), whisper.cpp (+ model),
 #             Conda env + accelerate/Axolotl (best effort), and repo configs
 # - Configures: etc/sleep.json (LoRA on), etc/auto-approval.json (live + auto*)
 # - Verifies tools and prints clear next steps
@@ -32,8 +32,10 @@ ensure_node() {
   if need_cmd node; then
     ver="$(node -v | sed 's/v//')"
     major="${ver%%.*}"
-    if [[ "${major}" -ge 18 ]]; then log "Node ${ver} OK"; return; fi
-    warn "Node < 18 detected (${ver}); installing LTS via nvm"
+    remainder="${ver#*.}"
+    minor="${remainder%%.*}"
+    if [[ "${major}" -eq 22 && "${minor}" -ge 3 ]]; then log "Node ${ver} OK"; return; fi
+    warn "Node ${ver} does not satisfy >=22.3.0 <23; installing the repo runtime via nvm"
   else
     warn "Node not found; installing via nvm"
   fi
@@ -44,14 +46,19 @@ ensure_node() {
   fi
   # shellcheck disable=SC1090
   . "$NVM_DIR/nvm.sh"
-  nvm install --lts
-  nvm alias default 'lts/*'
+  requested_version="$(tr -d '[:space:]' < "$REPO_ROOT/.nvmrc")"
+  nvm install "$requested_version"
+  nvm alias default "$requested_version"
+  nvm use "$requested_version"
   log "Node $(node -v) installed"
 }
 
 ensure_pnpm() {
+  if need_cmd corepack; then
+    corepack enable pnpm
+  fi
   if need_cmd pnpm; then log "pnpm $(pnpm -v) OK"; return; fi
-  if need_cmd corepack; then corepack enable; corepack prepare pnpm@latest --activate; log "pnpm installed via corepack"; else npm install -g pnpm; fi
+  npm install -g pnpm@10.15.1
 }
 
 ensure_ollama() {

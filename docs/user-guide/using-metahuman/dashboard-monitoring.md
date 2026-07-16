@@ -79,21 +79,35 @@ Last 7 days: +87 memories
 - Processing status
 - Agent logs (recent 50 entries)
 
-**Available Agents:**
-- **organizer**: Memory enrichment (tags, entities)
-- **reflector**: Reflection generation
-- **dreamer**: Dream creation during sleep
-- **boredom-maintenance**: Activity-based reflection triggering
-- **curiosity-service**: User-facing questions
-- **inner-curiosity**: Self-directed questions
-- **sleep-workflow**: Coordinator-owned nightly dream and persona-review work
-- **ingestor**: File inbox processing
-- **audio-organizer**: Audio transcription and organization
+The Agent Monitor uses the canonical Agent Catalog for names, executable health,
+and lifecycle authorization. Persistent services are started as processes;
+finite agents are admitted to the Work Coordinator.
 
 **Actions:**
-- Start/stop agents
+- Start, stop, and restart persistent services
+- Submit finite agent work through the Work Coordinator
 - View detailed logs
 - Monitor coordinator work items and terminal history
+
+### Agent Catalog
+
+**Displays:**
+
+- every maintained installed agent and persistent service;
+- Trigger Manager registration and enabled state;
+- installed-but-unscheduled agents;
+- source aliases and workflow-parent relationships;
+- privileged/destructive risk, LLM use, source health, and ownership.
+
+Use **System → Agent Catalog** to register an installed finite agent with its
+safe default trigger, unregister it without deleting source or history, enable
+or disable registered triggers, and submit manual runs. Scheduling details remain
+under **System → Trigger Manager**.
+
+The **Mood** catalog card also exposes its per-user review settings and current
+review state. Its smaller Trigger Manager/Queue display reports the counted
+message trigger and next idle-baseline deadline; it appears in the running
+process list only while a queued Mood run is actually executing.
 
 ### Model Information
 
@@ -183,7 +197,7 @@ Roles:
 **Settings:**
 - Reflection frequency: high (~1 min), medium (~5 mins), low (~15 mins), off
 - Configures `etc/agents.json`
-- Auto-detected by scheduler-service
+- Applied live by TriggerConfigService and evaluated by TriggerManager
 - Controls boredom-maintenance agent activity
 
 ### Model Selector
@@ -216,7 +230,8 @@ Roles:
 - **Kokoro TTS**: Text-to-speech server status
 - **Whisper STT**: Speech-to-text server status
 - **Cloudflare Tunnel**: Public URL status (if enabled)
-- **Scheduler Service**: Agent scheduler status
+- **Maintenance Service**: Lock, audit-log, and embedding-preload maintenance
+- **Environment Bridge**: Configured environment-adapter connection
 - **Background Agents**: Individual agent health
 
 **Status Indicators:**

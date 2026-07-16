@@ -5,6 +5,7 @@
   import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl, isMobileApp } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
+  import { runTriggerNow } from '../lib/stores/trigger-manager';
 
   function storeSession(sessionId: string, username: string): void {
     if (!isMobileApp()) return;
@@ -230,25 +231,9 @@
         if (shouldSync) {
           console.log('[AuthGate] Auto-sync on login enabled, triggering profile-sync agent...');
           // Fire-and-forget: agent runs in background while app loads
-          apiFetch('/api/agents/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agent: 'profile-sync',
-              args: ['--pull-only', '--full', '--skip-config']
-            }),
-          })
-            .then(async (res) => {
-              if (res.ok) {
-                const result = await res.json();
-                console.log(`[AuthGate] Profile-sync agent started (PID: ${result.pid})`);
-              } else {
-                console.log('[AuthGate] Profile-sync agent failed to start:', await res.text());
-              }
-            })
-            .catch(err => {
-              console.warn('[AuthGate] Profile-sync agent trigger failed:', err);
-            });
+          runTriggerNow('profile-sync', ['--pull-only', '--full', '--skip-config'])
+            .then(taskId => console.log(`[AuthGate] Profile-sync queued as ${taskId}`))
+            .catch(err => console.warn('[AuthGate] Profile-sync trigger failed:', err));
           successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
         } else {
           successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;

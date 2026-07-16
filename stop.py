@@ -256,7 +256,7 @@ def main():
 
     # Stop specific services
     print("Stopping services...")
-    kill_processes_by_pattern("scheduler-service", "Scheduler Service")
+    kill_processes_by_pattern("maintenance-service", "Maintenance Service")
     kill_processes_by_pattern("audio-organizer", "Audio Organizer")
     kill_processes_by_pattern("brain/agents", "Background Agents")
     print()

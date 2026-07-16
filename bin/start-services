@@ -26,54 +26,9 @@ start_task() {
   } >> "$log_file" 2>&1 &
 }
 
-should_start_vllm() {
-  local config_file="$REPO_ROOT/etc/llm-backend.json"
-
-  if [ ! -f "$config_file" ] || ! command -v node >/dev/null 2>&1; then
-    return 1
-  fi
-
-  node -e "
-const fs = require('fs');
-const config = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-process.exit(config.activeBackend === 'vllm' && config.vllm?.autoStart ? 0 : 1);
-" "$config_file"
-}
-
-start_vllm_task() {
-  local log_file="$LOG_DIR/vllm.launcher.log"
-  local marker_file="$LOG_DIR/vllm.starting"
-
-  if curl --max-time 3 -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
-    echo "vLLM server already running"
-    return 0
-  fi
-
-  {
-    echo "[$(date -Is)] starting vllm"
-    date -Is > "$marker_file"
-    set +e
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 300 "$REPO_ROOT/bin/mh" vllm start
-    else
-      "$REPO_ROOT/bin/mh" vllm start
-    fi
-    local exit_code=$?
-    if curl --max-time 3 -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
-      exit_code=0
-    fi
-    set -e
-    rm -f "$marker_file"
-    echo "[$(date -Is)] vllm launcher exited with code $exit_code"
-    exit "$exit_code"
-  } >> "$log_file" 2>&1 &
-}
-
 start_background_services() {
   start_task event-bus "$REPO_ROOT/bin/start-event-bus"
-  if should_start_vllm; then
-    start_vllm_task
-  fi
+  start_task llm-backend "$REPO_ROOT/bin/mh" backend start
   start_task agents "$REPO_ROOT/bin/mh" start --no-restart
   start_task cloudflare "$REPO_ROOT/bin/start-cloudflare"
   start_task voice-server "$REPO_ROOT/bin/start-voice-server"

@@ -11,31 +11,37 @@
  * AUTO-START: Automatically starts the configured backend if not running
  *
  * UNIFIED CODEBASE:
- * With React Native migration (Node.js 18), both web and mobile use the same code path.
+ * With the React Native migration, both web and mobile use the same code path.
  * Feature detection determines if native fetch is available:
- * - Node.js 18+ (web, React Native): Uses @metahuman/server with native fetch
- * - Node.js 12 (legacy Capacitor): Falls back to mobile-providers.ts with https module
+ * - Runtimes with native fetch: Uses @metahuman/server
+ * - Legacy runtimes without native fetch: Falls back to mobile-providers.ts
  */
 
-import { ollama, isRunning as isOllamaRunning } from '../ollama.js';
-import { vllm, isVLLMRunning } from '../vllm.js';
+import {
+  ollama,
+  isRunning as isOllamaRunning,
+  buildOllamaChatMessages,
+  normalizeOllamaChatResponse,
+  resolveOllamaThinkingMode,
+} from '../ollama.js';
+import { vllm, isVLLMRunning, type VLLMConfig } from '../vllm.js';
 import { buildVLLMStartConfig, loadBackendConfig, getBackendStatus } from '../llm-backend.js';
 import { generateWithLocalService, isLocalModelServiceRunning } from './local-models.js';
 import { loadDeploymentConfig } from '../deployment.js';
 import { callMobileProvider } from '../mobile-providers.js';
 import { getUserContext } from '../context.js';
+import { getProfilePaths } from '../path-builder.js';
+import { getAdaptersToLoad, getVllmLoraConfig } from '../vllm-lora.js';
 import { resolveCredentials } from '../llm-config.js';
 import { loadFreshOperatorConfig } from '../config.js';
 
-// Feature detection: Check if native fetch is available (Node.js 18+)
+// Feature detection keeps the shared provider path independent of runtime version labels.
 // This determines whether to use @metahuman/server (native fetch) or mobile-providers.ts (https module)
 const hasNativeFetch = typeof globalThis.fetch === 'function';
-const nodeVersion = parseInt(process.version.slice(1).split('.')[0], 10);
-const isModernNode = nodeVersion >= 18;
 
 // Log once at startup
 if (process.env.METAHUMAN_MOBILE === 'true') {
-  console.log(`[provider-bridge] Mobile runtime - Node.js ${process.version}, native fetch: ${hasNativeFetch}, modern: ${isModernNode}`);
+  console.log(`[provider-bridge] Mobile runtime - Node.js ${process.version}, native fetch: ${hasNativeFetch}`);
 }
 
 // Track if we've already logged the active backend
@@ -47,6 +53,9 @@ import {
   type ProviderProgressCallback,
   type ProviderConfig,
   type ProviderType,
+  ProviderInputError,
+  inspectProviderMessages,
+  providerImagePolicyFromOptions,
   isCloudProvider,
   isRemoteServerProvider,
 } from './types.js';
@@ -57,6 +66,12 @@ function messageText(message: ProviderMessage): string {
     .filter(part => part.type === 'text')
     .map(part => part.text)
     .join('\n');
+}
+
+export function assertAdapterPreservesImageInput(provider: string, imageCount: number): void {
+  if (imageCount > 0) {
+    throw new ProviderInputError(`${provider} does not preserve image content in its current MetaHuman adapter.`)
+  }
 }
 
 // Re-export types for convenience
@@ -77,6 +92,15 @@ export async function callProvider(
   options: ProviderOptions,
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
+  const imagePolicy = providerImagePolicyFromOptions(options)
+  const contentInspection = inspectProviderMessages(messages, imagePolicy)
+  const hasImages = contentInspection.imageCount > 0
+  const declaredCapabilities = options.modelCapabilities || []
+  if (hasImages && declaredCapabilities.length > 0
+    && !declaredCapabilities.some(capability => capability === 'image' || capability === 'vision')) {
+    throw new ProviderInputError(`The selected model ${options.model || 'unknown'} is not configured for image input.`)
+  }
+
   // Get config
   const deploymentConfig = loadDeploymentConfig();
 
@@ -123,6 +147,7 @@ export async function callProvider(
   }
 
   if (shouldUseBigBrother) {
+    assertAdapterPreservesImageInput('Big Brother', contentInspection.imageCount)
     // Use the provider-agnostic escalation system
     const { escalate, getActiveBackend } = await import('../escalation-backend.js');
 
@@ -231,10 +256,11 @@ export async function callProvider(
   }
 
   if (isCloudProvider(providerName)) {
+    assertAdapterPreservesImageInput(providerName, contentInspection.imageCount)
     // UNIFIED CODEBASE: Use feature detection instead of platform check
-    // - Node.js 18+ (web, React Native): Use @metahuman/server with native fetch
-    // - Node.js 12 (legacy Capacitor): Use mobile-providers.ts with https module
-    const shouldUseMobileProvider = !hasNativeFetch && !isModernNode;
+    // - Native fetch: Use @metahuman/server
+    // - No native fetch: Use the legacy https-module provider
+    const shouldUseMobileProvider = !hasNativeFetch;
 
     if (shouldUseMobileProvider && providerName === 'runpod_serverless' && config.runpod?.apiKey) {
       // Legacy path: Node.js 12 doesn't have native fetch
@@ -300,9 +326,11 @@ export async function callProvider(
     }
 
     case 'mock':
+      assertAdapterPreservesImageInput('Mock provider', contentInspection.imageCount)
       return callMockProvider(messages, options);
 
     case 'local-models': {
+      assertAdapterPreservesImageInput('Local models', contentInspection.imageCount)
       // Local model service (Transformers.js) - for mobile/offline use
       const backendConfig = loadBackendConfig();
       const localModelsConfig = backendConfig.localModels;
@@ -343,6 +371,8 @@ async function callRemoteProvider(
   backendConfig: any,
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
+  const inspection = inspectProviderMessages(messages, providerImagePolicyFromOptions(options))
+  assertAdapterPreservesImageInput('Remote provider', inspection.imageCount)
   const remoteConfig = backendConfig.remote;
   if (!remoteConfig?.provider) {
     throw new Error('No remote provider configured');
@@ -437,10 +467,7 @@ async function callRemoteServerProvider(
       headers,
       body: JSON.stringify({
         model,
-        messages: messages.map(m => ({
-          role: m.role,
-          content: messageText(m),
-        })),
+        messages,
         options: {
           temperature: options.temperature,
           num_predict: options.maxTokens,
@@ -502,7 +529,12 @@ async function callOllamaProvider(
   options: ProviderOptions,
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
-  const model = options.model || 'qwen3:14b';
+  const backendConfig = loadBackendConfig();
+  const ollamaConfig = backendConfig.ollama;
+  const model = options.model || ollamaConfig.defaultModel;
+  ollama.setEndpoint(ollamaConfig.endpoint);
+  const imagePolicy = providerImagePolicyFromOptions(options)
+  const contentInspection = inspectProviderMessages(messages, imagePolicy)
 
   // Log active backend once
   if (!backendLoggedOnce) {
@@ -518,6 +550,21 @@ async function callOllamaProvider(
       message: 'Ollama is not running. Start it with: ollama serve',
     });
     throw new Error('Ollama is not running. Start it with: ollama serve');
+  }
+
+  if (contentInspection.imageCount > 0) {
+    let details: { capabilities?: string[] }
+    try {
+      details = await ollama.showModel(model) as { capabilities?: string[] }
+    } catch {
+      throw new ProviderInputError(`The selected Ollama model ${model} is not installed or could not be inspected.`)
+    }
+    const capabilities = Array.isArray(details.capabilities)
+      ? details.capabilities.map(capability => capability.toLowerCase())
+      : []
+    if (capabilities.length > 0 && !capabilities.includes('vision') && !capabilities.includes('image')) {
+      throw new ProviderInputError(`The selected Ollama model ${model} does not support image input.`)
+    }
   }
 
   // Check if model is already loaded or if we need to wait
@@ -569,11 +616,15 @@ async function callOllamaProvider(
   }
 
   // Build Ollama options
-  const ollamaOptions: Record<string, any> = {};
-  if (options.temperature !== undefined) ollamaOptions.temperature = options.temperature;
-  if (options.topP !== undefined) ollamaOptions.top_p = options.topP;
-  if (options.repeatPenalty !== undefined) ollamaOptions.repeat_penalty = options.repeatPenalty;
-  if (options.maxTokens !== undefined) ollamaOptions.num_predict = options.maxTokens;
+  const ollamaOptions = {
+    temperature: options.temperature ?? ollamaConfig.temperature,
+    top_p: options.topP ?? ollamaConfig.topP,
+    top_k: options.topK ?? ollamaConfig.topK,
+    min_p: options.minP ?? ollamaConfig.minP,
+    repeat_penalty: options.repeatPenalty ?? ollamaConfig.repeatPenalty,
+    seed: options.seed ?? ollamaConfig.seed ?? undefined,
+    num_predict: options.maxTokens ?? ollamaConfig.maxTokens,
+  };
 
   onProgress?.({
     phase: 'running',
@@ -583,13 +634,13 @@ async function callOllamaProvider(
   // Call Ollama with OOM error detection
   let response;
   try {
-    response = await ollama.chat(model, messages.map(message => ({
-      role: message.role,
-      content: messageText(message),
-    })), {
+    const ollamaMessages = buildOllamaChatMessages(messages, imagePolicy)
+    response = await ollama.chat(model, ollamaMessages, {
       ...ollamaOptions,
+      num_ctx: options.contextWindow ?? ollamaConfig.contextWindow,
+      think: resolveOllamaThinkingMode(options.enableThinking ?? ollamaConfig.enableThinking),
       format: options.format === 'json' ? 'json' : undefined,
-      keep_alive: options.keepAlive,
+      keep_alive: options.keepAlive ?? ollamaConfig.keepAlive,
     });
   } catch (error) {
     const errorMsg = (error as Error).message || '';
@@ -612,8 +663,11 @@ async function callOllamaProvider(
     message: `${model} ready`,
   });
 
+  const normalizedResponse = normalizeOllamaChatResponse(response)
+
   return {
-    content: response.message?.content || '',
+    content: normalizedResponse.content,
+    thinking: normalizedResponse.thinking,
     model,
     provider: 'ollama',
     usage: response.prompt_eval_count || response.eval_count ? {
@@ -638,7 +692,28 @@ async function callVLLMProvider(
   const backendConfig = loadBackendConfig();
   // Always use the vLLM backend's configured model - vLLM only loads one model at startup
   // and doesn't understand Ollama model names (e.g., qwen3:14b vs Qwen/Qwen3-14B-AWQ)
-  const vllmStartConfig = buildVLLMStartConfig(backendConfig);
+  let vllmStartConfig: VLLMConfig = buildVLLMStartConfig(backendConfig);
+  const username = getUserContext()?.username;
+  if (username) {
+    try {
+      const profilePaths = getProfilePaths(username);
+      const loraConfig = getVllmLoraConfig(profilePaths.etc);
+      vllmStartConfig = {
+        ...vllmStartConfig,
+        loraModules: await getAdaptersToLoad(
+          profilePaths.out,
+          profilePaths.etc,
+          vllmStartConfig.artifact?.displayName || vllmStartConfig.servedModelName || vllmStartConfig.model,
+        ),
+        maxLoraRank: loraConfig.maxLoraRank,
+        maxLoras: loraConfig.maxLoras,
+        maxCpuLoras: loraConfig.maxCpuLoras,
+        loraDtype: loraConfig.loraDtype,
+      };
+    } catch (error) {
+      console.warn('[provider-bridge] Could not resolve vLLM LoRA configuration:', error);
+    }
+  }
   const model = vllmStartConfig.servedModelName || backendConfig.vllm.model || options.model || 'default';
 
   // Log active backend once
@@ -735,7 +810,7 @@ async function callVLLMProvider(
         // Don't fall back to default maxTokens if explicitly undefined (for Big Brother mode)
         maxTokens: options.maxTokens !== undefined ? options.maxTokens : backendConfig.vllm.maxTokens,
         topP: options.topP,
-        enableThinking: backendConfig.vllm.enableThinking,
+        enableThinking: options.enableThinking ?? backendConfig.vllm.enableThinking,
         frequencyPenalty: backendConfig.vllm.frequencyPenalty,
         presencePenalty: backendConfig.vllm.presencePenalty,
         repetitionPenalty: backendConfig.vllm.repetitionPenalty ?? options.repeatPenalty,

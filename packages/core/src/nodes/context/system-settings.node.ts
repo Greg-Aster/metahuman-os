@@ -38,6 +38,7 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
         const { getActiveFacet } = await import('../../identity.js');
         activeFacet = getActiveFacet();
       } catch (error) {
+        if ((error as Error).name === 'PersonaFacetConfigurationError') throw error;
         console.warn('[SystemSettings] Could not load active facet:', error);
       }
 
@@ -82,6 +83,7 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
       };
     } catch (error) {
       console.error('[SystemSettings] Error loading settings:', error);
+      if ((error as Error).name === 'PersonaFacetConfigurationError') throw error;
       return {
         cognitiveMode: context.cognitiveMode || 'dual',
         chatSettings: {

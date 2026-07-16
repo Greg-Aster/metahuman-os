@@ -138,7 +138,7 @@ MetaHuman OS stores all its data in human-readable formats directly on your loca
 
 MetaHuman OS is built with modern, open-source technologies to ensure transparency and flexibility:
 
-*   **Runtime**: Node.js 18+, TypeScript 5+, ESM modules.
+*   **Runtime**: Node.js 22.3+, TypeScript 5+, ESM modules.
 *   **Data Storage**: JSON/Markdown files on disk (no database server required).
 *   **Web UI**: Astro + Svelte with Tailwind CSS.
 *   **LLM & Embeddings**: Ollama for local model inference.

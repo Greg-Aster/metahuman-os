@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { acquireLock } from '@metahuman/core';
 import { ROOT } from '@metahuman/core/paths';
 
 const LOG_PREFIX = '[environment-bridge]';
@@ -17,8 +18,8 @@ interface BridgeConfig {
   username: string;
 }
 
-interface SchedulerConfig {
-  agents?: Record<string, Record<string, unknown>>;
+interface ServiceConfig {
+  services?: Record<string, Record<string, unknown>>;
 }
 
 function configValue(config: Record<string, unknown>, key: string): string {
@@ -27,17 +28,17 @@ function configValue(config: Record<string, unknown>, key: string): string {
 }
 
 function readConfig(): BridgeConfig {
-  let scheduler: SchedulerConfig = {};
+  let serviceConfig: ServiceConfig = {};
   try {
-    scheduler = JSON.parse(
-      fs.readFileSync(path.join(ROOT, 'etc', 'agents.json'), 'utf8'),
-    ) as SchedulerConfig;
+    serviceConfig = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'etc', 'services.json'), 'utf8'),
+    ) as ServiceConfig;
   } catch {}
-  const agent = scheduler.agents?.['environment-bridge'] ?? {};
+  const service = serviceConfig.services?.['environment-bridge'] ?? {};
   const adapterUrl = process.env.MH_ENVIRONMENT_ADAPTER_URL?.trim()
-    || configValue(agent, 'adapterUrl');
+    || configValue(service, 'adapterUrl');
   const graph = process.env.MH_ENVIRONMENT_GRAPH?.trim()
-    || configValue(agent, 'graph')
+    || configValue(service, 'graph')
     || 'environment';
   const adapterToken = process.env.MH_ENVIRONMENT_ADAPTER_TOKEN?.trim() || '';
   const serviceToken = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN?.trim() || '';
@@ -237,17 +238,29 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
 }
 
 export async function runEnvironmentBridgeAgent(signal: AbortSignal): Promise<void> {
-  const config = readConfig();
-  console.log(`${LOG_PREFIX} starting mode=event-driven adapter=${config.adapterUrl} graph=${config.graph}`);
-  while (!signal.aborted) {
-    try {
-      await connectOnce(config, signal);
-    } catch (error) {
-      if (!signal.aborted) {
-        console.error(`${LOG_PREFIX} connection failed: ${(error as Error).message}`);
+  let lock;
+  try {
+    lock = acquireLock('agent-environment-bridge');
+  } catch {
+    console.log(`${LOG_PREFIX} another instance is already running`);
+    return;
+  }
+
+  try {
+    const config = readConfig();
+    console.log(`${LOG_PREFIX} starting mode=event-driven adapter=${config.adapterUrl} graph=${config.graph}`);
+    while (!signal.aborted) {
+      try {
+        await connectOnce(config, signal);
+      } catch (error) {
+        if (!signal.aborted) {
+          console.error(`${LOG_PREFIX} connection failed: ${(error as Error).message}`);
+        }
       }
+      if (!signal.aborted) await waitForAbort(signal, RECONNECT_DELAY_MS);
     }
-    if (!signal.aborted) await waitForAbort(signal, RECONNECT_DELAY_MS);
+  } finally {
+    lock.release();
   }
 }
 

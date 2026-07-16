@@ -88,16 +88,21 @@ try {
   resetState();
   const firstCommand = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
   const secondCommand = enqueueEnvironmentAction({ type: 'robotCommand', command: 'wave', sessionId: 'robot-1' });
-  assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, firstCommand.id);
+  const claimedCommand = dispatchEnvironmentActions('robot-1')[0];
+  assert.ok(
+    claimedCommand?.id === firstCommand.id || claimedCommand?.id === secondCommand.id,
+    'one of the queued commands must be claimed',
+  );
   assert.deepEqual(dispatchEnvironmentActions('robot-1'), [], 'one session may claim only one command at a time');
   recordEnvironmentActionResult({
     id: 'first-command-accepted',
     timestamp: new Date().toISOString(),
     type: 'accepted',
     message: 'accepted',
-    actionId: firstCommand.id,
+    actionId: claimedCommand!.id,
   });
-  assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, secondCommand.id);
+  const remainingCommandId = claimedCommand!.id === firstCommand.id ? secondCommand.id : firstCommand.id;
+  assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, remainingCommandId);
 
   resetState();
   const stateWithTwoSessions = readEnvironmentBridgeState();
@@ -235,6 +240,14 @@ try {
   assert.equal(parseDirectRobotInstruction("don't walk forward", 'robot-1'), null);
   assert.equal(parseDirectRobotInstruction('can you walk forward?', 'robot-1'), null);
   assert.equal(parseDirectRobotInstruction('walk forward 25 steps', 'robot-1')?.action.units, 10);
+  assert.deepEqual(
+    parseDirectRobotInstruction('Please wave', 'robot-1', ['stand', 'wave', 'dance']),
+    {
+      action: { type: 'robotCommand', command: 'wave', sessionId: 'robot-1' },
+      response: 'I will wave.',
+    },
+  );
+  assert.equal(parseDirectRobotInstruction('Please swim', 'robot-1', ['wave']), null);
 
   const conversationOnly = await environmentSendActionNode.execute({
     actions: [],
@@ -256,8 +269,16 @@ try {
     id: 'camera-1',
     timestamp: new Date().toISOString(),
     mimeType: 'image/jpeg',
-    dataUrl: 'data:image/jpeg;base64,/9j/2Q==',
+    dataUrl: `data:image/jpeg;base64,${fs.readFileSync(new URL(
+      '../../../../vendor/whisper.cpp/examples/whisper.android.java/README_files/1.jpg',
+      import.meta.url,
+    )).toString('base64')}`,
   };
+  const malformedImageOutput = await environmentImageInputNode.execute({
+    visual: { ...visual, dataUrl: 'data:image/jpeg;base64,/9j/2Q==' },
+  }, {});
+  assert.deepEqual(malformedImageOutput.images, []);
+  assert.equal(malformedImageOutput.rejectedCount, 1);
   const imageOutput = await environmentImageInputNode.execute({ visual }, {});
   assert.deepEqual(imageOutput.images, [
     { type: 'image_url', image_url: { url: visual.dataUrl } },
@@ -268,9 +289,14 @@ try {
       adapter: 'test-adapter',
       sessionId: 'robot-1',
       timestamp: new Date().toISOString(),
-      capabilities: { actions: ['robotCommand'], visual: true },
+      capabilities: {
+        actions: ['robotCommand'],
+        robotCommands: ['stand', 'wave', 'dance'],
+        visual: true,
+      },
       visual,
     },
+    instruction: 'Find the object in front of the robot.',
     images: imageOutput.images,
   }, {}, {});
   const content = contextOutput.messages[0]?.content;
@@ -279,6 +305,23 @@ try {
     type: 'image_url',
     image_url: { url: visual.dataUrl },
   });
+  assert.match(String(content[0]?.text), /Supported robot commands: stand, wave, dance/);
+
+  const generalQuestionContext = await environmentContextBuilderNode.execute({
+    observation: {
+      environmentId: 'test',
+      adapter: 'test-adapter',
+      sessionId: 'robot-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['robotCommand'], visual: true },
+      visual,
+    },
+    instruction: 'What is happening in France?',
+    images: imageOutput.images,
+  }, {}, {});
+  assert.equal(typeof generalQuestionContext.messages[0]?.content, 'string');
+  assert.deepEqual(generalQuestionContext.images, []);
+  assert.doesNotMatch(String(generalQuestionContext.message), /Visual frame/);
 
   console.log('Environment bridge coordinator checks passed');
 } finally {

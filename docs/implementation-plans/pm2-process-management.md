@@ -11,8 +11,8 @@ This document outlines the plan to integrate PM2 (Process Manager 2) into MetaHu
 | Process | Type | Current Management | Notes |
 |---------|------|-------------------|-------|
 | Web Server | Astro SSR | `start.sh` / manual | Single-threaded, port 4321 |
-| scheduler-service | Background agent | `./bin/mh start` | Uses file lock for single-instance |
-| audio-organizer | Background agent | `./bin/mh start` | Uses file lock for single-instance |
+| maintenance-service | Persistent maintenance service | `./bin/mh start` | Uses file lock for single-instance |
+| audio-organizer | Finite coordinator work | Explicit Trigger Manager admission | Never a boot daemon |
 | terminal-server | Service | `./bin/start-terminal` | WebSocket-based |
 | voice servers | Services | `./bin/start-voice-server` | Kokoro, RVC, SoVits |
 | cloudflare tunnel | Service | `./bin/start-cloudflare` | Optional |
@@ -33,9 +33,8 @@ This document outlines the plan to integrate PM2 (Process Manager 2) into MetaHu
 - Web server (clustered across CPU cores)
 
 **Will NOT manage with PM2 (keep existing):**
-- scheduler-service (requires single-instance lock)
-- audio-organizer (requires single-instance lock)
-- Other agents (managed by scheduler-service)
+- maintenance-service (requires single-instance lock)
+- finite agents (admitted once through TriggerManager and the Work Coordinator)
 
 ### Why Partial Integration?
 
@@ -210,7 +209,7 @@ fi
 
 # Force kill stragglers
 pkill -f "brain/agents" 2>/dev/null || true
-pkill -f "scheduler-service" 2>/dev/null || true
+pkill -f "maintenance-service" 2>/dev/null || true
 
 echo "MetaHuman OS stopped"
 ```

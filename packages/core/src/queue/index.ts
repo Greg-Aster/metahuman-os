@@ -17,7 +17,33 @@ export * from './types.js';
 export { UnifiedQueueManager, getQueueManager, resetQueueManager } from './unified-queue-manager.js';
 export { ExecutionEngine } from './execution-engine.js';
 export { TriggerManager } from './trigger-manager.js';
-export type { TriggerType, AgentTriggerConfig, TriggerManagerConfig } from './trigger-manager.js';
+export type {
+  TriggerHandlerHealth,
+  TriggerManagerLifecycle,
+  TriggerManagerSnapshot,
+  TriggerState,
+  TriggerSuppressionReason,
+  TriggerView,
+} from './trigger-manager.js';
+export {
+  TriggerConfigService,
+  getTriggerConfigService,
+  resetTriggerConfigService,
+} from './trigger-config-service.js';
+export type {
+  TriggerType,
+  AgentTriggerConfig,
+  TriggerConfigPatch,
+  TriggerConfigRead,
+  TriggerManagerConfig,
+} from './trigger-config-service.js';
+export {
+  agentHandlerId,
+  agentTaskType,
+  defaultAgentLifecycle,
+  isPersistentService,
+} from './agent-work-catalog.js';
+export type { AgentLifecycleClass, TriggerStartupPolicy } from './agent-work-catalog.js';
 export { RemoteDispatcher } from './remote-dispatcher.js';
 
 // Facade

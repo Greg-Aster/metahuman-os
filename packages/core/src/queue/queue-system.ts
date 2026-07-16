@@ -8,8 +8,10 @@ import { EventEmitter } from 'node:events';
 import { UnifiedQueueManager, getQueueManager } from './unified-queue-manager.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { TriggerManager } from './trigger-manager.js';
+import { getTriggerConfigService, type TriggerConfigRead } from './trigger-config-service.js';
 import { RemoteDispatcher } from './remote-dispatcher.js';
 import type {
+  AutonomyMode,
   PersistedQueueState,
   QueueConfig,
   QueueEvent,
@@ -19,6 +21,7 @@ import type {
 } from './types.js';
 import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
+import { eventBus } from '../infrastructure/event-bus/client.js';
 import {
   auditRecovery,
   clearQueueState,
@@ -29,6 +32,7 @@ import {
   shouldRestoreState,
 } from './queue-persister.js';
 import { isWorkCoordinatorOwner } from './work-submission.js';
+import { agentHandlerId, agentTaskType } from './agent-work-catalog.js';
 
 interface QueueSystemConfig {
   enabled: boolean;
@@ -74,6 +78,7 @@ export class QueueSystem extends EventEmitter {
   private readonly queueManager: UnifiedQueueManager;
   private readonly executionEngine: ExecutionEngine;
   private readonly triggerManager: TriggerManager;
+  private readonly triggerConfig = getTriggerConfigService();
   private readonly remoteDispatcher: RemoteDispatcher;
   private lifecycle: QueueLifecycleState = 'stopped';
   private initialized = false;
@@ -81,6 +86,8 @@ export class QueueSystem extends EventEmitter {
   private lastError?: string;
   private immediateSave?: () => void;
   private startPromise: Promise<boolean> | null = null;
+  private readonly unsubscribeTriggerConfig: () => void;
+  private readonly unsubscribeEventBus: () => void;
 
   constructor(config: Partial<QueueSystemConfig> = {}) {
     super();
@@ -89,7 +96,25 @@ export class QueueSystem extends EventEmitter {
     this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000 }, this.queueManager);
     this.triggerManager = new TriggerManager(this.queueManager);
     this.remoteDispatcher = new RemoteDispatcher(this.queueManager);
+    this.triggerManager.setHandlerInspector(config => ({
+      registered: this.executionEngine.hasHandler(config.handler),
+      sourceResolvable: config.handler.startsWith('agent.')
+        ? this.executionEngine.isAgentSourceResolvable(config.id)
+        : this.executionEngine.hasHandler(config.handler),
+    }));
+    this.unsubscribeTriggerConfig = this.triggerConfig.subscribe(read => this.applyTriggerConfig(read));
+    this.unsubscribeEventBus = eventBus.subscribe(event => this.triggerManager.triggerEvent(event.event, event.data));
     this.queueManager.addEventListener(event => this.emit('queue', event));
+    this.triggerManager.on('stateChange', event => this.emit('triggerState', event));
+  }
+
+  private applyTriggerConfig(read: TriggerConfigRead): void {
+    for (const [agentId, config] of Object.entries(read.config.agents)) {
+      if (config.lifecycle !== 'service' && config.handler.startsWith('agent.')) {
+        this.executionEngine.registerAgentHandler(agentId, config.handler);
+      }
+    }
+    this.triggerManager.applyConfig(read);
   }
 
   private get configPath(): string {
@@ -128,7 +153,18 @@ export class QueueSystem extends EventEmitter {
     if (!this.loadConfig()) return false;
 
     try {
-      this.triggerManager.loadConfig();
+      try {
+        this.triggerConfig.load(true);
+      } catch (error) {
+        this.triggerManager.markConfigError(error);
+        audit({
+          level: 'error',
+          category: 'system',
+          event: 'trigger_config_load_failed',
+          actor: 'queue_system',
+          details: { error: (error as Error).message },
+        });
+      }
       if (shouldRestoreState()) {
         const state = loadQueueState();
         if (state) {
@@ -185,7 +221,7 @@ export class QueueSystem extends EventEmitter {
     }
     try {
       this.executionEngine.start();
-      if (this.proactiveScheduling) this.triggerManager.start();
+      this.triggerManager.start();
       this.setLifecycle('running');
       audit({ level: 'info', category: 'system', event: 'queue_system_started', actor: 'queue_system' });
       this.emit('started');
@@ -215,11 +251,22 @@ export class QueueSystem extends EventEmitter {
     }
   }
 
+  async dispose(): Promise<boolean> {
+    const stopped = await this.stop();
+    this.triggerManager.dispose();
+    this.unsubscribeTriggerConfig();
+    this.unsubscribeEventBus();
+    return stopped;
+  }
+
   setProactiveScheduling(enabled: boolean): void {
     this.proactiveScheduling = enabled;
-    if (!this.isRunning()) return;
-    if (enabled) this.triggerManager.start();
-    else this.triggerManager.stop();
+    this.triggerManager.setAutonomyMode(enabled ? 'semi' : 'reactive');
+  }
+
+  setAutonomyMode(mode: AutonomyMode): void {
+    this.proactiveScheduling = mode === 'semi' || mode === 'full';
+    this.triggerManager.setAutonomyMode(mode);
   }
 
   isProactiveSchedulingEnabled(): boolean {
@@ -240,6 +287,9 @@ export class QueueSystem extends EventEmitter {
     if (!this.initialize()) {
       throw new Error(this.lastError || 'Work coordinator is not configured');
     }
+    if (input.handler?.startsWith('agent.') && typeof input.input?.agentId === 'string') {
+      this.executionEngine.registerAgentHandler(input.input.agentId, input.handler);
+    }
     return this.queueManager.enqueue(input);
   }
 
@@ -250,8 +300,24 @@ export class QueueSystem extends EventEmitter {
     return this.queueManager.enqueueUserMessage(message, username, options);
   }
 
-  triggerAgent(agentId: string, username?: string): string | null {
-    return this.triggerManager.triggerManual(agentId, username);
+  triggerAgent(agentId: string, username?: string, args: string[] = []): string | null {
+    return this.triggerManager.triggerManual(agentId, username, args);
+  }
+
+  enqueueFiniteAgent(agentId: string, username: string, args: string[] = []): QueuedTask {
+    const handler = agentHandlerId(agentId);
+    if (!this.executionEngine.registerAgentHandler(agentId, handler) && !this.executionEngine.hasHandler(handler)) {
+      throw new Error(`No maintained executable for agent: ${agentId}`);
+    }
+    return this.enqueue({
+      type: agentTaskType(agentId),
+      handler,
+      source: 'user',
+      username,
+      priority: 'normal',
+      input: { agentId, args, triggeredBy: 'manual' },
+      metadata: { producer: 'manual-agent-control', agentId },
+    });
   }
 
   recordActivity(username?: string): void {
@@ -284,8 +350,9 @@ export class QueueSystem extends EventEmitter {
         'remote-llm': this.queueManager.getLaneStatus('remote-llm'),
       },
       inFlightRemote: this.queueManager.getInFlightRemote(),
-      nextTriggers: this.proactiveScheduling ? this.triggerManager.getNextTriggers() : [],
+      nextTriggers: this.triggerManager.getNextTriggers(),
       lastActivity: this.triggerManager.getLastActivity(),
+      triggerManager: this.triggerManager.getSnapshot(),
     };
   }
 
@@ -299,6 +366,10 @@ export class QueueSystem extends EventEmitter {
 
   get triggers(): TriggerManager {
     return this.triggerManager;
+  }
+
+  get triggerConfiguration() {
+    return this.triggerConfig;
   }
 
   get remote(): RemoteDispatcher {
@@ -335,7 +406,7 @@ export async function ensureQueueSystemStarted(): Promise<QueueSystem> {
 }
 
 export function resetQueueSystem(): void {
-  if (instance) void instance.stop();
+  if (instance) void instance.dispose();
   instance = null;
 }
 

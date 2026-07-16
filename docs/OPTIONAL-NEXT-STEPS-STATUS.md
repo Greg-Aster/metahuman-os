@@ -17,7 +17,7 @@ $ tail -20 logs/audit/2025-11-20.ndjson | jq -r 'select(.category == "action") |
 
 **Results**:
 - ✅ Seeing "greggles" as actor (real username) instead of generic "web_ui"
-- ✅ Agent entries correctly show "organizer", "scheduler-service", etc.
+- ✅ Agent entries distinguish finite work such as `organizer` from the persistent `maintenance-service`.
 - ⚠️ Some endpoints still use generic placeholders ("user", "human")
 
 ### 2. ✅ Created Comprehensive Test Plan

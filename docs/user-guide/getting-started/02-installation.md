@@ -9,7 +9,7 @@ Install MetaHuman OS on your Linux server.
 ## Prerequisites
 
 ### Required
-- **Node.js 18+** — JavaScript runtime
+- **Node.js 22.3+ (22.x)** — JavaScript runtime (the repository includes an `.nvmrc`)
 - **pnpm** — Package manager (`npm install -g pnpm`)
 - **Python 3** — Required by `./start.sh` (creates a virtual env and installs deps)
 - **Git** — Version control

@@ -17,6 +17,8 @@ let saveVllmLoraConfig: any;
 let enableVllmLoraAdapter: any;
 let disableVllmLoraAdapter: any;
 let getVLLMLoadedLoras: any;
+let loadBackendConfig: any;
+let isVllmLoraCompatibleWithModel: any;
 
 async function ensureLoraFunctions(): Promise<boolean> {
   try {
@@ -28,6 +30,8 @@ async function ensureLoraFunctions(): Promise<boolean> {
     enableVllmLoraAdapter = core.enableVllmLoraAdapter;
     disableVllmLoraAdapter = core.disableVllmLoraAdapter;
     getVLLMLoadedLoras = core.getVLLMLoadedLoras;
+    loadBackendConfig = core.loadBackendConfig;
+    isVllmLoraCompatibleWithModel = core.isVllmLoraCompatibleWithModel;
     return !!(getProfilePaths && discoverVllmLoraAdapters);
   } catch {
     return false;
@@ -56,6 +60,7 @@ export async function handleGetVllmLoras(req: UnifiedRequest): Promise<UnifiedRe
     }
 
     const profilePaths = getProfilePaths(user.username);
+    const targetModel = req.query?.model || loadBackendConfig?.().vllm?.model;
 
     // Discover adapters
     const adapters = await discoverVllmLoraAdapters(profilePaths.out);
@@ -72,6 +77,9 @@ export async function handleGetVllmLoras(req: UnifiedRequest): Promise<UnifiedRe
     const adaptersWithStatus = adapters.map((a: VllmLoraAdapter) => ({
       ...a,
       loaded: loadedLoras.includes(a.name),
+      compatibleWithTarget: targetModel
+        ? isVllmLoraCompatibleWithModel?.(a.baseModel, targetModel) === true
+        : undefined,
     }));
 
     // Get user's config
@@ -81,6 +89,7 @@ export async function handleGetVllmLoras(req: UnifiedRequest): Promise<UnifiedRe
       available: adaptersWithStatus,
       loaded: loadedLoras,
       config,
+      targetModel,
     });
   } catch (error) {
     console.error('[vllm-loras] GET failed:', error);
@@ -96,6 +105,9 @@ export async function handleGetVllmLoras(req: UnifiedRequest): Promise<UnifiedRe
  * - adapterName: Name of adapter (for enable/disable)
  * - enabledAdapters: Array of names (for set)
  * - maxLoraRank: Optional rank override
+ * - maxLoras: Maximum distinct adapters in one batch
+ * - maxCpuLoras: Maximum adapters retained in CPU RAM
+ * - loraDtype: auto, float16, or bfloat16
  *
  * Returns:
  * - success: boolean
@@ -156,11 +168,42 @@ export async function handleUpdateVllmLoras(req: UnifiedRequest): Promise<Unifie
       }
 
       case 'set': {
-        const enabledAdapters = body?.enabledAdapters || [];
-        const maxLoraRank = body?.maxLoraRank || 64;
+        const enabledAdapters = body?.enabledAdapters ?? [];
+        const maxLoraRank = body?.maxLoraRank ?? 64;
+        const maxLoras = body?.maxLoras ?? 1;
+        const maxCpuLoras = body?.maxCpuLoras ?? maxLoras;
+        const loraDtype = body?.loraDtype ?? 'auto';
+
+        if (!Array.isArray(enabledAdapters) || enabledAdapters.some(name => typeof name !== 'string')) {
+          return { status: 400, error: 'enabledAdapters must be an array of adapter names' };
+        }
+        const allowedRanks = [1, 8, 16, 32, 64, 128, 256, 320, 512];
+        if (!allowedRanks.includes(maxLoraRank)) {
+          return { status: 400, error: `maxLoraRank must be one of: ${allowedRanks.join(', ')}` };
+        }
+        if (!Number.isInteger(maxLoras) || maxLoras < 1 || maxLoras > 256) {
+          return { status: 400, error: 'maxLoras must be an integer between 1 and 256' };
+        }
+        if (!Number.isInteger(maxCpuLoras) || maxCpuLoras < maxLoras || maxCpuLoras > 1024) {
+          return { status: 400, error: 'maxCpuLoras must be an integer greater than or equal to maxLoras' };
+        }
+        if (!['auto', 'float16', 'bfloat16'].includes(loraDtype)) {
+          return { status: 400, error: 'loraDtype must be auto, float16, or bfloat16' };
+        }
+
+        const discoveredAdapters = await discoverVllmLoraAdapters(profilePaths.out);
+        const availableNames = new Set(discoveredAdapters.filter((adapter: VllmLoraAdapter) => adapter.valid).map((adapter: VllmLoraAdapter) => adapter.name));
+        const unknownAdapter = enabledAdapters.find((name: string) => !availableNames.has(name));
+        if (unknownAdapter) {
+          return { status: 400, error: `Unknown or invalid LoRA adapter: ${unknownAdapter}` };
+        }
+
         saveVllmLoraConfig(profilePaths.etc, {
           enabledAdapters,
           maxLoraRank,
+          maxLoras,
+          maxCpuLoras,
+          loraDtype,
         }, user.username);
 
         // Needs restart if the enabled set is different from loaded set

@@ -14,7 +14,11 @@ import { ollama } from './ollama.js';
 import { embedWithLocalService, isLocalModelServiceRunning } from './providers/local-models.js';
 import { loadBackendConfig } from './llm-backend.js';
 import { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
-import type { ProviderMessageContent } from './providers/types.js';
+import {
+  providerMessagesContainImages,
+  type ProviderMessageContent,
+  type ProviderResponse,
+} from './providers/types.js';
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
@@ -94,6 +98,25 @@ export interface RouterStreamChunk {
   };
 }
 
+export function normalizeProviderReasoningResponse(
+  providerResponse: Pick<ProviderResponse, 'content' | 'thinking'>
+): { thinking: string | null; stripped: string } {
+  const parsed = parseThinkingBlocks(providerResponse.content || '')
+  const nativeThinking = providerResponse.thinking?.trim() || null
+  const thinkingParts = [nativeThinking, parsed.thinking]
+    .filter((value): value is string => Boolean(value))
+  const thinking = thinkingParts.length > 0
+    ? Array.from(new Set(thinkingParts)).join('\n\n')
+    : null
+
+  return {
+    thinking,
+    stripped: parsed.stripped || (thinking
+      ? '[Response incomplete - thinking exceeded token limit]'
+      : ''),
+  }
+}
+
 function getContextualCognitiveMode(explicitMode: string | undefined): string | null {
   if (explicitMode !== undefined) {
     return explicitMode;
@@ -139,6 +162,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   // in the cognitive graphs. This makes persona flow visible and editable in the graph editor.
   // Response Synthesizer applies persona voice to final output only.
   let messages = callOptions.messages;
+  const hasImages = providerMessagesContainImages(messages);
 
   // Merge options: model defaults + call-specific options
   const mergedOptions = {
@@ -181,14 +205,23 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
         format: mergedOptions.format,
         keepAlive: callOptions.keepAlive as string | undefined,
-        endpointTier: resolved.metadata?.endpointTier,
+        contextWindow: mergedOptions.contextWindow,
+        enableThinking: mergedOptions.enableThinking,
+        maxImages: mergedOptions.maxImages,
+        maxImageBytes: mergedOptions.maxImageBytes,
+        allowedImageMimeTypes: mergedOptions.allowedImageMimeTypes,
+        modelCapabilities: resolved.capabilities,
+        endpointTier: typeof resolved.metadata?.endpointTier === 'string'
+          ? resolved.metadata.endpointTier
+          : undefined,
         useBigBrother: mergedOptions.useBigBrother,
       },
       bridgeProgress
     );
 
-    // Extract thinking blocks from response content
-    const { thinking, stripped } = parseThinkingBlocks(providerResponse.content);
+    // Normalize both legacy inline <think> blocks and provider-native reasoning
+    // fields without leaking reasoning into user-visible response content.
+    const { thinking, stripped } = normalizeProviderReasoningResponse(providerResponse);
 
     // Convert to RouterResponse
     response = {
@@ -218,9 +251,9 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
       actor: 'model_router',
       details: {
         role: callOptions.role,
-        modelId: resolved.id,
-        provider: resolved.provider,
-        model: resolved.model,
+        modelId: response.modelId,
+        provider: providerResponse.provider,
+        model: providerResponse.model,
         adapters: resolved.adapters,
         cognitiveMode: effectiveCognitiveMode,
         latencyMs: response.latencyMs,
@@ -228,6 +261,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         cached: response.cached || false,
         hadThinking: !!thinking,
         thinkingLength: thinking?.length || 0,
+        imageInput: hasImages,
       },
     });
 
@@ -250,6 +284,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         cognitiveMode: effectiveCognitiveMode,
         error: (error as Error).message,
         latencyMs,
+        imageInput: hasImages,
       },
     });
 
@@ -412,7 +447,9 @@ export async function callEmbeddings(options: EmbeddingCallOptions): Promise<Emb
         endpoint,
       });
 
-      dimensions = resolved.options?.dimensions || embeddings.length;
+      dimensions = typeof resolved.options?.dimensions === 'number'
+        ? resolved.options.dimensions
+        : embeddings.length;
     } else if (resolved.provider === 'ollama') {
       // Fallback to Ollama embeddings if configured
       const result = await ollama.embeddings(resolved.model, options.text);

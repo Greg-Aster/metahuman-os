@@ -12,7 +12,7 @@
  * - Role adherence scoring
  * - Consistency variance metrics
  *
- * Triggered by scheduler-service on configurable intervals.
+ * Admitted by TriggerManager on a configurable interval.
  *
  * @author MetaHuman OS
  */

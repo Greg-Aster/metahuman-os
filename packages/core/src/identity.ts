@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { storageClient } from './storage-client.js';
+import {
+  loadPersonaFacetConfigFile,
+  PersonaFacetConfigurationError,
+  resolvePersonaFacetPath,
+} from './persona-facets.js';
 
 const LOG_PREFIX = '[identity]';
 
@@ -425,7 +430,8 @@ export function setTrustLevel(level: string): void {
 /**
  * Load persona with facet support
  * Returns null if persona is set to inactive (relies on LoRA only)
- * Falls back to core.json if facets not configured or facet file missing
+ * Refuses to load when facets.json is missing or invalid. The default facet
+ * explicitly points to core.json; it is not an implicit recovery path.
  */
 export function loadPersonaWithFacet(): PersonaCore | null {
   console.log(`${LOG_PREFIX} ========== loadPersonaWithFacet HIT ==========`);
@@ -442,18 +448,8 @@ export function loadPersonaWithFacet(): PersonaCore | null {
 
     const facetsPath = path.join(personaDir, 'facets.json');
 
-    // If no facets config, use core persona
-    if (!fs.existsSync(facetsPath)) {
-      return loadPersonaCore();
-    }
-
-    const facetsConfig = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
-    const activeFacet = facetsConfig.activeFacet || 'default';
-
-    // If default facet or facet not found, use core persona
-    if (activeFacet === 'default' || !facetsConfig.facets[activeFacet]) {
-      return loadPersonaCore();
-    }
+    const facetsConfig = loadPersonaFacetConfigFile(facetsPath, 'for the active profile');
+    const activeFacet = facetsConfig.activeFacet;
 
     const facetInfo = facetsConfig.facets[activeFacet];
 
@@ -464,11 +460,15 @@ export function loadPersonaWithFacet(): PersonaCore | null {
       return null;
     }
 
-    const facetFilePath = path.join(personaDir, facetInfo.personaFile);
+    const facetFilePath = resolvePersonaFacetPath(personaDir, facetInfo);
+    if (!facetFilePath) {
+      throw new PersonaFacetConfigurationError(
+        'persona_file_invalid',
+        `Persona facet configuration for the active profile has an invalid persona file for "${activeFacet}". Persona loading is blocked until facets.json is repaired.`,
+      );
+    }
 
-    // If facet file doesn't exist, fall back to core
-    if (!fs.existsSync(facetFilePath)) {
-      console.warn(`${LOG_PREFIX} Facet file not found: ${facetFilePath}, using core persona`);
+    if (path.resolve(facetFilePath) === path.resolve(personaDir, 'core.json')) {
       return loadPersonaCore();
     }
 
@@ -494,15 +494,8 @@ export function loadPersonaWithFacet(): PersonaCore | null {
       },
     };
   } catch (error) {
-    // If error is about anonymous user access or path resolution, throw it up
-    const errorMsg = (error as Error).message || '';
-    if (errorMsg.includes('Anonymous users cannot access') || errorMsg.includes('Cannot resolve')) {
-      throw error; // Let buildPersonaContext handle this silently
-    }
-
-    // For other errors, try loading core persona
-    console.warn(`${LOG_PREFIX} Error loading faceted persona, using core:`, error);
-    return loadPersonaCore();
+    console.error(`${LOG_PREFIX} Error loading faceted persona:`, error);
+    throw error;
   }
 }
 
@@ -753,25 +746,17 @@ export function getProposedGoals(): Array<{
  * Get current active facet name
  */
 export function getActiveFacet(): string {
-  try {
-    // Resolve persona directory via storage router
-    const personaResult = storageClient.resolvePath({
-      category: 'config',
-      subcategory: 'persona',
-    });
-    if (!personaResult.success || !personaResult.path) {
-      return 'default';
-    }
-
-    const facetsPath = path.join(personaResult.path, 'facets.json');
-    if (!fs.existsSync(facetsPath)) {
-      return 'default';
-    }
-    const facetsConfig = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
-    return facetsConfig.activeFacet || 'default';
-  } catch (error) {
-    // Return default when facets.json doesn't exist or cannot be read
-    console.log(`${LOG_PREFIX} Cannot read facets config, using default facet:`, error);
-    return 'default';
+  const personaResult = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+  });
+  if (!personaResult.success || !personaResult.path) {
+    throw new PersonaFacetConfigurationError(
+      'missing',
+      'Persona facet configuration for the active profile cannot be resolved. Persona loading is blocked until the profile storage is available.',
+    );
   }
+
+  const facetsPath = path.join(personaResult.path, 'facets.json');
+  return loadPersonaFacetConfigFile(facetsPath, 'for the active profile').activeFacet;
 }

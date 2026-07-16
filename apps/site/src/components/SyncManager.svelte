@@ -18,21 +18,12 @@
     type SyncSettings,
   } from '../lib/client/sync-settings';
   import { apiFetch } from '../lib/client/api-config';
+  import { runTriggerNow } from '../lib/stores/trigger-manager';
 
-  async function triggerAgent(agentName: string, args: string[] = []): Promise<{ success: boolean; pid?: number; error?: string }> {
+  async function triggerAgent(agentName: string, args: string[] = []): Promise<{ success: boolean; taskId?: string; error?: string }> {
     try {
-      const res = await apiFetch('/api/agents/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: agentName, args }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { success: true, pid: data.pid };
-      } else {
-        const error = await res.text();
-        return { success: false, error };
-      }
+      const taskId = await runTriggerNow(agentName, args);
+      return { success: true, taskId };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Network error' };
     }
@@ -400,7 +391,7 @@
         const agentResult = await triggerAgent('profile-sync', agentArgs);
 
         if (agentResult.success) {
-          remoteSyncMessage = `Profile sync agent started (PID: ${agentResult.pid}). Syncing...`;
+          remoteSyncMessage = `Profile sync queued as ${agentResult.taskId}. Syncing...`;
           const finalState = await waitForProfileSync(120000);
 
           if (finalState.phase === 'complete') {

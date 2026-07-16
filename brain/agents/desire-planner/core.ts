@@ -790,7 +790,7 @@ export async function processPlanningDesires(
 // ============================================================================
 
 /**
- * Run a single planning cycle - entry point for CLI and scheduler
+ * Run a single planning cycle - entry point for CLI and Trigger Manager
  */
 export async function runCycle(options: DesirePlannerOptions = {}): Promise<DesirePlannerResult> {
   const result: DesirePlannerResult = {
@@ -874,7 +874,7 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
 }
 
 /**
- * Agent runtime entry point - used by mobile and scheduler
+ * Agent runtime entry point - used by mobile and Trigger Manager
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();

@@ -92,6 +92,7 @@ function queueSnapshot(user: UnifiedUser) {
     inFlightRemote: user.role === 'owner' ? state.inFlightRemote : [],
     nextTriggers: user.role === 'owner' ? state.nextTriggers : [],
     lastActivity: user.role === 'owner' ? state.lastActivity : undefined,
+    triggerManager: user.role === 'owner' ? state.triggerManager : undefined,
   };
 }
 
@@ -211,7 +212,10 @@ export async function handleTriggerAgent(req: UnifiedRequest): Promise<UnifiedRe
   if (authError) return authError;
   const agentId = req.params?.agentId || req.params?.id || req.body?.agentId;
   if (!agentId) return failure('Missing agentId', 400);
-  const taskId = getQueueSystem().triggerAgent(agentId, req.user.username);
+  const args = Array.isArray(req.body?.args)
+    ? req.body.args.filter((value: unknown): value is string => typeof value === 'string')
+    : [];
+  const taskId = getQueueSystem().triggerAgent(agentId, req.user.username, args);
   if (!taskId) return failure(`Unknown agent: ${agentId}`, 404);
   audit({ level: 'info', category: 'action', event: 'queue_agent_triggered', actor: req.user.username, details: { agentId, taskId } });
   return success({ success: true, agentId, taskId });
@@ -234,20 +238,14 @@ export async function handleQueueControl(req: UnifiedRequest): Promise<UnifiedRe
 
 export async function handleGetTriggers(): Promise<UnifiedResponse> {
   const system = getQueueSystem();
-  const triggers = [...system.triggers.getTriggers().entries()].map(([id, state]) => ({
-    id,
-    type: state.config.type,
-    enabled: state.config.enabled,
-    priority: state.config.priority,
-    lastRun: state.lastRun?.toISOString(),
-    nextRun: state.nextRun?.toISOString(),
-    runCount: state.runCount,
-    errorCount: state.errorCount,
-    interval: state.config.interval,
-    schedule: state.config.schedule,
-    inactivityThreshold: state.config.inactivityThreshold,
-  }));
-  return success({ success: true, triggers, nextTriggers: system.getState().nextTriggers });
+  const snapshot = system.triggers.getSnapshot();
+  return success({
+    success: true,
+    triggers: snapshot.triggers,
+    nextTriggers: system.getState().nextTriggers,
+    snapshot,
+    compatibilityAlias: true,
+  });
 }
 
 export async function handleRecordActivity(req: UnifiedRequest): Promise<UnifiedResponse> {

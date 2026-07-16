@@ -31,13 +31,35 @@ priority rules as manually submitted work.
 
 Examples include:
 
-- `reflector`, `curiosity-service`, and `inner-curiosity` after configured
+- `reflector`, `curiosity` (implemented by `curiosity-service`), and
+  `inner-curiosity` after configured
   inactivity;
 - `dreamer`, `curator`, and other registered agents;
+- `mood`, which reviews recent user conversation and/or inner dialogue every
+  configured number of persisted user messages;
 - `sleep-workflow`, which admits bounded dream and persona-review child work.
 
 The sleep workflow does not silently start audio processing or model training.
 Those remain explicit owner-triggered controls.
+
+## Mood persona routing
+
+Mood is registered in the Agent Catalog and admitted by TriggerManager. It is
+not an always-running process and is disabled by default. After an owner enables
+it, the default trigger queues one review after each ten persisted user messages.
+The editable **Mood Persona Review** graph uses a
+psychoanalyzer classifier on the established `psychotherapist` model role to
+choose among the logged-in user's enabled persona facets. Buffer content is
+treated as evidence, not as graph instructions, and a minimum-confidence guard
+prevents weak classifications from changing facets.
+
+Use **System → Agent Catalog → Mood** to select conversation, inner dialogue, or
+both; choose the baseline facet; set context and confidence limits; and control
+whether Mood may override a disabled persona system. Use **System → Trigger
+Manager → Mood** to change the message-count threshold or idle cooldown. The
+idle cooldown queues the same graph with a forced baseline decision, so a robot
+left unused does not remain stuck in a transient mood. Disabling Mood prevents
+future admissions without changing the current facet.
 
 ## Active Operator
 
@@ -58,9 +80,16 @@ Use the right-side **Queue** panel to inspect:
 Deleting or clearing queued work requests coordinator cancellation. Running
 work remains visible until its executor acknowledges cancellation.
 
-Use **Scheduler Settings** to change producer configuration. Disabling a
+Use **System → Trigger Manager** to change producer configuration. Disabling a
 producer prevents new admissions; it does not create another scheduler or
 erase running work.
+
+Use **Dashboard → Agent Catalog** to see every maintained agent, including
+installed agents that are not scheduled, workflow children, source aliases,
+missing implementations, and persistent services. Use **System → Agent Catalog**
+to register or unregister finite agents. Unregistering removes the Trigger
+Manager entry while preserving source code, logs, run history, and queued work.
+Privileged and destructive agents require explicit registration confirmation.
 
 ## Operational boundary
 

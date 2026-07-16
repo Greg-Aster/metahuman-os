@@ -14,6 +14,7 @@ const LOG_PREFIX = '[model-resolver]';
 
 export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
+export type ModelCapability = 'text' | 'image';
 
 export interface ModelDefinition {
   provider: ModelProvider;
@@ -21,6 +22,8 @@ export interface ModelDefinition {
   adapters: string[];
   baseModel?: string;
   roles: string[];
+  /** Input modalities supported by this model, from config or provider discovery. */
+  capabilities?: ModelCapability[];
   description: string;
   options: {
     contextWindow?: number;
@@ -68,6 +71,7 @@ export interface ResolvedModel {
   adapters: string[];
   baseModel?: string;
   roles: string[];
+  capabilities: ModelCapability[];
   options: Record<string, unknown>; // Model options - intentionally flexible
   metadata: Record<string, unknown>; // Model metadata - intentionally flexible
 }
@@ -79,13 +83,16 @@ const registryCache = new Map<string, { registry: ModelRegistry; timestamp: numb
  * Get the active LLM backend (ollama or vllm)
  * Used to ensure model resolution respects the configured backend
  */
-function getActiveBackend(): BackendType {
+function getBackendSelection(): { activeBackend: BackendType; vllmModel?: string } {
   try {
     const config = loadBackendConfig();
-    return config.activeBackend;
+    return {
+      activeBackend: config.activeBackend,
+      vllmModel: config.vllm.servedModelName || config.vllm.model,
+    };
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to load backend config, using fallback:`, error);
-    return 'ollama'; // Default fallback
+    return { activeBackend: 'ollama' }; // Default fallback
   }
 }
 
@@ -95,7 +102,7 @@ function getActiveBackend(): BackendType {
  * This ensures consistent behavior regardless of how cognitive mode mappings are configured
  */
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
-  const activeBackend = getActiveBackend();
+  const { activeBackend, vllmModel: configuredVllmModel } = getBackendSelection();
 
 
   // Cloud providers and remote-server are NEVER overridden - user's choice is respected
@@ -110,6 +117,17 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
     return resolved;
   }
 
+  // vllm.active is a dynamic slot, not a second persisted backend model. Keep
+  // user-owned roles/capabilities/options from the registry while reporting the
+  // checkpoint actually configured by the backend manager.
+  if (activeBackend === 'vllm' && resolved.provider === 'vllm' && resolved.id === 'vllm.active') {
+    return {
+      ...resolved,
+      model: configuredVllmModel || resolved.model,
+      metadata: { ...resolved.metadata, backendOverride: 'vllm' },
+    };
+  }
+
   // If resolved model uses ollama but vLLM is active, check for vllm.active model
   if (activeBackend === 'vllm' && resolved.provider === 'ollama') {
 
@@ -119,10 +137,11 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
       return {
         id: 'vllm.active',
         provider: 'vllm' as ModelProvider,
-        model: vllmModel.model,
+        model: configuredVllmModel || vllmModel.model,
         adapters: vllmModel.adapters || [],
         baseModel: vllmModel.baseModel,
         roles: vllmModel.roles,
+        capabilities: vllmModel.capabilities || [],
         options: { ...resolved.options, ...vllmModel.options },
         metadata: { ...resolved.metadata, ...vllmModel.metadata, backendOverride: 'vllm' },
       };
@@ -267,6 +286,7 @@ export function resolveModel(
     adapters: modelDef.adapters || [],
     baseModel: modelDef.baseModel,
     roles: modelDef.roles,
+    capabilities: modelDef.capabilities || [],
     options: { ...modelDef.options },
     metadata: { ...modelDef.metadata },
   };
@@ -312,6 +332,7 @@ export function resolveModelById(modelId: string, username?: string): ResolvedMo
     adapters: modelDef.adapters || [],
     baseModel: modelDef.baseModel,
     roles: modelDef.roles,
+    capabilities: modelDef.capabilities || [],
     options: { ...modelDef.options },
     metadata: { ...modelDef.metadata || {} },
   };
@@ -364,18 +385,11 @@ export function resolveModelForCognitiveMode(
       return applyBackendOverride(resolved, registry);
     }
 
-    // Role exists in mapping but has no value (undefined, not null)
-    // This is a configuration error - fail loudly
-    throw new Error(
-      `MISSING CONFIG: Role '${role}' has no model assigned in cognitive mode '${cognitiveMode}'.\n` +
-      `Fix: Add "${role}": "vllm.active" to cognitiveModeMappings.${cognitiveMode} in your profile's models.json`
-    );
+    // Cognitive-mode mappings override defaults. Roles omitted from the mode
+    // continue through their normal default assignment.
+    return resolveModel(role, undefined, username);
   } else {
-    // No cognitive mode mapping exists at all for this mode
-    throw new Error(
-      `MISSING CONFIG: Cognitive mode '${cognitiveMode}' has no mappings defined.\n` +
-      `Fix: Add cognitiveModeMappings.${cognitiveMode} section to your profile's models.json`
-    );
+    return resolveModel(role, undefined, username);
   }
 }
 

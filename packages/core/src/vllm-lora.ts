@@ -46,6 +46,12 @@ export interface VllmLoraConfig {
   enabledAdapters: string[];
   /** Maximum LoRA rank (vLLM --max-lora-rank flag, default: 64) */
   maxLoraRank: number;
+  /** Maximum number of distinct adapters active in one batch. */
+  maxLoras: number;
+  /** Maximum number of adapters retained in CPU RAM. */
+  maxCpuLoras: number;
+  /** Compute dtype used by LoRA layers. */
+  loraDtype: 'auto' | 'float16' | 'bfloat16';
 }
 
 export interface VllmLoraModule {
@@ -53,6 +59,37 @@ export interface VllmLoraModule {
   name: string;
   /** Absolute path to adapter directory */
   path: string;
+}
+
+function normalizedModelReference(reference: string): string {
+  return reference
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()!
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+}
+
+/**
+ * Derive a provider-neutral family/parameter-scale key from a model reference.
+ * This allows equivalent quantized repositories to share an adapter while
+ * preventing obvious architecture/size mismatches such as 14B versus 9B.
+ */
+export function getVllmLoraModelCompatibilityKey(reference: string): string {
+  const normalized = normalizedModelReference(reference);
+  const sizedModel = normalized.match(/^(.*?)[_-](\d+(?:\.\d+)?b)(?:[_-].*)?$/i);
+  if (!sizedModel) return normalized;
+  return `${sizedModel[1]}:${sizedModel[2]}`;
+}
+
+export function isVllmLoraCompatibleWithModel(
+  adapterBaseModel: string | undefined,
+  targetModel: string | undefined,
+): boolean {
+  if (!adapterBaseModel || !targetModel) return false;
+  return getVllmLoraModelCompatibilityKey(adapterBaseModel)
+    === getVllmLoraModelCompatibilityKey(targetModel);
 }
 
 // ============================================================================
@@ -203,6 +240,9 @@ export function getVllmLoraConfig(profileEtcPath: string): VllmLoraConfig {
   const defaultConfig: VllmLoraConfig = {
     enabledAdapters: [],
     maxLoraRank: 64,
+    maxLoras: 1,
+    maxCpuLoras: 1,
+    loraDtype: 'auto',
   };
 
   if (!fs.existsSync(modelsPath)) {
@@ -215,6 +255,9 @@ export function getVllmLoraConfig(profileEtcPath: string): VllmLoraConfig {
     return {
       enabledAdapters: models.vllmLora?.enabledAdapters ?? [],
       maxLoraRank: models.vllmLora?.maxLoraRank ?? 64,
+      maxLoras: models.vllmLora?.maxLoras ?? 1,
+      maxCpuLoras: models.vllmLora?.maxCpuLoras ?? models.vllmLora?.maxLoras ?? 1,
+      loraDtype: models.vllmLora?.loraDtype ?? 'auto',
     };
   } catch (error) {
     console.error('[vllm-lora] Failed to read LoRA config:', error);
@@ -247,6 +290,9 @@ export function saveVllmLoraConfig(
   models.vllmLora = {
     enabledAdapters: config.enabledAdapters,
     maxLoraRank: config.maxLoraRank,
+    maxLoras: config.maxLoras,
+    maxCpuLoras: config.maxCpuLoras,
+    loraDtype: config.loraDtype,
   };
 
   fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2));
@@ -341,14 +387,17 @@ export function buildLoraModulesArg(adapters: VllmLoraModule[]): string {
  */
 export async function getAdaptersToLoad(
   profileOutPath: string,
-  profileEtcPath: string
+  profileEtcPath: string,
+  targetModel?: string,
 ): Promise<VllmLoraModule[]> {
   const config = getVllmLoraConfig(profileEtcPath);
   const discovered = await discoverVllmLoraAdapters(profileOutPath);
 
   // Filter to only enabled and valid adapters
   return discovered
-    .filter(a => config.enabledAdapters.includes(a.name) && a.valid)
+    .filter(a => config.enabledAdapters.includes(a.name)
+      && a.valid
+      && (!targetModel || isVllmLoraCompatibleWithModel(a.baseModel, targetModel)))
     .map(a => ({ name: a.name, path: a.path }));
 }
 

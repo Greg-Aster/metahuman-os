@@ -10,7 +10,8 @@
 
 // ws is CommonJS - use default import for bundler compatibility
 import ws from 'ws';
-const WebSocket = ws;
+import type { RawData, WebSocket as WsWebSocket } from 'ws';
+const WebSocketClient = ws;
 import type { MetaHumanEvent, EventSource } from './schema.js';
 import { createEvent } from './schema.js';
 
@@ -31,13 +32,14 @@ const DEFAULT_OPTIONS: Required<EventBusClientOptions> = {
 };
 
 export class EventBusClient {
-  private ws: WebSocket | null = null;
+  private ws: WsWebSocket | null = null;
   private options: Required<EventBusClientOptions>;
   private eventQueue: MetaHumanEvent[] = [];
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isConnecting = false;
   private isShuttingDown = false;
+  private listeners = new Set<(event: MetaHumanEvent) => void>();
 
   constructor(options: EventBusClientOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -52,35 +54,49 @@ export class EventBusClient {
       return;
     }
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws && this.ws.readyState === WebSocketClient.OPEN) {
       return;
     }
 
     this.isConnecting = true;
 
     try {
-      this.ws = new WebSocket(this.options.url);
+      const socket = new WebSocketClient(this.options.url);
+      this.ws = socket;
 
-      this.ws.on('open', () => {
+      socket.on('open', () => {
         console.log(`${LOG_PREFIX} Connected to event bus at ${this.options.url}`);
+        // The event bus is observability plumbing, not process ownership. A
+        // connected socket must not keep a completed CLI or one-shot agent
+        // alive when it has no other work.
+        (socket as WsWebSocket & { _socket?: { unref?: () => void } })._socket?.unref?.();
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         this.flushQueue();
       });
 
-      this.ws.on('close', () => {
+      socket.on('close', () => {
         this.isConnecting = false;
         if (!this.isShuttingDown) {
           this.scheduleReconnect();
         }
       });
 
-      this.ws.on('error', (error) => {
+      socket.on('error', (error: Error) => {
         // Only log if not a connection refused error (server not running)
         if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED') {
           console.error(`${LOG_PREFIX} WebSocket error:`, error.message);
         }
         this.isConnecting = false;
+      });
+
+      socket.on('message', (message: RawData) => {
+        try {
+          const event = JSON.parse(message.toString()) as MetaHumanEvent;
+          for (const listener of this.listeners) listener(event);
+        } catch (error) {
+          console.warn(`${LOG_PREFIX} Ignoring invalid event:`, (error as Error).message);
+        }
       });
     } catch (error) {
       console.error(`${LOG_PREFIX} Failed to create WebSocket:`, error);
@@ -107,6 +123,9 @@ export class EventBusClient {
       this.reconnectTimer = null;
       this.connect();
     }, delay);
+    // Offline retry bookkeeping must not keep short-lived CLI commands,
+    // validators, or one-shot agent processes alive after their work ends.
+    this.reconnectTimer.unref?.();
   }
 
   /**
@@ -114,7 +133,7 @@ export class EventBusClient {
    * If not connected, events are queued and sent when connection is restored.
    */
   publish(event: MetaHumanEvent): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws && this.ws.readyState === WebSocketClient.OPEN) {
       try {
         this.ws.send(JSON.stringify(event));
       } catch (error) {
@@ -138,7 +157,7 @@ export class EventBusClient {
     options?: Partial<Omit<MetaHumanEvent, 'timestamp' | 'source' | 'event' | 'data'>>
   ): void {
     // Auto-connect on first emit if not connected
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== WebSocketClient.OPEN) {
       this.connect();
     }
 
@@ -147,6 +166,12 @@ export class EventBusClient {
       ...options,
     });
     this.publish(event);
+  }
+
+  subscribe(listener: (event: MetaHumanEvent) => void): () => void {
+    this.listeners.add(listener);
+    this.connect();
+    return () => this.listeners.delete(listener);
   }
 
   /**
@@ -164,7 +189,7 @@ export class EventBusClient {
    * Flush queued events to the server.
    */
   private flushQueue(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== WebSocketClient.OPEN) {
       return;
     }
 
@@ -190,7 +215,7 @@ export class EventBusClient {
    * Check if connected to the event bus.
    */
   isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return this.ws !== null && this.ws.readyState === WebSocketClient.OPEN;
   }
 
   /**

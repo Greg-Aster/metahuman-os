@@ -28,6 +28,7 @@ export const ModelResolverNode: NodeDefinition = defineNode({
     try {
       const { loadModelRegistry } = await import('../../model-resolver.js');
       const { getActiveFacet } = await import('../../identity.js');
+      const { loadMoodSettings } = await import('../../mood-settings.js');
 
       const registry = loadModelRegistry();
 
@@ -43,10 +44,15 @@ export const ModelResolverNode: NodeDefinition = defineNode({
       let includePersonaSummary = globalSettings.includePersonaSummary !== false;
 
       try {
-        if (getActiveFacet() === 'inactive') {
+        const activeFacet = getActiveFacet();
+        if (activeFacet === 'inactive') {
           includePersonaSummary = false;
+        } else if (!includePersonaSummary) {
+          const moodSettings = loadMoodSettings(context.username || context.userId);
+          includePersonaSummary = moodSettings.overridePersonaDisabled;
         }
       } catch (error) {
+        if ((error as Error).name === 'PersonaFacetConfigurationError') throw error;
         console.warn('[ModelResolver] Could not check active facet:', error);
       }
 

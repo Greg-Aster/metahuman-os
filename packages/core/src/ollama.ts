@@ -4,6 +4,11 @@
  */
 
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
+import {
+  parseProviderImageDataUrl,
+  type ProviderImagePolicy,
+  type ProviderMessage,
+} from './providers/types.js';
 
 export interface OllamaModel {
   name: string;
@@ -41,6 +46,35 @@ export interface OllamaGenerateResponse {
 export interface OllamaChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** Native Ollama vision payload: raw base64 without a data URL prefix. */
+  images?: string[];
+}
+
+export function buildOllamaChatMessages(
+  messages: ProviderMessage[],
+  policy: ProviderImagePolicy
+): OllamaChatMessage[] {
+  return messages.map(message => {
+    if (typeof message.content === 'string') {
+      return { role: message.role, content: message.content }
+    }
+
+    const text: string[] = []
+    const images: string[] = []
+    for (const part of message.content) {
+      if (part.type === 'text') {
+        text.push(part.text)
+      } else {
+        images.push(parseProviderImageDataUrl(part.image_url.url, policy).base64)
+      }
+    }
+
+    return {
+      role: message.role,
+      content: text.join('\n'),
+      ...(images.length ? { images } : {}),
+    }
+  })
 }
 
 export interface OllamaChatResponse {
@@ -49,14 +83,86 @@ export interface OllamaChatResponse {
   message: {
     role: string;
     content: string;
+    /** Native Ollama reasoning channel used by thinking-capable models. */
+    thinking?: string;
   };
   done: boolean;
+  done_reason?: string;
   total_duration?: number;
   load_duration?: number;
   prompt_eval_count?: number;
   prompt_eval_duration?: number;
   eval_count?: number;
   eval_duration?: number;
+}
+
+export interface OllamaChatOptions {
+  temperature?: number
+  stream?: boolean
+  top_p?: number
+  top_k?: number
+  min_p?: number
+  seed?: number
+  repeat_penalty?: number
+  repeat_last_n?: number
+  num_ctx?: number
+  num_predict?: number
+  mirostat?: number
+  mirostat_eta?: number
+  mirostat_tau?: number
+  format?: string
+  keep_alive?: string | number
+  think?: boolean
+}
+
+export function resolveOllamaThinkingMode(enableThinking: boolean | undefined): boolean {
+  // Model-level MetaHuman settings are authoritative. Ollama models may enable
+  // thinking by default, which can consume the full output budget before a
+  // user-visible answer is produced.
+  return enableThinking === true
+}
+
+export function normalizeOllamaChatResponse(response: OllamaChatResponse): {
+  content: string;
+  thinking: string | null;
+} {
+  return {
+    content: typeof response.message?.content === 'string' ? response.message.content : '',
+    thinking: typeof response.message?.thinking === 'string' && response.message.thinking.trim()
+      ? response.message.thinking.trim()
+      : null,
+  }
+}
+
+export function buildOllamaChatRequest(
+  model: string,
+  messages: OllamaChatMessage[],
+  options: OllamaChatOptions = {}
+): Record<string, unknown> {
+  return {
+    model,
+    messages,
+    stream: options.stream || false,
+    options: Object.fromEntries(
+      Object.entries({
+        temperature: options.temperature ?? 0.7,
+        top_p: options.top_p,
+        top_k: options.top_k,
+        min_p: options.min_p,
+        seed: options.seed,
+        repeat_penalty: options.repeat_penalty,
+        repeat_last_n: options.repeat_last_n,
+        num_ctx: options.num_ctx,
+        num_predict: options.num_predict,
+        mirostat: options.mirostat,
+        mirostat_eta: options.mirostat_eta,
+        mirostat_tau: options.mirostat_tau,
+      }).filter(([, value]) => value !== undefined)
+    ),
+    ...(options.format ? { format: options.format } : {}),
+    ...(options.keep_alive !== undefined ? { keep_alive: options.keep_alive } : {}),
+    ...(options.think !== undefined ? { think: options.think } : {}),
+  }
 }
 
 export interface OllamaEmbeddingsResponse {
@@ -71,7 +177,11 @@ export class OllamaClient {
   private endpoint: string;
 
   constructor(endpoint = 'http://localhost:11434') {
-    this.endpoint = endpoint;
+    this.endpoint = endpoint.replace(/\/+$/, '');
+  }
+
+  setEndpoint(endpoint: string): void {
+    this.endpoint = endpoint.replace(/\/+$/, '');
   }
 
   /**
@@ -79,7 +189,9 @@ export class OllamaClient {
    */
   async isRunning(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.endpoint}/api/version`);
+      const response = await fetch(`${this.endpoint}/api/version`, {
+        signal: AbortSignal.timeout(2000),
+      });
       return response.ok;
     } catch {
       return false;
@@ -188,21 +300,7 @@ export class OllamaClient {
   async chat(
     model: string,
     messages: OllamaChatMessage[],
-    options?: {
-      temperature?: number
-      stream?: boolean
-      top_p?: number
-      top_k?: number
-      repeat_penalty?: number
-      repeat_last_n?: number
-      num_ctx?: number
-      num_predict?: number
-      mirostat?: number
-      mirostat_eta?: number
-      mirostat_tau?: number
-      format?: string // BUGFIX: Support JSON mode to constrain output format
-      keep_alive?: string | number // How long to keep model in VRAM (0 = unload immediately, "5m" = 5 minutes)
-    }
+    options?: OllamaChatOptions
   ): Promise<OllamaChatResponse> {
     const requestId = generateRequestId();
     const startTime = Date.now();
@@ -215,36 +313,7 @@ export class OllamaClient {
       format: options?.format,
     }, { requestId });
 
-    // BUGFIX: Build request body with format at top level (not in options)
-    const requestBody: any = {
-      model,
-      messages,
-      stream: options?.stream || false,
-      options: Object.fromEntries(
-        Object.entries({
-          temperature: options?.temperature ?? 0.7,
-          top_p: options?.top_p,
-          top_k: options?.top_k,
-          repeat_penalty: options?.repeat_penalty,
-          repeat_last_n: options?.repeat_last_n,
-          num_ctx: options?.num_ctx,
-          num_predict: options?.num_predict,
-          mirostat: options?.mirostat,
-          mirostat_eta: options?.mirostat_eta,
-          mirostat_tau: options?.mirostat_tau,
-        }).filter(([, v]) => v !== undefined)
-      ),
-    };
-
-    // BUGFIX: Add format as top-level parameter (Ollama API requirement)
-    if (options?.format) {
-      requestBody.format = options.format;
-    }
-
-    // Add keep_alive if specified (controls how long model stays in VRAM)
-    if (options?.keep_alive !== undefined) {
-      requestBody.keep_alive = options.keep_alive;
-    }
+    const requestBody = buildOllamaChatRequest(model, messages, options);
 
     // 2 minute timeout for LLM chat (large models can take time)
     const response = await fetch(`${this.endpoint}/api/chat`, {
@@ -420,7 +489,9 @@ export class OllamaClient {
       expiresAt: string;
     }>;
   }> {
-    const response = await fetch(`${this.endpoint}/api/ps`);
+    const response = await fetch(`${this.endpoint}/api/ps`, {
+      signal: AbortSignal.timeout(3000),
+    });
     if (!response.ok) {
       throw new Error(`Failed to get running models: ${response.status}`);
     }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { getUserContext } from './context.js';
 import { systemPaths } from './path-builder.js';
 import { withBufferLock } from './buffer-locks.js';
+import { eventBus } from './infrastructure/event-bus/client.js';
 
 export type ConversationBufferMode = 'inner' | 'conversation' | 'system';
 
@@ -42,6 +43,7 @@ export type ConversationBuffer = {
   messages: ConversationMessage[];
   lastSummarizedIndex: number | null;
   lastUpdated: string;
+  userMessageCount?: number;
 };
 
 /**
@@ -112,6 +114,7 @@ function createEmptyBuffer(): ConversationBuffer {
     messages: [],
     lastSummarizedIndex: null,
     lastUpdated: new Date().toISOString(),
+    userMessageCount: 0,
   };
 }
 
@@ -230,6 +233,7 @@ export function loadPersistedBuffer(mode: ConversationBufferMode): {
           messages: deduped,
           lastSummarizedIndex: derivedLastSummarized ?? null,
           lastUpdated: new Date().toISOString(),
+          userMessageCount: parsed.userMessageCount ?? deduped.filter(message => message.role === 'user').length,
         };
         fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
 
@@ -293,6 +297,15 @@ export async function persistBuffer(
         messages: conversationMessages,
         lastSummarizedIndex,
         lastUpdated: new Date().toISOString(),
+        userMessageCount: (() => {
+          try {
+            if (!fs.existsSync(bufferPath)) return conversationMessages.filter(message => message.role === 'user').length;
+            const existing = JSON.parse(fs.readFileSync(bufferPath, 'utf8')) as Partial<ConversationBuffer>;
+            return Math.max(existing.userMessageCount || 0, conversationMessages.filter(message => message.role === 'user').length);
+          } catch {
+            return conversationMessages.filter(message => message.role === 'user').length;
+          }
+        })(),
       };
 
       fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
@@ -395,6 +408,7 @@ export async function appendToUserBuffer(
     return false;
   }
 
+  let appendedUserMessageCount: number | undefined;
   const result = await withBufferLock(usernameForBuffer, mode, 'append_message', async () => {
     const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
 
@@ -435,6 +449,15 @@ export async function appendToUserBuffer(
       };
 
       buffer.messages.push(newMessage);
+      const existingUserCount = Number.isInteger(buffer.userMessageCount)
+        ? Number(buffer.userMessageCount)
+        : buffer.messages.slice(0, -1).filter(item => item.role === 'user').length;
+      if (mode === 'conversation' && message.role === 'user') {
+        buffer.userMessageCount = existingUserCount + 1;
+        appendedUserMessageCount = buffer.userMessageCount;
+      } else if (buffer.userMessageCount === undefined) {
+        buffer.userMessageCount = existingUserCount;
+      }
 
       // Auto-prune to last 50 messages
       const MAX_MESSAGES = 50;
@@ -457,6 +480,13 @@ export async function appendToUserBuffer(
     }
   }, windowId);
 
+  if (result !== null && appendedUserMessageCount !== undefined) {
+    eventBus.emit('core', 'conversation.user-message.appended', {
+      username: usernameForBuffer,
+      mode,
+      userMessageCount: appendedUserMessageCount,
+    }, { userId: usernameForBuffer });
+  }
   return result !== null;
 }
 

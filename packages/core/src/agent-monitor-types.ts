@@ -128,13 +128,13 @@ export interface AgentBootEntry {
   description: string;
   kind: AgentKind;
   enabled: boolean;
-  runOnBoot: boolean;
+  startOnSystemBoot: boolean;
   autoRestart: boolean;
   maxRetries: number;
   dependencyNotes: string[];
 }
 
-export type SchedulerAgentConfig = Record<string, unknown> & {
+export type AgentCatalogEntry = Record<string, unknown> & {
   id?: string;
   enabled?: boolean;
   type?: string;
@@ -142,12 +142,13 @@ export type SchedulerAgentConfig = Record<string, unknown> & {
   usesLLM?: boolean;
   interval?: number;
   inactivityThreshold?: number;
-  runOnBoot?: boolean;
+  startOnSystemBoot?: boolean;
   autoRestart?: boolean;
   maxRetries?: number;
   comment?: string;
 };
 
-export interface SchedulerConfigFile {
-  agents?: Record<string, SchedulerAgentConfig>;
+export interface AgentMonitorConfig {
+  agents?: Record<string, AgentCatalogEntry>;
+  services?: Record<string, AgentCatalogEntry>;
 }

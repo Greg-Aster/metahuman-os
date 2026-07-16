@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeView } from '../stores/navigation';
+  import { activeView, dashboardSection, systemSection } from '../stores/navigation';
   import { onDestroy, onMount } from 'svelte';
   import type { SvelteComponent } from 'svelte';
   import { apiFetch, isMobileApp } from '../lib/client/api-config';
@@ -135,8 +135,11 @@
         case 'AddonsManager':
           module = await import('./AddonsManager.svelte');
           break;
-        case 'SchedulerSettings':
-          module = await import('./SchedulerSettings.svelte');
+        case 'TriggerManagerSettings':
+          module = await import('./TriggerManagerSettings.svelte');
+          break;
+        case 'AgentCatalogSettings':
+          module = await import('./AgentCatalogSettings.svelte');
           break;
         case 'ProfileLocation':
           module = await import('./ProfileLocation.svelte');
@@ -149,6 +152,12 @@
           break;
         case 'ActiveOperatorDashboard':
           module = await import('./ActiveOperatorDashboard.svelte');
+          break;
+        case 'TriggerManagerDashboard':
+          module = await import('./TriggerManagerDashboard.svelte');
+          break;
+        case 'AgentCatalogDashboard':
+          module = await import('./AgentCatalogDashboard.svelte');
           break;
         case 'SystemCoderDashboard':
           module = await import('./SystemCoderDashboard.svelte');
@@ -213,8 +222,6 @@ let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'pruned' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
 let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
-let systemTab: 'chat' | 'lifeline' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'scheduler' | 'terminal' = 'settings'
-let dashboardTab: 'overview' | 'tasks' | 'approvals' | 'operator' = 'overview'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -244,10 +251,10 @@ async function loadVoiceProvider() {
 
 function handleOpenSystemTab(event: Event) {
   const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab;
-  activeView.set('system');
   if (tab === 'backend') {
-    systemTab = 'backend';
+    systemSection.set('backend');
   }
+  activeView.set('system');
 }
 
 onMount(() => {
@@ -359,14 +366,6 @@ $: if ($activeView !== 'voice') {
 
 $: if ($activeView !== 'training') {
   trainingTab = 'datasets';
-}
-
-$: if ($activeView !== 'system') {
-  systemTab = 'settings';
-}
-
-$: if ($activeView !== 'dashboard') {
-  dashboardTab = 'overview';
 }
 
 // Reset pagination when switching tabs or searching
@@ -619,7 +618,7 @@ async function loadMemoryContent(relPath: string) {
         void loadComponent('NetworkServerSettings');
         void loadComponent('AddonsManager');
         void loadComponent('Lifeline');
-        void loadComponent('SchedulerSettings');
+        void loadComponent('TriggerManagerSettings');
         break;
       case 'terminal':
         void loadComponent('TerminalManager');
@@ -656,32 +655,46 @@ async function loadMemoryContent(relPath: string) {
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button {dashboardTab === 'overview' ? 'active' : ''}" on:click={() => dashboardTab = 'overview'}>Overview</button>
-          <button class="tab-button {dashboardTab === 'tasks' ? 'active' : ''}" on:click={() => dashboardTab = 'tasks'}>Tasks</button>
-          <button class="tab-button {dashboardTab === 'approvals' ? 'active' : ''}" on:click={() => dashboardTab = 'approvals'}>Approvals</button>
-          <button class="tab-button {dashboardTab === 'operator' ? 'active' : ''}" on:click={() => dashboardTab = 'operator'}>Active Operator</button>
+          <button class="tab-button {$dashboardSection === 'overview' ? 'active' : ''}" on:click={() => dashboardSection.set('overview')}>Overview</button>
+          <button class="tab-button {$dashboardSection === 'tasks' ? 'active' : ''}" on:click={() => dashboardSection.set('tasks')}>Tasks</button>
+          <button class="tab-button {$dashboardSection === 'approvals' ? 'active' : ''}" on:click={() => dashboardSection.set('approvals')}>Approvals</button>
+          <button class="tab-button {$dashboardSection === 'operator' ? 'active' : ''}" on:click={() => dashboardSection.set('operator')}>Active Operator</button>
+          <button class="tab-button {$dashboardSection === 'agent-catalog' ? 'active' : ''}" on:click={() => dashboardSection.set('agent-catalog')}>Agent Catalog</button>
+          <button class="tab-button {$dashboardSection === 'trigger-manager' ? 'active' : ''}" on:click={() => dashboardSection.set('trigger-manager')}>Trigger Manager</button>
         </div>
-        {#if dashboardTab === 'overview'}
+        {#if $dashboardSection === 'overview'}
           {#await loadComponent('Dashboard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading dashboard...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if dashboardTab === 'tasks'}
+        {:else if $dashboardSection === 'tasks'}
           {#await loadComponent('TaskManager')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading tasks...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if dashboardTab === 'approvals'}
+        {:else if $dashboardSection === 'approvals'}
           {#await loadComponent('ApprovalQueue')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading approvals...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if dashboardTab === 'operator'}
+        {:else if $dashboardSection === 'operator'}
           {#await loadComponent('ActiveOperatorDashboard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading active operator...</div>
+          {:then Component}
+              <svelte:component this={Component} />
+            {/await}
+        {:else if $dashboardSection === 'agent-catalog'}
+          {#await loadComponent('AgentCatalogDashboard')}
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading Agent Catalog…</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if $dashboardSection === 'trigger-manager'}
+          {#await loadComponent('TriggerManagerDashboard')}
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading Trigger Manager…</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -1465,74 +1478,81 @@ async function loadMemoryContent(relPath: string) {
       </div>
     </div>
   {:else if $activeView === 'system'}
-    <div class="view-container" class:terminal-view={systemTab === 'terminal'}>
+    <div class="view-container" class:terminal-view={$systemSection === 'terminal'}>
       <div class="view-header">
         <h2 class="view-title">⚙️ System</h2>
         <p class="view-subtitle">Tools & settings</p>
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button" class:active={systemTab==='chat'} on:click={() => systemTab='chat'}>Chat</button>
-          <button class="tab-button" class:active={systemTab==='settings'} on:click={() => systemTab='settings'}>Settings</button>
-          <button class="tab-button" class:active={systemTab==='backend'} on:click={() => systemTab='backend'}>Backend</button>
-          <button class="tab-button" class:active={systemTab==='security'} on:click={() => systemTab='security'}>Security</button>
-          <button class="tab-button" class:active={systemTab==='storage'} on:click={() => systemTab='storage'}>Storage</button>
-          <button class="tab-button" class:active={systemTab==='network'} on:click={() => systemTab='network'}>🌐 Network</button>
-          <button class="tab-button" class:active={systemTab==='addons'} on:click={() => systemTab='addons'}>Addons</button>
-          <button class="tab-button" class:active={systemTab==='scheduler'} on:click={() => systemTab='scheduler'}>Scheduler</button>
-          <button class="tab-button" class:active={systemTab==='lifeline'} on:click={() => systemTab='lifeline'}>Lifeline</button>
+          <button class="tab-button" class:active={$systemSection==='chat'} on:click={() => systemSection.set('chat')}>Chat</button>
+          <button class="tab-button" class:active={$systemSection==='settings'} on:click={() => systemSection.set('settings')}>Settings</button>
+          <button class="tab-button" class:active={$systemSection==='backend'} on:click={() => systemSection.set('backend')}>Backend</button>
+          <button class="tab-button" class:active={$systemSection==='security'} on:click={() => systemSection.set('security')}>Security</button>
+          <button class="tab-button" class:active={$systemSection==='storage'} on:click={() => systemSection.set('storage')}>Storage</button>
+          <button class="tab-button" class:active={$systemSection==='network'} on:click={() => systemSection.set('network')}>🌐 Network</button>
+          <button class="tab-button" class:active={$systemSection==='addons'} on:click={() => systemSection.set('addons')}>Addons</button>
+          <button class="tab-button" class:active={$systemSection==='agent-catalog'} on:click={() => systemSection.set('agent-catalog')}>Agent Catalog</button>
+          <button class="tab-button" class:active={$systemSection==='trigger-manager'} on:click={() => systemSection.set('trigger-manager')}>Trigger Manager</button>
+          <button class="tab-button" class:active={$systemSection==='lifeline'} on:click={() => systemSection.set('lifeline')}>Lifeline</button>
         </div>
-        {#if systemTab === 'chat'}
+        {#if $systemSection === 'chat'}
           {#await loadComponent('ChatSettings')}
             <div class="loading-placeholder">Loading chat settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'settings'}
+        {:else if $systemSection === 'settings'}
           {#await loadComponent('SystemSettings')}
             <div class="loading-placeholder">Loading system settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'backend'}
+        {:else if $systemSection === 'backend'}
           {#await loadComponent('BackendSettings')}
             <div class="loading-placeholder">Loading backend settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'security'}
+        {:else if $systemSection === 'security'}
           {#await loadComponent('SecuritySettings')}
             <div class="loading-placeholder">Loading security settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'storage'}
+        {:else if $systemSection === 'storage'}
           {#await loadComponent('ProfileLocation')}
             <div class="loading-placeholder">Loading storage settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'network'}
+        {:else if $systemSection === 'network'}
           {#await loadComponent('NetworkServerSettings')}
             <div class="loading-placeholder">Loading network settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'addons'}
+        {:else if $systemSection === 'addons'}
           {#await loadComponent('AddonsManager')}
             <div class="loading-placeholder">Loading addons manager...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'lifeline'}
+        {:else if $systemSection === 'lifeline'}
           {#await loadComponent('Lifeline')}
             <div class="loading-placeholder">Loading lifeline...</div>
           {:then Component}
+              <svelte:component this={Component} />
+            {/await}
+        {:else if $systemSection === 'agent-catalog'}
+          {#await loadComponent('AgentCatalogSettings')}
+            <div class="loading-placeholder">Loading Agent Catalog…</div>
+          {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if systemTab === 'scheduler'}
-          {#await loadComponent('SchedulerSettings')}
-            <div class="loading-placeholder">Loading scheduler settings...</div>
+        {:else if $systemSection === 'trigger-manager'}
+          {#await loadComponent('TriggerManagerSettings')}
+            <div class="loading-placeholder">Loading Trigger Manager settings…</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}

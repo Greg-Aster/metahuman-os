@@ -94,8 +94,11 @@ export function registerAgent(name: string, pid: number): void {
   clearAgentFailure(name);
 }
 
-export function unregisterAgent(name: string): void {
+export function unregisterAgent(name: string, expectedPid?: number): void {
   const registry = readRegistry();
+  if (expectedPid !== undefined && registry[name]?.pid !== expectedPid) {
+    return;
+  }
   delete registry[name];
   writeRegistry(registry);
 }

@@ -1,142 +1,67 @@
 /**
- * Scheduler Config API Handlers
+ * Compatibility API for the former scheduler settings surface.
  *
- * Unified handlers for agent scheduler configuration.
- * Works for both web (Astro) and mobile (nodejs-mobile).
+ * The TriggerConfigService is the sole configuration owner. New clients should
+ * use /api/trigger-manager/config.
  */
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse } from '../types.js';
-import { ROOT } from '../../paths.js';
 import { audit } from '../../audit.js';
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { ensureQueueSystemStarted, getTriggerConfigService } from '../../queue/index.js';
+import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 
-const agentsConfigPath = path.join(ROOT, 'etc', 'agents.json');
-
-export interface AgentConfig {
-  id: string;
-  enabled: boolean;
-  type: 'interval' | 'activity' | 'time-of-day' | 'manual';
-  priority: 'high' | 'normal' | 'low';
-  agentPath: string;
-  usesLLM: boolean;
-  interval?: number;
-  inactivityThreshold?: number;
-  schedule?: string;
-  runOnBoot: boolean;
-  autoRestart: boolean;
-  maxRetries: number;
-  comment?: string;
+function failure(error: string, status = 500): UnifiedResponse {
+  return { status, data: { success: false, error } };
 }
 
-export interface GlobalSettings {
-  pauseAll: boolean;
-  quietHours: {
-    enabled: boolean;
-    start: string;
-    end: string;
-  };
-  maxConcurrentAgents: number;
-  maxConcurrentLLMAgents: number;
-  maxConcurrentNonLLMAgents: number;
-  pauseQueueOnActivity: boolean;
-  activityResumeDelay: number;
-}
-
-export interface SchedulerConfig {
-  globalSettings: GlobalSettings;
-  agents: Record<string, AgentConfig>;
-}
-
-/**
- * GET /api/scheduler-config - Retrieve scheduler configuration
- */
-export async function handleGetSchedulerConfig(_req: UnifiedRequest): Promise<UnifiedResponse> {
+export async function handleGetSchedulerConfig(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return failure('Authentication required', 401);
+  if (req.user.role !== 'owner') return failure('Owner permission required', 403);
   try {
-    const configData = await fs.readFile(agentsConfigPath, 'utf-8');
-    const config = JSON.parse(configData);
-
-    return successResponse({
-      success: true,
-      globalSettings: config.globalSettings || {},
-      agents: config.agents || {},
-    });
+    const system = await ensureQueueSystemStarted();
+    const read = getTriggerConfigService().load(false);
+    return {
+      status: 200,
+      data: {
+        success: true,
+        globalSettings: read.config.globalSettings,
+        agents: read.config.agents,
+        scope: read.scope,
+        persistedRevision: read.revision,
+        runtimeRevision: system.triggers.getSnapshot().config.runtimeRevision,
+        loadedAt: read.loadedAt,
+      },
+    };
   } catch (error) {
-    console.error('[scheduler-config] Failed to load config:', error);
-    return { status: 500, error: (error as Error).message };
+    return failure((error as Error).message);
   }
 }
 
-/**
- * POST /api/scheduler-config - Update scheduler configuration (owner only)
- * Body: { globalSettings?: Partial<GlobalSettings>, agents?: Record<string, Partial<AgentConfig>> }
- */
 export async function handleSetSchedulerConfig(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, body } = req;
-
+  if (!req.user.isAuthenticated) return failure('Authentication required', 401);
+  if (req.user.role !== 'owner') return failure('Owner permission required', 403);
   try {
-    if (!user.isAuthenticated) {
-      return { status: 401, error: 'Authentication required' };
-    }
-
-    if (user.role !== 'owner') {
-      return { status: 403, error: 'Owner permission required' };
-    }
-
-    // Read current config
-    const configData = await fs.readFile(agentsConfigPath, 'utf-8');
-    const config = JSON.parse(configData);
-
-    const changes: string[] = [];
-
-    // Update global settings if provided
-    if (body.globalSettings) {
-      config.globalSettings = {
-        ...config.globalSettings,
-        ...body.globalSettings,
-      };
-      changes.push('globalSettings');
-    }
-
-    // Update individual agent settings if provided
-    if (body.agents) {
-      for (const [agentId, agentUpdates] of Object.entries(body.agents)) {
-        if (config.agents[agentId]) {
-          config.agents[agentId] = {
-            ...config.agents[agentId],
-            ...(agentUpdates as Partial<AgentConfig>),
-          };
-          changes.push(`agents.${agentId}`);
-        }
-      }
-    }
-
-    // Write updated config
-    await fs.writeFile(agentsConfigPath, JSON.stringify(config, null, 2));
-
-    // Audit the change
+    const system = await ensureQueueSystemStarted();
+    const read = getTriggerConfigService().update(req.body || {}, req.user.username);
     audit({
       level: 'info',
       category: 'system',
-      event: 'scheduler_config_updated',
-      details: {
-        changes,
-        globalSettings: body.globalSettings,
-        agentChanges: body.agents ? Object.keys(body.agents) : [],
+      event: 'scheduler_config_compatibility_api_used',
+      actor: req.user.username,
+      details: { revision: read.revision },
+    });
+    return {
+      status: 200,
+      data: {
+        success: true,
+        globalSettings: read.config.globalSettings,
+        agents: read.config.agents,
+        scope: read.scope,
+        persistedRevision: read.revision,
+        runtimeRevision: system.triggers.getSnapshot().config.runtimeRevision,
+        loadedAt: read.loadedAt,
       },
-      actor: user.username,
-    });
-
-    console.log(`[scheduler-config] Updated by ${user.username}: ${changes.join(', ')}`);
-
-    return successResponse({
-      success: true,
-      globalSettings: config.globalSettings,
-      agents: config.agents,
-    });
+    };
   } catch (error) {
-    console.error('[scheduler-config] Failed to update config:', error);
-    return { status: 500, error: (error as Error).message };
+    return failure((error as Error).message, 400);
   }
 }

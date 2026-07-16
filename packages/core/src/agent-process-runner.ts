@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { audit } from './audit.js';
-import { isLocked } from './locks.js';
+import { getLockOwnerPid } from './locks.js';
 import { ROOT, systemPaths } from './path-builder.js';
 import {
   buildAgentNodePath,
@@ -73,6 +73,11 @@ function failureMessage(agentName: string, code: number | null, stderr?: string)
   return stderr || `Agent ${agentName} exited with code ${code ?? 'unknown'}`;
 }
 
+function processLockName(agentName: string): string {
+  if (agentName === 'maintenance-service') return 'service-maintenance';
+  return `agent-${agentName}`;
+}
+
 export async function startAgentProcess(agentName: string, options: StartAgentProcessOptions): Promise<AgentStartResult> {
   const actor = options.actor ?? 'system';
   const source = options.source;
@@ -86,8 +91,18 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       return { agent: agentName, started: false, success: false, alreadyRunning: true };
     }
 
-    if (options.checkLock && isLocked(`agent-${agentName}`)) {
-      return { agent: agentName, started: false, success: false, alreadyRunning: true, error: 'Agent is already running' };
+    const lockOwnerPid = options.checkLock ? getLockOwnerPid(processLockName(agentName)) : undefined;
+    if (lockOwnerPid) {
+      // Repair a missing/stale monitor registry from the service's own lock.
+      registerAgent(agentName, lockOwnerPid);
+      return {
+        agent: agentName,
+        started: false,
+        success: false,
+        alreadyRunning: true,
+        pid: lockOwnerPid,
+        error: 'Agent is already running',
+      };
     }
 
     const bootstrapPath = path.join(systemPaths.brain, 'scripts', '_bootstrap.ts');
@@ -108,12 +123,29 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
     }
 
     const commandArgs = useBootstrap ? [bootstrapPath, agentName, ...args] : [agentPath, ...args];
-    const child = spawn(resolveTsx(), commandArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: ROOT,
-      detached,
-      env,
-    });
+    let stdoutFd: number | undefined;
+    let stderrFd: number | undefined;
+    if (detached) {
+      const logDir = path.join(systemPaths.logs, 'run', 'agents');
+      fs.mkdirSync(logDir, { recursive: true });
+      stdoutFd = fs.openSync(path.join(logDir, `${agentName}.log`), 'a');
+      stderrFd = fs.openSync(path.join(logDir, `${agentName}.error.log`), 'a');
+    }
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(resolveTsx(), commandArgs, {
+        // A detached service must never inherit pipes owned by a short-lived
+        // CLI/API request. Durable files keep diagnostics without keeping the
+        // launcher terminal alive or delivering EPIPE to the service later.
+        stdio: detached ? ['ignore', stdoutFd!, stderrFd!] : ['ignore', 'pipe', 'pipe'],
+        cwd: ROOT,
+        detached,
+        env,
+      });
+    } finally {
+      if (stdoutFd !== undefined) fs.closeSync(stdoutFd);
+      if (stderrFd !== undefined) fs.closeSync(stderrFd);
+    }
 
     const pid = child.pid;
     if (!pid) {
@@ -137,15 +169,27 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
     const immediateResultPromise = waitForMs > 0
       ? new Promise<ImmediateResult>((resolve) => {
           let resolved = false;
+          let timeout: NodeJS.Timeout | undefined;
+          let lockPoll: NodeJS.Timeout | undefined;
           finishImmediate = (result) => {
             if (resolved) return;
             resolved = true;
+            if (timeout) clearTimeout(timeout);
+            if (lockPoll) clearInterval(lockPoll);
             resolve(result);
           };
           child.once('error', error => finishImmediate?.({ type: 'error', error }));
           child.once('close', () => finishImmediate?.({ type: 'closed' }));
-          const timer = setTimeout(() => finishImmediate?.({ type: 'running' }), waitForMs);
-          timer.unref?.();
+          if (options.checkLock) {
+            lockPoll = setInterval(() => {
+              if (getLockOwnerPid(processLockName(agentName)) === pid) {
+                finishImmediate?.({ type: 'running' });
+              }
+            }, 50);
+            lockPoll.unref?.();
+          }
+          timeout = setTimeout(() => finishImmediate?.({ type: 'running' }), waitForMs);
+          timeout.unref?.();
         })
       : undefined;
 
@@ -174,7 +218,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
         details: { agent: agentName, exitCode: code, source },
         actor,
       });
-      unregisterAgent(agentName);
+      unregisterAgent(agentName, pid);
       if (code === 0) {
         clearAgentFailure(agentName);
       } else {
@@ -197,7 +241,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
     }
 
     if (immediateResult?.type === 'error') {
-      unregisterAgent(agentName);
+      unregisterAgent(agentName, pid);
       const stderr = outputExcerpt(stderrChunks);
       const stdout = outputExcerpt(stdoutChunks);
       recordAgentFailure({

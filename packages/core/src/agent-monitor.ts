@@ -6,16 +6,17 @@
 import fs, { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
+import { getAgentCatalogSnapshot, type AgentCatalogSnapshot } from './agent-catalog.js';
 import {
   bootEntryForDescriptor,
   buildAgentDescriptor,
-  defaultSchedulerAgentConfig,
+  defaultAgentCatalogEntry,
   DESCRIPTORS,
   ENVIRONMENT_BRIDGE_FIELDS,
-  readSchedulerConfig,
-  SCHEDULER_AGENT_FIELDS,
+  readAgentMonitorConfig,
+  SERVICE_LIFECYCLE_FIELDS,
   updateEnvironmentBridgeVariable,
-  writeSchedulerConfig,
+  writeServiceConfig,
 } from './agent-monitor-descriptors.js';
 import {
   getAgentFailures,
@@ -38,7 +39,8 @@ import type {
   AgentRunMetrics,
   AgentStatus,
   AgentVariableDescriptor,
-  SchedulerConfigFile,
+  AgentCatalogEntry,
+  AgentMonitorConfig,
 } from './agent-monitor-types.js';
 
 export {
@@ -267,18 +269,24 @@ function isTrackableAgent(id: string): boolean {
   return Boolean(DESCRIPTORS[id]) || hasRunnableAgentSource(id);
 }
 
-function normalizedAgentIds(schedulerConfig: SchedulerConfigFile): string[] {
+function normalizedAgentIds(config: AgentMonitorConfig, catalog: AgentCatalogSnapshot): string[] {
   const registry = readRegistry();
   const failures = getAgentFailures();
+  const catalogIds = new Set(catalog.agents.map(agent => agent.id));
   return [...new Set([
     ...Object.keys(DESCRIPTORS),
-    ...listAvailableAgents(),
-    ...Object.keys(schedulerConfig.agents ?? {}),
+    ...catalogIds,
+    ...Object.keys(config.agents ?? {}),
+    ...Object.keys(config.services ?? {}),
     ...Object.keys(registry),
     ...failures.map(failure => failure.agent),
   ])]
-    .filter(isTrackableAgent)
+    .filter(id => catalogIds.has(id) || isTrackableAgent(id))
     .sort((a, b) => a.localeCompare(b));
+}
+
+function configuredAgent(config: AgentMonitorConfig, id: string): AgentCatalogEntry | undefined {
+  return config.services?.[id] ?? config.agents?.[id];
 }
 
 /**
@@ -605,7 +613,9 @@ export function getAgentMetrics(agentName: string): AgentRunMetrics {
 }
 
 export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
-  const schedulerConfig = readSchedulerConfig();
+  const monitorConfig = readAgentMonitorConfig();
+  const catalog = getAgentCatalogSnapshot();
+  const catalogById = new Map(catalog.agents.map(agent => [agent.id, agent]));
   const statuses = getAgentStatuses();
   const statusByName = new Map(statuses.map(status => [status.name, status]));
   const failures = getAgentFailures();
@@ -613,8 +623,8 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
   const cards: AgentMonitorCard[] = [];
   const descriptors = new Map<string, AgentDescriptor>();
 
-  for (const id of normalizedAgentIds(schedulerConfig)) {
-    const descriptor = buildAgentDescriptor(id, schedulerConfig.agents?.[id]);
+  for (const id of normalizedAgentIds(monitorConfig, catalog)) {
+    const descriptor = buildAgentDescriptor(id, configuredAgent(monitorConfig, id), catalogById.get(id));
     descriptors.set(id, descriptor);
     cards.push(monitorCardForAgent(id, descriptor, statusByName.get(id)));
   }
@@ -631,7 +641,7 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
     .slice(0, 10);
   const recentFailures = failures
     .map(failure => {
-      const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, schedulerConfig.agents?.[failure.agent]);
+      const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, configuredAgent(monitorConfig, failure.agent), catalogById.get(failure.agent));
       descriptors.set(failure.agent, descriptor);
       return monitorCardForFailure(failure, descriptor);
     })
@@ -660,7 +670,7 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
 
   for (const failure of failures) {
     if (agentData[failure.agent]) continue;
-    const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, schedulerConfig.agents?.[failure.agent]);
+    const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, configuredAgent(monitorConfig, failure.agent), catalogById.get(failure.agent));
     const card = monitorCardForFailure(failure, descriptor);
     agentData[failure.agent] = dataPanelForFailure(card, descriptor, failure);
   }
@@ -704,8 +714,9 @@ function coerceAgentVariable(value: unknown, descriptor: AgentVariableDescriptor
 }
 
 function findVariableDescriptor(agentName: string, key: string): AgentVariableDescriptor | undefined {
-  const schedulerConfig = readSchedulerConfig();
-  const descriptor = buildAgentDescriptor(agentName, schedulerConfig.agents?.[agentName]);
+  const monitorConfig = readAgentMonitorConfig();
+  const catalogItem = getAgentCatalogSnapshot().agents.find(agent => agent.id === agentName);
+  const descriptor = buildAgentDescriptor(agentName, configuredAgent(monitorConfig, agentName), catalogItem);
   return descriptor.variables.find(variable => variable.key === key);
 }
 
@@ -720,27 +731,28 @@ export function setAgentVariable(agentName: string, key: string, rawValue: unkno
   if (agentName === 'environment-bridge' && ENVIRONMENT_BRIDGE_FIELDS.has(key)) {
     updateEnvironmentBridgeVariable(key, value);
   } else {
-    if (!SCHEDULER_AGENT_FIELDS.has(key)) {
+    if (!SERVICE_LIFECYCLE_FIELDS.has(key)) {
       throw new Error(`Agent variable is not editable: ${agentName}.${key}`);
     }
-    const config = readSchedulerConfig();
-    const descriptor = buildAgentDescriptor(agentName, config.agents?.[agentName]);
-    const agent = config.agents?.[agentName] ?? defaultSchedulerAgentConfig(agentName, descriptor.kind);
+    const config = readAgentMonitorConfig();
+    const catalogItem = getAgentCatalogSnapshot().agents.find(agent => agent.id === agentName);
+    const descriptor = buildAgentDescriptor(agentName, configuredAgent(config, agentName), catalogItem);
+    if (descriptor.kind !== 'service' && descriptor.kind !== 'connection') {
+      throw new Error(`Finite work is configured through Trigger Manager: ${agentName}`);
+    }
+    const agent = configuredAgent(config, agentName) ?? defaultAgentCatalogEntry(agentName, descriptor.kind);
     if (!agent) {
-      throw new Error(`Agent is not present in scheduler config: ${agentName}`);
+      throw new Error(`Service is not present in lifecycle config: ${agentName}`);
     }
-    const schedulerUpdates: Record<string, unknown> = { [key]: value };
-    if (key === 'runOnBoot' && value === true) {
-      schedulerUpdates.enabled = true;
+    const serviceUpdates: Record<string, unknown> = { [key]: value };
+    if (key === 'startOnSystemBoot' && value === true) {
+      serviceUpdates.enabled = true;
     }
-    config.agents = {
-      ...config.agents,
-      [agentName]: {
-        ...agent,
-        ...schedulerUpdates,
-      },
+    config.services = {
+      ...config.services,
+      [agentName]: { ...agent, ...serviceUpdates },
     };
-    writeSchedulerConfig(config);
+    writeServiceConfig(config);
   }
 
   const snapshot = getAgentMonitorSnapshot();

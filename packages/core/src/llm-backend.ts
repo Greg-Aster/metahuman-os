@@ -14,7 +14,7 @@ import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
 import { ollama, isRunning as isOllamaRunning, stopOllamaService, startOllamaService } from './ollama.js';
-import { vllm, isVLLMRunning } from './vllm.js';
+import { vllm, isVLLMRunning, preflightVLLMArtifacts, type VLLMConfig } from './vllm.js';
 import { isLocalModelServiceRunning, getLocalModelStatus } from './providers/local-models.js';
 import {
   listLocalModelArtifacts,
@@ -67,6 +67,21 @@ export interface OllamaBackendConfig {
   endpoint: string;
   autoStart: boolean;
   defaultModel: string;
+  /** Default context window used when a model/graph does not override it. */
+  contextWindow: number;
+  /** Default maximum generated tokens used when a model/graph does not override it. */
+  maxTokens: number;
+  temperature: number;
+  topP: number;
+  topK: number;
+  minP: number;
+  repeatPenalty: number;
+  /** Null keeps Ollama's normal non-deterministic seed behavior. */
+  seed: number | null;
+  /** How long Ollama should keep model weights loaded after a request. */
+  keepAlive: string;
+  /** Enable provider-native reasoning when a model/graph does not override it. */
+  enableThinking: boolean;
 }
 
 export interface VLLMBackendConfig {
@@ -84,7 +99,19 @@ export interface VLLMBackendConfig {
   /** How long to wait for vLLM startup before reporting failure. */
   startupTimeoutMs?: number;
   gpuMemoryUtilization: number;
-  maxModelLen?: number;
+  /** Leave this much VRAM free when autoUtilization is enabled. */
+  gpuMemoryHeadroomGiB?: number;
+  /** Maximum allocation used by autoUtilization. */
+  autoUtilizationMax?: number;
+  /** Token context limit, or auto to choose the largest value that fits VRAM. */
+  maxModelLen?: number | 'auto';
+  /** Optional explicit GPU KV-cache budget in GiB. */
+  kvCacheMemoryGiB?: number | null;
+  /** Model-weight offload budget in CPU RAM. */
+  cpuOffloadGiB?: number;
+  /** KV-cache offload budget in CPU RAM. */
+  kvOffloadingGiB?: number;
+  kvOffloadingBackend?: 'native' | 'lmcache';
   /** Maximum output tokens per response (default: 2048). Increase when thinking is enabled. */
   maxTokens?: number;
   tensorParallelSize?: number;
@@ -203,6 +230,16 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       endpoint: 'http://localhost:11434',
       autoStart: false,
       defaultModel: 'qwen3:14b',
+      contextWindow: 8192,
+      maxTokens: 2048,
+      temperature: 0.7,
+      topP: 0.9,
+      topK: 40,
+      minP: 0,
+      repeatPenalty: 1.1,
+      seed: null,
+      keepAlive: '5m',
+      enableThinking: false,
     },
     vllm: {
       endpoint: 'http://localhost:8000',
@@ -211,7 +248,13 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       loadFormat: 'auto',
       tokenizer: undefined,
       gpuMemoryUtilization: 0.7,
-      maxModelLen: 4096,
+      gpuMemoryHeadroomGiB: 1.5,
+      autoUtilizationMax: 0.95,
+      maxModelLen: 'auto',
+      kvCacheMemoryGiB: null,
+      cpuOffloadGiB: 0,
+      kvOffloadingGiB: 0,
+      kvOffloadingBackend: 'native',
       tensorParallelSize: 1,
       dtype: 'auto',
       quantization: null,
@@ -272,7 +315,13 @@ export function buildVLLMStartConfig(
   servedModelName?: string;
   startupTimeoutMs?: number;
   gpuMemoryUtilization: number;
-  maxModelLen?: number;
+  gpuMemoryHeadroomGiB?: number;
+  autoUtilizationMax?: number;
+  maxModelLen?: number | 'auto';
+  kvCacheMemoryGiB?: number | null;
+  cpuOffloadGiB?: number;
+  kvOffloadingGiB?: number;
+  kvOffloadingBackend?: 'native' | 'lmcache';
   tensorParallelSize?: number;
   dtype?: string;
   quantization?: string | null;
@@ -287,20 +336,27 @@ export function buildVLLMStartConfig(
   const artifact = artifactResolution.artifact && !artifactResolution.error
     ? artifactResolution.artifact
     : undefined;
+  const artifactIsGGUF = artifact?.format === 'gguf';
 
   return {
     endpoint: config.vllm.endpoint,
     model: artifact?.path || config.vllm.modelPath || requestedModel,
-    modelPath: artifact?.path || config.vllm.modelPath,
-    loadFormat: artifact ? 'gguf' : config.vllm.loadFormat,
+    modelPath: artifactIsGGUF ? artifact?.path : artifact ? undefined : config.vllm.modelPath,
+    loadFormat: artifactIsGGUF ? 'gguf' : config.vllm.loadFormat,
     tokenizer: config.vllm.tokenizer,
     servedModelName: artifact?.displayName || config.vllm.servedModelName,
     startupTimeoutMs: config.vllm.startupTimeoutMs ?? (artifact ? 240000 : undefined),
     gpuMemoryUtilization: overrideGpuMemoryUtilization ?? config.vllm.gpuMemoryUtilization,
+    gpuMemoryHeadroomGiB: config.vllm.gpuMemoryHeadroomGiB,
+    autoUtilizationMax: config.vllm.autoUtilizationMax,
     maxModelLen: config.vllm.maxModelLen,
+    kvCacheMemoryGiB: config.vllm.kvCacheMemoryGiB,
+    cpuOffloadGiB: config.vllm.cpuOffloadGiB,
+    kvOffloadingGiB: config.vllm.kvOffloadingGiB,
+    kvOffloadingBackend: config.vllm.kvOffloadingBackend,
     tensorParallelSize: config.vllm.tensorParallelSize,
     dtype: config.vllm.dtype,
-    quantization: artifact ? null : config.vllm.quantization,
+    quantization: artifactIsGGUF ? null : config.vllm.quantization,
     enforceEager: config.vllm.enforceEager,
     autoUtilization: config.vllm.autoUtilization,
     enableThinking: config.vllm.enableThinking,
@@ -330,11 +386,13 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
     newConfig.localModels = { ...config.localModels, ...updates.localModels };
   }
 
-  // Only one GPU chat backend may own boot-time startup. Without this, a UI
-  // switch to Ollama can leave vLLM.autoStart enabled and boot both services.
+  // The selected GPU chat backend always owns boot-time startup. Keep these
+  // persisted flags normalized for older clients that still display them.
   if (newConfig.activeBackend === 'ollama') {
+    newConfig.ollama = { ...newConfig.ollama, autoStart: true };
     newConfig.vllm = { ...newConfig.vllm, autoStart: false };
   } else if (newConfig.activeBackend === 'vllm') {
+    newConfig.vllm = { ...newConfig.vllm, autoStart: true };
     newConfig.ollama = { ...newConfig.ollama, autoStart: false };
   } else if (newConfig.activeBackend === 'remote' || newConfig.activeBackend === 'local-models') {
     newConfig.ollama = { ...newConfig.ollama, autoStart: false };
@@ -385,6 +443,7 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   }
 
   if (backend === 'ollama') {
+    ollama.setEndpoint(config.ollama.endpoint);
     const running = await isOllamaRunning();
     let model: string | undefined;
     const artifactResolution = resolveLocalModelArtifact(config.ollama.defaultModel, 'ollama');
@@ -571,6 +630,7 @@ async function resolveAutoBackend(config: BackendConfig): Promise<BackendStatus>
  */
 export async function detectAvailableBackends(): Promise<AvailableBackends> {
   const config = loadBackendConfig();
+  ollama.setEndpoint(config.ollama.endpoint);
 
   const localModelsEndpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324';
 
@@ -584,8 +644,8 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
   let ollamaInstalled = ollamaRunning;
   if (!ollamaInstalled) {
     try {
-      const { execSync } = await import('node:child_process');
-      execSync('which ollama', { stdio: 'ignore' });
+      const { execFileSync } = await import('node:child_process');
+      execFileSync('which', ['ollama'], { stdio: 'ignore', timeout: 2000 });
       ollamaInstalled = true;
     } catch {
       ollamaInstalled = false;
@@ -596,9 +656,12 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
   let vllmInstalled = vllmRunning;
   if (!vllmInstalled) {
     try {
-      const { execSync } = await import('node:child_process');
+      const { execFileSync } = await import('node:child_process');
       const pythonPath = getVLLMPython();
-      execSync(`${pythonPath} -c "import vllm"`, { stdio: 'ignore' });
+      execFileSync(pythonPath, [
+        '-c',
+        "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('vllm') else 1)",
+      ], { stdio: 'ignore', timeout: 3000 });
       vllmInstalled = true;
     } catch {
       vllmInstalled = false;
@@ -674,6 +737,19 @@ export async function switchBackend(
     return { success: true };
   }
 
+  const vllmStartConfig = to === 'vllm' && options?.startNew !== false
+    ? buildVLLMStartConfig(config)
+    : null;
+  if (vllmStartConfig?.artifact) {
+    const compatibility = preflightVLLMArtifacts([vllmStartConfig.artifact])[0];
+    if (!compatibility?.compatible) {
+      return {
+        success: false,
+        error: compatibility?.reason || 'The selected artifact is not compatible with this vLLM environment.',
+      };
+    }
+  }
+
   console.log(`[llm-backend] Switching from ${from} to ${to}`);
 
   try {
@@ -706,7 +782,7 @@ export async function switchBackend(
     if (options?.startNew !== false) {
       if (to === 'vllm') {
         console.log('[llm-backend] Starting vLLM...');
-        const result = await vllm.startServer(buildVLLMStartConfig(config));
+        const result = await vllm.startServer(vllmStartConfig || buildVLLMStartConfig(config));
 
         if (!result.success) {
           return { success: false, error: result.error };
@@ -776,9 +852,12 @@ export async function autoSelectBackend(): Promise<BackendType> {
 /**
  * Ensure the active backend is running
  */
-export async function ensureBackendRunning(): Promise<{ running: boolean; error?: string }> {
+export async function ensureBackendRunning(
+  options: { forceStart?: boolean; vllmStartConfig?: VLLMConfig } = {},
+): Promise<{ running: boolean; error?: string }> {
   const config = loadBackendConfig();
   const backend = config.activeBackend;
+  const forceStart = options.forceStart === true;
 
   async function startConfiguredBackend(target: 'ollama' | 'vllm'): Promise<{ running: boolean; error?: string }> {
     if (target === 'ollama') {
@@ -786,7 +865,7 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
       return result.success ? { running: true } : { running: false, error: result.error };
     }
 
-    const result = await vllm.startServer(buildVLLMStartConfig(config));
+    const result = await vllm.startServer(options.vllmStartConfig || buildVLLMStartConfig(config));
     return result.success ? { running: true } : { running: false, error: result.error };
   }
 
@@ -797,10 +876,10 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
     }
 
     const preferred = config.preferredLocalBackend || 'ollama';
-    if (preferred === 'ollama' && config.ollama.autoStart) {
+    if (preferred === 'ollama' && (forceStart || config.ollama.autoStart)) {
       return startConfiguredBackend('ollama');
     }
-    if (preferred === 'vllm' && config.vllm.autoStart) {
+    if (preferred === 'vllm' && (forceStart || config.vllm.autoStart)) {
       return startConfiguredBackend('vllm');
     }
     if (preferred !== 'ollama' && config.ollama.autoStart) {
@@ -833,7 +912,7 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
   if (backend === 'ollama') {
     const running = await isOllamaRunning();
     if (!running) {
-      if (config.ollama.autoStart) {
+      if (forceStart || config.ollama.autoStart) {
         return startConfiguredBackend('ollama');
       }
 
@@ -847,7 +926,7 @@ export async function ensureBackendRunning(): Promise<{ running: boolean; error?
 
   // vLLM
   const running = await isVLLMRunning();
-  if (!running && config.vllm.autoStart) {
+  if (!running && (forceStart || config.vllm.autoStart)) {
     return startConfiguredBackend('vllm');
   }
 

@@ -594,7 +594,7 @@ export async function processReviewingDesires(username?: string): Promise<{
 // ============================================================================
 
 /**
- * Run a single execution cycle - entry point for CLI and scheduler
+ * Run a single execution cycle - entry point for CLI and Trigger Manager
  */
 export async function runCycle(options: DesireExecutorOptions = {}): Promise<DesireExecutorResult> {
   const result: DesireExecutorResult = {
@@ -663,7 +663,7 @@ export async function runCycle(options: DesireExecutorOptions = {}): Promise<Des
 }
 
 /**
- * Agent runtime entry point - used by mobile and scheduler
+ * Agent runtime entry point - used by mobile and Trigger Manager
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();
