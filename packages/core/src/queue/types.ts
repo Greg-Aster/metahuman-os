@@ -52,6 +52,7 @@ export type TaskType =
   | 'inner_curiosity'
   | 'dream'
   | 'psychoanalyze'
+  | 'mood_review'
   | 'desire_generate'
   | 'desire_execute'
   | 'big_brother_escalation'
@@ -74,6 +75,7 @@ export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
   dream: 'local-llm',
   desire_generate: 'local-llm',
   psychoanalyze: 'local-llm',
+  mood_review: 'local-llm',
   custom: 'local-llm',
   generic: 'local-llm',
   sleep_workflow: 'local-llm',
@@ -109,6 +111,7 @@ export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
   dream: 'low',
   desire_generate: 'low',
   psychoanalyze: 'low',
+  mood_review: 'normal',
   sleep_workflow: 'background',
   operator_policy: 'background',
   code_analyze: 'background',
@@ -126,6 +129,7 @@ export const DEFAULT_HANDLERS: Record<TaskType, string> = {
   inner_curiosity: 'agent.inner-curiosity',
   dream: 'agent.dreamer',
   psychoanalyze: 'agent.psychoanalyzer',
+  mood_review: 'agent.mood',
   desire_generate: 'agent.desire-generator',
   desire_execute: 'agent.desire-executor',
   big_brother_escalation: 'remote.big-brother',

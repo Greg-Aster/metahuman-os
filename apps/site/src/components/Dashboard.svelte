@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import TriggerManagerOverviewCard from './TriggerManagerOverviewCard.svelte';
 
   interface SystemStatus {
     identity: { name: string; role: string; trustLevel: string; icon?: string };
@@ -127,6 +128,7 @@
   </div>
 {:else if status}
   <div class="max-w-[1200px] mx-auto p-4 flex flex-col gap-4">
+    <TriggerManagerOverviewCard />
     <!-- Identity & Quick Stats -->
     <section class="card p-6">
       <div class="flex items-start justify-between mb-4">

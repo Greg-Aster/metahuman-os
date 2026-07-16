@@ -37,7 +37,7 @@ async function main() {
     reprocess,
   };
 
-  console.log('[organizer] Running single cycle (managed by scheduler)...');
+  console.log('[organizer] Running single cycle (managed by Trigger Manager)...');
   if (limit) console.log(`[organizer]   Limit: ${limit} memories per user`);
   if (reprocess) console.log('[organizer]   REPROCESS MODE: Regenerating all tags/entities from user content only');
 

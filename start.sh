@@ -10,6 +10,10 @@ REPO_ROOT="$SCRIPT_DIR"
 # Treat the script directory as the MetaHuman repository root.
 SERVER_ENTRY="$REPO_ROOT/apps/site/dist/server/entry.mjs"
 # Point to the prebuilt Astro/Node production server entrypoint.
+NODE_VERSION_FILE="$REPO_ROOT/.nvmrc"
+# Pin the supported Node.js line for interactive and desktop launches.
+NODE_VERSION_CHECK="$REPO_ROOT/scripts/check-node-runtime.mjs"
+# Keep the executable runtime check shared with pnpm installs and CI.
 LOG_DIR="$REPO_ROOT/logs"
 # Store general runtime logs under logs/.
 RUN_LOG_DIR="$LOG_DIR/run"
@@ -56,6 +60,50 @@ print_error() {
 command_exists() {
   # Return success when the named executable is available on PATH.
   command -v "$1" >/dev/null 2>&1
+}
+
+activate_repo_node_runtime() {
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  local requested_version=""
+
+  if command_exists node && node "$NODE_VERSION_CHECK" --quiet >/dev/null 2>&1; then
+    node "$NODE_VERSION_CHECK"
+    return
+  fi
+
+  if [ ! -r "$NODE_VERSION_FILE" ]; then
+    print_error "Node.js version file is missing: $NODE_VERSION_FILE"
+    exit 1
+  fi
+
+  requested_version="$(tr -d '[:space:]' < "$NODE_VERSION_FILE")"
+  if [ ! -s "$nvm_dir/nvm.sh" ]; then
+    print_error "MetaHuman OS requires Node.js >=22.3.0 <23"
+    if command_exists node; then
+      print_warning "Found $(node --version) at $(command -v node)"
+    else
+      print_warning "Node.js was not found on PATH"
+    fi
+    print_warning "Install Node.js $requested_version or install NVM at $nvm_dir"
+    exit 1
+  fi
+
+  print_warning "Activating MetaHuman OS Node.js $requested_version with NVM"
+  set +u
+  # shellcheck disable=SC1090
+  source "$nvm_dir/nvm.sh"
+  set -u
+
+  if ! nvm use --silent "$requested_version" >/dev/null; then
+    print_error "Node.js $requested_version is not installed in NVM"
+    print_warning "Run: nvm install $requested_version"
+    exit 1
+  fi
+
+  hash -r
+  if ! node "$NODE_VERSION_CHECK"; then
+    exit 1
+  fi
 }
 
 process_command() {
@@ -268,13 +316,15 @@ cleanup() {
     rm -f "$RUN_LOG_DIR/vllm.pid" "$RUN_LOG_DIR/vllm.starting"
     run_with_timeout 5 "$REPO_ROOT/bin/mh" agent stop --all
     kill_pattern_fast "brain/scripts/_bootstrap.ts"
-    kill_pattern_fast "scheduler-service"
+    kill_pattern_fast "maintenance-service"
     kill_pattern_fast "audio-organizer"
     kill_pattern_fast "mh start --no-restart"
     kill_pattern_fast "src/mh-new.ts start --no-restart"
     kill_pattern_fast "bin/start-services --background"
     kill_pattern_fast "mh vllm start"
     kill_pattern_fast "src/mh-new.ts vllm start"
+    kill_pattern_fast "mh backend start"
+    kill_pattern_fast "src/mh-new.ts backend start"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-local-models"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-voice-server"
     run_with_timeout 3 "$REPO_ROOT/bin/stop-event-bus"
@@ -328,9 +378,14 @@ fi
 export PORT="${PORT:-4321}"
 # Resolve the web port before lock and listener checks.
 
-if ! command_exists node; then
-  # The production server is a Node process, so Node is mandatory.
-  print_error "Node.js is required to start MetaHuman OS"
+activate_repo_node_runtime
+# Never let a desktop or non-interactive launch fall back to an unsupported system Node.
+
+if ! command_exists pnpm; then
+  # Full-system launchers call the workspace CLI, so pnpm is required even when
+  # the prebuilt web entrypoint itself can run with node alone.
+  print_error "pnpm is required to start MetaHuman OS background services"
+  print_warning "Enable the repository-pinned pnpm release with: corepack enable pnpm"
   exit 1
 fi
 
@@ -387,8 +442,11 @@ fi
 
 print_status "Starting background services"
 # Announce the non-blocking service trigger.
-(exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1 &
-# Start services through the existing service script and return immediately.
+if ! (exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1; then
+  print_warning "One or more background service launchers could not be started"
+fi
+# Start each service launcher before the web server, while the long-running
+# services themselves continue in the background.
 STARTED=true
 # Mark that cleanup should run when this launcher exits.
 

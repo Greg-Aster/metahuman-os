@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Mood Persona Review",
+  "description": "Reviews configured conversation buffers and selects an enabled per-user persona facet. Idle resets use the same graph with a forced baseline decision.",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-07-15",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "personaNode",
+      "position": { "x": 80, "y": 120 },
+      "data": {
+        "label": "Load Mood Context",
+        "nodeType": "mood_context_loader",
+        "properties": {}
+      },
+      "width": 240,
+      "height": 100
+    },
+    {
+      "id": "2",
+      "type": "personaNode",
+      "position": { "x": 420, "y": 120 },
+      "data": {
+        "label": "Classify Mood Persona",
+        "nodeType": "mood_classifier",
+        "properties": {
+          "role": "psychotherapist",
+          "temperature": 0.2,
+          "maxTokens": 500
+        }
+      },
+      "width": 260,
+      "height": 130
+    },
+    {
+      "id": "3",
+      "type": "personaNode",
+      "position": { "x": 800, "y": 120 },
+      "data": {
+        "label": "Apply Persona Facet",
+        "nodeType": "mood_persona_switch",
+        "properties": {}
+      },
+      "width": 250,
+      "height": 110
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-1-reviewContext-2-reviewContext",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "reviewContext",
+      "targetHandle": "reviewContext",
+      "data": { "type": "object", "comment": "Buffers, persona choices, and safety settings" }
+    },
+    {
+      "id": "e-2-decision-3-decision",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "decision",
+      "targetHandle": "decision",
+      "data": { "type": "decision", "comment": "Validated persona decision" }
+    },
+    {
+      "id": "e-1-reviewContext-3-reviewContext",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "reviewContext",
+      "targetHandle": "reviewContext",
+      "data": { "type": "object", "comment": "Safety policy and available facets" }
+    }
+  ]
+}

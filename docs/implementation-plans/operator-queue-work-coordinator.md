@@ -1,6 +1,6 @@
 # Operator Queue and Work Coordinator Implementation
 
-Status: verification
+Status: complete
 Started: 2026-07-14
 Owner: `packages/core/src/queue`
 Scope: maintained MetaHuman OS work coordination, autonomy scheduling, chat work, and environment/Ainekio work
@@ -372,13 +372,13 @@ The retained structures named queue are bounded and non-authoritative: Event Bus
 
 Goal: prove the implementation contract and record evidence.
 
-- [ ] Run all focused coordinator, chat, autonomy, timer, environment, recovery, cancellation, security, and UI tests.
-- [ ] Run graph, node-default, security-route, and architecture validators.
-- [ ] Run core typecheck and site build; resolve all scoped diagnostics.
-- [ ] Run Python Ainekio gateway tests if the adapter contract changes.
-- [ ] Run `git diff --check` over all scoped changes.
-- [ ] Record exact validation results and any explicitly out-of-scope pre-existing debt below.
-- [ ] Change this document status to `complete` only after every required item and finish criterion is satisfied.
+- [x] Run all focused coordinator, chat, autonomy, timer, environment, recovery, cancellation, security, and UI tests.
+- [x] Run graph, node-default, security-route, and architecture validators.
+- [x] Run core typecheck and site build; resolve all scoped diagnostics.
+- [x] Run Python Ainekio gateway tests if the adapter contract changes.
+- [x] Run `git diff --check` over all scoped changes.
+- [x] Record exact validation results and any explicitly out-of-scope pre-existing debt below.
+- [x] Change this document status to `complete` only after every required item and finish criterion is satisfied.
 
 ## Definition of finished
 
@@ -422,15 +422,48 @@ Every migration must update this register before its phase closes.
 
 ## Validation record
 
-Pre-closeout evidence on 2026-07-14:
+Final verification on 2026-07-14:
 
-- `node --import tsx packages/core/src/queue/work-owner-architecture.spec.ts` — passed.
-- `node --import tsx packages/core/src/queue/work-coordinator.spec.ts` — passed.
-- `node --import tsx packages/core/src/environment-interface/compatibility.spec.ts` — passed.
-- `node --import tsx scripts/validate-security-routes.ts` — passed, 12/12 routes.
-- `pnpm validate:graphs` — passed, 20/20 graphs.
-- `pnpm --dir apps/site build` — passed.
-- `git diff --check` — passed.
-- Live current-build service handoff — HTTP 202; task `task-1784083458051-ee1ac9e7` reached `completed` through handler `generic` with `{ accepted: true }`.
+| Command or probe | Result |
+| --- | --- |
+| `node --import tsx packages/core/src/queue/work-owner-architecture.spec.ts` | passed; sole-owner, deleted-owner, startup, service handoff, environment bypass, legacy import, and compatibility-export contracts |
+| `node --import tsx packages/core/src/queue/work-coordinator.spec.ts` | passed; priority, lifecycle, idempotency, cancellation, expiry, restart recovery, mode admission, policy validation, bounded wait/history, vector handlers, and sleep workflow |
+| `node --import tsx packages/core/src/environment-interface/compatibility.spec.ts` | passed; session isolation, ordering, stop, stale motion, observations, lifecycle feedback, authentication, image input, and emergency stop |
+| `node --import tsx scripts/validate-node-defaults.ts` | passed |
+| `node --import tsx scripts/validate-agent-monitor.ts` | passed, 68/68 checks |
+| `node --import tsx scripts/audit-graph-executors.ts` | passed, 20 graphs and 208 nodes; zero invalid graphs or missing executors |
+| `node --import tsx scripts/validate-security-routes.ts` | passed, 12/12 routes |
+| `pnpm validate:graphs` | passed, 20/20 graphs |
+| `node --import tsx scripts/check-architecture.ts --fail-on-stale-baseline` | passed; zero current violations and no stale baseline drift |
+| `./bin/audit check` | passed |
+| `pnpm --dir apps/site build` | passed |
+| `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=Master:Emulator:Slave/software python3 -m unittest discover -s Emulator/tests` in Ainekio | passed, 101 tests |
+| `git diff --check` | passed |
+| Live current-build service handoff | HTTP 202; task `task-1784083458051-ee1ac9e7` reached `completed` through handler `generic` with `{ accepted: true }` |
 
-Phase 8 remains open until the complete final command set is rerun and recorded here.
+The full `pnpm --dir packages/core exec tsc --noEmit --pretty false` command remains red on 78 pre-existing diagnostics in 27 files outside this consolidation scope. A diagnostic filter over `queue`, `active-operator`, `environment-interface`, the affected queue/environment API handlers and router, and `memory.ts` found **zero scoped diagnostics**. The unrelated debt includes agent graph typing, cognitive-layer persona typing, connectors, encryption, Event Bus WebSocket typings, legacy CLI adapters, model routing, older nodes, and duplicate root `listBackups` exports; it was not broadened into this ownership refactor.
+
+## TriggerManager integration follow-up — 2026-07-15
+
+The completed
+`docs/implementation-plans/trigger-manager-runtime-ui-consolidation.md` closes
+the remaining producer and lifecycle seams that were outside this plan's first
+closeout:
+
+- TriggerManager is always observable and submits finite work only through this
+  coordinator in reactive, semi, and full mode policy.
+- `TriggerConfigService` is the one validated, revisioned, live-applied owner of
+  system trigger configuration.
+- finite UI, CLI, manual, event, interval, and activity admissions receive one
+  durable coordinator id; persistent services use Agent Monitor and
+  `etc/services.json` instead.
+- Dashboard, Queue, Settings, and conversation controls consume one public
+  TriggerManager snapshot/store and agree on all three Active Operator modes.
+- the former scheduler service was renamed Maintenance Service and cannot claim
+  timer ownership; Audio Organizer has no implicit boot path.
+
+Focused TriggerManager runtime/API/catalog/UI contracts, the existing
+coordinator and work-owner contracts, 71/71 Agent Monitor checks, zero current
+architecture violations, host service restart validation, and the production
+site build pass. The dated orphan audit records the static and live process
+dispositions.

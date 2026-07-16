@@ -12,6 +12,7 @@ import { audit } from '../audit.js';
 import { ROOT } from '../paths.js';
 import { systemPaths } from '../path-builder.js';
 import { readSystemActivityTimestamp } from '../system-activity.js';
+import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
 import {
   buildAgentNodePath,
   resolveAgentExecutablePath,
@@ -20,18 +21,11 @@ import {
 
 const DEFERRED = Symbol('deferred-work-completion');
 
-const AGENT_HANDLERS: Record<string, string> = {
-  'agent.organizer': 'organizer',
-  'agent.curator': 'curator',
-  'agent.reflector': 'reflector',
-  'agent.curiosity-service': 'curiosity-service',
-  'agent.inner-curiosity': 'inner-curiosity',
-  'agent.dreamer': 'dreamer',
-  'agent.desire-generator': 'desire-generator',
-  'agent.desire-executor': 'desire-executor',
-  'agent.psychoanalyzer': 'psychoanalyzer',
-  'agent.coder': 'coder',
-};
+const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
+  Object.values(AGENT_CATALOG_DEFINITIONS)
+    .filter(definition => definition.lifecycle === 'scheduled-work')
+    .map(definition => [definition.handler ?? `agent.${definition.id}`, definition.id]),
+);
 
 function isWithinWindow(window: { start: string; end: string }, now = new Date()): boolean {
   const [startHour, startMinute] = window.start.split(':').map(Number);
@@ -96,6 +90,17 @@ export class ExecutionEngine {
 
   getHandlerIds(): string[] {
     return [...this.handlers.keys()].sort();
+  }
+
+  registerAgentHandler(agentId: string, handlerId = `agent.${agentId}`): boolean {
+    if (this.handlers.has(handlerId)) return true;
+    if (!resolveAgentExecutablePath(agentId)) return false;
+    this.registerHandler(handlerId, (task, context) => this.runAgent(task, agentId, context.signal));
+    return true;
+  }
+
+  isAgentSourceResolvable(agentId: string): boolean {
+    return Boolean(resolveAgentExecutablePath(agentId));
   }
 
   private registerDefaultHandlers(): void {
@@ -424,7 +429,10 @@ export class ExecutionEngine {
     const fullPath = resolveAgentExecutablePath(agentId);
     if (!fullPath) return Promise.reject(new Error(`No maintained executable for agent: ${agentId}`));
     return new Promise((resolve, reject) => {
-      const child = spawn(resolveTsx(), [fullPath], {
+      const args = Array.isArray(task.input.args)
+        ? task.input.args.filter((value): value is string => typeof value === 'string')
+        : [];
+      const child = spawn(resolveTsx(), [fullPath, ...args], {
         cwd: ROOT,
         env: {
           ...process.env,

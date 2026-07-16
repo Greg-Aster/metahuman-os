@@ -20,6 +20,7 @@ import { audit } from './audit.js';
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
 import { resolveVLLMTokenizerReference } from './vllm-tokenizer.js';
 import type { ProviderMessageContent } from './providers/types.js';
+import type { LocalModelArtifact } from './model-artifacts.js';
 
 const LOG_PREFIX = '[vllm]';
 
@@ -67,10 +68,22 @@ export interface VLLMConfig {
   servedModelName?: string;
   /** How long to wait for vLLM to bind before treating startup as failed. */
   startupTimeoutMs?: number;
-  /** GPU memory utilization (0.0-1.0, default: 0.9). Set to 0 or 'auto' for dynamic detection. */
+  /** GPU memory utilization (0.0-1.0, default: 0.9). */
   gpuMemoryUtilization: number;
-  /** Maximum model context length */
-  maxModelLen?: number;
+  /** Leave this much physical VRAM free when automatic allocation is enabled. */
+  gpuMemoryHeadroomGiB?: number;
+  /** Upper bound for automatically calculated GPU utilization. */
+  autoUtilizationMax?: number;
+  /** Maximum model context length, or auto to fit the largest length in the KV budget. */
+  maxModelLen?: number | 'auto';
+  /** Explicit GPU KV-cache budget. When set, vLLM ignores gpuMemoryUtilization for KV sizing. */
+  kvCacheMemoryGiB?: number | null;
+  /** Model-weight memory to offload to CPU RAM. */
+  cpuOffloadGiB?: number;
+  /** CPU RAM reserved for KV-cache offloading. */
+  kvOffloadingGiB?: number;
+  /** KV-cache offload implementation. */
+  kvOffloadingBackend?: 'native' | 'lmcache';
   /** Maximum output tokens per response (default: 2048). Increase when thinking is enabled. */
   maxTokens?: number;
   /** Number of GPUs for tensor parallelism */
@@ -89,6 +102,269 @@ export interface VLLMConfig {
   loraModules?: Array<{ name: string; path: string }>;
   /** Maximum LoRA rank (default: 64) */
   maxLoraRank?: number;
+  /** Maximum number of distinct LoRAs active in one batch. */
+  maxLoras?: number;
+  /** Maximum number of LoRAs retained in CPU memory. */
+  maxCpuLoras?: number;
+  /** LoRA compute dtype. */
+  loraDtype?: 'auto' | 'float16' | 'bfloat16';
+  /** Shared artifact selected through the backend registry, when applicable. */
+  artifact?: LocalModelArtifact;
+}
+
+export type VLLMArtifactCompatibilityStatus = 'compatible' | 'incompatible' | 'unknown';
+
+export interface VLLMArtifactCompatibility {
+  artifactId: string;
+  status: VLLMArtifactCompatibilityStatus;
+  compatible: boolean;
+  architecture?: string;
+  quantization?: string;
+  reason: string;
+  vllmVersion?: string;
+  transformersVersion?: string;
+}
+
+const artifactCompatibilityCache = new Map<string, VLLMArtifactCompatibility>();
+
+/** vLLM may write informational startup lines to stdout before script output. */
+export function parseVLLMPreflightOutput<T>(output: string): T {
+  const lines = output.trim().split(/\r?\n/).reverse();
+  for (const line of lines) {
+    try {
+      return JSON.parse(line) as T;
+    } catch {
+      // Continue past vLLM/transformers informational output.
+    }
+  }
+  throw new Error('vLLM preflight did not return a JSON result')
+}
+
+export interface VLLMMemoryPlan {
+  utilization: number;
+  allocatedGB: number;
+  headroomGB: number;
+  freeGB: number;
+  usedGB: number;
+  totalGB: number;
+  recommendation: string;
+}
+
+/**
+ * Convert live GPU memory into vLLM's total-device utilization fraction.
+ * vLLM profiles model weights first and uses the remaining allocation for KV
+ * cache, so this plan does not need to guess weight size from a file on disk.
+ */
+export function calculateVLLMMemoryPlan(input: {
+  freeGB: number;
+  totalGB: number;
+  usedGB?: number;
+  headroomGB?: number;
+  maxUtilization?: number;
+}): VLLMMemoryPlan {
+  const totalGB = Number.isFinite(input.totalGB) ? Math.max(0, input.totalGB) : 0;
+  const freeGB = Number.isFinite(input.freeGB) ? Math.max(0, Math.min(input.freeGB, totalGB)) : 0;
+  const usedGB = Number.isFinite(input.usedGB)
+    ? Math.max(0, input.usedGB!)
+    : Math.max(0, totalGB - freeGB);
+  const headroomGB = Number.isFinite(input.headroomGB)
+    ? Math.max(0, input.headroomGB!)
+    : 1.5;
+  const maxUtilization = Number.isFinite(input.maxUtilization)
+    ? Math.max(0.1, Math.min(0.99, input.maxUtilization!))
+    : 0.95;
+  const availableForVLLM = Math.max(0, freeGB - headroomGB);
+  const utilization = totalGB > 0
+    ? Math.min(maxUtilization, availableForVLLM / totalGB)
+    : 0;
+  const allocatedGB = utilization * totalGB;
+
+  let recommendation: string;
+  if (totalGB <= 0) {
+    recommendation = 'GPU memory could not be detected.';
+  } else if (utilization < 0.1) {
+    recommendation = `Only ${availableForVLLM.toFixed(1)} GiB remains after headroom; free GPU memory before starting vLLM.`;
+  } else if (usedGB > 1) {
+    recommendation = `Reserve ${allocatedGB.toFixed(1)} GiB for vLLM and leave ${headroomGB.toFixed(1)} GiB free; other processes currently use ${usedGB.toFixed(1)} GiB.`;
+  } else {
+    recommendation = `Reserve ${allocatedGB.toFixed(1)} GiB for model weights and KV cache while leaving ${headroomGB.toFixed(1)} GiB free.`;
+  }
+
+  return {
+    utilization,
+    allocatedGB,
+    headroomGB,
+    freeGB,
+    usedGB,
+    totalGB,
+    recommendation,
+  };
+}
+
+/** Build the vLLM arguments that control context, GPU KV cache, and CPU offload. */
+export function buildVLLMMemoryArgs(config: VLLMConfig): string[] {
+  const args: string[] = [];
+  if (config.maxModelLen) {
+    args.push('--max-model-len', String(config.maxModelLen));
+  }
+  if (config.kvCacheMemoryGiB && config.kvCacheMemoryGiB > 0) {
+    args.push('--kv-cache-memory-bytes', String(Math.round(config.kvCacheMemoryGiB * 1024 ** 3)));
+  }
+  if (config.cpuOffloadGiB && config.cpuOffloadGiB > 0) {
+    args.push('--cpu-offload-gb', String(config.cpuOffloadGiB));
+  }
+  if (config.kvOffloadingGiB && config.kvOffloadingGiB > 0) {
+    args.push('--kv-offloading-size', String(config.kvOffloadingGiB));
+    args.push('--kv-offloading-backend', config.kvOffloadingBackend || 'native');
+  }
+  return args;
+}
+
+/** Build LoRA startup arguments for PEFT/safetensors model launches. */
+export function buildVLLMLoraArgs(config: VLLMConfig, loadFormat?: string): string[] {
+  const loraModules = loadFormat === 'gguf' ? [] : config.loraModules || [];
+  if (loraModules.length === 0) return [];
+  return [
+    '--enable-lora',
+    '--lora-modules',
+    ...loraModules.map(lora => `${lora.name}=${lora.path}`),
+    '--max-lora-rank', String(config.maxLoraRank ?? 64),
+    '--max-loras', String(config.maxLoras ?? 1),
+    '--max-cpu-loras', String(config.maxCpuLoras ?? config.maxLoras ?? 1),
+    '--lora-dtype', config.loraDtype || 'auto',
+  ];
+}
+
+/**
+ * Verify discovered artifacts against MetaHuman's active vLLM environment.
+ * This is deliberately explicit and cached: importing vLLM's model registry
+ * and GGUF readers during every ordinary status request is slow.
+ */
+export function preflightVLLMArtifacts(
+  artifacts: LocalModelArtifact[],
+): VLLMArtifactCompatibility[] {
+  const results = new Map<string, VLLMArtifactCompatibility>();
+  const pending = artifacts.filter(artifact => {
+    const cacheKey = `${artifact.digest}:${artifact.format}:${artifact.architecture || 'unknown'}:${artifact.quantization || 'none'}`;
+    const cached = artifactCompatibilityCache.get(cacheKey);
+    if (cached) {
+      results.set(artifact.id, { ...cached, artifactId: artifact.id });
+      return false;
+    }
+
+    if (!artifact.architecture) {
+      const result: VLLMArtifactCompatibility = {
+        artifactId: artifact.id,
+        status: 'unknown',
+        compatible: false,
+        quantization: artifact.quantization,
+        reason: 'The artifact does not expose an architecture in its model metadata.',
+      };
+      artifactCompatibilityCache.set(cacheKey, result);
+      results.set(artifact.id, result);
+      return false;
+    }
+
+    return true;
+  });
+
+  if (pending.length > 0) {
+    const requested = pending.map(artifact => ({
+      key: `${artifact.format}:${artifact.architecture}:${artifact.quantization || 'none'}`,
+      format: artifact.format,
+      architecture: artifact.architecture!,
+      quantization: artifact.quantization || null,
+    }));
+    try {
+      const python = [
+        'import importlib.metadata, json, sys',
+        'from transformers.modeling_gguf_pytorch_utils import GGUF_SUPPORTED_ARCHITECTURES',
+        'from gguf import MODEL_ARCH_NAMES',
+        'from vllm.model_executor.models import ModelRegistry',
+        'from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS',
+        'requested = json.loads(sys.argv[1])',
+        'transformers_supported = set(GGUF_SUPPORTED_ARCHITECTURES)',
+        'loader_supported = set(MODEL_ARCH_NAMES.values())',
+        'registered_architectures = set(ModelRegistry.get_supported_archs())',
+        'print(json.dumps({',
+        '  "vllmVersion": importlib.metadata.version("vllm"),',
+        '  "transformersVersion": importlib.metadata.version("transformers"),',
+        '  "results": {item["key"]: {',
+        '    "transformers": item["architecture"] in transformers_supported,',
+        '    "loader": item["architecture"] in loader_supported,',
+        '    "registered": item["architecture"] in registered_architectures,',
+        '    "quantization": item["quantization"] is None or item["quantization"] in QUANTIZATION_METHODS,',
+        '  } for item in requested},',
+        '}))',
+      ].join('\n');
+      const output = execFileSync(getVLLMPython(), ['-c', python, JSON.stringify(requested)], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 12000,
+      });
+      const inspection = parseVLLMPreflightOutput<{
+        vllmVersion: string;
+        transformersVersion: string;
+        results: Record<string, { transformers: boolean; loader: boolean; registered: boolean; quantization: boolean }>;
+      }>(output);
+
+      for (const artifact of pending) {
+        const architecture = artifact.architecture!;
+        const support = inspection.results[
+          `${artifact.format}:${architecture}:${artifact.quantization || 'none'}`
+        ];
+        const compatible = artifact.format === 'gguf'
+          ? support?.transformers === true && support.loader === true
+          : support?.registered === true && support.quantization === true;
+        let reason = artifact.format === 'gguf'
+          ? `Verified GGUF architecture ${architecture} against the installed vLLM environment.`
+          : artifact.quantization
+            ? `vLLM ${inspection.vllmVersion} registers ${architecture} and supports ${artifact.quantization} checkpoints.`
+            : `vLLM ${inspection.vllmVersion} registers ${architecture} for ${artifact.format} checkpoints.`;
+        if (artifact.format === 'gguf' && !support?.transformers) {
+          reason = `Transformers ${inspection.transformersVersion} cannot read GGUF architecture ${architecture}.`;
+        } else if (artifact.format === 'gguf' && !support?.loader) {
+          reason = `vLLM ${inspection.vllmVersion} has no GGUF loader mapping for architecture ${architecture}.`;
+        } else if (artifact.format !== 'gguf' && !support?.registered) {
+          reason = `vLLM ${inspection.vllmVersion} does not register checkpoint architecture ${architecture}.`;
+        } else if (artifact.format !== 'gguf' && artifact.quantization && !support?.quantization) {
+          reason = `vLLM ${inspection.vllmVersion} does not support checkpoint quantization ${artifact.quantization}.`;
+        }
+        const result: VLLMArtifactCompatibility = {
+          artifactId: artifact.id,
+          status: compatible ? 'compatible' : 'incompatible',
+          compatible,
+          architecture,
+          quantization: artifact.quantization,
+          reason,
+          vllmVersion: inspection.vllmVersion,
+          transformersVersion: inspection.transformersVersion,
+        };
+        artifactCompatibilityCache.set(
+          `${artifact.digest}:${artifact.format}:${architecture}:${artifact.quantization || 'none'}`,
+          result,
+        );
+        results.set(artifact.id, result);
+      }
+    } catch (error) {
+      const reason = error instanceof Error
+        ? `vLLM compatibility preflight failed: ${error.message}`
+        : 'vLLM compatibility preflight failed.';
+      for (const artifact of pending) {
+        const result: VLLMArtifactCompatibility = {
+          artifactId: artifact.id,
+          status: 'unknown',
+          compatible: false,
+          architecture: artifact.architecture,
+          quantization: artifact.quantization,
+          reason,
+        };
+        results.set(artifact.id, result);
+      }
+    }
+  }
+
+  return artifacts.map(artifact => results.get(artifact.id)!);
 }
 
 export interface VLLMModel {
@@ -121,11 +397,47 @@ export interface VLLMChatResponse {
   };
 }
 
+export interface VLLMChatOptions {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  stream?: boolean;
+  enableThinking?: boolean;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  repetitionPenalty?: number;
+}
+
 export function buildVLLMChatMessages(messages: VLLMChatMessage[]): VLLMChatMessage[] {
   return messages.map(message => ({
     role: message.role,
     content: message.content,
   }));
+}
+
+export function buildVLLMChatRequest(
+  messages: VLLMChatMessage[],
+  options: VLLMChatOptions = {},
+  currentModel: string | null = null
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: options.model || currentModel || 'default',
+    messages: buildVLLMChatMessages(messages),
+    max_tokens: options.maxTokens ?? 2048,
+    temperature: options.temperature ?? 0.7,
+    top_p: options.topP ?? 0.95,
+    stream: false,
+  };
+
+  if (options.frequencyPenalty !== undefined) body.frequency_penalty = options.frequencyPenalty;
+  if (options.presencePenalty !== undefined) body.presence_penalty = options.presencePenalty;
+  if (options.repetitionPenalty !== undefined) body.repetition_penalty = options.repetitionPenalty;
+  if (options.enableThinking !== undefined) {
+    body.chat_template_kwargs = { enable_thinking: options.enableThinking };
+  }
+
+  return body;
 }
 
 // ============================================================================
@@ -404,17 +716,15 @@ export class VLLMClient {
    * Calculate optimal GPU memory utilization based on available memory
    * Returns a utilization value (0.0-1.0) that leaves headroom for other processes
    */
-  async calculateOptimalUtilization(modelSizeHint?: number): Promise<{
-    utilization: number;
-    freeGB: number;
-    totalGB: number;
-    recommendation: string;
-  }> {
+  async calculateOptimalUtilization(
+    headroomGB = 1.5,
+    maxUtilization = 0.95,
+  ): Promise<VLLMMemoryPlan> {
     try {
-      const output = execSync(
-        'nvidia-smi --query-gpu=memory.free,memory.total,memory.used --format=csv,noheader,nounits',
-        { encoding: 'utf-8' }
-      ).trim();
+      const output = execFileSync('nvidia-smi', [
+        '--query-gpu=memory.free,memory.total,memory.used',
+        '--format=csv,noheader,nounits',
+      ], { encoding: 'utf-8' }).trim();
 
       const [freeStr, totalStr, usedStr] = output.split(',').map(s => s.trim());
       const freeMB = parseInt(freeStr);
@@ -425,29 +735,21 @@ export class VLLMClient {
       const totalGB = totalMB / 1024;
       const usedGB = usedMB / 1024;
 
-      // Reserve 1GB for system/other apps + headroom for CUDA graphs/eager mode
-      const reserveGB = 1.5;
-      const availableForVLLM = Math.max(0, freeGB - reserveGB);
-
-      // Calculate utilization as percentage of TOTAL GPU
-      // (vLLM's --gpu-memory-utilization is based on total, not free)
-      const utilization = Math.min(0.95, availableForVLLM / totalGB);
-
-      let recommendation: string;
-      if (usedGB > 1) {
-        recommendation = `Other processes using ${usedGB.toFixed(1)}GB. Capped utilization to ${(utilization * 100).toFixed(0)}%`;
-      } else if (utilization < 0.5) {
-        recommendation = `Low available memory (${freeGB.toFixed(1)}GB free). Consider closing other GPU apps.`;
-      } else {
-        recommendation = `Optimal: ${(utilization * 100).toFixed(0)}% of ${totalGB.toFixed(1)}GB GPU`;
-      }
-
-      return { utilization, freeGB, totalGB, recommendation };
+      return calculateVLLMMemoryPlan({
+        freeGB,
+        totalGB,
+        usedGB,
+        headroomGB,
+        maxUtilization,
+      });
     } catch (error) {
       // Fallback to conservative default
       return {
-        utilization: 0.7,
+        utilization: Math.min(0.7, maxUtilization),
+        allocatedGB: 0,
+        headroomGB,
         freeGB: 0,
+        usedGB: 0,
         totalGB: 0,
         recommendation: 'Could not detect GPU memory, using conservative 70% allocation',
       };
@@ -469,6 +771,17 @@ export class VLLMClient {
     const effectiveLoadFormat = config.loadFormat;
     const servedModelName = config.servedModelName || config.model;
     let effectiveTokenizer: string | undefined;
+
+    if (config.artifact) {
+      const compatibility = preflightVLLMArtifacts([config.artifact])[0];
+      if (!compatibility?.compatible) {
+        return {
+          pid: 0,
+          success: false,
+          error: compatibility?.reason || 'The selected artifact is not compatible with this vLLM environment.',
+        };
+      }
+    }
 
     try {
       const resolvedTokenizer = resolveVLLMTokenizerReference(config.tokenizer);
@@ -516,12 +829,23 @@ export class VLLMClient {
     await this.cleanupZombieProcesses();
 
     // STEP 2.5: Auto-detect optimal GPU utilization if enabled
-    let effectiveUtilization = config.gpuMemoryUtilization || 0.9;
+    let effectiveUtilization = config.gpuMemoryUtilization ?? 0.9;
     if (config.autoUtilization) {
-      const optimal = await this.calculateOptimalUtilization();
+      const optimal = await this.calculateOptimalUtilization(
+        config.gpuMemoryHeadroomGiB ?? 1.5,
+        config.autoUtilizationMax ?? 0.95,
+      );
       effectiveUtilization = optimal.utilization;
       console.log(`${LOG_PREFIX} Auto-utilization: ${optimal.recommendation}`);
       console.log(`${LOG_PREFIX} Using ${(effectiveUtilization * 100).toFixed(0)}% GPU memory (${optimal.freeGB.toFixed(1)}GB free of ${optimal.totalGB.toFixed(1)}GB)`);
+    }
+
+    if (effectiveUtilization < 0.1) {
+      return {
+        pid: 0,
+        success: false,
+        error: 'Automatic GPU allocation left less than 10% of VRAM available for vLLM. Reduce configured headroom or close other GPU applications.',
+      };
     }
 
     // STEP 3: Check GPU memory availability
@@ -558,9 +882,7 @@ export class VLLMClient {
       args.push('--served-model-name', config.servedModelName);
     }
 
-    if (config.maxModelLen) {
-      args.push('--max-model-len', String(config.maxModelLen));
-    }
+    args.push(...buildVLLMMemoryArgs(config));
 
     if (config.tensorParallelSize && config.tensorParallelSize > 1) {
       args.push('--tensor-parallel-size', String(config.tensorParallelSize));
@@ -594,11 +916,7 @@ export class VLLMClient {
       console.warn(`${LOG_PREFIX} Skipping ${config.loraModules.length} LoRA adapter(s): GGUF startup path does not load PEFT adapters`);
     }
     if (loraModules && loraModules.length > 0) {
-      // --enable-lora is REQUIRED for vLLM to support LoRA at all
-      args.push('--enable-lora');
-      // Each LoRA module must be a separate argument (vLLM argparse splits on '=')
-      args.push('--lora-modules', ...loraModules.map(l => `${l.name}=${l.path}`));
-      args.push('--max-lora-rank', String(config.maxLoraRank ?? 64));
+      args.push(...buildVLLMLoraArgs(config, effectiveLoadFormat));
       console.log(`${LOG_PREFIX} Loading ${loraModules.length} LoRA adapter(s): ${loraModules.map(l => l.name).join(', ')}`);
     }
 
@@ -941,13 +1259,10 @@ export class VLLMClient {
    */
   async switchModel(model: string, config?: Partial<VLLMConfig>): Promise<{ success: boolean; error?: string }> {
     const fullConfig: VLLMConfig = {
+      ...config,
       endpoint: this.endpoint,
       model,
-      gpuMemoryUtilization: config?.gpuMemoryUtilization || 0.9,
-      maxModelLen: config?.maxModelLen,
-      tensorParallelSize: config?.tensorParallelSize,
-      dtype: config?.dtype,
-      quantization: config?.quantization,
+      gpuMemoryUtilization: config?.gpuMemoryUtilization ?? 0.9,
     };
 
     console.log(`${LOG_PREFIX} Switching to model: ${model}`);
@@ -965,21 +1280,7 @@ export class VLLMClient {
    */
   async chat(
     messages: VLLMChatMessage[],
-    options?: {
-      model?: string;
-      temperature?: number;
-      maxTokens?: number;
-      topP?: number;
-      stream?: boolean;
-      /** Control Qwen3 thinking mode. Set false to disable <think> tags. */
-      enableThinking?: boolean;
-      /** Penalize tokens based on frequency (0.0-2.0, higher = less repetition) */
-      frequencyPenalty?: number;
-      /** Penalize tokens that have appeared at all (0.0-2.0, higher = more variety) */
-      presencePenalty?: number;
-      /** Repetition penalty (1.0 = no penalty, >1.0 = less repetition) */
-      repetitionPenalty?: number;
-    }
+    options?: VLLMChatOptions
   ): Promise<VLLMChatResponse> {
     const requestId = generateRequestId();
     const startTime = Date.now();
@@ -997,30 +1298,7 @@ export class VLLMClient {
       enableThinking: options?.enableThinking,
     }, { requestId });
 
-    const body: Record<string, unknown> = {
-      model: options?.model || this.currentModel || 'default',
-      messages: buildVLLMChatMessages(messages),
-      max_tokens: options?.maxTokens ?? 2048,
-      temperature: options?.temperature ?? 0.7,
-      top_p: options?.topP ?? 0.95,
-      stream: false,
-    };
-
-    // Add repetition control parameters
-    if (options?.frequencyPenalty !== undefined) {
-      body.frequency_penalty = options.frequencyPenalty;
-    }
-    if (options?.presencePenalty !== undefined) {
-      body.presence_penalty = options.presencePenalty;
-    }
-    if (options?.repetitionPenalty !== undefined) {
-      body.repetition_penalty = options.repetitionPenalty;
-    }
-
-    // Add chat_template_kwargs for Qwen3 thinking mode control
-    if (options?.enableThinking !== undefined) {
-      body.chat_template_kwargs = { enable_thinking: options.enableThinking };
-    }
+    const body = buildVLLMChatRequest(messages, options, this.currentModel);
 
     // 2 minute timeout for LLM generation (large models can take time)
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
@@ -1262,13 +1540,11 @@ export async function checkVLLMGPUMemory(utilizationTarget = 0.8): Promise<{
 /**
  * Calculate optimal GPU utilization based on available memory
  */
-export async function calculateOptimalVLLMUtilization(): Promise<{
-  utilization: number;
-  freeGB: number;
-  totalGB: number;
-  recommendation: string;
-}> {
-  return vllm.calculateOptimalUtilization();
+export async function calculateOptimalVLLMUtilization(
+  headroomGB = 1.5,
+  maxUtilization = 0.95,
+): Promise<VLLMMemoryPlan> {
+  return vllm.calculateOptimalUtilization(headroomGB, maxUtilization);
 }
 
 /**

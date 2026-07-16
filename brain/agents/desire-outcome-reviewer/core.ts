@@ -978,7 +978,7 @@ export async function processDesires(username?: string): Promise<{
 // ============================================================================
 
 /**
- * Run a single review cycle - entry point for CLI and scheduler
+ * Run a single review cycle - entry point for CLI and Trigger Manager
  */
 export async function runCycle(options: DesireOutcomeReviewerOptions = {}): Promise<DesireOutcomeReviewerResult> {
   const result: DesireOutcomeReviewerResult = {
@@ -1043,7 +1043,7 @@ export async function runCycle(options: DesireOutcomeReviewerOptions = {}): Prom
 }
 
 /**
- * Agent runtime entry point - used by mobile and scheduler
+ * Agent runtime entry point - used by mobile and Trigger Manager
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();

@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
+  import TriggerManagerSummary from './TriggerManagerSummary.svelte';
 
   interface WorkView {
     id: string;
@@ -128,6 +129,7 @@
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto p-3">
+    <TriggerManagerSummary />
     {#if !snapshot}
       <div class="py-8 text-center text-xs text-gray-500 dark:text-gray-400">Waiting for coordinator state…</div>
     {:else}

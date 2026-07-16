@@ -1,6 +1,6 @@
+import { Buffer } from 'node:buffer';
 import { defineNode } from '../types.js';
 import type { EnvironmentVisualFrame } from '../../environment-interface/index.js';
-
 const JPEG_PREFIX = 'data:image/jpeg;base64,';
 const MAX_JPEG_BYTES = 120 * 1024;
 
@@ -27,9 +27,11 @@ function validJpegDataUrl(value: unknown): value is string {
   if (typeof value !== 'string' || !value.startsWith(JPEG_PREFIX)) return false;
   const encoded = value.slice(JPEG_PREFIX.length);
   if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(encoded)) return false;
-  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
-  const bytes = Math.floor((encoded.length * 3) / 4) - padding;
-  return bytes > 0 && bytes <= MAX_JPEG_BYTES;
+  const payload = Buffer.from(encoded, 'base64');
+  if (payload.length < 6 || payload.length > MAX_JPEG_BYTES) return false;
+  if (payload[0] !== 0xff || payload[1] !== 0xd8) return false;
+  if (payload.at(-2) !== 0xff || payload.at(-1) !== 0xd9) return false;
+  return payload.indexOf(Buffer.from([0xff, 0xda]), 2) > 1;
 }
 
 export const environmentImageInputNode = defineNode({

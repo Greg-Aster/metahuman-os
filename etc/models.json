@@ -433,6 +433,9 @@
     "emulation": {
       "orchestrator": "default.orchestrator",
       "persona": "default.orchestrator"
+    },
+    "environment": {
+      "persona": "default.persona"
     }
   },
   "providers": {

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { canWriteMemory } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
+  import { runTriggerNow } from '../lib/stores/trigger-manager';
 
   type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
 
@@ -278,18 +279,10 @@
   }
 
   async function runOrganizerAgent() {
-    agentStatus = 'Starting agent...';
+    agentStatus = 'Queueing organizer...';
     try {
-      const res = await apiFetch('/api/agents/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: 'organizer' }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.success === false) {
-        throw new Error(data.error || data.message || 'Failed to start agent');
-      }
-      agentStatus = data.pid ? `Organizer started with PID ${data.pid}` : (data.message || 'Organizer start requested');
+      const taskId = await runTriggerNow('organizer');
+      agentStatus = `Organizer queued as ${taskId}`;
     } catch (e) {
       agentStatus = (e as Error).message;
     } finally {

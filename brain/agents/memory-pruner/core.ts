@@ -460,7 +460,7 @@ export async function runCycle(options: PrunerOptions = {}): Promise<{
 // ============================================================================
 
 /**
- * Agent runtime entry point for mobile/scheduled execution
+ * Agent runtime entry point for mobile/Trigger Manager execution
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();

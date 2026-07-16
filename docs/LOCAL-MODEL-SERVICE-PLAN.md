@@ -92,7 +92,7 @@ packages/embedding-service/
 }
 ```
 
-**Note**: Requires Node.js 18+ (for Transformers.js ESM support)
+**Note**: Requires the MetaHuman OS Node.js 22 runtime (for Transformers.js ESM support)
 
 #### 1.3 Core API Design
 

@@ -57,7 +57,7 @@ export class ModeController extends EventEmitter {
     const previousMode = this.currentMode;
     try {
       const system = await ensureQueueSystemStarted();
-      system.setProactiveScheduling(mode === 'semi' || mode === 'full');
+      system.setAutonomyMode(mode);
       const config = loadConfig();
       if (mode === 'full') {
         getOperatorPolicyService().start(username, {
@@ -84,11 +84,6 @@ export class ModeController extends EventEmitter {
     } finally {
       this.applying = false;
     }
-  }
-
-  async toggleMode(username = 'system'): Promise<AutonomyMode> {
-    await this.setMode(this.currentMode === 'full' ? 'reactive' : 'full', username);
-    return this.currentMode;
   }
 
   async start(username = 'system'): Promise<void> {

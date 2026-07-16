@@ -1,0 +1,13 @@
+{
+  "$schema": "https://metahuman.dev/schemas/mood.json",
+  "version": "1.0.0",
+  "description": "System defaults for per-user Mood agent behavior",
+  "settings": {
+    "bufferSource": "conversation",
+    "maxMessagesPerBuffer": 20,
+    "maxContextChars": 12000,
+    "baselineFacet": "default",
+    "overridePersonaDisabled": false,
+    "minimumConfidence": 0.6
+  }
+}

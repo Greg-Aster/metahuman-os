@@ -12,58 +12,39 @@ import type {
   AgentDescriptor,
   AgentKind,
   AgentVariableDescriptor,
-  SchedulerAgentConfig,
-  SchedulerConfigFile,
+  AgentCatalogEntry,
+  AgentMonitorConfig,
 } from './agent-monitor-types.js';
+import type { AgentCatalogItem } from './agent-catalog.js';
+import { AGENT_CATALOG_DEFINITIONS, getAgentCatalogDefinition, type AgentCatalogDefinition } from './agent-catalog-definitions.js';
 
-export const DESCRIPTORS: Record<string, Omit<AgentDescriptor, 'variables'>> = {
-  organizer: {
-    id: 'organizer',
-    name: 'Organizer',
-    description: 'Enriches memories with tags, entities, and metadata.',
-    kind: 'scheduled',
-    startable: true,
-    bootEligible: true,
-  },
-  reflector: {
-    id: 'reflector',
-    name: 'Mind Wandering',
-    description: 'Generates reflections after conversation inactivity.',
-    kind: 'scheduled',
-    startable: true,
-    bootEligible: true,
-  },
-  'scheduler-service': {
-    id: 'scheduler-service',
-    name: 'Scheduler Service',
-    description: 'Runs the scheduled agent timer bus.',
-    kind: 'service',
-    startable: false,
-    bootEligible: true,
-  },
-  'audio-organizer': {
-    id: 'audio-organizer',
-    name: 'Audio Organizer',
-    description: 'Processes the audio inbox into transcripts and memories.',
-    kind: 'one-shot',
-    startable: true,
-    bootEligible: true,
-    dependencyNotes: ['Runs once at startup when enabled; heavy audio processing should stay disabled unless needed.'],
-  },
-  'environment-bridge': {
-    id: 'environment-bridge',
-    name: 'Environment Bridge',
-    description: 'Transfers semantic actions and observations through a configured environment adapter.',
-    kind: 'connection',
-    startable: true,
-    bootEligible: true,
-    dependencyNotes: ['Requires internal and adapter tokens plus a WebSocket adapter URL.'],
-  },
-};
+function monitorKind(definition: AgentCatalogDefinition): AgentKind {
+  if (definition.id === 'environment-bridge') return 'connection';
+  if (definition.lifecycle === 'service') return 'service';
+  if (definition.id === 'audio-organizer') return 'one-shot';
+  if (definition.defaultTrigger?.type === 'manual') return 'manual';
+  return 'scheduled';
+}
 
-export const SCHEDULER_AGENT_FIELDS = new Set([
+export const DESCRIPTORS: Record<string, Omit<AgentDescriptor, 'variables'>> = Object.fromEntries(
+  Object.values(AGENT_CATALOG_DEFINITIONS).map(definition => [definition.id, {
+    id: definition.id,
+    name: definition.displayName,
+    description: definition.description,
+    kind: monitorKind(definition),
+    startable: true,
+    bootEligible: definition.lifecycle === 'service',
+    dependencyNotes: definition.id === 'environment-bridge'
+      ? ['Requires internal and adapter tokens plus a WebSocket adapter URL.']
+      : definition.id === 'audio-organizer'
+        ? ['Finite audio processing runs through the Work Coordinator only when explicitly requested.']
+        : [],
+  }]),
+);
+
+export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'enabled',
-  'runOnBoot',
+  'startOnSystemBoot',
   'autoRestart',
   'maxRetries',
   'interval',
@@ -76,20 +57,38 @@ export const ENVIRONMENT_BRIDGE_FIELDS = new Set([
   'deliveryEnabled',
 ]);
 
-export function schedulerConfigPath(): string {
+export function triggerConfigPath(): string {
   return path.join(systemPaths.root, 'etc', 'agents.json');
 }
 
-export function readSchedulerConfig(): SchedulerConfigFile {
-  try {
-    return JSON.parse(fs.readFileSync(schedulerConfigPath(), 'utf8')) as SchedulerConfigFile;
-  } catch {
-    return { agents: {} };
-  }
+export function serviceConfigPath(): string {
+  return path.join(systemPaths.root, 'etc', 'services.json');
 }
 
-export function writeSchedulerConfig(config: SchedulerConfigFile): void {
-  fs.writeFileSync(schedulerConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
+export function readAgentMonitorConfig(): AgentMonitorConfig {
+  let agents: AgentMonitorConfig['agents'] = {};
+  let services: AgentMonitorConfig['services'] = {};
+  try {
+    const triggerConfig = JSON.parse(fs.readFileSync(triggerConfigPath(), 'utf8')) as AgentMonitorConfig;
+    agents = triggerConfig.agents ?? {};
+  } catch {}
+  try {
+    const serviceConfig = JSON.parse(fs.readFileSync(serviceConfigPath(), 'utf8')) as AgentMonitorConfig;
+    services = serviceConfig.services ?? {};
+  } catch {}
+  return { agents, services };
+}
+
+export function writeServiceConfig(config: AgentMonitorConfig): void {
+  const serviceConfig = {
+    $schema: 'https://metahuman.dev/schemas/services.json',
+    version: '1.0.0',
+    description: 'Persistent service lifecycle configuration',
+    services: config.services ?? {},
+  };
+  const temporaryPath = `${serviceConfigPath()}.tmp-${process.pid}`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(serviceConfig, null, 2)}\n`);
+  fs.renameSync(temporaryPath, serviceConfigPath());
 }
 
 function labelFromId(id: string): string {
@@ -100,7 +99,7 @@ function labelFromId(id: string): string {
     .join(' ');
 }
 
-function inferKind(id: string, config?: SchedulerAgentConfig): AgentKind {
+function inferKind(id: string, config?: AgentCatalogEntry): AgentKind {
   if (id.endsWith('-service')) return 'service';
   if (config?.type === 'manual') return 'manual';
   if (config?.type === 'interval' || config?.type === 'activity' || config?.type === 'time-of-day') return 'scheduled';
@@ -126,24 +125,27 @@ function hasRunnableAgentSource(id: string): boolean {
   ].some(candidate => fs.existsSync(candidate));
 }
 
-export function defaultSchedulerAgentConfig(id: string, kind: AgentKind): SchedulerAgentConfig {
-  const runsByDefault = id === 'scheduler-service' || id === 'audio-organizer';
+export function defaultAgentCatalogEntry(id: string, kind: AgentKind): AgentCatalogEntry {
+  const definition = getAgentCatalogDefinition(id);
+  const persistent = definition?.lifecycle === 'service' || kind === 'service' || kind === 'connection';
   return {
     id,
     enabled: true,
-    type: kind === 'scheduled' ? 'interval' : 'manual',
-    priority: 'normal',
+    type: definition?.defaultTrigger?.type ?? (kind === 'scheduled' ? 'interval' : 'manual'),
+    priority: definition?.priority ?? 'normal',
     agentPath: defaultAgentPath(id),
-    usesLLM: false,
-    runOnBoot: runsByDefault,
-    autoRestart: kind === 'service' || kind === 'connection',
-    maxRetries: kind === 'service' || kind === 'connection' ? 3 : 1,
+    usesLLM: definition?.usesLLM ?? false,
+    startOnSystemBoot: persistent,
+    autoRestart: persistent,
+    maxRetries: persistent ? 3 : 1,
   };
 }
 
-function schedulerVariables(config: SchedulerAgentConfig | undefined, id: string, kind: AgentKind, bootEligible: boolean): AgentVariableDescriptor[] {
+function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: string, kind: AgentKind, bootEligible: boolean): AgentVariableDescriptor[] {
   if (!config && !bootEligible) return [];
-  const effective = config ?? defaultSchedulerAgentConfig(id, kind);
+  const effective = config ?? defaultAgentCatalogEntry(id, kind);
+
+  if (kind !== 'service' && kind !== 'connection') return [];
 
   const variables: AgentVariableDescriptor[] = [
     {
@@ -153,13 +155,13 @@ function schedulerVariables(config: SchedulerAgentConfig | undefined, id: string
       value: effective.enabled ?? false,
       applyMode: 'restart',
       writable: true,
-      description: 'Whether scheduler-managed runs are enabled for this agent.',
+      description: 'Whether this persistent service or connection is enabled.',
     },
     {
-      key: 'runOnBoot',
-      label: 'Run On Boot',
+      key: 'startOnSystemBoot',
+      label: 'Start On System Boot',
       type: 'toggle',
-      value: effective.runOnBoot ?? false,
+      value: effective.startOnSystemBoot ?? false,
       applyMode: 'nextBoot',
       writable: true,
       description: 'Start this agent when MetaHuman OS boots.',
@@ -171,7 +173,7 @@ function schedulerVariables(config: SchedulerAgentConfig | undefined, id: string
       value: effective.autoRestart ?? false,
       applyMode: 'restart',
       writable: true,
-      description: 'Restart this agent after failures when the scheduler supports it.',
+      description: 'Restart this persistent service after a supervised failure.',
     },
     {
       key: 'maxRetries',
@@ -304,20 +306,20 @@ function environmentBridgeVariables(): AgentVariableDescriptor[] {
   ];
 }
 
-export function buildAgentDescriptor(id: string, schedulerConfig?: SchedulerAgentConfig): AgentDescriptor {
+export function buildAgentDescriptor(id: string, catalogEntry?: AgentCatalogEntry, catalogItem?: AgentCatalogItem): AgentDescriptor {
   const known = DESCRIPTORS[id];
-  const kind = known?.kind ?? inferKind(id, schedulerConfig);
+  const kind = known?.kind ?? inferKind(id, catalogEntry);
   const bootEligible = known?.bootEligible ?? false;
   return {
     id,
-    name: known?.name ?? labelFromId(id),
-    description: known?.description ?? schedulerConfig?.comment ?? 'Background MetaHuman agent.',
+    name: catalogItem?.displayName ?? known?.name ?? labelFromId(id),
+    description: catalogItem?.description ?? known?.description ?? catalogEntry?.comment ?? 'Background MetaHuman agent.',
     kind,
-    startable: known?.startable ?? hasRunnableAgentSource(id),
+    startable: catalogItem?.canRun ?? known?.startable ?? hasRunnableAgentSource(id),
     bootEligible,
     dependencyNotes: known?.dependencyNotes ?? [],
     variables: [
-      ...schedulerVariables(schedulerConfig, id, kind, bootEligible),
+      ...serviceLifecycleVariables(catalogEntry, id, kind, bootEligible),
       ...(id === 'environment-bridge' ? environmentBridgeVariables() : []),
     ],
   };
@@ -334,7 +336,7 @@ export function bootEntryForDescriptor(descriptor: AgentDescriptor): AgentBootEn
     description: descriptor.description,
     kind: descriptor.kind,
     enabled: Boolean(variableValue(descriptor, 'enabled')),
-    runOnBoot: Boolean(variableValue(descriptor, 'runOnBoot')),
+    startOnSystemBoot: Boolean(variableValue(descriptor, 'startOnSystemBoot')),
     autoRestart: Boolean(variableValue(descriptor, 'autoRestart')),
     maxRetries: Number(variableValue(descriptor, 'maxRetries') ?? 0),
     dependencyNotes: descriptor.dependencyNotes ?? [],

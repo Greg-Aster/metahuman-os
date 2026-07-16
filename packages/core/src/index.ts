@@ -63,6 +63,7 @@ export * from './llm';
 export * from './ollama';
 export * from './vllm';
 export * from './vllm-lora';
+export * from './ollama-lora';
 export * from './llm-backend';
 export * from './local-model-service-manager';
 export * from './model-resolver';
@@ -71,6 +72,10 @@ export * from './model-router';
 export * from './specialist-broker';
 export * from './agent-monitor';
 export * from './agent-executable-resolver';
+export * from './agent-catalog';
+export * from './agent-catalog-definitions';
+export * from './persona-facets';
+export * from './mood-settings';
 export * from './agent-process-runner';
 export * from './vector-index';
 // Embeddings - exclude isEmbeddingServiceAvailable (conflicts with model-router)

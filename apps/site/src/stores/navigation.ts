@@ -71,6 +71,32 @@ function createNavigationStore(defaultValue: string) {
 // Navigation store with URL hash persistence - survives dev server reloads
 export const activeView = createNavigationStore('chat');
 
+export type DashboardSection = 'overview' | 'tasks' | 'approvals' | 'operator' | 'agent-catalog' | 'trigger-manager';
+export type SystemSection = 'chat' | 'lifeline' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'agent-catalog' | 'trigger-manager' | 'terminal';
+
+export const dashboardSection = writable<DashboardSection>('overview');
+export const systemSection = writable<SystemSection>('settings');
+
+export function openTriggerManagerDashboard(): void {
+  dashboardSection.set('trigger-manager');
+  activeView.set('dashboard');
+}
+
+export function openTriggerManagerSettings(): void {
+  systemSection.set('trigger-manager');
+  activeView.set('system');
+}
+
+export function openAgentCatalogDashboard(): void {
+  dashboardSection.set('agent-catalog');
+  activeView.set('dashboard');
+}
+
+export function openAgentCatalogSettings(): void {
+  systemSection.set('agent-catalog');
+  activeView.set('system');
+}
+
 // Check for bootstrap data from index.astro inline script
 const bootstrapStatus = typeof window !== 'undefined'
   ? (window as any).__MH_BOOTSTRAP_STATUS__ || null

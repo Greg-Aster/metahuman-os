@@ -7,10 +7,12 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import { getProfilePaths } from '../../paths.js';
-import { audit } from '../../audit.js';
+import {
+  loadPersonaFacetConfig,
+  PersonaFacetConfigurationError,
+  personaFacetResolvedPath,
+  setActivePersonaFacet,
+} from '../../persona-facets.js';
 
 const INACTIVE_FACET = {
   name: 'Persona Off',
@@ -19,36 +21,6 @@ const INACTIVE_FACET = {
   enabled: true,
   color: 'gray',
 };
-
-function buildFacetResponse(
-  facetsPath: string,
-  facets: Record<string, any>
-): Record<string, any> {
-  const personasDir = path.dirname(facetsPath);
-  const augmented = { ...facets };
-  if (!augmented.inactive) {
-    augmented.inactive = { ...INACTIVE_FACET };
-  }
-
-  return Object.fromEntries(
-    Object.entries(augmented).map(([key, config]) => {
-      const personaFile = config.personaFile ?? null;
-      const resolvedPath =
-        personaFile && typeof personaFile === 'string'
-          ? path.join(personasDir, personaFile)
-          : null;
-
-      return [
-        key,
-        {
-          ...config,
-          personaFile,
-          resolvedPath,
-        },
-      ];
-    })
-  );
-}
 
 /**
  * GET /api/persona-facet - Get active facet and available facets
@@ -64,30 +36,23 @@ export async function handleGetPersonaFacet(req: UnifiedRequest): Promise<Unifie
       });
     }
 
-    const profilePaths = getProfilePaths(user.username);
-    const facetsPath = profilePaths.personaFacets;
-
-    if (!fs.existsSync(facetsPath)) {
-      return successResponse({
-        activeFacet: 'default',
-        facets: buildFacetResponse(facetsPath, {}),
-      });
-    }
-
-    const facetsData = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
-    if (!facetsData.facets) {
-      facetsData.facets = {};
-    }
+    const facetsData = loadPersonaFacetConfig(user.username);
 
     return successResponse({
-      activeFacet: facetsData.activeFacet || 'default',
-      facets: buildFacetResponse(facetsPath, facetsData.facets),
+      success: true,
+      activeFacet: facetsData.activeFacet,
+      facets: Object.fromEntries(Object.entries(facetsData.facets).map(([id, facet]) => [id, {
+        ...facet,
+        resolvedPath: personaFacetResolvedPath(user.username, facet),
+      }])),
     });
   } catch (error) {
     console.error('[persona-facet] GET error:', error);
     return {
-      status: 500,
-      error: 'Failed to load facets',
+      status: error instanceof PersonaFacetConfigurationError ? 409 : 500,
+      error: error instanceof PersonaFacetConfigurationError
+        ? error.message
+        : 'Failed to load facets',
     };
   }
 }
@@ -112,72 +77,21 @@ export async function handleSetPersonaFacet(req: UnifiedRequest): Promise<Unifie
       };
     }
 
-    const profilePaths = getProfilePaths(user.username);
-    const facetsPath = profilePaths.personaFacets;
-
-    // Load current facets config
-    if (!fs.existsSync(facetsPath)) {
-      return {
-        status: 404,
-        error: 'Facets configuration not found',
-      };
-    }
-
-    const facetsData = JSON.parse(fs.readFileSync(facetsPath, 'utf-8'));
-    facetsData.facets = facetsData.facets || {};
-    if (!facetsData.facets.inactive) {
-      facetsData.facets.inactive = { ...INACTIVE_FACET };
-    }
-
-    // Validate facet exists and is enabled
-    if (!facetsData.facets[facet]) {
-      return {
-        status: 404,
-        error: `Facet "${facet}" not found`,
-      };
-    }
-
-    if (!facetsData.facets[facet].enabled) {
-      return {
-        status: 400,
-        error: `Facet "${facet}" is disabled`,
-      };
-    }
-
-    // Update active facet
-    const previousFacet = facetsData.activeFacet;
-    facetsData.activeFacet = facet;
-    facetsData.lastUpdated = new Date().toISOString();
-
-    // Write updated config
-    fs.mkdirSync(path.dirname(facetsPath), { recursive: true });
-    fs.writeFileSync(facetsPath, JSON.stringify(facetsData, null, 2));
-
-    // Audit the change
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'persona_facet_changed',
-      details: {
-        previousFacet,
-        newFacet: facet,
-        facetName: facetsData.facets[facet].name,
-        facetDescription: facetsData.facets[facet].description,
-      },
-      actor: user.username,
-    });
+    const result = setActivePersonaFacet(user.username, facet, user.username, 'Persona UI selection');
 
     return successResponse({
       success: true,
-      activeFacet: facet,
-      facetName: facetsData.facets[facet].name,
-      message: `Switched to ${facetsData.facets[facet].name} facet`,
+      activeFacet: result.activeFacet,
+      facetName: result.facet.name,
+      message: `Switched to ${result.facet.name} facet`,
     });
   } catch (error) {
     console.error('[persona-facet] POST error:', error);
     return {
-      status: 500,
-      error: 'Failed to switch facet',
+      status: error instanceof PersonaFacetConfigurationError ? 409 : 500,
+      error: error instanceof PersonaFacetConfigurationError
+        ? error.message
+        : 'Failed to switch facet',
     };
   }
 }

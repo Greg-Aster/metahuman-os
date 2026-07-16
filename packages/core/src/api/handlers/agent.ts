@@ -4,6 +4,8 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { audit, getAgentMonitorSnapshot, startAgentProcess, stopAllAgents } from '../../index.js';
+import { getAgentCatalogService } from '../../agent-catalog.js';
+import { ensureQueueSystemStarted } from '../../queue/index.js';
 import {
   clearAgentFailure,
   isAgentRunning,
@@ -23,41 +25,25 @@ interface RunAgentResponse {
   stdout?: string;
   completed?: boolean;
   alreadyRunning?: boolean;
+  taskId?: string;
+  queued?: boolean;
 }
-
-const ALLOWED_AGENTS = [
-  'profile-sync',
-  'memory-sync',
-  'memory-pruner',
-  'organizer',
-  'curator',
-  'ingestor',
-  'summarizer',
-  'digest',
-  'reflector',
-  'dreamer',
-  'train-of-thought',
-  'psychoanalyzer',
-  'curiosity-service',
-  'curiosity-researcher',
-  'inner-curiosity',
-  'desire-generator',
-  'desire-planner',
-  'desire-executor',
-  'desire-outcome-reviewer',
-  'audio-organizer',
-  'transcriber',
-  'environment-bridge',
-];
 
 function json(data: Record<string, unknown>, status = 200): UnifiedResponse {
   return { status, data };
 }
 
-async function runAllowedAgent(agentName: string, args: string[], actor: string, triggerUsername?: string): Promise<RunAgentResponse> {
+async function runAllowedService(agentName: string, args: string[], actor: string, triggerUsername?: string): Promise<RunAgentResponse> {
   try {
-    if (!ALLOWED_AGENTS.includes(agentName)) {
-      return { success: false, agent: agentName, error: `Agent '${agentName}' is not allowed to be triggered via API` };
+    const catalogAgent = getAgentCatalogService().getAgent(agentName);
+    if (!catalogAgent?.sourceReady) {
+      return { success: false, agent: agentName, error: `Agent '${agentName}' is not installed or its executable is missing` };
+    }
+    if (catalogAgent.lifecycle !== 'service' || !catalogAgent.serviceRegistered) {
+      return { success: false, agent: agentName, error: `${agentName} is finite work and must run through the Work Coordinator` };
+    }
+    if (!catalogAgent.enabled) {
+      return { success: false, agent: agentName, error: `${agentName} is disabled in services.json` };
     }
 
     const result = await startAgentProcess(agentName, {
@@ -115,13 +101,18 @@ export async function handleAgentsControl(req: UnifiedRequest): Promise<UnifiedR
       if (!agent) {
         return json({ success: false, message: 'Agent name is required' }, 400);
       }
-      if (!ALLOWED_AGENTS.includes(agent)) {
+      const catalogAgent = getAgentCatalogService().getAgent(agent);
+      if (!catalogAgent) {
         return json({ success: false, message: `Agent '${agent}' cannot be controlled from the UI` }, 400);
       }
 
       if (action === 'clear-failure') {
         clearAgentFailure(agent);
         return json({ success: true, agent, message: `Cleared ${agent} failure` });
+      }
+
+      if (catalogAgent.lifecycle !== 'service' || !catalogAgent.serviceRegistered) {
+        return json({ success: false, agent, message: `${agent} is finite work; manage its task through the Work Coordinator` }, 409);
       }
 
       if (action === 'stop') {
@@ -140,7 +131,7 @@ export async function handleAgentsControl(req: UnifiedRequest): Promise<UnifiedR
         }
       }
 
-      const result = await runAllowedAgent(agent, [], actor, req.user.username);
+      const result = await runAllowedService(agent, [], actor, req.user.username);
       return json({
         ...result,
         message: result.success
@@ -167,13 +158,16 @@ export async function handleAgentsControl(req: UnifiedRequest): Promise<UnifiedR
     }
 
     const bootAgents = getAgentMonitorSnapshot().bootAgents
-      .filter(agent => agent.enabled && agent.runOnBoot)
+      .filter(agent => agent.enabled && agent.startOnSystemBoot)
       .map(agent => agent.agentId);
     const agentsToRestart = [...new Set(bootAgents)];
     const results = await Promise.all(agentsToRestart.map(agent => startAgentProcess(agent, {
       actor,
       source: 'api/agents/control',
       useBootstrap: true,
+      detached: true,
+      waitForMs: 5_000,
+      checkLock: true,
     })));
     const started = results.filter(r => r.started);
     const already = results.filter(r => r.alreadyRunning);
@@ -209,8 +203,29 @@ export async function handleRunAgent(req: UnifiedRequest): Promise<UnifiedRespon
       return json({ success: false, error: 'Agent name is required' }, 400);
     }
 
-    const result = await runAllowedAgent(agent, args, req.user.username, req.user.username);
-    const status = result.success ? 200 : (result.alreadyRunning ? 409 : 400);
+    const catalogAgent = getAgentCatalogService().getAgent(agent);
+    let result: RunAgentResponse;
+    if (!catalogAgent || !catalogAgent.sourceReady) {
+      result = { success: false, agent, error: `Agent '${agent}' is not installed or its executable is missing` };
+    } else if (!catalogAgent.canRun) {
+      result = { success: false, agent, error: catalogAgent.triggerRegistered || catalogAgent.serviceRegistered
+        ? `Agent '${agent}' is disabled in its lifecycle configuration`
+        : `Agent '${agent}' requires explicit Agent Catalog registration before it can run` };
+    } else if (catalogAgent.lifecycle === 'service') {
+      result = await runAllowedService(agent, args, req.user.username, req.user.username);
+    } else {
+      const system = await ensureQueueSystemStarted();
+      if (catalogAgent.triggerRegistered) {
+        const taskId = system.triggerAgent(agent, req.user.username, args);
+        result = taskId
+          ? { success: true, agent, taskId, queued: true }
+          : { success: false, agent, error: `Trigger '${agent}' did not admit work; check its enabled state and Trigger Manager health` };
+      } else {
+        const task = system.enqueueFiniteAgent(agent, req.user.username, args);
+        result = { success: true, agent, taskId: task.id, queued: true };
+      }
+    }
+    const status = result.success ? (result.queued ? 202 : 200) : (result.alreadyRunning ? 409 : 400);
 
     return {
       status,

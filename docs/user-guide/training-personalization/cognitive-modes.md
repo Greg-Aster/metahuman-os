@@ -518,8 +518,8 @@ if (cognitiveMode === 'emulation') {
 **Cause:** Mode configuration not applied to scheduler
 **Solution:**
 1. Check `etc/agents.json` for proactive agent status
-2. Restart scheduler: `./bin/mh agent stop scheduler-service && ./bin/mh agent run scheduler-service`
-3. Verify agents stopped: `./bin/mh agent ps`
+2. Open Dashboard → Trigger Manager and compare persisted/runtime revisions
+3. Use **Reload config** if an external edit has not yet applied; no service restart is required
 
 ## Next Steps
 

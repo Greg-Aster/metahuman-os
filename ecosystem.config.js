@@ -9,9 +9,9 @@
  *   pm2 restart all
  *   pm2 monit
  *
- * Note: Agents (scheduler-service, audio-organizer) are NOT managed by PM2
- * because they use file-based locks for single-instance guarantees.
- * They continue to be managed by ./bin/mh start
+ * PM2 owns only the web server in this configuration. Persistent agent
+ * services are owned by Agent Monitor and etc/services.json; finite agents
+ * are submitted through TriggerManager and the Work Coordinator.
  */
 
 module.exports = {

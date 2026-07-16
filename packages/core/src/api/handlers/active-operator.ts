@@ -20,7 +20,7 @@ import {
 import { getQueueManager, getQueueSystem } from '../../queue/index.js';
 import type { AutonomyMode } from '../../queue/types.js';
 
-type ControlAction = 'start' | 'stop' | 'toggle' | 'set-mode' | 'emergency-stop' | 'reset';
+type ControlAction = 'start' | 'stop' | 'set-mode' | 'emergency-stop' | 'reset';
 
 function jsonError(error: unknown): UnifiedResponse {
   return {
@@ -161,10 +161,10 @@ export async function handleActiveOperatorControl(req: UnifiedRequest): Promise<
     const body = req.body || {};
     const action = body.action as ControlAction;
 
-    if (!action || !['start', 'stop', 'toggle', 'set-mode', 'emergency-stop', 'reset'].includes(action)) {
+    if (!action || !['start', 'stop', 'set-mode', 'emergency-stop', 'reset'].includes(action)) {
       return {
         status: 400,
-        error: 'Invalid action. Use: start, stop, toggle, set-mode, emergency-stop, reset',
+        error: 'Invalid action. Use: start, stop, set-mode, emergency-stop, reset',
       };
     }
 
@@ -188,16 +188,6 @@ export async function handleActiveOperatorControl(req: UnifiedRequest): Promise<
           success: true,
           mode: 'reactive',
           message: 'Reactive mode enabled',
-        };
-        break;
-      }
-
-      case 'toggle': {
-        const mode = await controller.toggleMode(req.user.username);
-        result = {
-          success: true,
-          mode,
-          message: `${mode} mode enabled`,
         };
         break;
       }

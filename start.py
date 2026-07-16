@@ -475,7 +475,7 @@ def cleanup_services():
     except:
         pass
     try:
-        subprocess.run(["pkill", "-f", "scheduler-service"], capture_output=True, timeout=2)
+        subprocess.run(["pkill", "-f", "maintenance-service"], capture_output=True, timeout=2)
     except:
         pass
     try:

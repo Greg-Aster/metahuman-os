@@ -14,10 +14,12 @@ import { audit } from './audit.js';
 /**
  * Buffer lock information
  */
+export type BufferLockMode = 'conversation' | 'inner' | 'system';
+
 export interface BufferLock {
   lockId: string;           // Unique lock identifier
   username: string;         // User whose buffer is locked
-  mode: 'conversation' | 'inner'; // Buffer mode being locked
+  mode: BufferLockMode; // Buffer mode being locked
   windowId?: string;        // Window that owns the lock
   acquiredAt: string;       // When lock was acquired
   expiresAt: string;        // When lock expires
@@ -99,7 +101,7 @@ function cleanupExpiredLocks(): void {
 /**
  * Check if a buffer is currently locked
  */
-function isBufferLocked(username: string, mode: 'conversation' | 'inner'): BufferLock | null {
+function isBufferLocked(username: string, mode: BufferLockMode): BufferLock | null {
   cleanupExpiredLocks();
   const store = loadLocks();
   
@@ -115,7 +117,7 @@ function isBufferLocked(username: string, mode: 'conversation' | 'inner'): Buffe
  */
 export function acquireBufferLock(
   username: string,
-  mode: 'conversation' | 'inner',
+  mode: BufferLockMode,
   operation: string,
   windowId?: string
 ): BufferLock | null {
@@ -196,7 +198,7 @@ export function releaseBufferLock(lockId: string): boolean {
  */
 export async function waitForBufferLock(
   username: string,
-  mode: 'conversation' | 'inner',
+  mode: BufferLockMode,
   operation: string,
   windowId?: string,
   maxWait: number = MAX_LOCK_WAIT
@@ -222,7 +224,7 @@ export async function waitForBufferLock(
  */
 export async function withBufferLock<T>(
   username: string,
-  mode: 'conversation' | 'inner',
+  mode: BufferLockMode,
   operation: string,
   fn: () => Promise<T> | T,
   windowId?: string

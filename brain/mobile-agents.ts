@@ -18,7 +18,7 @@
  * - desire-generator: Synthesize desires from system inputs
  * - desire-planner: Generate execution plans for desires
  * - desire-executor: Execute approved desire plans
- * - desire-reviewer: Review completed/failed desires
+ * - desire-outcome-reviewer: Review completed/failed desires
  *
  * Server-Only Agents (cannot run on mobile):
  * - transcriber: Requires Whisper/GPU
@@ -449,7 +449,7 @@ export function registerMobileAgents(): MobileAgentRegistration[] {
       intervalSeconds: 300, // Every 5 minutes
     },
     {
-      id: 'desire-reviewer',
+      id: 'desire-outcome-reviewer',
       name: 'Desire Outcome Reviewer',
       run: runDesireReviewerWrapper,
       usesLLM: true,

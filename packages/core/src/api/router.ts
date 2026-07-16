@@ -185,6 +185,17 @@ import { handleDeleteMemory } from './handlers/memories-delete.js';
 import { handleValidateMemory } from './handlers/memories-validate.js';
 import { handleClearAudit } from './handlers/audit-clear.js';
 import { handleGetSchedulerConfig, handleSetSchedulerConfig } from './handlers/scheduler-config.js';
+import {
+  handleGetTriggerManager,
+  handlePatchTriggerManagerConfig,
+  handleTriggerManagerControl,
+  handleTriggerManagerStream,
+} from './handlers/trigger-manager.js';
+import {
+  handleAgentCatalogControl,
+  handleGetAgentCatalog,
+} from './handlers/agent-catalog.js';
+import { handleGetMoodSettings, handleUpdateMoodSettings } from './handlers/mood-settings.js';
 import { handleGetBigBrotherConfig, handleSetBigBrotherConfig } from './handlers/big-brother-config.js';
 import { handleGetCuriosityQuestions } from './handlers/curiosity-questions.js';
 import { handleGetPersonaToggle, handleSetPersonaToggle } from './handlers/persona-toggle.js';
@@ -240,6 +251,7 @@ import { handleSwitchLlmBackend } from './handlers/llm-backend-switch.js';
 import { handleOllamaControl } from './handlers/llm-backend-ollama.js';
 import { handleVllmControl } from './handlers/llm-backend-vllm.js';
 import { handleGetVllmLoras, handleUpdateVllmLoras } from './handlers/vllm-loras.js';
+import { handleGetOllamaLoras, handleCreateOllamaLora } from './handlers/ollama-loras.js';
 import {
   handleLlmChat,
   handleLLMProxy,
@@ -982,6 +994,20 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/scheduler-config', handler: handleGetSchedulerConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/scheduler-config', handler: handleSetSchedulerConfig, requiresAuth: true, guard: 'owner' },
 
+  // Trigger Manager
+  { method: 'GET', pattern: '/api/trigger-manager', handler: handleGetTriggerManager, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/trigger-manager/stream', handler: handleTriggerManagerStream, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/trigger-manager/control', handler: handleTriggerManagerControl, requiresAuth: true, guard: 'owner' },
+  { method: 'PATCH', pattern: '/api/trigger-manager/config', handler: handlePatchTriggerManagerConfig, requiresAuth: true, guard: 'owner' },
+
+  // Agent Catalog
+  { method: 'GET', pattern: '/api/agent-catalog', handler: handleGetAgentCatalog, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/agent-catalog/control', handler: handleAgentCatalogControl, requiresAuth: true, guard: 'owner' },
+
+  // Mood Agent
+  { method: 'GET', pattern: '/api/mood-settings', handler: handleGetMoodSettings, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/mood-settings', handler: handleUpdateMoodSettings, requiresAuth: true },
+
   // Big Brother Config
   { method: 'GET', pattern: '/api/big-brother-config', handler: handleGetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-config', handler: handleSetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
@@ -1119,6 +1145,10 @@ const routes: RouteDefinition[] = [
   // vLLM LoRA adapters
   { method: 'GET', pattern: '/api/vllm/loras', handler: handleGetVllmLoras, requiresAuth: true },
   { method: 'PUT', pattern: '/api/vllm/loras', handler: handleUpdateVllmLoras, requiresAuth: true, guard: 'owner' },
+
+  // Ollama packages supported LoRAs as normal derived models.
+  { method: 'GET', pattern: '/api/ollama/loras', handler: handleGetOllamaLoras, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/ollama/loras', handler: handleCreateOllamaLora, requiresAuth: true, guard: 'owner' },
 
   // LLM Proxy - allows remote clients to use this server's LLM (Ollama or vLLM)
   { method: 'POST', pattern: '/api/llm/chat', handler: handleLlmChat, requiresAuth: true },

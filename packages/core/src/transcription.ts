@@ -242,7 +242,7 @@ async function transcribeOpenAI(
     throw new Error('OpenAI API key not configured');
   }
 
-  // Use global FormData (Node 18/undici) and append file stream
+  // Use the runtime's global FormData implementation and append the file stream.
   const formData = new (globalThis as any).FormData();
   const fileStream = fs.createReadStream(audioPath);
   formData.append('file', fileStream as any, path.basename(audioPath));

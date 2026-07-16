@@ -67,6 +67,7 @@ export const environmentInstructionInterpreterNode = defineNode({
     const timestamp = rawObservation?.timestamp || new Date().toISOString();
     const capabilities: EnvironmentCapabilities = {
       actions: rawObservation?.capabilities?.actions ?? [],
+      robotCommands: rawObservation?.capabilities?.robotCommands,
       text: rawObservation?.capabilities?.text ?? true,
       movement: rawObservation?.capabilities?.movement ?? false,
       visual: rawObservation?.capabilities?.visual ?? false,

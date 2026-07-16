@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import { apiFetch } from '../lib/client/api-config';
+  import { runTriggerNow } from '../lib/stores/trigger-manager';
   const dispatch = createEventDispatcher()
 
   // ============================================================================
@@ -57,13 +58,7 @@
 
   async function runAgent(name: string, options: Record<string, any> = {}): Promise<boolean> {
     try {
-      const res = await apiFetch('/api/agents/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: name, args: agentOptionArgs(options) })
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to start agent')
+      await runTriggerNow(name, agentOptionArgs(options))
       return true
     } catch (e) {
       console.error(`Failed to run agent ${name}:`, e)

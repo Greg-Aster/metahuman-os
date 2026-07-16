@@ -23,6 +23,60 @@
     reason?: string;
   }
 
+  interface LocalModelArtifact {
+    id: string;
+    displayName: string;
+    source: 'ollama-store' | 'huggingface-cache';
+    compatibleProviders: string[];
+    format: string;
+    architecture?: string;
+    modelType?: string;
+    quantization?: string;
+    sizeBytes: number;
+    path: string;
+    installed: boolean;
+    error?: string;
+  }
+
+  interface VllmArtifactCompatibility {
+    artifactId: string;
+    status: 'compatible' | 'incompatible' | 'unknown';
+    compatible: boolean;
+    architecture?: string;
+    reason: string;
+    vllmVersion?: string;
+    transformersVersion?: string;
+  }
+
+  interface VllmMemoryPlan {
+    utilization: number;
+    allocatedGB: number;
+    headroomGB: number;
+    freeGB: number;
+    usedGB: number;
+    totalGB: number;
+    recommendation: string;
+    currentVllmRunning?: boolean;
+  }
+
+  interface VllmLoraAdapter {
+    name: string;
+    path: string;
+    createdAt: string;
+    valid: boolean;
+    loaded: boolean;
+    baseModel?: string;
+    loraRank?: number;
+    sizeBytes?: number;
+    compatibleWithTarget?: boolean;
+  }
+
+  interface OllamaLoraAdapter extends VllmLoraAdapter {
+    compatibleWithTarget: boolean;
+    supportedByOllama: boolean;
+    unavailableReason?: string;
+  }
+
   interface BigBrotherConfig {
     enabled: boolean;
     provider: string;
@@ -59,23 +113,84 @@
   let resolvedBackend: ResolvedBackend | null = null;
   let backendStatus: BackendStatus | null = null;
   let available: BackendAvailability | null = null;
+  let sharedArtifacts: LocalModelArtifact[] = [];
+  let vllmArtifacts: LocalModelArtifact[] = [];
+  let selectedVllmArtifact: LocalModelArtifact | null = null;
+  let vllmArtifactCompatibility: Record<string, VllmArtifactCompatibility> = {};
+  let selectedVllmCompatibility: VllmArtifactCompatibility | null = null;
+  let checkingVllmCompatibility = false;
+  let statusLoading = false;
+  let statusWarning: string | null = null;
 
   let ollamaEndpoint = 'http://localhost:11434';
-  let ollamaAutoStart = false;
   let ollamaModel = 'qwen3:14b';
+  let ollamaModelSelection = '__custom__';
+  let ollamaArtifacts: LocalModelArtifact[] = [];
+  let selectedOllamaArtifact: LocalModelArtifact | null = null;
+  let ollamaContextWindow = 8192;
+  let ollamaMaxTokens = 2048;
+  let ollamaTemperature = 0.7;
+  let ollamaTopP = 0.9;
+  let ollamaTopK = 40;
+  let ollamaMinP = 0;
+  let ollamaRepeatPenalty = 1.1;
+  let ollamaSeed: number | undefined = undefined;
+  let ollamaKeepAlive = '5m';
+  let ollamaEnableThinking = false;
+  let showOllamaAdvanced = false;
+  let showOllamaLoras = false;
+  let ollamaLoraAdapters: OllamaLoraAdapter[] = [];
+  let loadingOllamaLoras = false;
+  let buildingOllamaLora: string | null = null;
 
   let vllmEndpoint = 'http://localhost:8000';
-  let vllmAutoStart = false;
   let vllmModel = '';
   let vllmGpuUtil = 0.7;
   let vllmEnforceEager = true;
   let vllmAutoUtilization = false;
+  let vllmGpuHeadroomGiB = 1.5;
+  let vllmAutoUtilizationMax = 0.95;
+  let vllmContextMode: 'auto' | 'manual' = 'auto';
   let vllmMaxModelLen = 4096;
+  let vllmKvCacheMemoryGiB = 0;
+  let vllmCpuOffloadGiB = 0;
+  let vllmKvOffloadingGiB = 0;
+  let vllmKvOffloadingBackend: 'native' | 'lmcache' = 'native';
   let vllmMaxTokens = 2048;
   let vllmEnableThinking = true;
   let vllmModelPath = '';
   let vllmLoadFormat = '';
+  let vllmQuantization = '';
+  let vllmTokenizer = '';
   let vllmServedModelName = '';
+  let vllmModelSelection = '__custom__';
+  let showVllmAdvanced = false;
+  let showVllmLoras = false;
+  let vllmMemoryPlan: VllmMemoryPlan | null = null;
+  let checkingVllmMemory = false;
+  let vllmLoraAdapters: VllmLoraAdapter[] = [];
+  let vllmEnabledLoras: string[] = [];
+  let vllmMaxLoraRank = 64;
+  let vllmMaxLoras = 1;
+  let vllmMaxCpuLoras = 1;
+  let vllmLoraDtype: 'auto' | 'float16' | 'bfloat16' = 'auto';
+  let loadingVllmLoras = false;
+  let savingVllmLoras = false;
+  let vllmLoraNeedsRestart = false;
+
+  $: vllmArtifacts = sharedArtifacts.filter(artifact =>
+    artifact.installed && artifact.compatibleProviders.includes('vllm')
+  );
+  $: ollamaArtifacts = sharedArtifacts.filter(artifact =>
+    artifact.installed &&
+    artifact.source === 'ollama-store' &&
+    artifact.compatibleProviders.includes('ollama')
+  );
+  $: selectedOllamaArtifact = ollamaArtifacts.find(artifact => artifact.id === ollamaModelSelection) || null;
+  $: selectedVllmArtifact = vllmArtifacts.find(artifact => artifact.id === vllmModelSelection) || null;
+  $: selectedVllmCompatibility = selectedVllmArtifact
+    ? vllmArtifactCompatibility[selectedVllmArtifact.id] || null
+    : null;
 
   let savingDefault = false;
   let savingOllamaConfig = false;
@@ -113,10 +228,14 @@
   let embeddingSaving = false;
 
   onMount(() => {
-    loadStatus();
+    void loadBackendSettings().then(() => {
+      void refreshVllmMemoryPlan();
+      void loadOllamaLoras();
+    });
     loadInterpreterStatus();
     loadBigBrotherConfig();
     loadEmbeddingConfig();
+    loadVllmLoras();
   });
 
   function isDefaultBackend(value: string): value is DefaultBackend {
@@ -132,44 +251,339 @@
     savedNotice = null;
   }
 
-  async function loadStatus() {
+  function formatArtifactSize(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return 'Unknown size';
+    const gib = bytes / 1024 / 1024 / 1024;
+    return gib >= 1 ? `${gib.toFixed(gib >= 10 ? 0 : 1)} GB` : `${Math.round(bytes / 1024 / 1024)} MB`;
+  }
+
+  function syncVllmModelSelection() {
+    const artifact = sharedArtifacts.find(candidate =>
+      candidate.installed &&
+      candidate.compatibleProviders.includes('vllm') &&
+      (
+      candidate.id === vllmModel ||
+      candidate.displayName === vllmModel ||
+      candidate.path === vllmModelPath
+      )
+    );
+    vllmModelSelection = artifact?.id || '__custom__';
+  }
+
+  function syncOllamaModelSelection() {
+    const artifact = sharedArtifacts.find(candidate =>
+      candidate.installed &&
+      candidate.source === 'ollama-store' &&
+      candidate.compatibleProviders.includes('ollama') &&
+      (candidate.id === ollamaModel || candidate.displayName === ollamaModel)
+    );
+    ollamaModelSelection = artifact?.id || '__custom__';
+  }
+
+  function selectOllamaModel() {
+    const artifact = ollamaArtifacts.find(candidate => candidate.id === ollamaModelSelection);
+    if (!artifact) {
+      ollamaModel = '';
+      return;
+    }
+    ollamaModel = artifact.displayName;
+    void loadOllamaLoras(ollamaModel);
+  }
+
+  function applyBackendConfig(config: any) {
+    configuredActiveBackend = config.activeBackend || 'auto';
+    activeBackend = isDefaultBackend(configuredActiveBackend) ? configuredActiveBackend : 'auto';
+    preferredLocalBackend = config.preferredLocalBackend === 'ollama' ? 'ollama' : 'vllm';
+
+    ollamaEndpoint = config.ollama?.endpoint || 'http://localhost:11434';
+    ollamaModel = config.ollama?.defaultModel || 'qwen3:14b';
+    ollamaContextWindow = config.ollama?.contextWindow ?? 8192;
+    ollamaMaxTokens = config.ollama?.maxTokens ?? 2048;
+    ollamaTemperature = config.ollama?.temperature ?? 0.7;
+    ollamaTopP = config.ollama?.topP ?? 0.9;
+    ollamaTopK = config.ollama?.topK ?? 40;
+    ollamaMinP = config.ollama?.minP ?? 0;
+    ollamaRepeatPenalty = config.ollama?.repeatPenalty ?? 1.1;
+    ollamaSeed = config.ollama?.seed === null || config.ollama?.seed === undefined
+      ? undefined
+      : Number(config.ollama.seed);
+    ollamaKeepAlive = config.ollama?.keepAlive || '5m';
+    ollamaEnableThinking = config.ollama?.enableThinking ?? false;
+
+    vllmEndpoint = config.vllm?.endpoint || 'http://localhost:8000';
+    vllmModel = config.vllm?.model || '';
+    vllmModelPath = config.vllm?.modelPath || '';
+    vllmLoadFormat = config.vllm?.loadFormat || '';
+    vllmQuantization = config.vllm?.quantization || '';
+    vllmTokenizer = config.vllm?.tokenizer || '';
+    vllmServedModelName = config.vllm?.servedModelName || '';
+    vllmGpuUtil = config.vllm?.gpuMemoryUtilization ?? 0.7;
+    vllmEnforceEager = config.vllm?.enforceEager ?? true;
+    vllmAutoUtilization = config.vllm?.autoUtilization ?? false;
+    vllmGpuHeadroomGiB = config.vllm?.gpuMemoryHeadroomGiB ?? 1.5;
+    vllmAutoUtilizationMax = config.vllm?.autoUtilizationMax ?? 0.95;
+    vllmContextMode = config.vllm?.maxModelLen === 'auto' ? 'auto' : 'manual';
+    vllmMaxModelLen = typeof config.vllm?.maxModelLen === 'number' ? config.vllm.maxModelLen : 4096;
+    vllmKvCacheMemoryGiB = config.vllm?.kvCacheMemoryGiB ?? 0;
+    vllmCpuOffloadGiB = config.vllm?.cpuOffloadGiB ?? 0;
+    vllmKvOffloadingGiB = config.vllm?.kvOffloadingGiB ?? 0;
+    vllmKvOffloadingBackend = config.vllm?.kvOffloadingBackend === 'lmcache' ? 'lmcache' : 'native';
+    vllmMaxTokens = config.vllm?.maxTokens || 2048;
+    vllmEnableThinking = config.vllm?.enableThinking ?? true;
+
+    if (config.remote?.serverUrl) {
+      remoteServerUrl = config.remote.serverUrl;
+    }
+
+    syncOllamaModelSelection();
+    syncVllmModelSelection();
+  }
+
+  async function loadOllamaLoras(targetModel = ollamaModel) {
+    if (!targetModel.trim()) {
+      ollamaLoraAdapters = [];
+      return;
+    }
+    loadingOllamaLoras = true;
     try {
-      const res = await apiFetch('/api/llm-backend/status');
-      if (!res.ok) return;
+      const res = await apiFetch(`/api/ollama/loras?model=${encodeURIComponent(targetModel.trim())}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Ollama LoRA settings returned ${res.status}`);
+      }
+      ollamaLoraAdapters = data.available || [];
+    } catch (err) {
+      console.error('[BackendSettings] Ollama LoRA settings failed:', err);
+      ollamaLoraAdapters = [];
+    } finally {
+      loadingOllamaLoras = false;
+    }
+  }
+
+  async function buildOllamaLora(adapter: OllamaLoraAdapter) {
+    if (adapter.unavailableReason || !ollamaModel.trim()) return;
+    buildingOllamaLora = adapter.name;
+    clearMessages();
+    try {
+      const res = await apiFetch('/api/ollama/loras', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adapterName: adapter.name,
+          baseModel: ollamaModel.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        error = data.error || 'Failed to create Ollama model from the selected LoRA';
+        return;
+      }
+      ollamaModel = data.modelName;
+      savedNotice = `${data.modelName} was created and selected for new Ollama requests.`;
+      await loadStatus();
+      await loadOllamaLoras(ollamaModel);
+      statusRefreshTrigger.update(n => n + 1);
+    } catch {
+      error = 'Failed to create Ollama model from the selected LoRA';
+    } finally {
+      buildingOllamaLora = null;
+    }
+  }
+
+  function selectVllmModel() {
+    const artifact = vllmArtifacts.find(candidate => candidate.id === vllmModelSelection);
+    if (!artifact) {
+      vllmModel = '';
+      vllmModelPath = '';
+      vllmLoadFormat = 'auto';
+      vllmQuantization = '';
+      vllmTokenizer = '';
+      vllmServedModelName = '';
+      showVllmAdvanced = true;
+      return;
+    }
+
+    vllmModel = artifact.displayName;
+    vllmModelPath = artifact.format === 'gguf' ? artifact.path : '';
+    vllmLoadFormat = artifact.format === 'gguf' ? 'gguf' : 'auto';
+    vllmQuantization = artifact.format === 'gguf' ? '' : artifact.quantization || '';
+    vllmTokenizer = '';
+    vllmServedModelName = artifact.displayName;
+    if (!vllmArtifactCompatibility[artifact.id]) {
+      void preflightVllmArtifacts([artifact.id]);
+    }
+    void loadVllmLoras(artifact.displayName);
+  }
+
+  async function preflightVllmArtifacts(artifactIds = vllmArtifacts.map(artifact => artifact.id)) {
+    if (artifactIds.length === 0) return;
+    checkingVllmCompatibility = true;
+    try {
+      const res = await apiFetch('/api/llm-backend/vllm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'preflight', artifactIds }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Compatibility preflight returned ${res.status}`);
+      }
+      vllmArtifactCompatibility = {
+        ...vllmArtifactCompatibility,
+        ...Object.fromEntries(
+          (data.results || []).map((result: VllmArtifactCompatibility) => [result.artifactId, result])
+        ),
+      };
+    } catch (err) {
+      console.error('[BackendSettings] vLLM artifact preflight failed:', err);
+      statusWarning = 'Could not verify installed GGUF models against vLLM. They will not be started until compatibility is known.';
+    } finally {
+      checkingVllmCompatibility = false;
+    }
+  }
+
+  async function refreshVllmMemoryPlan() {
+    checkingVllmMemory = true;
+    try {
+      const res = await apiFetch('/api/llm-backend/vllm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'memory_plan',
+          gpuMemoryHeadroomGiB: vllmGpuHeadroomGiB,
+          autoUtilizationMax: vllmAutoUtilizationMax,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Memory plan returned ${res.status}`);
+      }
+      vllmMemoryPlan = data;
+    } catch (err) {
+      console.error('[BackendSettings] vLLM memory planning failed:', err);
+      vllmMemoryPlan = null;
+      statusWarning = 'Could not read live GPU memory. Saved vLLM settings remain editable.';
+    } finally {
+      checkingVllmMemory = false;
+    }
+  }
+
+  async function loadVllmLoras(targetModel = vllmModel) {
+    loadingVllmLoras = true;
+    try {
+      const query = targetModel.trim() ? `?model=${encodeURIComponent(targetModel.trim())}` : '';
+      const res = await apiFetch(`/api/vllm/loras${query}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `LoRA settings returned ${res.status}`);
+      }
+      vllmLoraAdapters = data.available || [];
+      vllmEnabledLoras = data.config?.enabledAdapters || [];
+      vllmMaxLoraRank = data.config?.maxLoraRank ?? 64;
+      vllmMaxLoras = data.config?.maxLoras ?? 1;
+      vllmMaxCpuLoras = data.config?.maxCpuLoras ?? vllmMaxLoras;
+      vllmLoraDtype = data.config?.loraDtype || 'auto';
+    } catch (err) {
+      console.error('[BackendSettings] vLLM LoRA settings failed:', err);
+      vllmLoraAdapters = [];
+    } finally {
+      loadingVllmLoras = false;
+    }
+  }
+
+  async function saveVllmLoraConfig() {
+    if (vllmMaxCpuLoras < vllmMaxLoras) {
+      error = 'CPU-cached LoRAs must be greater than or equal to active LoRAs per batch.';
+      return;
+    }
+    savingVllmLoras = true;
+    clearMessages();
+    try {
+      const res = await apiFetch('/api/vllm/loras', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set',
+          enabledAdapters: vllmEnabledLoras,
+          maxLoraRank: vllmMaxLoraRank,
+          maxLoras: vllmMaxLoras,
+          maxCpuLoras: vllmMaxCpuLoras,
+          loraDtype: vllmLoraDtype,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        error = data.error || 'Failed to save vLLM LoRA settings';
+        return;
+      }
+      vllmLoraNeedsRestart = data.needsRestart ?? true;
+      savedNotice = data.needsRestart
+        ? 'LoRA settings saved. Restart vLLM to load the selected adapters.'
+        : 'LoRA settings saved.';
+      await loadVllmLoras();
+    } catch (err) {
+      error = 'Failed to save vLLM LoRA settings';
+    } finally {
+      savingVllmLoras = false;
+    }
+  }
+
+  async function loadBackendSettings() {
+    loading = true;
+    void loadStatus();
+
+    try {
+      const res = await apiFetch('/api/llm-backend/config', {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        throw new Error(`Backend configuration returned ${res.status}`);
+      }
+      applyBackendConfig(await res.json());
+    } catch (err) {
+      console.error('[BackendSettings] Error loading config:', err);
+      error = 'Failed to load saved backend configuration';
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function loadStatus(): Promise<boolean> {
+    statusLoading = true;
+    statusWarning = null;
+    try {
+      const res = await apiFetch('/api/llm-backend/status', {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        throw new Error(`Backend status returned ${res.status}`);
+      }
 
       const data = await res.json();
       backendStatus = data.active;
       available = data.available;
-      configuredActiveBackend = data.config.activeBackend || 'auto';
-      activeBackend = isDefaultBackend(configuredActiveBackend) ? configuredActiveBackend : 'auto';
-      preferredLocalBackend = data.config.preferredLocalBackend === 'ollama' ? 'ollama' : 'vllm';
       resolvedBackend = data.active?.resolvedBackend || null;
-
-      ollamaEndpoint = data.config.ollama?.endpoint || 'http://localhost:11434';
-      ollamaAutoStart = data.config.ollama?.autoStart ?? false;
-      ollamaModel = data.config.ollama?.defaultModel || 'qwen3:14b';
-
-      vllmEndpoint = data.config.vllm?.endpoint || 'http://localhost:8000';
-      vllmAutoStart = data.config.vllm?.autoStart ?? false;
-      vllmModel = data.config.vllm?.model || '';
-      vllmModelPath = data.config.vllm?.modelPath || '';
-      vllmLoadFormat = data.config.vllm?.loadFormat || '';
-      vllmServedModelName = data.config.vllm?.servedModelName || '';
-      vllmGpuUtil = data.config.vllm?.gpuMemoryUtilization || 0.7;
-      vllmEnforceEager = data.config.vllm?.enforceEager ?? true;
-      vllmAutoUtilization = data.config.vllm?.autoUtilization ?? false;
-      vllmMaxModelLen = data.config.vllm?.maxModelLen || 4096;
-      vllmMaxTokens = data.config.vllm?.maxTokens || 2048;
-      vllmEnableThinking = data.config.vllm?.enableThinking ?? true;
-
-      if (data.config.remote?.serverUrl) {
-        remoteServerUrl = data.config.remote.serverUrl;
-      }
+      sharedArtifacts = data.sharedArtifacts || data.available?.sharedArtifacts || [];
+      applyBackendConfig(data.config);
+      void loadOllamaLoras(ollamaModel);
+      void preflightVllmArtifacts(
+        sharedArtifacts
+          .filter((artifact: LocalModelArtifact) => artifact.installed && artifact.compatibleProviders.includes('vllm'))
+          .map((artifact: LocalModelArtifact) => artifact.id)
+      );
+      return true;
     } catch (err) {
       console.error('[BackendSettings] Error loading status:', err);
-      error = 'Failed to load backend status';
+      statusWarning = 'Live service status is unavailable. Saved settings are still editable.';
+      return false;
     } finally {
-      loading = false;
+      statusLoading = false;
     }
   }
 
@@ -218,6 +632,10 @@
   }
 
   async function saveOllamaConfig() {
+    if (!ollamaModel.trim()) {
+      error = 'Choose an installed Ollama model or enter a custom model name.';
+      return;
+    }
     savingOllamaConfig = true;
     clearMessages();
 
@@ -228,8 +646,17 @@
         body: JSON.stringify({
           ollama: {
             endpoint: ollamaEndpoint,
-            autoStart: ollamaAutoStart,
-            defaultModel: ollamaModel,
+            defaultModel: ollamaModel.trim(),
+            contextWindow: ollamaContextWindow,
+            maxTokens: ollamaMaxTokens,
+            temperature: ollamaTemperature,
+            topP: ollamaTopP,
+            topK: ollamaTopK,
+            minP: ollamaMinP,
+            repeatPenalty: ollamaRepeatPenalty,
+            seed: Number.isInteger(ollamaSeed) ? ollamaSeed : null,
+            keepAlive: ollamaKeepAlive.trim(),
+            enableThinking: ollamaEnableThinking,
           },
         }),
       });
@@ -240,8 +667,9 @@
         return;
       }
 
-      savedNotice = restartNotice('Ollama configuration saved');
+      savedNotice = 'Ollama configuration saved. New requests will use these backend defaults unless a model or graph overrides them.';
       await loadStatus();
+      await loadOllamaLoras(ollamaModel);
       statusRefreshTrigger.update(n => n + 1);
     } catch (err) {
       error = 'Failed to save Ollama config';
@@ -251,25 +679,40 @@
   }
 
   async function saveVllmConfig() {
+    if (!vllmModel.trim()) {
+      error = 'Choose an installed model or enter a custom model ID.';
+      return;
+    }
+    if (selectedVllmArtifact && !selectedVllmCompatibility?.compatible) {
+      error = selectedVllmCompatibility?.reason || 'This installed artifact has not passed the vLLM compatibility preflight.';
+      return;
+    }
+
     savingVllmConfig = true;
     clearMessages();
 
     try {
       const vllm: Record<string, any> = {
         endpoint: vllmEndpoint,
-        autoStart: vllmAutoStart,
-        model: vllmModel,
+        model: vllmModel.trim(),
+        modelPath: vllmModelPath.trim(),
+        loadFormat: vllmLoadFormat.trim() || 'auto',
+        quantization: vllmQuantization.trim() || null,
+        tokenizer: vllmTokenizer.trim(),
+        servedModelName: vllmServedModelName.trim(),
         gpuMemoryUtilization: vllmGpuUtil,
+        gpuMemoryHeadroomGiB: vllmGpuHeadroomGiB,
+        autoUtilizationMax: vllmAutoUtilizationMax,
         enforceEager: vllmEnforceEager,
         autoUtilization: vllmAutoUtilization,
-        maxModelLen: vllmMaxModelLen,
+        maxModelLen: vllmContextMode === 'auto' ? 'auto' : vllmMaxModelLen,
+        kvCacheMemoryGiB: vllmKvCacheMemoryGiB > 0 ? vllmKvCacheMemoryGiB : null,
+        cpuOffloadGiB: vllmCpuOffloadGiB,
+        kvOffloadingGiB: vllmKvOffloadingGiB,
+        kvOffloadingBackend: vllmKvOffloadingBackend,
         maxTokens: vllmMaxTokens,
         enableThinking: vllmEnableThinking,
       };
-
-      if (vllmModelPath.trim()) vllm.modelPath = vllmModelPath.trim();
-      if (vllmLoadFormat.trim()) vllm.loadFormat = vllmLoadFormat.trim();
-      if (vllmServedModelName.trim()) vllm.servedModelName = vllmServedModelName.trim();
 
       const res = await apiFetch('/api/llm-backend/config', {
         method: 'PUT',
@@ -285,6 +728,7 @@
 
       savedNotice = restartNotice('vLLM configuration saved');
       await loadStatus();
+      await loadVllmLoras(vllmModel);
       statusRefreshTrigger.update(n => n + 1);
     } catch (err) {
       error = 'Failed to save vLLM config';
@@ -294,6 +738,15 @@
   }
 
   async function controlLLMBackend(backend: 'ollama' | 'vllm', action: 'start' | 'stop' | 'restart') {
+    if (
+      backend === 'vllm' &&
+      action !== 'stop' &&
+      selectedVllmArtifact &&
+      !selectedVllmCompatibility?.compatible
+    ) {
+      error = selectedVllmCompatibility?.reason || 'This installed artifact has not passed the vLLM compatibility preflight.';
+      return;
+    }
     actionInProgress = `${backend}-${action}`;
     clearMessages();
 
@@ -606,6 +1059,15 @@
     <div class="banner banner-warning mb-4">{savedNotice}</div>
   {/if}
 
+  {#if statusWarning}
+    <div class="banner banner-warning mb-4 flex items-center justify-between gap-3">
+      <span>{statusWarning}</span>
+      <button class="btn-secondary btn-sm shrink-0" on:click={loadStatus} disabled={statusLoading}>
+        {statusLoading ? 'Checking...' : 'Retry status'}
+      </button>
+    </div>
+  {/if}
+
   {#if loading}
     <div class="text-center py-8 text-gray-500">Loading backend settings...</div>
   {:else}
@@ -666,17 +1128,170 @@
 
           <div class="grid grid-cols-1 gap-3 mb-4">
             <label class="block text-sm">
-              <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint</span>
-              <input class="input-field font-mono" bind:value={ollamaEndpoint} />
-            </label>
-            <label class="block text-sm">
               <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Default model</span>
-              <input class="input-field font-mono" bind:value={ollamaModel} placeholder="qwen3:14b" />
+              <select class="select-field w-full" bind:value={ollamaModelSelection} on:change={selectOllamaModel}>
+                {#each ollamaArtifacts as artifact}
+                  <option value={artifact.id}>
+                    {artifact.displayName} · {artifact.modelType || artifact.architecture || artifact.format.toUpperCase()} · {formatArtifactSize(artifact.sizeBytes)}
+                  </option>
+                {/each}
+                <option value="__custom__">
+                  {ollamaModelSelection === '__custom__' && ollamaModel ? `Current custom model — ${ollamaModel}` : 'Custom Ollama model name…'}
+                </option>
+              </select>
+              <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Installed models are discovered from the same Ollama store used by the service.
+              </span>
             </label>
-            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
-              <input type="checkbox" bind:checked={ollamaAutoStart} class="w-4 h-4 accent-violet-600" />
-              <span>Auto-start when active backend requires Ollama</span>
-            </label>
+
+            {#if selectedOllamaArtifact}
+              <div class="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/60 dark:bg-green-900/10 p-3 text-sm">
+                <div class="font-medium text-green-800 dark:text-green-200">Installed and available to Ollama</div>
+                <div class="mt-1 text-xs text-green-700 dark:text-green-300">
+                  {selectedOllamaArtifact.architecture || 'Architecture not reported'}{selectedOllamaArtifact.quantization ? ` · ${selectedOllamaArtifact.quantization}` : ''} · {formatArtifactSize(selectedOllamaArtifact.sizeBytes)}
+                </div>
+              </div>
+            {:else}
+              <label class="block text-sm">
+                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Custom model name</span>
+                <input class="input-field font-mono" bind:value={ollamaModel} placeholder="model:tag" />
+                <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">The model must already exist in the configured Ollama service.</span>
+              </label>
+            {/if}
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+              <div class="font-medium text-sm text-gray-800 dark:text-gray-200">Context and generation</div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Context tokens</span>
+                  <input class="input-field" type="number" min="256" max="1048576" step="1024" bind:value={ollamaContextWindow} />
+                </label>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Max output tokens</span>
+                  <input class="input-field" type="number" min="1" max="131072" step="256" bind:value={ollamaMaxTokens} />
+                </label>
+              </div>
+              <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+                Larger context uses more memory. Model and cognitive-graph settings can deliberately override these backend defaults.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              class="text-left text-sm font-medium text-violet-700 dark:text-violet-300 hover:underline"
+              on:click={() => showOllamaAdvanced = !showOllamaAdvanced}
+            >
+              {showOllamaAdvanced ? 'Hide advanced configuration' : 'Advanced configuration'}
+            </button>
+
+            {#if showOllamaAdvanced}
+              <div class="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-black/[0.02] dark:bg-white/[0.02] p-3">
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint</span>
+                  <input class="input-field font-mono" bind:value={ollamaEndpoint} />
+                </label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</span>
+                    <input class="input-field" type="number" min="0" max="5" step="0.05" bind:value={ollamaTemperature} />
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Top P</span>
+                    <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={ollamaTopP} />
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Top K</span>
+                    <input class="input-field" type="number" min="0" max="10000" step="1" bind:value={ollamaTopK} />
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Min P</span>
+                    <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={ollamaMinP} />
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Repeat penalty</span>
+                    <input class="input-field" type="number" min="0.1" max="5" step="0.05" bind:value={ollamaRepeatPenalty} />
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Seed</span>
+                    <input class="input-field" type="number" min="0" step="1" bind:value={ollamaSeed} placeholder="Random" />
+                  </label>
+                </div>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Keep model loaded</span>
+                  <input class="input-field font-mono" bind:value={ollamaKeepAlive} placeholder="5m" />
+                  <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">Examples: 5m, 1h, or 0 to unload after the request.</span>
+                </label>
+                <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="checkbox" bind:checked={ollamaEnableThinking} class="w-4 h-4 accent-violet-600" />
+                  <span>Enable model-native thinking by default</span>
+                </label>
+              </div>
+            {/if}
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+              <button
+                type="button"
+                class="w-full flex items-center justify-between text-left text-sm font-medium text-gray-800 dark:text-gray-200"
+                on:click={() => showOllamaLoras = !showOllamaLoras}
+              >
+                <span>LoRA and fine-tuned models</span>
+                <span aria-hidden="true">{showOllamaLoras ? '−' : '+'}</span>
+              </button>
+
+              {#if showOllamaLoras}
+                <div class="mt-3 space-y-3">
+                  <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+                    Ollama packages a compatible LoRA with its exact base as a derived model. Already merged or previously created models appear in the main model dropdown above.
+                  </p>
+                  {#if loadingOllamaLoras}
+                    <div class="text-xs text-gray-500">Loading profile adapters…</div>
+                  {:else if ollamaLoraAdapters.length === 0}
+                    <div class="rounded-md bg-gray-50 dark:bg-gray-800 p-2 text-xs text-gray-500 dark:text-gray-400">
+                      No profile LoRA directories containing adapter_model.safetensors and adapter_config.json were found.
+                    </div>
+                  {:else}
+                    <div class="space-y-2">
+                      {#each ollamaLoraAdapters as adapter}
+                        <div class="rounded-md border border-gray-200 dark:border-gray-700 p-2 text-sm">
+                          <div class="flex items-start gap-2">
+                            <div class="min-w-0 flex-1">
+                              <div class="font-medium text-gray-800 dark:text-gray-200">
+                                {adapter.name}
+                                {#if adapter.compatibleWithTarget && adapter.supportedByOllama}
+                                  <span class="ml-1 text-xs text-green-600 dark:text-green-400">Compatible</span>
+                                {:else if adapter.compatibleWithTarget === false}
+                                  <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">Different base model</span>
+                                {:else}
+                                  <span class="ml-1 text-xs text-amber-600 dark:text-amber-400">Use with vLLM</span>
+                                {/if}
+                              </div>
+                              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 break-all">
+                                {adapter.baseModel || 'Unknown base model'}{adapter.loraRank ? ` · rank ${adapter.loraRank}` : ''}{adapter.sizeBytes ? ` · ${formatArtifactSize(adapter.sizeBytes)}` : ''}
+                              </div>
+                              {#if adapter.unavailableReason}
+                                <div class="mt-1 text-xs text-amber-700 dark:text-amber-300">{adapter.unavailableReason}</div>
+                              {/if}
+                            </div>
+                            <button
+                              type="button"
+                              class="btn-secondary btn-sm shrink-0"
+                              on:click={() => buildOllamaLora(adapter)}
+                              disabled={Boolean(adapter.unavailableReason) || buildingOllamaLora !== null}
+                            >
+                              {buildingOllamaLora === adapter.name ? 'Building…' : 'Build & use'}
+                            </button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+
+            <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+              Starts automatically with MetaHuman OS when selected as the default backend.
+            </p>
           </div>
 
           <div class="flex items-center gap-2 text-sm mb-4">
@@ -717,56 +1332,329 @@
 
           <div class="grid grid-cols-1 gap-3 mb-4">
             <label class="block text-sm">
-              <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint</span>
-              <input class="input-field font-mono" bind:value={vllmEndpoint} />
-            </label>
-            <label class="block text-sm">
               <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Model</span>
-              <input class="input-field font-mono" bind:value={vllmModel} placeholder="Qwen/Qwen3-14B-AWQ" />
+              <select class="select-field w-full" bind:value={vllmModelSelection} on:change={selectVllmModel}>
+                {#each vllmArtifacts as artifact}
+                  <option value={artifact.id}>
+                    {artifact.displayName} · {artifact.format.toUpperCase()} · {formatArtifactSize(artifact.sizeBytes)}{vllmArtifactCompatibility[artifact.id]?.status === 'incompatible' ? ' · Unsupported' : ''}
+                  </option>
+                {/each}
+                <option value="__custom__">
+                  {vllmModelSelection === '__custom__' && vllmModel ? `Current custom model — ${vllmModel}` : 'Custom model ID or path…'}
+                </option>
+              </select>
+              <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Installed models are discovered from the Ollama store and complete Hugging Face cache snapshots.
+              </span>
             </label>
-            <label class="block text-sm">
-              <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Model path</span>
-              <input class="input-field font-mono" bind:value={vllmModelPath} placeholder="Optional local artifact path" />
-            </label>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label class="block text-sm">
-                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Load format</span>
-                <input class="input-field font-mono" bind:value={vllmLoadFormat} placeholder="auto" />
-              </label>
-              <label class="block text-sm">
-                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Served name</span>
-                <input class="input-field font-mono" bind:value={vllmServedModelName} placeholder="Optional" />
-              </label>
-            </div>
-            <div>
-              <label for="vllm-gpu" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">GPU Memory Utilization</label>
-              <div class="flex items-center gap-3">
-                <input id="vllm-gpu" type="range" min="0.5" max="0.95" step="0.05" bind:value={vllmGpuUtil} disabled={vllmAutoUtilization}
-                  class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600 disabled:opacity-50" />
-                <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[3rem]">{vllmAutoUtilization ? 'Auto' : `${Math.round(vllmGpuUtil * 100)}%`}</span>
+
+            {#if selectedVllmArtifact}
+              <div class="rounded-lg border p-3 text-sm {selectedVllmCompatibility?.compatible ? 'border-green-200 dark:border-green-800 bg-green-50/60 dark:bg-green-900/10' : selectedVllmCompatibility ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10'}">
+                {#if selectedVllmCompatibility?.compatible}
+                  <div class="font-medium text-green-800 dark:text-green-200">Verified for this vLLM environment</div>
+                  <div class="mt-1 text-xs text-green-700 dark:text-green-300">
+                    {selectedVllmCompatibility.reason} MetaHuman OS will use the discovered model identity and served name automatically.
+                  </div>
+                {:else if selectedVllmCompatibility}
+                  <div class="font-medium text-red-800 dark:text-red-200">Not supported by this vLLM environment</div>
+                  <div class="mt-1 text-xs text-red-700 dark:text-red-300">{selectedVllmCompatibility.reason}</div>
+                {:else}
+                  <div class="font-medium text-amber-800 dark:text-amber-200">
+                    {checkingVllmCompatibility ? 'Checking compatibility…' : 'Compatibility has not been verified'}
+                  </div>
+                  <button type="button" class="btn-secondary btn-sm mt-2" on:click={() => preflightVllmArtifacts([selectedVllmArtifact.id])} disabled={checkingVllmCompatibility}>
+                    {checkingVllmCompatibility ? 'Checking…' : 'Check now'}
+                  </button>
+                {/if}
               </div>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {:else}
               <label class="block text-sm">
-                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Context Length</span>
-                <input class="input-field" type="number" min="2048" step="1024" bind:value={vllmMaxModelLen} />
+                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Custom model ID</span>
+                <input class="input-field font-mono" bind:value={vllmModel} placeholder="Qwen/Qwen3-14B-AWQ" />
+                <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">Use a Hugging Face model ID or open Advanced for a local path.</span>
               </label>
+            {/if}
+
+            <button
+              type="button"
+              class="text-left text-sm font-medium text-violet-700 dark:text-violet-300 hover:underline"
+              on:click={() => showVllmAdvanced = !showVllmAdvanced}
+            >
+              {showVllmAdvanced ? 'Hide advanced configuration' : 'Advanced configuration'}
+            </button>
+
+            {#if showVllmAdvanced}
+              <div class="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-black/[0.02] dark:bg-white/[0.02] p-3">
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint</span>
+                  <input class="input-field font-mono" bind:value={vllmEndpoint} />
+                </label>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Model path</span>
+                  <input class="input-field font-mono" bind:value={vllmModelPath} readonly={selectedVllmArtifact?.format === 'gguf'} placeholder="Optional local artifact path" />
+                </label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Load format</span>
+                    <select class="select-field w-full font-mono" bind:value={vllmLoadFormat} disabled={selectedVllmArtifact?.format === 'gguf'}>
+                      <option value="auto">auto</option>
+                      <option value="gguf">gguf</option>
+                      <option value="safetensors">safetensors</option>
+                      <option value="bitsandbytes">bitsandbytes</option>
+                      <option value="sharded_state">sharded_state</option>
+                    </select>
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Served name</span>
+                    <input class="input-field font-mono" bind:value={vllmServedModelName} readonly={selectedVllmArtifact?.format === 'gguf'} placeholder="Optional" />
+                  </label>
+                </div>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Quantization</span>
+                  <select class="select-field w-full font-mono" bind:value={vllmQuantization} disabled={selectedVllmArtifact?.format === 'gguf'}>
+                    <option value="">Checkpoint default</option>
+                    <option value="bitsandbytes">bitsandbytes (4-bit in-flight)</option>
+                    <option value="fp8">fp8 (8-bit in-flight)</option>
+                    <option value="awq">awq</option>
+                    <option value="gptq">gptq</option>
+                    <option value="compressed-tensors">compressed-tensors</option>
+                  </select>
+                  <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Choose a method only when the checkpoint or installed vLLM environment supports it.
+                  </span>
+                </label>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Tokenizer model</span>
+                  <input class="input-field font-mono" bind:value={vllmTokenizer} placeholder="Optional stable Hugging Face model ID" />
+                  <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    For GGUF, use the base model's stable Hugging Face ID. Leave blank to let vLLM read the model metadata.
+                  </span>
+                </label>
+              </div>
+            {/if}
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+              <div>
+                <div class="font-medium text-sm text-gray-800 dark:text-gray-200">GPU memory budget</div>
+                <p class="mt-1 mb-0 text-xs text-gray-500 dark:text-gray-400">
+                  vLLM loads model weights first, then uses the remaining budget for its KV cache and longer context.
+                </p>
+              </div>
+              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input type="checkbox" bind:checked={vllmAutoUtilization} class="w-4 h-4 accent-violet-600" />
+                <span>Calculate allocation from live free VRAM</span>
+              </label>
+
+              {#if vllmAutoUtilization}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Leave free</span>
+                    <div class="flex items-center gap-2">
+                      <input class="input-field" type="number" min="0" max="64" step="0.25" bind:value={vllmGpuHeadroomGiB} />
+                      <span class="text-xs text-gray-500">GiB</span>
+                    </div>
+                  </label>
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum allocation</span>
+                    <div class="flex items-center gap-2">
+                      <input type="range" min="0.5" max="0.99" step="0.01" bind:value={vllmAutoUtilizationMax}
+                        class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600" />
+                      <span class="text-xs font-semibold min-w-[3rem]">{Math.round(vllmAutoUtilizationMax * 100)}%</span>
+                    </div>
+                  </label>
+                </div>
+                <div class="rounded-md bg-violet-50 dark:bg-violet-900/20 p-2 text-xs text-violet-800 dark:text-violet-200">
+                  {#if vllmMemoryPlan}
+                    <div class="font-medium">Calculated now: {Math.round(vllmMemoryPlan.utilization * 100)}% / {vllmMemoryPlan.allocatedGB.toFixed(1)} GiB</div>
+                    <div class="mt-1">{vllmMemoryPlan.recommendation}</div>
+                    {#if vllmMemoryPlan.currentVllmRunning}
+                      <div class="mt-1 text-amber-700 dark:text-amber-300">The running vLLM process is included in current usage. Restart recalculates after releasing its existing allocation.</div>
+                    {/if}
+                  {:else}
+                    <div>Use the live calculator to preview the allocation before restarting vLLM.</div>
+                  {/if}
+                  <button type="button" class="btn-secondary btn-sm mt-2" on:click={refreshVllmMemoryPlan} disabled={checkingVllmMemory}>
+                    {checkingVllmMemory ? 'Reading GPU…' : 'Recalculate from GPU'}
+                  </button>
+                </div>
+              {:else}
+                <div>
+                  <label for="vllm-gpu" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fixed total VRAM allocation</label>
+                  <div class="flex items-center gap-3">
+                    <input id="vllm-gpu" type="range" min="0.5" max="0.99" step="0.01" bind:value={vllmGpuUtil}
+                      class="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-violet-600" />
+                    <span class="text-sm font-semibold text-gray-700 dark:text-gray-300 min-w-[3rem]">{Math.round(vllmGpuUtil * 100)}%</span>
+                  </div>
+                </div>
+              {/if}
+
               <label class="block text-sm">
-                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Max Output Tokens</span>
-                <input class="input-field" type="number" min="512" step="256" bind:value={vllmMaxTokens} />
+                <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Explicit GPU KV-cache budget</span>
+                <div class="flex items-center gap-2">
+                  <input class="input-field" type="number" min="0" max="128" step="0.25" bind:value={vllmKvCacheMemoryGiB} />
+                  <span class="text-xs text-gray-500">GiB</span>
+                </div>
+                <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Keep at 0 for automatic KV sizing. A non-zero value overrides percentage-based KV sizing.
+                </span>
               </label>
             </div>
-            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
-              <input type="checkbox" bind:checked={vllmAutoStart} class="w-4 h-4 accent-violet-600" />
-              <span>Auto-start when active backend requires vLLM</span>
-            </label>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+              <div class="font-medium text-sm text-gray-800 dark:text-gray-200">Context and generation</div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Context policy</span>
+                  <select class="select-field w-full" bind:value={vllmContextMode}>
+                    <option value="auto">Largest that fits VRAM</option>
+                    <option value="manual">Manual token limit</option>
+                  </select>
+                </label>
+                {#if vllmContextMode === 'manual'}
+                  <label class="block text-sm">
+                    <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Context tokens</span>
+                    <input class="input-field" type="number" min="256" step="1024" bind:value={vllmMaxModelLen} />
+                  </label>
+                {/if}
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Max output tokens</span>
+                  <input class="input-field" type="number" min="1" step="256" bind:value={vllmMaxTokens} />
+                </label>
+              </div>
+              <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+                “Largest that fits VRAM” asks vLLM to profile the loaded model and choose the largest supported context that fits the available KV cache.
+              </p>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+              <div>
+                <div class="font-medium text-sm text-gray-800 dark:text-gray-200">CPU offloading</div>
+                <p class="mt-1 mb-0 text-xs text-gray-500 dark:text-gray-400">Offloading can make larger models or contexts fit, but CPU/GPU transfers reduce inference speed.</p>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Model weights in CPU RAM</span>
+                  <div class="flex items-center gap-2">
+                    <input class="input-field" type="number" min="0" max="512" step="0.5" bind:value={vllmCpuOffloadGiB} />
+                    <span class="text-xs text-gray-500">GiB</span>
+                  </div>
+                </label>
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">KV cache in CPU RAM</span>
+                  <div class="flex items-center gap-2">
+                    <input class="input-field" type="number" min="0" max="512" step="0.5" bind:value={vllmKvOffloadingGiB} />
+                    <span class="text-xs text-gray-500">GiB</span>
+                  </div>
+                </label>
+              </div>
+              {#if vllmKvOffloadingGiB > 0}
+                <label class="block text-sm">
+                  <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">KV offload backend</span>
+                  <select class="select-field w-full" bind:value={vllmKvOffloadingBackend}>
+                    <option value="native">Native vLLM</option>
+                    <option value="lmcache">LMCache plugin</option>
+                  </select>
+                  {#if vllmKvOffloadingBackend === 'lmcache'}
+                    <span class="block mt-1 text-xs text-amber-600 dark:text-amber-400">LMCache must be installed in the vLLM Python environment.</span>
+                  {/if}
+                </label>
+              {/if}
+            </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+              <button
+                type="button"
+                class="w-full flex items-center justify-between text-left text-sm font-medium text-gray-800 dark:text-gray-200"
+                on:click={() => showVllmLoras = !showVllmLoras}
+              >
+                <span>LoRA adapters ({vllmEnabledLoras.length} enabled)</span>
+                <span aria-hidden="true">{showVllmLoras ? '−' : '+'}</span>
+              </button>
+
+              {#if showVllmLoras}
+                <div class="mt-3 space-y-3">
+                  <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+                    PEFT safetensors adapters are discovered from your profile and loaded by the normal vLLM launcher. Requests select an adapter through the existing model registry.
+                  </p>
+                  {#if selectedVllmArtifact?.format === 'gguf' || vllmLoadFormat === 'gguf'}
+                    <div class="rounded-md bg-amber-50 dark:bg-amber-900/20 p-2 text-xs text-amber-700 dark:text-amber-300">
+                      The current GGUF startup path does not load PEFT LoRAs. Select a compatible Hugging Face checkpoint to use these adapters.
+                    </div>
+                  {/if}
+
+                  {#if loadingVllmLoras}
+                    <div class="text-xs text-gray-500">Loading adapters…</div>
+                  {:else if vllmLoraAdapters.length === 0}
+                    <div class="rounded-md bg-gray-50 dark:bg-gray-800 p-2 text-xs text-gray-500 dark:text-gray-400">
+                      No valid adapter directories containing adapter_model.safetensors and adapter_config.json were found in this profile.
+                    </div>
+                  {:else}
+                    <div class="space-y-2">
+                      {#each vllmLoraAdapters as adapter}
+                        <label class="flex items-start gap-2 rounded-md border border-gray-200 dark:border-gray-700 p-2 text-sm">
+                          <input type="checkbox" bind:group={vllmEnabledLoras} value={adapter.name} disabled={!adapter.valid} class="mt-0.5 w-4 h-4 accent-violet-600" />
+                          <span class="min-w-0">
+                            <span class="block font-medium text-gray-800 dark:text-gray-200">
+                              {adapter.name}
+                              {#if adapter.loaded}<span class="ml-1 text-xs text-green-600 dark:text-green-400">Loaded</span>{/if}
+                              {#if adapter.compatibleWithTarget === false}<span class="ml-1 text-xs text-amber-600 dark:text-amber-400">Different base model</span>{/if}
+                            </span>
+                            <span class="block text-xs text-gray-500 dark:text-gray-400 break-all">
+                              {adapter.baseModel || 'Unknown base model'}{adapter.loraRank ? ` · rank ${adapter.loraRank}` : ''}{adapter.sizeBytes ? ` · ${formatArtifactSize(adapter.sizeBytes)}` : ''}
+                            </span>
+                          </span>
+                        </label>
+                      {/each}
+                    </div>
+                  {/if}
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label class="block text-sm">
+                      <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Maximum adapter rank</span>
+                      <select class="select-field w-full" bind:value={vllmMaxLoraRank}>
+                        {#each [1, 8, 16, 32, 64, 128, 256, 320, 512] as rank}
+                          <option value={rank}>{rank}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label class="block text-sm">
+                      <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">LoRA dtype</span>
+                      <select class="select-field w-full" bind:value={vllmLoraDtype}>
+                        <option value="auto">Match base model</option>
+                        <option value="float16">float16</option>
+                        <option value="bfloat16">bfloat16</option>
+                      </select>
+                    </label>
+                    <label class="block text-sm">
+                      <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Active LoRAs per batch</span>
+                      <input class="input-field" type="number" min="1" max="256" step="1" bind:value={vllmMaxLoras} />
+                    </label>
+                    <label class="block text-sm">
+                      <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">LoRAs cached in CPU RAM</span>
+                      <input class="input-field" type="number" min={vllmMaxLoras} max="1024" step="1" bind:value={vllmMaxCpuLoras} />
+                    </label>
+                  </div>
+                  <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+                    CPU-cached adapters save GPU memory but may add adapter-swap latency. The cache count must be at least the active-per-batch count.
+                  </p>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" class="btn-secondary btn-sm" on:click={saveVllmLoraConfig} disabled={savingVllmLoras}>
+                      {savingVllmLoras ? 'Saving LoRAs…' : 'Save LoRA settings'}
+                    </button>
+                    {#if vllmLoraNeedsRestart}
+                      <span class="text-xs text-amber-600 dark:text-amber-400">Restart vLLM to apply.</span>
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+              Starts automatically with MetaHuman OS when selected as the default backend.
+            </p>
             <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
               <input type="checkbox" bind:checked={vllmEnforceEager} class="w-4 h-4 accent-violet-600" />
               <span>Eager Mode</span>
-            </label>
-            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
-              <input type="checkbox" bind:checked={vllmAutoUtilization} class="w-4 h-4 accent-violet-600" />
-              <span>Auto GPU Allocation</span>
             </label>
             <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
               <input type="checkbox" bind:checked={vllmEnableThinking} class="w-4 h-4 accent-violet-600" />
@@ -785,18 +1673,18 @@
           </div>
 
           <div class="flex gap-2 flex-wrap">
-            <button class="btn-primary" on:click={saveVllmConfig} disabled={savingVllmConfig}>
+            <button class="btn-primary" on:click={saveVllmConfig} disabled={savingVllmConfig || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>
               {savingVllmConfig ? 'Saving...' : 'Save vLLM Config'}
             </button>
             {#if available?.vllm.running}
               <button class="btn-danger" on:click={() => controlLLMBackend('vllm', 'stop')} disabled={actionInProgress !== null}>
                 {actionInProgress === 'vllm-stop' ? 'Stopping...' : 'Stop'}
               </button>
-              <button class="btn-secondary" on:click={() => controlLLMBackend('vllm', 'restart')} disabled={actionInProgress !== null}>
+              <button class="btn-secondary" on:click={() => controlLLMBackend('vllm', 'restart')} disabled={actionInProgress !== null || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>
                 {actionInProgress === 'vllm-restart' ? 'Restarting...' : 'Restart'}
               </button>
             {:else}
-              <button class="btn-success" on:click={() => controlLLMBackend('vllm', 'start')} disabled={actionInProgress !== null || !available?.vllm.installed}>
+              <button class="btn-success" on:click={() => controlLLMBackend('vllm', 'start')} disabled={actionInProgress !== null || !available?.vllm.installed || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>
                 {actionInProgress === 'vllm-start' ? 'Starting...' : 'Start'}
               </button>
             {/if}

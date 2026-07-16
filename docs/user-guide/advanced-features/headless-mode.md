@@ -351,7 +351,7 @@ while ($true) {
 
 # Expected in normal mode:
 # agents selected in Boot Manager, such as:
-# scheduler-service     RUNNING   PID: 12346
+# maintenance-service   RUNNING   PID: 12346
 ```
 
 ### Watch Runtime Logs
@@ -565,7 +565,7 @@ Headless mode changes are fully audited:
   "message": "Headless mode activated - agents stopped",
   "actor": "runtime-mode",
   "metadata": {
-    "stopped": ["scheduler-service"],
+    "stopped": ["maintenance-service"],
     "failed": [],
     "total": 3,
     "changedBy": "local"

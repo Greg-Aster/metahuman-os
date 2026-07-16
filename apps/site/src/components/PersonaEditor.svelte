@@ -140,15 +140,16 @@
   async function loadPersonaData() {
     loading = true;
     error = null;
+    facetsConfig = null;
     try {
       const coreRes = await apiFetch('/api/persona-core-manage');
       const coreData = await coreRes.json();
-      if (!coreData.success) throw new Error(coreData.error || 'Failed to load persona core');
+      if (!coreRes.ok || !coreData.success) throw new Error(coreData.error || 'Failed to load persona core');
       personaCore = coreData.persona;
 
       const facetsRes = await apiFetch('/api/persona-facets-manage');
       const facetsData = await facetsRes.json();
-      if (!facetsData.success) throw new Error(facetsData.error || 'Failed to load facets');
+      if (!facetsRes.ok || !facetsData.success) throw new Error(facetsData.error || 'Failed to load facets');
       facetsConfig = facetsData.facets;
     } catch (e) {
       console.error('Failed to load persona data:', e);
@@ -178,6 +179,23 @@
       error = (e as Error).message;
     } finally {
       saving = false;
+    }
+  }
+
+  async function reloadFacets() {
+    loading = true;
+    error = null;
+    facetsConfig = null;
+    try {
+      const facetsRes = await apiFetch('/api/persona-facets-manage');
+      const facetsData = await facetsRes.json();
+      if (!facetsRes.ok || !facetsData.success) throw new Error(facetsData.error || 'Failed to load facets');
+      facetsConfig = facetsData.facets;
+    } catch (e) {
+      console.error('Failed to reload persona facets:', e);
+      error = (e as Error).message;
+    } finally {
+      loading = false;
     }
   }
 
@@ -493,7 +511,7 @@
         <button
           class="px-4 py-2 rounded-lg font-medium border transition-all
                  {editorTab === 'facets' ? 'bg-purple-600 text-white border-purple-600' : 'bg-transparent border-gray-300 dark:border-gray-600 dark:text-gray-300'}"
-          on:click={() => editorTab = 'facets'}
+          on:click={() => { editorTab = 'facets'; void reloadFacets(); }}
         >
           Facets
         </button>
@@ -852,11 +870,19 @@
       <div class="flex-1 overflow-y-auto p-4">
         <div class="flex justify-between items-center mb-6">
           <h3 class="m-0 text-xl font-semibold">Persona Facets</h3>
-          <button class="btn-primary" on:click={addFacet}>+ Add Facet</button>
+          <div class="flex gap-2">
+            <button class="btn-secondary" on:click={reloadFacets} disabled={loading}>Refresh</button>
+            <button class="btn-primary" on:click={addFacet}>+ Add Facet</button>
+          </div>
         </div>
 
-        <div class="flex flex-col gap-4 mb-8">
-          {#each Object.entries(facetsConfig.facets) as [facetId, facet]}
+        {#if Object.keys(facetsConfig.facets).length === 0}
+          <div class="p-6 mb-8 rounded-lg border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300">
+            No persona facets were returned. Persona loading is blocked until the configuration is repaired.
+          </div>
+        {:else}
+          <div class="flex flex-col gap-4 mb-8">
+            {#each Object.entries(facetsConfig.facets) as [facetId, facet]}
             <div class="p-6 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
               <div class="flex justify-between items-center mb-4">
                 <h4 class="m-0 text-lg font-semibold">{facet.name}</h4>
@@ -895,12 +921,24 @@
                 </label>
               </div>
             </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        {/if}
 
         <div class="flex justify-end">
           <button class="btn-primary px-6 py-3" on:click={saveFacets} disabled={saving}>
             {saving ? 'Saving...' : 'Save Facets'}
+          </button>
+        </div>
+      </div>
+
+    {:else if editorTab === 'facets'}
+      <div class="flex-1 overflow-y-auto p-6">
+        <div class="p-6 rounded-lg border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300">
+          <h3 class="m-0 mb-2 text-lg font-semibold">Persona facets unavailable</h3>
+          <p class="m-0 mb-4">{loading ? 'Loading persona facets...' : (error || 'No persona facet configuration was returned.')}</p>
+          <button class="btn-danger" on:click={reloadFacets} disabled={loading}>
+            {loading ? 'Loading...' : 'Retry'}
           </button>
         </div>
       </div>

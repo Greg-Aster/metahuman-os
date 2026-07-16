@@ -7,10 +7,11 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { promises as fs } from 'node:fs';
-import { existsSync } from 'node:fs';
-import { getProfilePaths } from '../../paths.js';
-import { audit } from '../../audit.js';
+import {
+  loadPersonaFacetConfig,
+  PersonaFacetConfigurationError,
+  savePersonaFacetConfig,
+} from '../../persona-facets.js';
 
 const DEFAULT_FACETS = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -45,18 +46,7 @@ export async function handleGetPersonaFacetsManage(req: UnifiedRequest): Promise
       });
     }
 
-    const profilePaths = getProfilePaths(user.username);
-    const facetsPath = profilePaths.personaFacets;
-
-    if (!existsSync(facetsPath)) {
-      // File doesn't exist - return default structure
-      return successResponse({
-        success: true,
-        facets: { ...DEFAULT_FACETS, lastUpdated: new Date().toISOString() }
-      });
-    }
-
-    const facetsData = JSON.parse(await fs.readFile(facetsPath, 'utf-8'));
+    const facetsData = loadPersonaFacetConfig(user.username);
 
     return successResponse({
       success: true,
@@ -64,7 +54,12 @@ export async function handleGetPersonaFacetsManage(req: UnifiedRequest): Promise
     });
   } catch (error) {
     console.error('[persona-facets-manage] GET error:', error);
-    return { status: 500, error: 'Failed to load facets configuration' };
+    return {
+      status: error instanceof PersonaFacetConfigurationError ? 409 : 500,
+      error: error instanceof PersonaFacetConfigurationError
+        ? error.message
+        : 'Failed to load facets configuration',
+    };
   }
 }
 
@@ -85,30 +80,7 @@ export async function handleUpdatePersonaFacetsManage(req: UnifiedRequest): Prom
       return { status: 400, error: 'Invalid facets data' };
     }
 
-    const profilePaths = getProfilePaths(user.username);
-    const facetsPath = profilePaths.personaFacets;
-
-    // Update lastUpdated timestamp
-    const updatedFacets = {
-      ...facets,
-      lastUpdated: new Date().toISOString()
-    };
-
-    // Ensure directory exists and write
-    await fs.mkdir(profilePaths.persona, { recursive: true });
-    await fs.writeFile(facetsPath, JSON.stringify(updatedFacets, null, 2));
-
-    // Audit the change
-    audit({
-      level: 'info',
-      category: 'data_change',
-      event: 'persona_facets_updated',
-      details: {
-        activeFacet: updatedFacets.activeFacet,
-        facetCount: Object.keys(updatedFacets.facets || {}).length,
-      },
-      actor: user.username,
-    });
+    savePersonaFacetConfig(user.username, facets, user.username);
 
     return successResponse({
       success: true,
@@ -116,6 +88,11 @@ export async function handleUpdatePersonaFacetsManage(req: UnifiedRequest): Prom
     });
   } catch (error) {
     console.error('[persona-facets-manage] POST error:', error);
-    return { status: 500, error: 'Failed to save facets configuration' };
+    return {
+      status: error instanceof PersonaFacetConfigurationError ? 400 : 500,
+      error: error instanceof PersonaFacetConfigurationError
+        ? error.message
+        : 'Failed to save facets configuration',
+    };
   }
 }

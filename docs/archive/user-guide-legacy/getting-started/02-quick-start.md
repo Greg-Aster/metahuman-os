@@ -1,7 +1,7 @@
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 22.3+
 - pnpm 9+
 - TypeScript 5+
 - Ollama (for local LLM) - Install from [ollama.ai](https://ollama.ai)

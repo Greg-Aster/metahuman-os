@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import GPUMonitor from './GPUMonitor.svelte';
   import ActiveOperatorSettings from './ActiveOperatorSettings.svelte';
+  import ModelRegistrySettings from './ModelRegistrySettings.svelte';
   import { apiFetch } from '../lib/client/api-config';
   import { systemCoderDisabled } from '../stores/navigation';
 
@@ -90,7 +91,7 @@
     description: string;
     kind: BootAgentKind;
     enabled: boolean;
-    runOnBoot: boolean;
+    startOnSystemBoot: boolean;
     autoRestart: boolean;
     maxRetries: number;
     dependencyNotes: string[];
@@ -151,7 +152,7 @@
     }
   }
 
-  async function saveBootAgentVariable(agent: BootAgent, key: 'enabled' | 'runOnBoot' | 'autoRestart' | 'maxRetries', value: boolean | number) {
+  async function saveBootAgentVariable(agent: BootAgent, key: 'enabled' | 'startOnSystemBoot' | 'autoRestart' | 'maxRetries', value: boolean | number) {
     const saveKey = bootManagerSaveKey(agent.agentId, key);
     if (bootManagerSaving) return;
     bootManagerSaving = saveKey;
@@ -525,11 +526,10 @@
   async function loadReflectorContentMode() {
     reflectorContentModeLoading = true;
     try {
-      const res = await apiFetch('/api/scheduler-config');
+      const res = await apiFetch('/api/trigger-manager');
       if (res.ok) {
         const data = await res.json();
-        const mode = data.globalSettings?.memoryContentMode
-          || data.agents?.reflector?.contentMode;
+        const mode = data.snapshot?.globalSettings?.memoryContentMode;
         if (mode && ['all', 'user', 'agent'].includes(mode)) {
           reflectorContentMode = mode as ContentMode;
         }
@@ -549,8 +549,8 @@
     reflectorContentModeSaving = true;
 
     try {
-      const res = await apiFetch('/api/scheduler-config', {
-        method: 'POST',
+      const res = await apiFetch('/api/trigger-manager/config', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           globalSettings: {
@@ -665,6 +665,9 @@
     </div>
   </div>
 
+  <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Model Settings</h3>
+  <ModelRegistrySettings />
+
   <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Agent Settings</h3>
 
   <!-- Agent Boot Manager -->
@@ -681,7 +684,7 @@
     </div>
 
     <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
-      Controls which boot-eligible agents are active when MetaHuman OS starts. Connection agents may still require endpoint configuration in Agent Monitor before they can start cleanly.
+      Controls persistent services and connections started with MetaHuman OS. Finite scheduled and one-shot work is configured in Trigger Manager and runs through the Work Coordinator.
     </p>
 
     {#if bootManagerFeedback}
@@ -716,9 +719,9 @@
                 <input
                   id={`boot-run-${agent.agentId}`}
                   type="checkbox"
-                  checked={agent.runOnBoot}
+                  checked={agent.startOnSystemBoot}
                   disabled={Boolean(bootManagerSaving)}
-                  on:change={(event) => saveBootAgentVariable(agent, 'runOnBoot', event.currentTarget.checked)}
+                  on:change={(event) => saveBootAgentVariable(agent, 'startOnSystemBoot', event.currentTarget.checked)}
                 />
                 <span class="toggle-slider"></span>
               </label>

@@ -1,6 +1,8 @@
 # Autonomous Agents
 
-MetaHuman OS exposes maintained autonomous agents through the Agent Monitor and Boot Manager. Configuration: `etc/agents.json`
+MetaHuman OS exposes finite autonomous work through TriggerManager and the Work
+Coordinator. Agent Monitor and Boot Manager are reserved for persistent
+services configured in `etc/services.json`.
 
 ## Agent List
 
@@ -43,4 +45,5 @@ MetaHuman OS exposes maintained autonomous agents through the Agent Monitor and 
 ## Configuration
 
 - `etc/agents.json` - Producer schedules and triggers; execution remains coordinator-owned
+- `etc/services.json` - Persistent service boot and restart policy
 - `etc/curiosity.json` - Curiosity agent settings

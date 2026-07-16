@@ -9,10 +9,14 @@ export interface LockHandle {
   release: () => void
 }
 
+export interface AcquireLockOptions {
+  exitOnSignal?: boolean
+}
+
 /**
  * Acquire a simple file lock. Returns a handle or throws if already locked.
  */
-export function acquireLock(name: string): LockHandle {
+export function acquireLock(name: string, options: AcquireLockOptions = {}): LockHandle {
   const dir = path.join(systemPaths.run, 'locks')
   fs.mkdirSync(dir, { recursive: true })
   const lockPath = path.join(dir, `${name}.lock`)
@@ -35,7 +39,7 @@ export function acquireLock(name: string): LockHandle {
         if (checkError.code === 'ESRCH' || checkError instanceof SyntaxError) {
           // Process doesn't exist or lock file is corrupt, lock is stale.
           fs.unlinkSync(lockPath);
-          return acquireLock(name);
+          return acquireLock(name, options);
         } else {
           // Another error occurred (e.g. reading file, permissions).
           // We can't be sure, so we'll throw the original error.
@@ -51,8 +55,10 @@ export function acquireLock(name: string): LockHandle {
   }
 
   process.once('exit', release)
-  process.once('SIGINT', () => { release(); process.exit(1) })
-  process.once('SIGTERM', () => { release(); process.exit(1) })
+  if (options.exitOnSignal !== false) {
+    process.once('SIGINT', () => { release(); process.exit(1) })
+    process.once('SIGTERM', () => { release(); process.exit(1) })
+  }
 
   return { name, path: lockPath, release }
 }
@@ -86,6 +92,18 @@ export function isLocked(name: string): boolean {
 
     // Other error (permissions, etc.) - assume locked to be safe
     return true
+  }
+}
+
+/** Return the live process recorded by a lock, if one exists. */
+export function getLockOwnerPid(name: string): number | undefined {
+  if (!isLocked(name)) return undefined
+  try {
+    const lockPath = path.join(systemPaths.run, 'locks', `${name}.lock`)
+    const { pid } = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as { pid?: unknown }
+    return Number.isInteger(pid) && Number(pid) > 0 ? Number(pid) : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -134,4 +152,3 @@ export function cleanupStaleLocks(): number {
 
   return cleaned
 }
-

@@ -14,7 +14,6 @@ import { successResponse } from '../types.js';
 let getBackendStatus: any;
 let detectAvailableBackends: any;
 let loadBackendConfig: any;
-let listLocalModelArtifacts: any;
 
 async function ensureBackendFunctions(): Promise<boolean> {
   try {
@@ -22,7 +21,6 @@ async function ensureBackendFunctions(): Promise<boolean> {
     getBackendStatus = core.getBackendStatus;
     detectAvailableBackends = core.detectAvailableBackends;
     loadBackendConfig = core.loadBackendConfig;
-    listLocalModelArtifacts = core.listLocalModelArtifacts;
     return !!(getBackendStatus && detectAvailableBackends && loadBackendConfig);
   } catch {
     return false;
@@ -55,6 +53,16 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
           endpoint: config.ollama.endpoint,
           autoStart: config.ollama.autoStart,
           defaultModel: config.ollama.defaultModel,
+          contextWindow: config.ollama.contextWindow,
+          maxTokens: config.ollama.maxTokens,
+          temperature: config.ollama.temperature,
+          topP: config.ollama.topP,
+          topK: config.ollama.topK,
+          minP: config.ollama.minP,
+          repeatPenalty: config.ollama.repeatPenalty,
+          seed: config.ollama.seed,
+          keepAlive: config.ollama.keepAlive,
+          enableThinking: config.ollama.enableThinking,
         },
         vllm: {
           endpoint: config.vllm.endpoint,
@@ -66,8 +74,15 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
           servedModelName: config.vllm.servedModelName,
           startupTimeoutMs: config.vllm.startupTimeoutMs,
           gpuMemoryUtilization: config.vllm.gpuMemoryUtilization,
+          gpuMemoryHeadroomGiB: config.vllm.gpuMemoryHeadroomGiB,
+          autoUtilizationMax: config.vllm.autoUtilizationMax,
           maxModelLen: config.vllm.maxModelLen,
+          kvCacheMemoryGiB: config.vllm.kvCacheMemoryGiB,
+          cpuOffloadGiB: config.vllm.cpuOffloadGiB,
+          kvOffloadingGiB: config.vllm.kvOffloadingGiB,
+          kvOffloadingBackend: config.vllm.kvOffloadingBackend,
           maxTokens: config.vllm.maxTokens,
+          quantization: config.vllm.quantization,
           enforceEager: config.vllm.enforceEager,
           autoUtilization: config.vllm.autoUtilization,
           enableThinking: config.vllm.enableThinking,
@@ -81,7 +96,7 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
           model: config.remote.model,
         } : null,
       },
-      sharedArtifacts: listLocalModelArtifacts ? listLocalModelArtifacts() : [],
+      sharedArtifacts: availableBackends.sharedArtifacts || [],
     });
   } catch (error) {
     console.error('[llm-backend-status] GET failed:', error);

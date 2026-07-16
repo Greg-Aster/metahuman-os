@@ -15,7 +15,7 @@ $ grep -E '"actor":"(web_ui|greggles|human|user)"' logs/audit/2025-11-20.ndjson 
 **Results**:
 - ✅ Seeing "greggles" as actor (real username) instead of generic "web_ui"
 - ⚠️ Some entries still use "user" or "human" (legacy placeholders in specific endpoints)
-- ✅ Agent entries correctly show "organizer", "scheduler-service", etc.
+- ✅ Agent entries distinguish finite work such as `organizer` from the persistent `maintenance-service`.
 
 ## Test Plan: End-to-End Authentication Flow
 

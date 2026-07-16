@@ -605,7 +605,7 @@ tsx brain/agents/curiosity-service.ts
 }
 ```
 
-**Note:** If using scheduler-service, it will auto-detect and run the agent.
+**Note:** TriggerManager validates this catalog entry and admits it through the Work Coordinator when due.
 
 ---
 

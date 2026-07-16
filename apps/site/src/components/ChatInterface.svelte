@@ -29,6 +29,8 @@
   } from '../lib/client/conversation-transport';
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
+  import { autonomyModeDefinition, nextAutonomyMode, type AutonomyMode } from '../lib/client/active-operator-modes';
+  import { setActiveOperatorMode, triggerManagerSnapshot, useTriggerManager } from '../lib/stores/trigger-manager';
 
   // Component state
   let input = '';
@@ -98,9 +100,12 @@
   let curiosityQuestions: any[] = [];
   let lastQuestionCheck = 0;
   let yoloMode = false;
-  // Active Operator toggle
-  let activeOperatorEnabled = false;
+  // Active Operator three-state control
+  let autonomyMode: AutonomyMode = 'reactive';
   let activeOperatorLoading = false;
+  let releaseTriggerManager: (() => void) | undefined;
+  $: if ($triggerManagerSnapshot?.autonomyMode) autonomyMode = $triggerManagerSnapshot.autonomyMode;
+  $: activeOperatorMode = autonomyModeDefinition(autonomyMode);
   // Synchronous guard to prevent double/triple submit race condition
   let sendInProgress = false;
 
@@ -333,7 +338,7 @@
   onMount(async () => {
     loadChatPrefs();
     loadThinkingMode(); // Load vLLM thinking mode setting
-    loadActiveOperatorStatus(); // Load active operator status
+    releaseTriggerManager = useTriggerManager();
     mic.loadVADSettings(); // Load VAD settings from voice config
 
     // Load saved terminal height
@@ -797,6 +802,7 @@
     ttsApi.cleanup();
     thinkingTraceApi.cleanup();
     unsubscribeYolo();
+    releaseTriggerManager?.();
 
     // A navigation can destroy the chat while a foreground request has the
     // shared pool suspended. Release the suspension so streams owned by the
@@ -2430,44 +2436,19 @@
     bigBrotherReady = bigBrotherEnabled && (bigBrotherProvider !== 'claude-code' || claudeSessionReady);
   }
 
-  async function toggleActiveOperator() {
+  async function cycleActiveOperatorMode() {
     if (activeOperatorLoading) return;
-
+    const nextMode = nextAutonomyMode(autonomyMode);
+    if (nextMode === 'full' && !confirm('Enable fully autonomous mode? Configured triggers and the bounded Active Operator policy may propose work.')) return;
     activeOperatorLoading = true;
-    const wasEnabled = activeOperatorEnabled;
-
     try {
-      const res = await apiFetch('/api/active-operator/control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'toggle' }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('[active-operator] Failed to toggle:', data.error);
-        return;
-      }
-
-      const data = await res.json();
-      activeOperatorEnabled = data.mode === 'active';
-      console.log('[active-operator] Toggled to:', data.mode);
+      await setActiveOperatorMode(nextMode);
+      autonomyMode = nextMode;
+      console.log('[active-operator] Mode changed to:', nextMode);
     } catch (error) {
-      console.error('[active-operator] Error toggling:', error);
+      console.error('[active-operator] Error changing mode:', error);
     } finally {
       activeOperatorLoading = false;
-    }
-  }
-
-  async function loadActiveOperatorStatus() {
-    try {
-      const res = await apiFetch('/api/active-operator/status');
-      if (res.ok) {
-        const status = await res.json();
-        activeOperatorEnabled = status.mode === 'full';
-      }
-    } catch (error) {
-      console.error('[active-operator] Failed to load status:', error);
     }
   }
 
@@ -2673,18 +2654,15 @@
 
     <!-- Active Operator Toggle -->
     <button
-      class="active-operator-toggle {activeOperatorEnabled ? 'active' : ''}"
+      class="active-operator-toggle {activeOperatorMode.buttonClass}"
       class:loading={activeOperatorLoading}
-      title={activeOperatorEnabled
-        ? 'Active Operator ON - Continuous autonomous thinking (click to disable)'
-        : 'Active Operator OFF - Click to enable autonomous operation'}
-      on:click={toggleActiveOperator}
+      title={`${activeOperatorMode.label}: ${activeOperatorMode.description} Click to advance mode.`}
+      aria-label={`Active Operator ${activeOperatorMode.label}. ${activeOperatorMode.description}`}
+      on:click={cycleActiveOperatorMode}
       disabled={activeOperatorLoading}
     >
       <span class="active-operator-icon">⚡</span>
-      {#if activeOperatorEnabled}
-        <span class="active-operator-badge">On</span>
-      {/if}
+      <span class="active-operator-badge">{activeOperatorMode.badge}</span>
     </button>
 
     <!-- Quick voice/tts controls - single toggle for all modes (conversation, inner, system) -->

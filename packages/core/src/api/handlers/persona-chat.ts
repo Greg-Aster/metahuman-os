@@ -159,7 +159,8 @@ ${personaCache ? `Long-term context:\n${personaCache}\n` : ''}
 You are having a ${mode}.
       `.trim();
     } catch (error) {
-      console.warn('[persona-chat] Failed to load persona:', (error as Error).message);
+      console.error('[persona-chat] Failed to load configured persona:', (error as Error).message);
+      throw error;
     }
   }
 

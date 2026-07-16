@@ -10,7 +10,7 @@ import { successResponse, errorResponse } from '../types.js';
 import { loadPersonaCore, loadDecisionRules } from '../../identity.js';
 import { listActiveTasks } from '../../memory.js';
 import { getActiveAdapter } from '../../adapters.js';
-import { listAvailableRoles, resolveModelForCognitiveMode, loadModelRegistry } from '../../model-resolver.js';
+import { resolveModelForCognitiveMode, loadModelRegistry } from '../../model-resolver.js';
 import { loadCognitiveMode } from '../../cognitive-mode.js';
 import { getIndexStatus } from '../../vector-index.js';
 import { listAvailableAgents } from '../../agent-monitor.js';
@@ -375,66 +375,34 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       const registry = loadModelRegistry(false, modelUsername);
       registryVersion = registry.version;
 
-      const modeMappings = registry.cognitiveModeMappings?.[cognitiveMode];
+      const modeMappings = registry.cognitiveModeMappings?.[cognitiveMode] || {};
+      const effectiveAssignments = { ...registry.defaults, ...modeMappings };
 
-      if (modeMappings) {
-        for (const [role, modelId] of Object.entries(modeMappings)) {
-          if (role === 'description' || modelId === null) continue;
-          try {
-            const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any, modelUsername);
+      for (const [role, modelId] of Object.entries(effectiveAssignments)) {
+        if (role === 'description' || modelId === null) continue;
+        try {
+          const resolved = resolveModelForCognitiveMode(cognitiveMode, role as any, modelUsername);
 
-            // Only include if the provider is available
-            if (availableProviders.has(resolved.provider)) {
-              modelRoles[role] = {
-                modelId: resolved.id,
-                provider: resolved.provider,
-                model: resolved.model,
-                adapters: resolved.adapters,
-                baseModel: resolved.baseModel,
-                temperature: resolved.options.temperature,
-              };
-            } else {
-              // Provider not available - mark as needing configuration
-              // Don't show as "error" - user just needs to select an available model
-              modelRoles[role] = {
-                modelId: resolved.id,
-                provider: resolved.provider,
-                model: null, // NULL means no model available
-                needsConfig: true, // User should select an available model
-                unavailableReason: `${resolved.provider} not available`,
-              };
-            }
-          } catch {}
-        }
-      } else {
-        const roles = listAvailableRoles(modelUsername);
-        for (const role of roles) {
-          try {
-            const resolved = resolveModelForCognitiveMode(cognitiveMode, role, modelUsername);
-
-            // Only include if the provider is available
-            if (availableProviders.has(resolved.provider)) {
-              modelRoles[role] = {
-                modelId: resolved.id,
-                provider: resolved.provider,
-                model: resolved.model,
-                adapters: resolved.adapters,
-                baseModel: resolved.baseModel,
-                temperature: resolved.options.temperature,
-              };
-            } else {
-              // Provider not available - mark as needing configuration
-              // Don't show as "error" - user just needs to select an available model
-              modelRoles[role] = {
-                modelId: resolved.id,
-                provider: resolved.provider,
-                model: null, // NULL means no model available
-                needsConfig: true, // User should select an available model
-                unavailableReason: `${resolved.provider} not available`,
-              };
-            }
-          } catch {}
-        }
+          if (availableProviders.has(resolved.provider)) {
+            modelRoles[role] = {
+              modelId: resolved.id,
+              provider: resolved.provider,
+              model: resolved.model,
+              capabilities: resolved.capabilities,
+              adapters: resolved.adapters,
+              baseModel: resolved.baseModel,
+              temperature: resolved.options.temperature,
+            };
+          } else {
+            modelRoles[role] = {
+              modelId: resolved.id,
+              provider: resolved.provider,
+              model: null,
+              needsConfig: true,
+              unavailableReason: `${resolved.provider} not available`,
+            };
+          }
+        } catch {}
       }
     } catch {}
 

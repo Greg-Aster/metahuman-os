@@ -97,7 +97,7 @@
   let isPageVisible = true;
   let statusFetchInProgress = false;
 
-  const STATUS_FETCH_TIMEOUT_MS = 5000;
+  const STATUS_FETCH_TIMEOUT_MS = 15000;
 
   const serverConfigs = [
     { name: 'whisper', displayName: 'Whisper STT', endpoint: '/api/whisper-server', port: 9883 },
@@ -108,13 +108,23 @@
 
   async function fetchStatusEndpoint(endpoint: string): Promise<Response> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), STATUS_FETCH_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(
+      new DOMException(`Status request exceeded ${STATUS_FETCH_TIMEOUT_MS}ms`, 'TimeoutError')
+    ), STATUS_FETCH_TIMEOUT_MS);
 
     try {
       return await apiFetch(endpoint, { signal: controller.signal });
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  function reportStatusFetchFailure(label: string, error: unknown) {
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+      console.debug(`[ServerStatus] ${label} status request timed out`);
+      return;
+    }
+    console.error(`Failed to fetch ${label} status:`, error);
   }
 
   async function fetchServerStatus() {
@@ -149,7 +159,7 @@
           };
         }
       } catch (error) {
-        console.error('Failed to fetch LLM backend status:', error);
+        reportStatusFetchFailure('LLM backend', error);
       }
 
       try {
@@ -172,7 +182,7 @@
           };
         }
       } catch (error) {
-        console.error('Failed to fetch local-models status:', error);
+        reportStatusFetchFailure('local-models', error);
         localModels = null;
       }
 
@@ -190,7 +200,7 @@
           };
         }
       } catch (error) {
-        console.error('Failed to fetch interpreter status:', error);
+        reportStatusFetchFailure('interpreter', error);
         interpreter = null;
       }
 
@@ -208,7 +218,7 @@
           };
         }
       } catch (error) {
-        console.error('Failed to fetch Big Brother status:', error);
+        reportStatusFetchFailure('Big Brother', error);
         bigBrother = null;
       }
 
@@ -227,7 +237,7 @@
           };
         }
       } catch (error) {
-        console.error('Failed to fetch Event Bus status:', error);
+        reportStatusFetchFailure('Event Bus', error);
         eventBus = null;
       }
 
@@ -259,7 +269,7 @@
               });
             }
           } catch (error) {
-            console.error(`Failed to fetch ${config.displayName} status:`, error);
+            reportStatusFetchFailure(config.displayName, error);
             newServers.push({
               name: config.name,
               displayName: config.displayName,
@@ -282,7 +292,7 @@
           astroServers = astroData.servers || [];
         }
       } catch (error) {
-        console.error('Failed to fetch Astro servers:', error);
+        reportStatusFetchFailure('Astro servers', error);
         astroServers = [];
       }
     } finally {

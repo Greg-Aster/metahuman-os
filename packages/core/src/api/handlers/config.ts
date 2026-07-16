@@ -7,11 +7,9 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { systemPaths } from '../../paths.js';
 import { audit } from '../../audit.js';
 import { loadCuriosityConfig, saveCuriosityConfig } from '../../config.js';
-import fs from 'node:fs';
-import path from 'node:path';
+import { getTriggerConfigService } from '../../queue/index.js';
 
 // Boredom interval mapping (in seconds)
 const BOREDOM_INTERVALS = {
@@ -41,9 +39,7 @@ function getBoredomLevelFromConfig(agentsConfig: any): string {
  */
 export async function handleGetBoredom(_req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const agentsConfigPath = path.join(systemPaths.etc, 'agents.json');
-    const configData = fs.readFileSync(agentsConfigPath, 'utf-8');
-    const agentsConfig = JSON.parse(configData);
+    const agentsConfig = getTriggerConfigService().load(false).config;
     const level = getBoredomLevelFromConfig(agentsConfig);
 
     return successResponse({ level });
@@ -72,20 +68,12 @@ export async function handleSetBoredom(req: UnifiedRequest): Promise<UnifiedResp
   }
 
   try {
-    const agentsConfigPath = path.join(systemPaths.etc, 'agents.json');
-    const configData = fs.readFileSync(agentsConfigPath, 'utf-8');
-    const agentsConfig = JSON.parse(configData);
-
     const intervalSeconds = BOREDOM_INTERVALS[level];
     const enabled = intervalSeconds > 0;
     const threshold = enabled ? intervalSeconds : 900;
-
-    if (agentsConfig.agents?.reflector) {
-      agentsConfig.agents.reflector.enabled = enabled;
-      agentsConfig.agents.reflector.inactivityThreshold = threshold;
-    }
-
-    fs.writeFileSync(agentsConfigPath, JSON.stringify(agentsConfig, null, 2));
+    getTriggerConfigService().update({
+      agents: { reflector: { enabled, inactivityThreshold: threshold } },
+    }, req.user.username || 'boredom-api');
 
     audit({
       category: 'system',
@@ -179,20 +167,11 @@ export async function handleSetCuriosityConfig(req: UnifiedRequest): Promise<Uni
 
     saveCuriosityConfig(newConfig, user.username);
 
-    // Also update agents.json to sync the inactivityThreshold
+    // Update the same canonical trigger transaction used by Trigger Manager Settings.
     if ((updates as any).questionIntervalSeconds !== undefined) {
-      try {
-        const agentsPath = path.join(systemPaths.etc, 'agents.json');
-        const agentsData = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
-
-        if (agentsData.agents.curiosity) {
-          agentsData.agents.curiosity.inactivityThreshold = (updates as any).questionIntervalSeconds;
-          fs.writeFileSync(agentsPath, JSON.stringify(agentsData, null, 2), 'utf-8');
-        }
-      } catch (agentError) {
-        console.error('[curiosity-config-handler] Failed to update agents.json:', agentError);
-        // Don't fail the whole request if agents.json update fails
-      }
+      getTriggerConfigService().update({
+        agents: { curiosity: { inactivityThreshold: (updates as any).questionIntervalSeconds } },
+      }, user.username);
     }
 
     return successResponse({ success: true, config: newConfig });

@@ -5,7 +5,7 @@ Welcome to MetaHuman OS! This tutorial will guide you through your first steps w
 ## Prerequisites
 
 Before starting, ensure you have:
-- **Node.js 18+** and **pnpm** installed
+- **Node.js 22.3+** and **pnpm** installed
 - **Ollama** installed and running ([ollama.ai](https://ollama.ai))
 - At least one LLM model installed in Ollama (e.g., `ollama pull phi3:mini`)
 - Basic familiarity with the command line

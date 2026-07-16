@@ -18,13 +18,18 @@ async function waitFor(
 
 const triggerConfig: TriggerManagerConfig = {
   version: '1',
-  globalSettings: { pauseAll: false },
+  revision: 1,
+  globalSettings: { pauseAll: false, timezone: 'UTC' },
   agents: {
     reflector: {
       id: 'reflector',
       enabled: true,
       type: 'activity',
+      lifecycle: 'scheduled-work',
+      handler: 'agent.reflector',
       priority: 'low',
+      allowedModes: ['semi', 'full'],
+      startupPolicy: 'skip',
       inactivityThreshold: 1,
       probability: 1,
       maxRetries: 1,
@@ -233,6 +238,9 @@ function input(overrides: Record<string, unknown> = {}) {
 
   assert.deepEqual(triggers.evaluateActivityTriggers(Date.now() + 2_000), [], 'reactive mode must not admit proactive work');
   triggers.start();
+  assert.deepEqual(triggers.evaluateActivityTriggers(Date.now() + 2_000), [], 'a running clock must remain suppressed in reactive mode');
+  assert.equal(triggers.getSnapshot().triggers[0]?.lastSuppressionReason, 'mode:reactive');
+  triggers.setAutonomyMode('semi');
   const admitted = triggers.evaluateActivityTriggers(Date.now() + 2_000);
   const duplicate = triggers.evaluateActivityTriggers(Date.now() + 2_000);
   const task = manager.getTask(admitted[0]);

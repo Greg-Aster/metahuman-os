@@ -228,7 +228,7 @@ curl -X POST http://localhost:4321/api/cognitive-mode \
 
 ### What are agents and why are they running?
 
-**Agents are autonomous background processes** that continuously work on your behalf:
+**Agents are finite work producers or persistent services** that work on your behalf:
 
 **Memory agents:**
 - `organizer` - Enriches memories with tags/entities
@@ -240,9 +240,12 @@ curl -X POST http://localhost:4321/api/cognitive-mode \
 - `inner-curiosity` - Self-directed questions and answers
 
 **System agents:**
-- `scheduler-service` - Coordinates agent triggers
-- `audio-organizer` - Processes audio transcripts
+- `maintenance-service` - Cleans stale locks and old audit logs; it does not schedule agents
+- `audio-organizer` - Processes audio transcripts only when explicitly queued
 - `ingestor` - Converts inbox files to memories
+
+TriggerManager evaluates configured schedules and the Work Coordinator owns
+durable execution. The Agent Monitor owns persistent services.
 
 See [Autonomous Agents](../advanced-features/autonomous-agents.md) for complete list.
 

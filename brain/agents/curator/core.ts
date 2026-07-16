@@ -255,7 +255,7 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     }
   }
 
-  // Don't treat 'system' as a valid username - it's a placeholder from scheduler
+  // Don't treat 'system' as a valid username - it is a placeholder from scheduled work.
   const effectiveUserId = ctx.userId !== 'system' ? ctx.userId : undefined;
 
   const options: CuratorOptions = {

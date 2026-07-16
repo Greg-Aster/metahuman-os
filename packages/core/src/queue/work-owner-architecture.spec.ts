@@ -40,6 +40,80 @@ assert.ok(
 );
 
 assert.ok(
+  !fs.existsSync(path.join(ROOT, 'packages/core/src/nodes/thought/agent-trigger.node.ts')),
+  'placeholder agent trigger node must not report success without durable work',
+);
+
+assert.ok(
+  !fs.existsSync(path.join(ROOT, 'apps/site/src/components/SchedulerSettings.svelte')),
+  'duplicate Scheduler settings surface must be removed',
+);
+
+assert.ok(
+  !fs.existsSync(path.join(ROOT, 'brain/services/scheduler-service.ts'))
+    && fs.existsSync(path.join(ROOT, 'brain/services/maintenance-service.ts')),
+  'maintenance process must not claim scheduling ownership',
+);
+
+const triggerCatalogSource = source('etc/agents.json');
+assert.ok(
+  !triggerCatalogSource.includes('runOnBoot')
+    && !triggerCatalogSource.includes('autoRestart')
+    && !triggerCatalogSource.includes('"services"'),
+  'finite trigger catalog must not own service boot or restart lifecycle',
+);
+
+assert.ok(
+  source('etc/services.json').includes('startOnSystemBoot'),
+  'persistent service lifecycle must have its own configuration owner',
+);
+assert.ok(
+  source('brain/agents/environment-bridge/core.ts').includes("'etc', 'services.json'")
+    && !source('brain/agents/environment-bridge/core.ts').includes("'etc', 'agents.json'"),
+  'Environment Bridge runtime configuration must come from the persistent service owner',
+);
+assert.ok(
+  source('packages/core/src/infrastructure/event-bus/client.ts').includes('_socket?.unref?.()')
+    && source('packages/core/src/agent-process-runner.ts').includes('child.stdout')
+    && source('packages/cli/src/mh-new.ts').includes('detached: true'),
+  'service startup and event-bus observability must not leave a hidden terminal owner',
+);
+
+for (const finiteUiPath of [
+  'apps/site/src/components/AuthGate.svelte',
+  'apps/site/src/components/MemoryControls.svelte',
+  'apps/site/src/components/SyncManager.svelte',
+  'apps/site/src/components/TaskManager.svelte',
+]) {
+  assert.ok(
+    !source(finiteUiPath).includes('/api/agents/run'),
+    `finite UI work must not use the process runner: ${finiteUiPath}`,
+  );
+}
+
+assert.ok(
+  source('apps/site/src/components/AgentMonitor.svelte').includes('/api/agents/run')
+    && source('packages/core/src/api/handlers/agent.ts').includes("catalogAgent.lifecycle === 'service'")
+    && source('packages/core/src/api/handlers/agent.ts').includes('system.enqueueFiniteAgent'),
+  'Agent Monitor control must derive service lifecycle from Agent Catalog and send finite work through the coordinator',
+);
+
+assert.ok(
+  !source('packages/core/src/api/handlers/config.ts').includes('writeFileSync'),
+  'domain settings must delegate trigger writes to TriggerConfigService',
+);
+
+assert.ok(
+  source('packages/core/src/queue/queue-system.ts').includes('eventBus.subscribe'),
+  'configured event triggers must be attached once to the canonical event bus',
+);
+
+assert.ok(
+  !source('packages/core/src/api/handlers/active-operator.ts').includes("case 'toggle'"),
+  'Active Operator control must use explicit three-state mode changes',
+);
+
+assert.ok(
   !source('packages/core/src/environment-interface/store.ts').includes('queuedActions'),
   'environment state must not own an executable action queue',
 );

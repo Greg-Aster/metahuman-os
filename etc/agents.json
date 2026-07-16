@@ -1,23 +1,20 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "revision": 3,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
-  "description": "Central agent scheduler configuration - SYSTEM TEMPLATE",
+  "description": "Canonical Trigger Manager configuration for finite work",
   "globalSettings": {
     "pauseAll": false,
+    "timezone": "America/Los_Angeles",
     "quietHours": {
       "enabled": false,
       "start": "22:00",
       "end": "08:00"
     },
-    "maxConcurrentAgents": 5,
-    "maxConcurrentLLMAgents": 1,
-    "maxConcurrentNonLLMAgents": 10,
-    "pauseQueueOnActivity": true,
-    "activityResumeDelay": 240,
     "memoryContentMode": "user",
     "memoryContentModeOptions": {
       "all": "All content - includes both user messages and AI responses",
@@ -26,19 +23,21 @@
     }
   },
   "agents": {
-    "environment-bridge": {
-      "id": "environment-bridge",
+    "audio-organizer": {
+      "id": "audio-organizer",
+      "displayName": "Audio Organizer",
+      "description": "Processes the audio inbox into transcripts and memories when explicitly requested.",
       "enabled": true,
       "type": "manual",
-      "priority": "high",
-      "agentPath": "environment-bridge/index.ts",
-      "usesLLM": false,
-      "runOnBoot": true,
-      "autoRestart": true,
-      "maxRetries": 3,
-      "adapterUrl": "ws://127.0.0.1:8790/environment",
-      "graph": "environment",
-      "comment": "Generic event-driven environment adapter connection."
+      "lifecycle": "scheduled-work",
+      "handler": "agent.audio-organizer",
+      "priority": "normal",
+      "agentPath": "audio-organizer/cli.ts",
+      "usesLLM": true,
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Finite one-shot work. Never starts on boot and always receives a durable coordinator task id."
     },
     "organizer": {
       "id": "organizer",
@@ -49,8 +48,6 @@
       "usesLLM": true,
       "inactivityThreshold": 600,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 3,
       "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM"
     },
@@ -63,8 +60,6 @@
       "usesLLM": true,
       "inactivityThreshold": 600,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 2,
       "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)"
     },
@@ -76,8 +71,6 @@
       "agentPath": "coordinator:workflow.sleep",
       "usesLLM": true,
       "schedule": "02:00",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 1,
       "comment": "Queues bounded dream and persona-review children through the work coordinator."
     },
@@ -92,8 +85,6 @@
       "probability": 0.7,
       "jitterMs": 60000,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 1,
       "comment": "70% chance to reflect after 15 min of inactivity - not guaranteed, feels more organic",
       "contentMode": "user",
@@ -112,8 +103,6 @@
       "usesLLM": true,
       "inactivityThreshold": 900,
       "pauseCategory": "interactive",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 2,
       "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json."
     },
@@ -125,8 +114,6 @@
       "agentPath": "curiosity-researcher.ts",
       "usesLLM": true,
       "interval": 3600,
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle."
     },
@@ -139,8 +126,6 @@
       "usesLLM": true,
       "interval": 3600,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat)."
     },
@@ -151,8 +136,6 @@
       "priority": "normal",
       "agentPath": "psychoanalyzer.ts",
       "usesLLM": true,
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 1,
       "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer"
     },
@@ -165,8 +148,6 @@
       "usesLLM": true,
       "inactivityThreshold": 600,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 2,
       "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and conversation patterns. Reinforces existing desires when user expresses similar wants. Runs after 10 min of inactivity to process recent conversations."
     },
@@ -178,8 +159,6 @@
       "agentPath": "desire-explorer/run.ts",
       "usesLLM": true,
       "interval": 120,
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Explores desires before planning - researches feasibility, generates smart context-aware questions. Runs every 2 minutes to process desires that crossed threshold."
     },
@@ -191,8 +170,6 @@
       "agentPath": "desire-executor.ts",
       "usesLLM": true,
       "interval": 300,
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes."
     },
@@ -204,8 +181,6 @@
       "agentPath": "desire-planner.ts",
       "usesLLM": true,
       "interval": 300,
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes."
     },
@@ -217,8 +192,6 @@
       "agentPath": "desire-outcome-reviewer.ts",
       "usesLLM": true,
       "interval": 600,
-      "runOnBoot": false,
-      "autoRestart": true,
       "maxRetries": 2,
       "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes."
     },
@@ -229,8 +202,6 @@
       "priority": "high",
       "agentPath": "profile-sync.ts",
       "usesLLM": false,
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 2,
       "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags."
     },
@@ -241,10 +212,28 @@
       "priority": "normal",
       "agentPath": "memory-sync.ts",
       "usesLLM": false,
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 2,
       "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags."
+    },
+    "mood": {
+      "id": "mood",
+      "displayName": "Mood",
+      "description": "Reviews recent conversation or inner dialogue and selects an enabled persona facet through the editable Mood Persona Review graph.",
+      "enabled": false,
+      "type": "event",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.mood",
+      "priority": "normal",
+      "agentPath": "mood/cli.ts",
+      "usesLLM": true,
+      "eventPattern": "conversation.user-message.appended",
+      "eventCountThreshold": 10,
+      "eventCountField": "userMessageCount",
+      "idleResetSeconds": 1800,
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Disabled by default. When enabled, queues one Mood graph review after every 10 user messages. After 30 minutes without a conversation event, queues the same graph in baseline-reset mode."
     },
     "auto-indexer": {
       "id": "auto-indexer",
@@ -254,8 +243,6 @@
       "agentPath": "auto-indexer.ts",
       "usesLLM": false,
       "schedule": "03:00",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 1,
       "comment": "Nightly vector index rebuild using Qwen3 embeddings. Runs on CPU via local-model-service (parallel to GPU backends). Skips rebuild if index is < 24 hours old."
     },
@@ -270,8 +257,6 @@
       "probability": 0.15,
       "jitterMs": 30000,
       "pauseCategory": "background",
-      "runOnBoot": false,
-      "autoRestart": false,
       "maxRetries": 1,
       "comment": "15% chance to generate a brief daydream after 5 min idle. Inner dialogue only - never surfaces to main chat. Lighter than full dreams."
     }

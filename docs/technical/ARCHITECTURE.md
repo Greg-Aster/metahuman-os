@@ -48,6 +48,69 @@ See `docs/technical/REFACTOR_BLUEPRINT.md` for the active cleanup contract, and 
 └────────────────────────────┘
 ```
 
+## Work Coordination, Triggering, and Services
+
+`AgentCatalogService` owns the complete runtime inventory. It merges canonical
+built-in metadata from `agent-catalog-definitions.ts`, maintained executables in
+`brain/agents`, finite registration in `etc/agents.json`, and persistent service
+registration in `etc/services.json`. Agent Monitor, API authorization, Dashboard,
+and System Settings consume that inventory instead of maintaining independent
+allowlists. Source aliases such as `curiosity` to `curiosity-service` and parent
+relationships such as `sleep-workflow` to `dreamer` are represented explicitly.
+
+Registering an installed finite agent adds a validated Trigger Manager entry.
+Unregistering removes future trigger membership but preserves executable source,
+logs, history, and work already accepted by the coordinator. Persistent services
+cannot be registered or removed through finite-agent controls.
+
+MetaHuman OS then has one finite-work path:
+
+```text
+Active Operator mode + etc/agents.json
+                  -> TriggerManager
+                  -> Work Coordinator
+                  -> registered finite handler
+```
+
+`QueueSystem` owns the running TriggerManager. `TriggerConfigService` is the
+only scheduling-config writer and applies validated, revisioned changes live.
+TriggerManager remains visible in reactive, semi, and full modes; it records an
+explicit suppression reason when mode or admission policy blocks work. Every
+admitted trigger receives one durable coordinator id. TriggerManager does not
+spawn finite agents or execute handlers itself.
+
+Persistent processes follow a separate lifecycle. Agent Monitor and the shared
+agent process runner start, stop, restart, lock, and report the services defined
+in `etc/services.json`. `startOnSystemBoot` and `autoRestart` are service fields;
+finite triggers use `startupPolicy` in `etc/agents.json`. Maintenance Service
+performs bounded lock/log cleanup and does not own clocks, schedules, or agent
+admission. Audio Organizer is finite work and has no implicit boot behavior.
+
+The web UI consumes one Agent Catalog inventory plus one TriggerManager snapshot
+and shared SSE store across Dashboard, Queue, Settings, and conversation mode
+controls. Astro catalog and trigger routes are transports only; inventory,
+configuration, and control behavior live in `packages/core/src/api/handlers`.
+
+Mood is a finite event-triggered agent, not a persistent service. After a user
+conversation message is durably appended, `conversation-buffer.ts` publishes
+`conversation.user-message.appended` with that user's monotonic message count.
+Mood is registered but disabled by default. Once an owner enables it,
+TriggerManager admits `agent.mood` on the configured count boundary (ten by
+default) and the Work Coordinator runs `brain/agents/mood/cli.ts`. The agent
+executes the editable `etc/cognitive-graphs/mood-review.json` graph, which loads
+the configured conversation and/or inner-dialogue buffers, presents only that
+user's enabled persona facets to its psychoanalyzer classifier (using the
+established `psychotherapist` model role), validates its selection, and
+delegates any change to the profile-aware persona-facet owner.
+
+Mood respects both the active `inactive` facet and the global persona-summary
+switch unless the user's explicit Mood override is enabled. Its idle baseline
+reset is evaluated by the existing TriggerManager activity loop and admitted
+through the same coordinator path; it does not add another timer, daemon, or
+queue. Per-user Mood settings live under the resolved profile root, while count
+and cooldown configuration remain system TriggerManager fields in
+`etc/agents.json`.
+
 ## Core Packages and Entry Points
 ### `@metahuman/core` (`packages/core/src`)
 The core ESM library supplies shared capabilities:
@@ -178,7 +241,7 @@ Persona files capture identity, values, routines, and decision heuristics. CLI c
 - **Extend the UI** — Astro routes can import any core helper to expose new data or controls, ensuring feature parity across surfaces.【F:apps/site/src/pages/api/tasks.ts†L1-L65】
 
 ## Technology Stack (Current)
-- **Runtime** — Node.js 18+, TypeScript 5+, ESM modules, pnpm workspace linking packages together.
+- **Runtime** — Node.js 22.3+ (22.x), TypeScript 5+, ESM modules, pnpm workspace linking packages together.
 - **Data** — JSON/Markdown files on disk plus optional embedding index JSON; no database server required.
 - **Web UI** — Astro + Svelte with Tailwind CSS, leveraging Astro API routes for server-side operations.
 - **LLM & Embeddings** — Ollama models (`phi3`, `dolphin-mistral`, `nomic-embed-text`) with HTTP streaming; deterministic mock fallback for dev/offline.

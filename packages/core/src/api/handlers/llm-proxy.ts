@@ -18,6 +18,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, errorResponse } from '../types.js';
 import { audit } from '../../audit.js';
 import { resolveModelById } from '../../model-resolver.js';
+import { ProviderInputError } from '../../providers/types.js';
 import {
   loadToolExecutorConfig,
   saveToolExecutorConfig,
@@ -110,6 +111,11 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
         temperature: options?.temperature,
         maxTokens: options?.num_predict || options?.max_tokens,
         topP: options?.top_p,
+        contextWindow: options?.num_ctx || options?.contextWindow,
+        enableThinking: options?.enableThinking,
+        maxImages: options?.maxImages,
+        maxImageBytes: options?.maxImageBytes,
+        allowedImageMimeTypes: options?.allowedImageMimeTypes,
       }
     );
 
@@ -126,7 +132,7 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
     });
   } catch (error) {
     console.error('[llm-proxy] Chat failed:', error);
-    return { status: 500, error: (error as Error).message };
+    return { status: error instanceof ProviderInputError ? 400 : 500, error: (error as Error).message };
   }
 }
 
@@ -196,13 +202,13 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
 
     // Resolve the user-configured model (NOT hardcoded!)
     const modelId = proxyConfig.modelId || 'default.coder';
-    const resolvedModel = resolveModelById(modelId);
+    const resolvedModel = resolveModelById(modelId, user.username);
 
     if (!resolvedModel) {
       console.error(`[llm-proxy] Failed to resolve model: ${modelId}`);
       // Try fallback model
       const fallbackModelId = proxyConfig.fallbackModelId || 'default.fallback';
-      const fallbackModel = resolveModelById(fallbackModelId);
+      const fallbackModel = resolveModelById(fallbackModelId, user.username);
 
       if (!fallbackModel) {
         return { status: 500, error: `Cannot resolve model ${modelId} or fallback ${fallbackModelId}` };
@@ -245,6 +251,12 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
         temperature: temperature ?? proxyConfig.temperature,
         maxTokens: max_tokens ?? proxyConfig.maxTokens,
         topP: top_p,
+        contextWindow: resolvedModel.options?.contextWindow as number | undefined,
+        enableThinking: resolvedModel.options?.enableThinking as boolean | undefined,
+        maxImages: resolvedModel.options?.maxImages as number | undefined,
+        maxImageBytes: resolvedModel.options?.maxImageBytes as number | undefined,
+        allowedImageMimeTypes: resolvedModel.options?.allowedImageMimeTypes as string[] | undefined,
+        modelCapabilities: resolvedModel.capabilities,
       }
     );
 
@@ -256,7 +268,7 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
       id: completionId,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: modelName,
+      model: response.model || modelName,
       choices: [
         {
           index: 0,
@@ -301,12 +313,12 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
 
     // Return OpenAI-format error
     return {
-      status: 500,
+      status: error instanceof ProviderInputError ? 400 : 500,
       data: {
         error: {
           message: (error as Error).message,
-          type: 'server_error',
-          code: 'internal_error',
+          type: error instanceof ProviderInputError ? 'invalid_request_error' : 'server_error',
+          code: error instanceof ProviderInputError ? error.code : 'internal_error',
         },
       },
     };
@@ -414,7 +426,7 @@ export async function handleSetProxyConfig(req: UnifiedRequest): Promise<Unified
 
     // Validate modelId if provided
     if (modelId !== undefined) {
-      const resolved = resolveModelById(modelId);
+      const resolved = resolveModelById(modelId, user.username);
       if (!resolved) {
         return { status: 400, error: `Unknown model ID: ${modelId}` };
       }
@@ -422,7 +434,7 @@ export async function handleSetProxyConfig(req: UnifiedRequest): Promise<Unified
     }
 
     if (fallbackModelId !== undefined) {
-      const resolved = resolveModelById(fallbackModelId);
+      const resolved = resolveModelById(fallbackModelId, user.username);
       if (!resolved) {
         return { status: 400, error: `Unknown fallback model ID: ${fallbackModelId}` };
       }
