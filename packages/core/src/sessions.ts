@@ -65,6 +65,20 @@ const GUEST_SESSION_DURATION = 60 * 60 * 1000; // 1 hour
 // After this time from creation, session MUST be re-authenticated
 const MAX_SESSION_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// Request bursts should not rewrite the complete session store for every API
+// call. Expiry is absolute, so coalescing this informational timestamp does not
+// extend session lifetime or weaken validation.
+export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 60 * 1000;
+
+export function shouldPersistSessionActivity(
+  session: Pick<Session, 'lastActivity'>,
+  nowMs = Date.now()
+): boolean {
+  const lastActivityMs = Date.parse(session.lastActivity);
+  return !Number.isFinite(lastActivityMs)
+    || nowMs - lastActivityMs >= SESSION_ACTIVITY_WRITE_INTERVAL_MS;
+}
+
 /**
  * Check if session has exceeded maximum age
  */
@@ -244,9 +258,12 @@ export function validateSession(sessionId: string): Session | null {
     return null;
   }
 
-  // Update last activity
-  session.lastActivity = now.toISOString();
-  saveSessions(store);
+  // Coalesce activity persistence. Expiry and max-age removals above remain
+  // immediate; this timestamp is used only for activity display/selection.
+  if (shouldPersistSessionActivity(session, now.getTime())) {
+    session.lastActivity = now.toISOString();
+    saveSessions(store);
+  }
 
   return session;
 }

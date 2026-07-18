@@ -10,7 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Determine active profile
-# Try to detect primary user from profiles directory, or fall back to global config
+# Resolve the default user's profile through the canonical core path owner.
+# This supports external and encrypted profile storage without duplicating its
+# path rules in this shell launcher.
 if [ -f "$REPO_ROOT/etc/default-user.txt" ]; then
   PROFILE=$(cat "$REPO_ROOT/etc/default-user.txt" 2>/dev/null || echo "")
 elif [ -d "$REPO_ROOT/profiles" ]; then
@@ -18,9 +20,21 @@ elif [ -d "$REPO_ROOT/profiles" ]; then
   PROFILE=$(ls -1 "$REPO_ROOT/profiles" 2>/dev/null | grep -v '^\.' | head -1)
 fi
 
-# If profile found, use profile config; otherwise use global config
-if [ -n "$PROFILE" ] && [ -f "$REPO_ROOT/profiles/$PROFILE/etc/voice.json" ]; then
-  VOICE_CONFIG="$REPO_ROOT/profiles/$PROFILE/etc/voice.json"
+# Resolve the profile voice config through `mh profile`, which delegates to
+# getProfilePaths(). If secure external storage is configured but unavailable,
+# fail visibly instead of silently selecting the global provider.
+RESOLVED_VOICE_CONFIG=""
+if [ -n "$PROFILE" ]; then
+  if ! RESOLVED_VOICE_CONFIG=$("$REPO_ROOT/bin/mh" profile path --voice-config "$PROFILE"); then
+    echo "✗ Failed to resolve voice configuration for profile: $PROFILE"
+    exit 1
+  fi
+fi
+
+# If the resolved profile has a voice config, use it; otherwise use the global
+# defaults exactly as before.
+if [ -n "$RESOLVED_VOICE_CONFIG" ] && [ -f "$RESOLVED_VOICE_CONFIG" ]; then
+  VOICE_CONFIG="$RESOLVED_VOICE_CONFIG"
   echo "• Using profile: $PROFILE"
 else
   VOICE_CONFIG="$REPO_ROOT/etc/voice.json"
@@ -145,6 +159,12 @@ case "$PROVIDER" in
     DEVICE=$(jq -r '.tts.kokoro.device // "cpu"' "$VOICE_CONFIG" 2>/dev/null || echo "cpu")
 
     echo "  Device: $DEVICE"
+
+    KOKORO_VOICE_CONFIGS="$REPO_ROOT/etc/voice.json"
+    if [ "$VOICE_CONFIG" != "$REPO_ROOT/etc/voice.json" ]; then
+      KOKORO_VOICE_CONFIGS="$KOKORO_VOICE_CONFIGS:$VOICE_CONFIG"
+    fi
+    export KOKORO_VOICE_CONFIGS
 
     if "$REPO_ROOT/bin/mh" kokoro serve start --device "$DEVICE" >/dev/null 2>&1; then
       echo -e "  ${GREEN}✓ Kokoro server started${NC}"

@@ -1,43 +1,28 @@
 # Training Configuration Files
 
-This directory contains training configurations for different base models. The `training.json` file is the active configuration used by training scripts.
+This directory contains the maintained Qwen 3.5 training configuration. The `training.json` file is the active configuration used by remote training scripts; `training-local.json` carries the equivalent Unsloth repository ID.
 
 ## Available Configurations
 
 ### Current Active: `training.json`
-**Model**: `openai/gpt-oss-20b` (Harmony format)
-- 21B total parameters, 3.6B active (MoE)
-- Optimized for 16GB VRAM
-- Chat template: Harmony (`<|start|>`, `<|message|>`, `<|end|>`)
+**Model**: `Qwen/Qwen3.5-9B`
+- Qwen 3.5 9B is the maintained training family.
+- Text-only LoRA uses the Unsloth 16-bit path; 4-bit QLoRA is not enabled.
+- Plan for a 24GB-class GPU or larger.
+- Chat template: ChatML (`<|im_start|>`, `<|im_end|>`)
 
 ### Alternative Configs
 
-**`training-gpt-oss-20b.json`** (same as current training.json)
+**`training-gpt-oss-20b.json`** (unrelated optional family)
 - OpenAI gpt-oss-20b
 - Harmony format
 - Best for: Local deployment, consumer hardware
-
-**`training-qwen3-8b.json`**
-- Qwen/Qwen3-8B
-- ChatML format (`<|im_start|>`, `<|im_end|>`)
-- Best for: Quick iteration, 16-24GB VRAM
-
-**`training-qwen3-coder-30b.json`**
-- unsloth/Qwen3-Coder-30B-A3B-Instruct
-- ChatML format
-- Best for: Code generation, RunPod with 80GB VRAM
 
 ## Switching Configurations
 
 To use a different model, copy the desired config to `training.json`:
 
 ```bash
-# Switch to Qwen3-8B
-cp etc/training-qwen3-8b.json etc/training.json
-
-# Switch to Qwen3-Coder-30B
-cp etc/training-qwen3-coder-30b.json etc/training.json
-
 # Switch to gpt-oss-20b
 cp etc/training-gpt-oss-20b.json etc/training.json
 ```
@@ -65,7 +50,8 @@ Then run training as normal:
 - `gradient_accumulation_steps` - Effective batch = batch_size × this
 
 ### Memory Optimization
-- `load_in_4bit` - Use 4-bit quantization (true for most cases)
+- `load_in_4bit` - Must remain false for the maintained Qwen 3.5 path
+- `load_in_16bit` - Use the supported 16-bit Qwen 3.5 LoRA path
 - `dtype` - Data type (`bfloat16` for modern GPUs)
 - `use_gradient_checkpointing` - Trade speed for memory (true recommended)
 
@@ -115,9 +101,4 @@ To create a new config:
 4. Adjust training parameters for your hardware
 5. Update the `notes` section for documentation
 
-Example:
-```bash
-cp etc/training-qwen3-8b.json etc/training-my-model.json
-# Edit etc/training-my-model.json
-cp etc/training-my-model.json etc/training.json
-```
+Custom model files are intentionally outside the maintained Qwen 3.5 default path. Validate the model family's loader, precision, chat template, and adapter compatibility before adding one.

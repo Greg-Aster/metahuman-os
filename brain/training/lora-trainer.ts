@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
 import { ROOT, audit, ProgressTracker, getProfilePaths } from '@metahuman/core';
 import { getActiveBackend } from '@metahuman/core/llm-backend';
+import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
 import fetch from 'node-fetch';
@@ -532,7 +533,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     base_model = cfg.base_model;
   } catch (error) {
     log(logFilePath, `Failed to read base model from config: ${(error as Error).message}`);
-    base_model = "Qwen/Qwen3-30B-A3B"; // fallback
+    base_model = DEFAULT_TRAINING_MODEL;
     cfg = { base_model, training_mode: 'lora' };
   }
 
@@ -1451,7 +1452,7 @@ echo "Upload complete!"
             const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
             ensureDirSync(path.dirname(finalGGUFPath));
 
-            // Start progress monitor (expected ~9GB for Qwen3-14B Q4_K_M)
+            // Start progress monitor for the configured Qwen 3.5 conversion.
             const expectedSizeGB = 9.0; // Approximate expected GGUF size
             const cancelProgressMonitor = monitorDownloadProgress(
                 finalGGUFPath,

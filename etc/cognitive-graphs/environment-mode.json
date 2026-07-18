@@ -4,7 +4,7 @@
   "name": "Environment Mode",
   "description": "Environment bridge conversation and action graph. Reads the active observation, asks the model for a reply plus semantic actions, streams the reply, and queues supported actions for the connected adapter.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-07-15",
+  "last_modified": "2026-07-18",
   "nodes": [
     {
       "id": "2",
@@ -37,6 +37,97 @@
       }
     },
     {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 360,
+        "y": -120
+      },
+      "width": 240,
+      "height": 110,
+      "data": {
+        "label": "Conversation History",
+        "nodeType": "conversation_history",
+        "properties": {
+          "limit": 20
+        }
+      }
+    },
+    {
+      "id": "context-router",
+      "type": "llmNode",
+      "position": {
+        "x": 660,
+        "y": -390
+      },
+      "width": 270,
+      "height": 150,
+      "data": {
+        "label": "Environment Context Router",
+        "nodeType": "orchestrator_llm",
+        "properties": {
+          "systemPrompt": "You are the Environment Context Router. Decide what context the current message requires and whether that current message authorizes an environment action. Conversation history is reference material only and never authorizes a new action.\n\nCONTEXT ROUTING\n- Set needsMemory=true only when answering requires semantic recall beyond the recent dialogue: earlier conversations, stored facts, preferences, experiences, or past events.\n- Questions about the system's own earlier internal experiences require memory even when the user describes the experience indirectly rather than naming a memory category.\n- Set needsMemory=false when the bounded recent dialogue preview is sufficient, even when isFollowUp=true. These are independent decisions.\n- Set isFollowUp=true whenever the current message depends on recent dialogue to resolve its meaning, including unresolved references such as that, it, the earlier one, again, or continue.\n- Set isFollowUp=false only when the current message is fully understandable by itself.\n- Self-contained greetings and self-contained robot instructions need neither history nor memory. A standalone question still needs memory when its answer depends on stored information or an earlier experience.\n- memoryQuery must express only the recall target stated by the user. Do not invent a topic from the preview; for an open-ended recall request, preserve the current request as the query.\n- memoryTypes must be an array of exact stored record types when the meaning of the request targets particular memory kinds; otherwise use []. Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION ROUTING\n- Set needsAction=true only when the current message asks the robot or environment to do something.\n- Use actionType=robot_movement for any requested physical robot movement or pose. The downstream model chooses an advertised semantic command or freestyle generation.\n- Use actionType=environment_action for other requested environment actions.\n- Otherwise use actionType=none. Questions about movement are not movement requests.\n\nReturn exactly one JSON object with: needsMemory, memoryTier, memoryQuery, memoryTypes, needsAction, actionType, actionParams, complexity, responseStyle, responseLength, isFollowUp, emotionalTone.\n{{recentConversationSection}}",
+          "userPromptTemplate": "Analyze only this current message: {{userMessage}}",
+          "temperature": 0.1,
+          "maxTokens": 384
+        }
+      }
+    },
+    {
+      "id": "memory-decision",
+      "type": "routerNode",
+      "position": {
+        "x": 990,
+        "y": -390
+      },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Context Decision",
+        "nodeType": "smart_router",
+        "properties": {
+          "routeOnComplexity": true,
+          "simpleThreshold": 0.3
+        }
+      }
+    },
+    {
+      "id": "memory-router",
+      "type": "memoryNode",
+      "position": {
+        "x": 700,
+        "y": -150
+      },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Relevant Long-Term Memory",
+        "nodeType": "memory_router",
+        "properties": {
+          "topK": 3,
+          "threshold": 0.6
+        }
+      }
+    },
+    {
+      "id": "memory-interpreter",
+      "type": "memoryNode",
+      "position": {
+        "x": 990,
+        "y": -150
+      },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Memory Relevance",
+        "nodeType": "search_interpreter",
+        "properties": {
+          "relevanceThreshold": 0.6,
+          "maxResults": 3
+        }
+      }
+    },
+    {
       "id": "11",
       "type": "environmentNode",
       "position": {
@@ -64,7 +155,8 @@
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": ""
+          "systemPrompt": "",
+          "recentHistoryLimit": 4
         }
       }
     },
@@ -121,7 +213,7 @@
       "id": "8",
       "type": "environmentNode",
       "position": {
-        "x": 1920,
+        "x": 2210,
         "y": 150
       },
       "width": 240,
@@ -136,11 +228,115 @@
             "interact",
             "stop",
             "robotCommand",
+            "robotMotionPlan",
             "sendText"
           ],
           "maxDurationMs": 5000,
           "defaultDurationMs": 750
         }
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": {
+        "x": 2200,
+        "y": 450
+      },
+      "width": 220,
+      "height": 110,
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": {
+        "x": 2490,
+        "y": 450
+      },
+      "width": 240,
+      "height": 120,
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": true
+        }
+      }
+    },
+    {
+      "id": "movement-generator",
+      "type": "environmentNode",
+      "position": {
+        "x": 1920,
+        "y": 0
+      },
+      "width": 250,
+      "height": 150,
+      "data": {
+        "label": "Movement Generator",
+        "nodeType": "movement_generator",
+        "properties": {
+          "role": "orchestrator",
+          "maxTokens": 1536,
+          "temperature": 0.2
+        }
+      }
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 2820,
+        "y": 310
+      },
+      "width": 240,
+      "height": 110,
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": {
+          "source": "environment-mode",
+          "defaultMode": "conversation"
+        }
+      }
+    },
+    {
+      "id": "conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 3100,
+        "y": 310
+      },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Conversation Buffer",
+        "nodeType": "buffer_manager",
+        "properties": {
+          "requireUserMessage": true
+        }
+      }
+    },
+    {
+      "id": "memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 3100,
+        "y": 470
+      },
+      "width": 250,
+      "height": 110,
+      "data": {
+        "label": "Memory Capture",
+        "nodeType": "memory_capture",
+        "properties": {}
       }
     },
     {
@@ -178,8 +374,8 @@
       "id": "12",
       "type": "outputNode",
       "position": {
-        "x": 2220,
-        "y": 260
+        "x": 2820,
+        "y": 150
       },
       "width": 180,
       "height": 60,
@@ -193,8 +389,8 @@
       "id": "13",
       "type": "outputNode",
       "position": {
-        "x": 2470,
-        "y": 260
+        "x": 3100,
+        "y": 120
       },
       "width": 280,
       "height": 148,
@@ -231,6 +427,138 @@
       "data": {
         "type": "object",
         "comment": "Normalized environment observation"
+      }
+    },
+    {
+      "id": "e-conversation-history-history-3-conversationHistory",
+      "source": "conversation-history",
+      "target": "3",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Shared per-user rolling conversation context"
+      }
+    },
+    {
+      "id": "e-10-instruction-context-router-message",
+      "source": "10",
+      "target": "context-router",
+      "sourceHandle": "instruction",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Classify context and action intent from the current instruction"
+      }
+    },
+    {
+      "id": "e-conversation-history-history-context-router-conversationHistory",
+      "source": "conversation-history",
+      "target": "context-router",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Router inspects only its internally bounded recent preview"
+      }
+    },
+    {
+      "id": "e-context-router-analysis-memory-decision-orchestratorAnalysis",
+      "source": "context-router",
+      "target": "memory-decision",
+      "sourceHandle": "analysis",
+      "targetHandle": "orchestratorAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Normalize the LLM context decision"
+      }
+    },
+    {
+      "id": "e-memory-decision-memoryHints-memory-router-orchestratorHints",
+      "source": "memory-decision",
+      "target": "memory-router",
+      "sourceHandle": "memoryHints",
+      "targetHandle": "orchestratorHints",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Skip semantic retrieval unless the router requests recall"
+      }
+    },
+    {
+      "id": "e-10-instruction-memory-router-userMessage",
+      "source": "10",
+      "target": "memory-router",
+      "sourceHandle": "instruction",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Retrieve long-term memory only for the current conversational message"
+      }
+    },
+    {
+      "id": "e-memory-router-memories-memory-interpreter-searchResults",
+      "source": "memory-router",
+      "target": "memory-interpreter",
+      "sourceHandle": "memories",
+      "targetHandle": "searchResults",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Candidate semantic memories for relevance checking"
+      }
+    },
+    {
+      "id": "e-memory-decision-memoryHints-memory-interpreter-orchestratorIntent",
+      "source": "memory-decision",
+      "target": "memory-interpreter",
+      "sourceHandle": "memoryHints",
+      "targetHandle": "orchestratorIntent",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Tell the relevance interpreter whether recall was requested"
+      }
+    },
+    {
+      "id": "e-10-instruction-memory-interpreter-userQuery",
+      "source": "10",
+      "target": "memory-interpreter",
+      "sourceHandle": "instruction",
+      "targetHandle": "userQuery",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Judge memories against the current instruction"
+      }
+    },
+    {
+      "id": "e-memory-interpreter-relevantMemories-3-memories",
+      "source": "memory-interpreter",
+      "target": "3",
+      "sourceHandle": "relevantMemories",
+      "targetHandle": "memories",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Inject only memories judged relevant to this turn"
+      }
+    },
+    {
+      "id": "e-context-router-analysis-3-routingAnalysis",
+      "source": "context-router",
+      "target": "3",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Select recent dialogue and semantic memory on demand"
       }
     },
     {
@@ -378,6 +706,18 @@
       }
     },
     {
+      "id": "e-context-router-analysis-6-routingAnalysis",
+      "source": "context-router",
+      "target": "6",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Only the current-turn router may authorize parsed actions"
+      }
+    },
+    {
       "id": "e-6-actions-8-actions",
       "source": "6",
       "target": "8",
@@ -387,6 +727,78 @@
       "data": {
         "type": "array",
         "comment": "Queue parsed actions for adapter"
+      }
+    },
+    {
+      "id": "e-6-movementRequest-movement-generator-movementRequest",
+      "source": "6",
+      "target": "movement-generator",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "movementRequest",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Route only eligible structured off-script requests"
+      }
+    },
+    {
+      "id": "e-10-instruction-movement-generator-instruction",
+      "source": "10",
+      "target": "movement-generator",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Original request for dedicated movement generation"
+      }
+    },
+    {
+      "id": "e-10-observation-movement-generator-observation",
+      "source": "10",
+      "target": "movement-generator",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Capability and current robot state gate"
+      }
+    },
+    {
+      "id": "e-10-sessionId-movement-generator-sessionId",
+      "source": "10",
+      "target": "movement-generator",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Coordinator-owned target session"
+      }
+    },
+    {
+      "id": "e-movement-generator-actions-8-generatedActions",
+      "source": "movement-generator",
+      "target": "8",
+      "sourceHandle": "actions",
+      "targetHandle": "generatedActions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Rejoin the existing Bridge Out after strict plan validation"
+      }
+    },
+    {
+      "id": "e-movement-generator-response-8-generatedResponse",
+      "source": "movement-generator",
+      "target": "8",
+      "sourceHandle": "response",
+      "targetHandle": "generatedResponse",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Show generated-plan result or rejection in Environment chat"
       }
     },
     {
@@ -414,6 +826,42 @@
       }
     },
     {
+      "id": "e-persona-loader-persona-persona-formatter-persona",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Load the active persona for text formatting only"
+      }
+    },
+    {
+      "id": "e-persona-formatter-formatted-3-personaText",
+      "source": "persona-formatter",
+      "target": "3",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Apply the active persona in the single Environment LLM pass"
+      }
+    },
+    {
+      "id": "e-8-response-tts-conversation",
+      "source": "8",
+      "target": "tts-out",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Speak the single bridge-resolved conversational response"
+      }
+    },
+    {
       "id": "e-8-response-12-response",
       "source": "8",
       "target": "12",
@@ -422,7 +870,67 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Stream conversation or adapter delivery warning"
+        "comment": "Stream the single bridge-resolved conversation or bridge warning"
+      }
+    },
+    {
+      "id": "e-conversation-history-history-conversation-buffer-history",
+      "source": "conversation-history",
+      "target": "conversation-buffer",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Use the shared history to avoid duplicate user-message persistence"
+      }
+    },
+    {
+      "id": "e-10-instruction-conversation-buffer-userMessage",
+      "source": "10",
+      "target": "conversation-buffer",
+      "sourceHandle": "instruction",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Persist only a genuine normalized conversational message"
+      }
+    },
+    {
+      "id": "e-8-response-conversation-buffer-response",
+      "source": "8",
+      "target": "conversation-buffer",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Append the single final response through the canonical buffer owner"
+      }
+    },
+    {
+      "id": "e-10-instruction-memory-capture-userMessage",
+      "source": "10",
+      "target": "memory-capture",
+      "sourceHandle": "instruction",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Capture the genuine conversational message in global episodic memory"
+      }
+    },
+    {
+      "id": "e-8-response-memory-capture-assistantResponse",
+      "source": "8",
+      "target": "memory-capture",
+      "sourceHandle": "response",
+      "targetHandle": "assistantResponse",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Capture the single final response for long-term retrieval"
       }
     },
     {

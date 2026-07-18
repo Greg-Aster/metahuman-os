@@ -45,11 +45,11 @@
   // Auto-scroll
   let messagesContainer: HTMLDivElement;
 
-  // Admin actions
+  // Owner actions
   let showPurgeConfirm = false;
   let showResetConfirm = false;
-  let adminLoading = false;
-  let adminError = '';
+  let ownerActionLoading = false;
+  let ownerActionError = '';
   let resetConfirmText = '';
 
   // Quick Add Notes
@@ -445,8 +445,8 @@
   }
 
   async function handlePurgeSessions() {
-    adminLoading = true;
-    adminError = '';
+    ownerActionLoading = true;
+    ownerActionError = '';
 
     try {
       const response = await apiFetch('/api/persona/generator/purge-sessions', {
@@ -464,20 +464,20 @@
       await loadSessionHistory();
       alert(`Successfully purged ${data.deletedCount} session(s)`);
     } catch (err: any) {
-      adminError = err.message;
+      ownerActionError = err.message;
     } finally {
-      adminLoading = false;
+      ownerActionLoading = false;
     }
   }
 
   async function handleResetPersona() {
     if (resetConfirmText !== 'RESET') {
-      adminError = 'Please type "RESET" to confirm';
+      ownerActionError = 'Please type "RESET" to confirm';
       return;
     }
 
-    adminLoading = true;
-    adminError = '';
+    ownerActionLoading = true;
+    ownerActionError = '';
 
     try {
       const response = await apiFetch('/api/persona/generator/reset-persona', {
@@ -494,9 +494,9 @@
       resetConfirmText = '';
       alert(`Persona file reset successfully. Backup saved at: ${data.backupPath}`);
     } catch (err: any) {
-      adminError = err.message;
+      ownerActionError = err.message;
     } finally {
-      adminLoading = false;
+      ownerActionLoading = false;
     }
   }
 </script>
@@ -665,9 +665,9 @@
         </div>
       {/if}
 
-      <!-- Admin Section -->
+      <!-- Owner Section -->
       <div class="bg-gray-800 border-2 border-red-900 rounded-lg p-6 mt-6">
-        <h4 class="m-0 mb-3 text-red-300 text-base">⚠️ Administrative Actions</h4>
+        <h4 class="m-0 mb-3 text-red-300 text-base">⚠️ Owner Actions</h4>
         <p class="m-0 mb-4 text-red-300 text-sm">
           These actions are irreversible. Use with caution.
         </p>
@@ -836,16 +836,16 @@
         This action cannot be undone. Session transcripts will be lost forever.
       </p>
 
-      {#if adminError}
-        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{adminError}</div>
+      {#if ownerActionError}
+        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{ownerActionError}</div>
       {/if}
 
       <div class="flex gap-3 justify-end">
-        <button class="btn-secondary" on:click={() => { showPurgeConfirm = false; adminError = ''; }} disabled={adminLoading}>
+        <button class="btn-secondary" on:click={() => { showPurgeConfirm = false; ownerActionError = ''; }} disabled={ownerActionLoading}>
           Cancel
         </button>
-        <button class="btn-danger" on:click={handlePurgeSessions} disabled={adminLoading}>
-          {adminLoading ? 'Purging...' : 'Purge All Sessions'}
+        <button class="btn-danger" on:click={handlePurgeSessions} disabled={ownerActionLoading}>
+          {ownerActionLoading ? 'Purging...' : 'Purge All Sessions'}
         </button>
       </div>
     </div>
@@ -872,21 +872,21 @@
           type="text"
           bind:value={resetConfirmText}
           placeholder="RESET"
-          disabled={adminLoading}
+          disabled={ownerActionLoading}
           class="w-full p-3 bg-gray-900 border border-gray-700 rounded-md text-gray-200 font-mono focus:outline-none focus:border-red-900"
         />
       </div>
 
-      {#if adminError}
-        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{adminError}</div>
+      {#if ownerActionError}
+        <div class="m-0 mb-4 p-3 bg-red-900 border border-red-800 rounded-md text-red-200 text-sm">{ownerActionError}</div>
       {/if}
 
       <div class="flex gap-3 justify-end">
-        <button class="btn-secondary" on:click={() => { showResetConfirm = false; resetConfirmText = ''; adminError = ''; }} disabled={adminLoading}>
+        <button class="btn-secondary" on:click={() => { showResetConfirm = false; resetConfirmText = ''; ownerActionError = ''; }} disabled={ownerActionLoading}>
           Cancel
         </button>
-        <button class="btn-danger" on:click={handleResetPersona} disabled={adminLoading || resetConfirmText !== 'RESET'}>
-          {adminLoading ? 'Resetting...' : 'Reset Persona'}
+        <button class="btn-danger" on:click={handleResetPersona} disabled={ownerActionLoading || resetConfirmText !== 'RESET'}>
+          {ownerActionLoading ? 'Resetting...' : 'Reset Persona'}
         </button>
       </div>
     </div>

@@ -3,13 +3,13 @@
   "notes": [
     "This config is for FULL fine-tuning, not LoRA training.",
     "Use lower learning rates than LoRA (5e-6 vs 2e-4).",
-    "Requires 70GB VRAM for 14B model (A100 80GB or H100 80GB recommended).",
+    "Requires substantially more VRAM than LoRA training; validate on the target accelerator.",
     "Uses Adafactor optimizer to reduce memory vs AdamW (15GB vs 60GB).",
     "Training time: 2-6 hours depending on dataset size.",
     "DO NOT use load_in_8bit - quantization only works with adapter training (QLoRA)."
   ],
 
-  "base_model": "Qwen/Qwen3-14B",
+  "base_model": "Qwen/Qwen3.5-9B",
 
   "training_mode": "full_finetune",
 
@@ -47,10 +47,10 @@
     "quantization_type": "Q6_K",
     "intermediate_type": "f16",
     "notes": [
-      "Q6_K: ~11GB, excellent quality, fits 16GB GPU comfortably",
-      "Q5_K_M: ~10GB, very good quality, faster inference",
-      "Q4_K_M: ~8GB, good quality, much faster",
-      "Q8_0: ~15GB, near-lossless, tighter fit on 16GB"
+      "Q6_K: excellent quality with a larger runtime footprint",
+      "Q5_K_M: very good quality with faster inference",
+      "Q4_K_M: good quality with a smaller runtime footprint",
+      "Q8_0: near-lossless with the largest runtime footprint"
     ]
   }
 }

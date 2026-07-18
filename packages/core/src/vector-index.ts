@@ -62,6 +62,7 @@ export interface VectorIndexItem {
   id: string
   path: string
   type: 'episodic' | 'task' | 'function'
+  memoryType?: string
   timestamp?: string
   text: string
   vector: number[]
@@ -193,7 +194,6 @@ export async function buildMemoryIndex(options: {
           'inner_dialogue',     // LLM internal thoughts
           'reflection',         // LLM reflections on memories
           'reflection_summary', // LLM summaries of reflections
-          'dream',              // LLM dreams
           'summary',            // LLM summaries
         ]
         // In 'user' mode, skip all LLM types. In 'agent' mode, we want these.
@@ -216,7 +216,15 @@ export async function buildMemoryIndex(options: {
           .filter(Boolean)
           .join(' ')
         const vector = await getEmbedding(text)
-        items.push({ id: obj.id, path: f, type: 'episodic', timestamp: obj.timestamp, text, vector })
+        items.push({
+          id: obj.id,
+          path: f,
+          type: 'episodic',
+          memoryType: memType || 'observation',
+          timestamp: obj.timestamp,
+          text,
+          vector,
+        })
         processed++
         if (processed % 50 === 0) {
           console.log(`[vector-index]   ...processed ${processed}/${files.length} episodic`)
@@ -417,7 +425,13 @@ function keywordScore(query: string, text: string): number {
 
 export async function queryIndex(
   query: string,
-  options: { model?: string; topK?: number; username?: string; hybridWeight?: number } = {}
+  options: {
+    model?: string
+    topK?: number
+    username?: string
+    hybridWeight?: number
+    memoryTypes?: string[]
+  } = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
   const totalStart = Date.now()
   const topK = options.topK ?? 10
@@ -441,7 +455,13 @@ export async function queryIndex(
 
   // Step 3: Compute HYBRID scores (vector + keyword)
   const scoreStart = Date.now()
-  const scored = idx.data.map(item => {
+  const requestedMemoryTypes = new Set(
+    (options.memoryTypes || []).map(type => type.trim().toLowerCase()).filter(Boolean)
+  )
+  const candidates = requestedMemoryTypes.size > 0
+    ? idx.data.filter(item => item.memoryType && requestedMemoryTypes.has(item.memoryType.toLowerCase()))
+    : idx.data
+  const scored = candidates.map(item => {
     const vectorSim = cosineSimilarity(qvec, item.vector)
     const kwScore = keywordScore(query, item.text)
     // Hybrid: combine vector and keyword scores
@@ -452,7 +472,7 @@ export async function queryIndex(
   const scoreTime = Date.now() - scoreStart
 
   const totalTime = Date.now() - totalStart
-  console.log(`[vector-index] queryIndex (hybrid): load=${loadTime}ms, embed=${embedTime}ms, score=${scoreTime}ms, total=${totalTime}ms (${idx.data.length} items)`)
+  console.log(`[vector-index] queryIndex (hybrid): load=${loadTime}ms, embed=${embedTime}ms, score=${scoreTime}ms, total=${totalTime}ms (${candidates.length}/${idx.data.length} items)`)
 
   // Return with combined score
   return scored.slice(0, topK).map(s => ({ item: s.item, score: s.score }))
@@ -500,8 +520,19 @@ export async function appendEventToIndex(event: {
   entities?: string[]
   path?: string
 }, options: { model?: string; username?: string } = {}): Promise<boolean> {
-  const idx = loadIndex(options.model, options.username)
-  if (!idx) return false
+  let idx = loadIndex(options.model, options.username)
+  if (!idx) {
+    console.log(`[vector-index] No index found for ${options.username || 'current user'}; building the base index before appending ${event.id}`)
+    await buildMemoryIndex({ force: true, username: options.username })
+    idx = loadIndex(options.model, options.username)
+    if (!idx) return false
+
+    // The full build scans episodic memory, so it normally includes the event
+    // that caused this bootstrap. Avoid writing a duplicate entry.
+    if (idx.data.some(item => item.id === event.id)) return true
+  }
+
+  if (idx.data.some(item => item.id === event.id)) return true
 
   // Load content mode from config
   const indexContentMode = loadIndexContentMode()
@@ -512,7 +543,6 @@ export async function appendEventToIndex(event: {
     'inner_dialogue',     // LLM internal thoughts
     'reflection',         // LLM reflections on memories
     'reflection_summary', // LLM summaries of reflections
-    'dream',              // LLM dreams
     'summary',            // LLM summaries
   ]
   if (indexContentMode === 'user' && llmGeneratedTypes.includes(memType)) {
@@ -535,7 +565,15 @@ export async function appendEventToIndex(event: {
 
   // Use model router for embeddings
   const vector = await embedText(text)
-  idx.data.push({ id: event.id, path: event.path || '', type: 'episodic', timestamp: event.timestamp, text, vector })
+  idx.data.push({
+    id: event.id,
+    path: event.path || '',
+    type: 'episodic',
+    memoryType: event.type || 'observation',
+    timestamp: event.timestamp,
+    text,
+    vector,
+  })
   idx.meta.items = idx.data.length
 
   const indexPath = indexFilePath(options.model, options.username)

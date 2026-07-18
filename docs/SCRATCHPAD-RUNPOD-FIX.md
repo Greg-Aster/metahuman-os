@@ -195,7 +195,7 @@ const contentStr = typeof message.content === 'string' ? message.content : Strin
 
 ### Root Cause Analysis
 1. **models.json EXISTS on mobile**: `/data/user/0/com.metahuman.os/files/profiles/greggles/etc/models.json` (11664 bytes)
-2. **Cloud providers ARE defined**: `cloud.qwen3-coder-30b` (runpod_serverless), `cloud.qwen3-14b` (runpod_serverless)
+2. **Cloud provider is defined**: `cloud.qwen3-coder-30b` (runpod_serverless)
 3. **Issue**: `loadCloudModelsFromRegistry()` in `status.ts` returns empty array
 
 ### Code Path

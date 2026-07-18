@@ -3,13 +3,14 @@
  *
  * Provides a single interface for chat that automatically routes to the best tier:
  * - Offline: On-device Qwen3-1.7B via llama.cpp
- * - Server: Home server Qwen3:14B via Ollama
+ * - Server: Home server Qwen3.5 9B via Ollama
  * - Cloud: RunPod Qwen3-Coder-30B
  *
  * All conversations are saved locally first, then synced to server when connected.
  */
 
 import { selectBestTier, type TierType } from './tier-selection';
+import { DEFAULT_OLLAMA_CHAT_MODEL } from './model-defaults';
 import { saveMemory } from './local-memory';
 import { apiFetch } from './api-config';
 import { healthStatus } from './server-health';
@@ -178,7 +179,7 @@ export class UnifiedChat {
 
     return {
       response: data.response || data.content || '',
-      model: data.model || 'qwen3:14b',
+      model: data.model || DEFAULT_OLLAMA_CHAT_MODEL,
     };
   }
 

@@ -1,6 +1,7 @@
 import type { EnvironmentAction, EnvironmentActionType, EnvironmentObservation } from '../../environment-interface/index.js';
 
-const ACTION_TYPES = new Set<EnvironmentActionType>([
+// robotMotionPlan is intentionally excluded. Only Movement Generator may create it.
+const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
   'move',
   'look',
   'jump',
@@ -13,6 +14,11 @@ const ACTION_TYPES = new Set<EnvironmentActionType>([
 export interface DirectRobotInstruction {
   action: Partial<EnvironmentAction>;
   response: string;
+}
+
+export interface EnvironmentMovementRequest {
+  description: string;
+  sessionId?: string;
 }
 
 export function parseDirectRobotInstruction(
@@ -158,7 +164,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   }
   sections.push([
     'Response contract:',
-    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[]}.',
+    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null}.',
     '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
   ].join('\n'));
   if (observation.capabilities.actions.includes('robotCommand')) {
@@ -169,6 +175,17 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
         ? ['- Use only a command named in Supported robot commands.']
         : []),
       '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}]}.',
+    ].join('\n'));
+  }
+  if (observation.capabilities.actions.includes('robotMotionPlan')) {
+    sections.push([
+      'Off-script movement routing:',
+      '- Decide movement only from the current Task instruction. Conversation history, memories, prior actions, and feedback never authorize a new movement.',
+      '- For greetings, general conversation, information questions, or any Task instruction that does not ask the robot to move, keep movementRequest null.',
+      '- Prefer an advertised Supported robot command whenever it represents the requested behavior.',
+      '- When a requested movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
+      '- Never put robotMotionPlan, joint targets, servo values, PWM values, calibration, or simulator commands in actions.',
+      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"}}.',
     ].join('\n'));
   }
 
@@ -210,7 +227,7 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
 
   const record = value as Record<string, unknown>;
   const type = record.type;
-  if (typeof type !== 'string' || !ACTION_TYPES.has(type as EnvironmentActionType)) {
+  if (typeof type !== 'string' || !DIRECT_ACTION_TYPES.has(type as EnvironmentActionType)) {
     return null;
   }
 
@@ -247,6 +264,29 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
   };
 }
 
+function parseMovementRequest(
+  value: unknown,
+  sessionId?: string,
+): { request: EnvironmentMovementRequest | null; error: string } {
+  if (value === undefined || value === null) return { request: null, error: '' };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { request: null, error: 'movementRequest must be an object or null' };
+  }
+  const record = value as Record<string, unknown>;
+  const unknown = Object.keys(record).filter(key => key !== 'description');
+  if (unknown.length > 0) {
+    return {
+      request: null,
+      error: `movementRequest contains unsupported field(s): ${unknown.join(', ')}`,
+    };
+  }
+  const description = typeof record.description === 'string' ? record.description.trim() : '';
+  if (!description || description.length > 500) {
+    return { request: null, error: 'movementRequest description must contain 1..500 characters' };
+  }
+  return { request: { description, sessionId }, error: '' };
+}
+
 export function parseEnvironmentActions(
   value: unknown,
   sessionId?: string,
@@ -279,7 +319,12 @@ export function parseEnvironmentActions(
 export function parseEnvironmentModelOutput(
   value: unknown,
   sessionId?: string,
-): { response: string; actions: Partial<EnvironmentAction>[] } {
+): {
+  response: string;
+  actions: Partial<EnvironmentAction>[];
+  movementRequest: EnvironmentMovementRequest | null;
+  movementRequestError: string;
+} {
   const parsed = typeof value === 'string' ? extractJsonObject(value) : value;
   const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? parsed as Record<string, unknown>
@@ -289,9 +334,12 @@ export function parseEnvironmentModelOutput(
     : typeof value === 'string' && !parsed
       ? value.trim()
       : '';
+  const movement = parseMovementRequest(record?.movementRequest, sessionId);
 
   return {
     response,
     actions: parseEnvironmentActions(parsed, sessionId),
+    movementRequest: movement.request,
+    movementRequestError: movement.error,
   };
 }

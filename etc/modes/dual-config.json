@@ -9,7 +9,7 @@
 
   "cognitive_mode": "dual",
 
-  "base_model": "Qwen/Qwen3-14B",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
 
   "learning_rate": 6e-6,

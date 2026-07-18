@@ -458,6 +458,20 @@ export class KokoroService implements ITextToSpeechService {
           cwd: kokoroDir,
           detached: true,
           stdio: ['ignore', logFd, logFd],
+          env: {
+            ...process.env,
+            KOKORO_DEFAULT_CONFIG_JSON: JSON.stringify({
+              lang_code: this.config.langCode,
+              voice: this.config.voice,
+              speed: this.config.speed,
+              custom_voicepack: this.config.useCustomVoicepack
+                ? this.config.customVoicepackPath
+                : null,
+              normalize: this.config.useCustomVoicepack
+                ? (this.config.normalizeCustomVoicepacks ?? true)
+                : false,
+            }),
+          },
         }
       );
 

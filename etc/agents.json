@@ -74,6 +74,38 @@
       "maxRetries": 1,
       "comment": "Queues bounded dream and persona-review children through the work coordinator."
     },
+    "robot-observer": {
+      "id": "robot-observer",
+      "displayName": "Robot Observer",
+      "description": "Requests a current robot camera image and runs a bounded Environment Mode observation cycle.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "handler": "workflow.robot-observer",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.robot-observer",
+      "usesLLM": true,
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Manual finite agent. Robot Operator may also submit it with autonomy source after its own inactivity conditions pass."
+    },
+    "boredom-movement": {
+      "id": "boredom-movement",
+      "displayName": "Boredom Movement",
+      "description": "Runs Environment Mode with the robot-advertised stationary movement catalog and permits one in-place semantic command.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "handler": "workflow.boredom-movement",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.boredom-movement",
+      "usesLLM": true,
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Manual finite agent with no timer. Its dedicated configuration allowlist is intersected with the robot's advertised command catalog before Robot Operator may submit it autonomously in semi or full mode."
+    },
     "reflector": {
       "id": "reflector",
       "enabled": true,

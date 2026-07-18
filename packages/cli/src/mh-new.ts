@@ -1268,8 +1268,9 @@ Examples:
   mh user list
 
 Security:
-  - Admin users (ADMIN_USERS in .env) can modify system files
-  - Regular users can only modify files in their own profile
+  - Owners can modify system files and manage all profiles
+  - Standard users can only modify files in their own profile
+  - Guests have read-only access
   - All data isolated per user in profiles/<username>/
 
 For more information, see DESIGN.md and ARCHITECTURE.md
@@ -2089,15 +2090,11 @@ function userCmd(args: string[]): void {
         return;
       }
 
-      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
-
       for (const user of users) {
-        const isAdmin = adminUsers.includes(user.username);
-        const badge = isAdmin ? ' [ADMIN]' : '';
-        const roleColor = user.role === 'owner' ? '\x1b[35m' : '\x1b[36m';  // Purple for owner, cyan for guest
+        const roleColor = user.role === 'owner' ? '\x1b[35m' : '\x1b[36m';
         const reset = '\x1b[0m';
 
-        console.log(`${roleColor}●${reset} ${user.username}${badge}`);
+        console.log(`${roleColor}●${reset} ${user.username}`);
         console.log(`  Role: ${user.role}`);
         console.log(`  ID: ${user.id}`);
         if (user.lastLogin) {
@@ -2121,11 +2118,6 @@ function userCmd(args: string[]): void {
       console.log(`Username: ${ctx.username}`);
       console.log(`User ID: ${ctx.userId}`);
       console.log(`Role: ${ctx.role}`);
-
-      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
-      if (adminUsers.includes(ctx.username)) {
-        console.log(`Admin: Yes`);
-      }
       break;
     }
 
@@ -2143,14 +2135,10 @@ function userCmd(args: string[]): void {
         process.exit(1);
       }
 
-      const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim());
-      const isAdmin = adminUsers.includes(user.username);
-
       console.log(`\nUser: ${user.username}`);
       console.log('─'.repeat(50));
       console.log(`ID: ${user.id}`);
       console.log(`Role: ${user.role}`);
-      console.log(`Admin: ${isAdmin ? 'Yes' : 'No'}`);
       console.log(`Created: ${new Date(user.createdAt).toLocaleString()}`);
       if (user.lastLogin) {
         console.log(`Last Login: ${new Date(user.lastLogin).toLocaleString()}`);
@@ -2177,7 +2165,7 @@ function userCmd(args: string[]): void {
       if (!username) {
         console.error('Error: reset-password requires a username');
         console.error('Usage: mh user reset-password <username> [--recovery]');
-        console.error('       --recovery: Use a recovery code instead of admin access');
+        console.error('       --recovery: Use a recovery code instead of owner access');
         process.exit(1);
       }
 
@@ -2219,7 +2207,7 @@ function userCmd(args: string[]): void {
             auditSecurity({
               actor: 'cli',
               event: 'password_reset',
-              details: { username, adminReset: !useRecoveryCode, usedRecoveryCode: useRecoveryCode }
+              details: { username, ownerReset: !useRecoveryCode, usedRecoveryCode: useRecoveryCode }
             });
           });
         });
@@ -2238,8 +2226,8 @@ function userCmd(args: string[]): void {
           promptForPassword();
         });
       } else {
-        // Admin reset (no recovery code needed)
-        console.log('⚠️  Admin password reset (no recovery code required)');
+        // Owner reset (no recovery code needed)
+        console.log('⚠️  Owner password reset (no recovery code required)');
         promptForPassword();
       }
       break;
@@ -2250,7 +2238,7 @@ function userCmd(args: string[]): void {
       console.log('  mh user list                      List all registered users');
       console.log('  mh user whoami                    Show current user context');
       console.log('  mh user info <name>               Show detailed info for a user');
-      console.log('  mh user reset-password <name>     Reset password (admin access)');
+      console.log('  mh user reset-password <name>     Reset password (owner access)');
       console.log('  mh user reset-password <name> --recovery  Reset using recovery code');
       console.log('');
       console.log('Multi-User CLI Usage:');

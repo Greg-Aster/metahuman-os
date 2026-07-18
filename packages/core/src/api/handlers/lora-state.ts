@@ -11,6 +11,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
 import { listAdapterDatasets, getActiveAdapter } from '../../adapters.js';
+import { loadSleepConfig } from '../../sleep-config.js';
 
 /**
  * GET /api/lora-state - Get LoRA adapter state
@@ -33,11 +34,7 @@ export async function handleGetLoraState(req: UnifiedRequest): Promise<UnifiedRe
     // Load LoRA enabled state from sleep.json
     let loraEnabled = false;
     try {
-      const sleepPath = path.join(systemPaths.etc, 'sleep.json');
-      if (fs.existsSync(sleepPath)) {
-        const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
-        loraEnabled = !!(sleep?.adapters?.lora);
-      }
+      loraEnabled = loadSleepConfig(user.username).adapters.lora;
     } catch (err) {
       console.warn('[lora-state] Failed to read sleep.json:', (err as Error).message);
     }

@@ -12,6 +12,8 @@ import fs from 'fs-extra';
 import path from 'path';
 import { systemPaths, ROOT, getProfilePaths } from './path-builder.js';
 import { audit } from './audit.js';
+import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from './model-defaults.js';
+import { createDefaultSleepConfig, loadSleepConfigFile } from './sleep-config.js';
 
 /** Path to the master profile template directory */
 const TEMPLATE_DIR = path.join(systemPaths.profiles, '_template');
@@ -45,6 +47,7 @@ export async function initializeProfile(username: string): Promise<void> {
       await createDefaultPersona(profileRoot, username);
       await createDefaultConfigs(profileRoot, username);
     }
+    loadSleepConfigFile(path.join(profileRoot, 'etc', 'sleep.json'));
 
     audit({
       level: 'info',
@@ -614,7 +617,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   // training.json - Training configuration
   const training = {
-    base_model: 'unsloth/Qwen3-Coder-30B-A3B-Instruct',
+    base_model: DEFAULT_TRAINING_MODEL,
     max_seq_length: 2048,
     lora_rank: 8,
     lora_alpha: 16,
@@ -623,6 +626,9 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     dtype: 'bfloat16',
+    lora_dropout: 0,
+    load_in_4bit: false,
+    load_in_16bit: true,
   };
 
   await writeJsonIfMissing(path.join(etcDir, 'training.json'), training);
@@ -636,12 +642,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
   await writeJsonIfMissing(path.join(etcDir, 'boredom.json'), boredom);
 
   // sleep.json - Sleep schedule configuration
-  const sleep = {
-    sleepHour: 2,
-    wakeHour: 8,
-    timezone: 'America/New_York',
-    enabled: true,
-  };
+  const sleep = createDefaultSleepConfig();
 
   await writeJsonIfMissing(path.join(etcDir, 'sleep.json'), sleep);
 
@@ -1136,8 +1137,8 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
       'The current_base_model is used for the next fine-tuning cycle.',
       'Original model is always preserved for reference.',
     ],
-    original_base_model: 'Qwen/Qwen3-14B',
-    current_base_model: 'Qwen/Qwen3-14B',
+    original_base_model: DEFAULT_VLLM_TRAINING_MODEL,
+    current_base_model: DEFAULT_VLLM_TRAINING_MODEL,
     model_type: 'huggingface',
     training_history: [],
     output_formats: {
@@ -1291,6 +1292,7 @@ export async function ensureProfileIntegrity(username: string): Promise<void> {
   await ensureProfileDirectories(profileRoot);
   await createDefaultPersona(profileRoot, username);
   await createDefaultConfigs(profileRoot, username);
+  loadSleepConfigFile(path.join(profileRoot, 'etc', 'sleep.json'));
 }
 
 async function ensureProfileDirectories(profileRoot: string): Promise<void> {

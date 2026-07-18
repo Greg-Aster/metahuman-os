@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import {
   badRequestResponse,
   errorResponse,
+  notFoundResponse,
   streamResponse,
   successResponse,
   unauthorizedResponse,
@@ -10,13 +11,19 @@ import {
 } from '../types.js';
 import {
   dispatchEnvironmentActions,
+  getEnvironmentBridgeDiagnosticMedia,
+  getEnvironmentBridgeDiagnosticsSnapshot,
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
+  recordEnvironmentBridgeDiagnosticObservation,
+  recordEnvironmentBridgeTelemetry,
   recordEnvironmentActionResult,
   setEnvironmentBridgeEnabled,
   summarizeEnvironmentBridgeState,
+  storeEnvironmentBridgeDiagnosticAudio,
   subscribeEnvironmentActions,
   touchEnvironmentSession,
+  type EnvironmentBridgeDiagnosticEvent,
   type EnvironmentFeedback,
   type EnvironmentObservation,
 } from '../../environment-interface/index.js';
@@ -31,6 +38,11 @@ const FEEDBACK_TYPES = new Set<EnvironmentFeedback['type']>([
   'expired',
   'failed',
   'status',
+]);
+const ROBOT_STATUS_KEYS = new Set([
+  'robot_id', 'epoch', 'vbat', 'rssi', 'state', 'uptime', 'heap', 'sd',
+  'cam_drops', 'spk_underruns', 'mic_drops', 'wake_enabled',
+  'wake_model', 'wake_ready',
 ]);
 
 function requestHeader(req: UnifiedRequest, name: string): string | undefined {
@@ -103,6 +115,7 @@ export async function handleEnvironmentBridgeObservation(req: UnifiedRequest): P
 
   try {
     const observation = body as unknown as EnvironmentObservation;
+    recordEnvironmentBridgeDiagnosticObservation(observation);
     const username = requestHeader(req, 'x-metahuman-environment-user')?.trim() ?? '';
     const graph = requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
     const graphQueued = Boolean(username) && /^[a-zA-Z0-9_-]{1,80}$/.test(graph);
@@ -114,6 +127,119 @@ export async function handleEnvironmentBridgeObservation(req: UnifiedRequest): P
   } catch (error) {
     return errorResponse((error as Error).message);
   }
+}
+
+export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorizationFailure = bridgeAuthorizationFailure(req);
+  if (authorizationFailure) return authorizationFailure;
+  const body = bodyRecord(req);
+  if (typeof body.sessionId !== 'string' || !body.sessionId.trim()) {
+    return badRequestResponse('Environment bridge telemetry requires a sessionId');
+  }
+  const robotStatus = body.robotStatus && typeof body.robotStatus === 'object'
+    ? Object.fromEntries(
+        Object.entries(body.robotStatus as Record<string, unknown>)
+          .filter(([key]) => ROBOT_STATUS_KEYS.has(key)),
+      )
+    : undefined;
+  try {
+    const diagnostics = recordEnvironmentBridgeTelemetry({
+      sessionId: body.sessionId,
+      timestamp: typeof body.timestamp === 'string' ? body.timestamp : undefined,
+      robotId: typeof body.robotId === 'string' ? body.robotId : undefined,
+      intervalMs: typeof body.intervalMs === 'number' ? body.intervalMs : undefined,
+      inboundBytes: typeof body.inboundBytes === 'number' ? body.inboundBytes : undefined,
+      outboundBytes: typeof body.outboundBytes === 'number' ? body.outboundBytes : undefined,
+      inboundMessages: typeof body.inboundMessages === 'number' ? body.inboundMessages : undefined,
+      outboundMessages: typeof body.outboundMessages === 'number' ? body.outboundMessages : undefined,
+      imageFrames: typeof body.imageFrames === 'number' ? body.imageFrames : undefined,
+      imageBytes: typeof body.imageBytes === 'number' ? body.imageBytes : undefined,
+      audioUtterances: typeof body.audioUtterances === 'number' ? body.audioUtterances : undefined,
+      audioBytes: typeof body.audioBytes === 'number' ? body.audioBytes : undefined,
+      microphoneLevel: typeof body.microphoneLevel === 'number' ? body.microphoneLevel : undefined,
+      pendingAudioUtterances: typeof body.pendingAudioUtterances === 'number'
+        ? body.pendingAudioUtterances
+        : undefined,
+      transcriptionStatus: typeof body.transcriptionStatus === 'string'
+        ? body.transcriptionStatus
+        : undefined,
+      transcript: typeof body.transcript === 'string' ? body.transcript : undefined,
+      robotStatus,
+      freestyleMovement: body.freestyleMovement && typeof body.freestyleMovement === 'object'
+        ? body.freestyleMovement as {
+            supported: boolean;
+            enabled: boolean;
+            available: boolean;
+          }
+        : undefined,
+      movementPlan: body.movementPlan && typeof body.movementPlan === 'object'
+        ? body.movementPlan as {
+            actionId?: string;
+            sequence?: number;
+            status: string;
+            frameCount?: number;
+            durationMs?: number;
+            activeFrame?: number;
+            message?: string;
+            updatedAt: string;
+          }
+        : undefined,
+      events: Array.isArray(body.events)
+        ? body.events as EnvironmentBridgeDiagnosticEvent[]
+        : undefined,
+    });
+    return successResponse({ success: true, diagnostics });
+  } catch (error) {
+    return badRequestResponse((error as Error).message);
+  }
+}
+
+export async function handleEnvironmentBridgeDiagnosticAudio(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorizationFailure = bridgeAuthorizationFailure(req);
+  if (authorizationFailure) return authorizationFailure;
+  const sessionId = requestHeader(req, 'x-environment-session-id')?.trim() ?? '';
+  const utteranceId = requestHeader(req, 'x-environment-utterance-id')?.trim() ?? '';
+  if (!req.rawBody || !sessionId || !utteranceId) {
+    return badRequestResponse('Diagnostic audio requires a WAV body, sessionId, and utteranceId');
+  }
+  try {
+    const durationHeader = requestHeader(req, 'x-environment-duration-ms');
+    storeEnvironmentBridgeDiagnosticAudio(sessionId, utteranceId, req.rawBody, {
+      timestamp: requestHeader(req, 'x-environment-timestamp'),
+      durationMs: durationHeader && Number.isFinite(Number(durationHeader))
+        ? Number(durationHeader)
+        : undefined,
+      wakeTriggered: requestHeader(req, 'x-environment-wake-triggered') === 'true',
+      truncated: requestHeader(req, 'x-environment-truncated') === 'true',
+    });
+    return successResponse({ success: true });
+  } catch (error) {
+    return badRequestResponse((error as Error).message);
+  }
+}
+
+export async function handleEnvironmentBridgeDiagnostics(_req: UnifiedRequest): Promise<UnifiedResponse> {
+  return successResponse(getEnvironmentBridgeDiagnosticsSnapshot());
+}
+
+export async function handleEnvironmentBridgeDiagnosticMedia(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const sessionId = req.query?.sessionId?.trim() ?? '';
+  const kind = req.query?.kind;
+  if (!sessionId || (kind !== 'image' && kind !== 'audio')) {
+    return badRequestResponse('Diagnostic media requires sessionId and image or audio kind');
+  }
+  const item = getEnvironmentBridgeDiagnosticMedia(sessionId, kind);
+  if (!item) return notFoundResponse('No diagnostic media is available for that session');
+  return {
+    status: 200,
+    binary: item.data,
+    contentType: item.contentType,
+    headers: {
+      'Content-Length': String(item.data.length),
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  };
 }
 
 export async function handleEnvironmentBridgeStream(req: UnifiedRequest): Promise<UnifiedResponse> {

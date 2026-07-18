@@ -6,29 +6,30 @@ This directory contains pre-built graph templates for the MetaHuman OS node-base
 
 ### 1. Dual Consciousness Mode (`dual-mode.json`)
 
-**Description**: Full operator pipeline with ReAct reasoning loop, semantic memory grounding, and proactive agents.
+**Description**: Memory-grounded, persona-aware conversation with a bounded quality and safety refinement loop. Explicit commands and skill execution are owned by Agent mode.
 
 **Flow**:
 ```
-UserInput → SemanticSearch → ContextBuilder → ReActPlanner
-                                                    ↓
-                                             SkillExecutor
-                                                    ↓
-                                         ObservationFormatter
-                                                    ↓
-                                          CompletionChecker
-                                                    ↓
-                                        ResponseSynthesizer → MemoryCapture → StreamWriter
+UserInput → IntentOrchestrator → MemoryDecision → MemoryRouter → SearchInterpreter
+     │                                                        ↓
+     └──────────────────────────────→ GroundedContext → ResponseSynthesizer
+                                                           ↓
+                                QualityCheck → SafetyCheck → ResponseRefiner
+                                      ↑                         ↓
+                                      └──── bounded retry ─ FeedbackRouter
+                                                                 ↓ accepted
+                                     OutputGate → ThinkingStripper → Stream/Memory/Buffer/TTS
 ```
 
-**Nodes**: 16 total
-- **Input**: UserInput, SessionContext, SystemSettings
-- **Router**: AuthCheck, OperatorEligibility
-- **Context**: SemanticSearch, ConversationHistory, ContextBuilder
-- **Operator**: ReActPlanner, SkillExecutor, ObservationFormatter, CompletionChecker, ResponseSynthesizer
-- **Output**: MemoryCapture, AuditLogger, StreamWriter
+**Nodes**: 21 total
+- **Input and context**: UserInput, ConversationHistory, IntentOrchestrator, MemoryDecision, MemoryRouter, SearchInterpreter, GroundedContext
+- **Persona**: PersonaLoader, PersonaFormatter
+- **Generation and checks**: ResponseSynthesizer, QualityScorer, SafetyValidator, ResponseRefiner, FeedbackRouter
+- **Accepted-output path**: OutputGate, ThinkingStripper, StreamWriter, MemoryCapture, BufferManager, TTS, AuditLogger
 
-**Use Case**: Primary operational mode with full cognitive capabilities, memory writes, and autonomous reasoning.
+**Use Case**: Primary conversational mode for reflective, memory-aware interaction. It records the accepted exchange but does not execute commands.
+
+The canonical file is `etc/cognitive-graphs/dual-mode.json`. Its site and mobile copies are generated artifacts; update them with `pnpm sync:graph-artifacts dual-mode`. `pnpm validate:graphs` rejects handle/property contract violations and artifact drift for this graph.
 
 ---
 

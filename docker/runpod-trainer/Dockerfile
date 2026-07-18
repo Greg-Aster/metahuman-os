@@ -22,20 +22,18 @@ RUN sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/ssh
     sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 
-# Python venv with Unsloth + deps
-# Build xformers from source for RTX 5090 compatibility
+# Python venv with current Qwen 3.5 / Unsloth dependencies.
 RUN python3 -m venv ${VENV_DIR} && \
     ${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel && \
-    ${VENV_DIR}/bin/pip install ninja && \
-    ${VENV_DIR}/bin/pip install -v \
-      "git+https://github.com/facebookresearch/xformers.git@main#egg=xformers" && \
     ${VENV_DIR}/bin/pip install --no-cache-dir \
       unsloth \
-      transformers \
+      "transformers>=5" \
       datasets \
       accelerate \
       peft \
-      bitsandbytes
+      bitsandbytes \
+      torchvision \
+      pillow
 
 # Training script
 COPY train_unsloth.py /workspace/train_unsloth.py
@@ -47,4 +45,3 @@ RUN chmod +x /usr/local/bin/start.sh
 EXPOSE 22
 
 ENTRYPOINT ["/usr/local/bin/start.sh"]
-

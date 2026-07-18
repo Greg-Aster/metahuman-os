@@ -57,11 +57,12 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const contextMessage = typeof context.userMessage === 'string' ? context.userMessage : '';
-    const fallbackEvent = textEventFromMessage(contextMessage);
-    const text = filterTextEvents([
-      ...(rawObservation?.text ?? []),
-      ...(fallbackEvent ? [fallbackEvent] : []),
-    ]);
+    const observationText = filterTextEvents(rawObservation?.text ?? []);
+    const currentTaskEvent = textEventFromMessage(contextMessage);
+    // A typed or coordinator-supplied current task is the only authoritative
+    // instruction for this execution. Adapter text is used when no current task
+    // exists, preventing an older transcript from replacing a UI command.
+    const text = currentTaskEvent ? [currentTaskEvent] : observationText;
     const instruction = text.map(event => event.text).join('\n').trim();
     const sessionId = rawObservation?.sessionId ?? '';
     const timestamp = rawObservation?.timestamp || new Date().toISOString();
@@ -86,6 +87,7 @@ export const environmentInstructionInterpreterNode = defineNode({
       visual: rawObservation?.visual,
       visuals: rawObservation?.visuals,
       feedback: rawObservation?.feedback,
+      metadata: rawObservation?.metadata,
     };
 
     return {

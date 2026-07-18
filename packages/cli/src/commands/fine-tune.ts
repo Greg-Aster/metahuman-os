@@ -7,11 +7,12 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { systemPaths } from '@metahuman/core';
+import { DEFAULT_VLLM_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 
 export async function fineTuneCommand(args: string[]): Promise<void> {
   // Parse arguments
   const username = getArg(args, '--username') || process.env.USER || 'greggles';
-  const baseModel = getArg(args, '--base-model') || 'qwen3-coder:30b';
+  const baseModel = getArg(args, '--base-model') || DEFAULT_VLLM_TRAINING_MODEL;
   const maxSamples = getArg(args, '--max');
   const modeFilter = getArg(args, '--mode');
   const skipValidation = args.includes('--skip-validation');
@@ -93,7 +94,7 @@ USAGE:
 
 OPTIONS:
   --username <name>           User profile to fine-tune (default: current user)
-  --base-model <model>        Base model to fine-tune (default: qwen3-coder:30b)
+  --base-model <model>        Base model to fine-tune (default: ${DEFAULT_VLLM_TRAINING_MODEL})
   --max <count>               Maximum samples to process (optional)
   --mode <type>               Filter by cognitive mode: dual, emulation, or agent (optional)
   --skip-validation           Skip dataset validation checks (not recommended)

@@ -1,5 +1,5 @@
 {
-  "autonomyMode": "reactive",
+  "autonomyMode": "semi",
   "cooldownMs": 30000,
   "maxConsecutiveTasks": 5,
   "maxEvaluationsPerHour": 12,

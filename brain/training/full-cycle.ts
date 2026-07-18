@@ -25,6 +25,7 @@ import { randomBytes } from 'node:crypto';
 import type { ActiveAdapterInfo } from '@metahuman/core/adapters';
 import { applySchemaBatch } from '@metahuman/core/schema-manager';
 import type { FormattedSample, SchemaAppliedSample } from '@metahuman/core/schema-manager';
+import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 
 // Load environment variables from .env file FIRST
 dotenv.config({ path: path.join(systemPaths.root, '.env') });
@@ -426,7 +427,7 @@ async function mainWithContext() {
 
     // Get base model from config (will be loaded below)
     const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
-    let baseModel = 'unsloth/Qwen3-14B'; // default
+    let baseModel = DEFAULT_TRAINING_MODEL;
     if (fs.existsSync(trainingConfigPath)) {
       const cfg = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
       baseModel = process.env.METAHUMAN_BASE_MODEL || cfg.base_model || baseModel;
@@ -494,15 +495,17 @@ async function mainWithContext() {
   // 2.3. Load training config from etc/training.json
   const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
   let config: any = {
-    "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+    "base_model": DEFAULT_TRAINING_MODEL,
     "lora_rank": 8,
     "lora_alpha": 16,
-    "lora_dropout": 0.05,
+    "lora_dropout": 0,
     "num_train_epochs": 2,
     "learning_rate": 0.0002,
     "per_device_train_batch_size": 1,
     "gradient_accumulation_steps": 16,
-    "max_seq_length": 2048
+    "max_seq_length": 2048,
+    "load_in_4bit": false,
+    "load_in_16bit": true
   };
 
   // Load from etc/training.json if it exists

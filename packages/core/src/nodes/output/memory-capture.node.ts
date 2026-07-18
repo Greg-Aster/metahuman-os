@@ -58,6 +58,14 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
       };
     }
 
+    if (typeof message !== 'string' || message.trim().length === 0) {
+      return {
+        saved: false,
+        reason: 'No user message to capture',
+      };
+    }
+
+    const cognitiveMode = context.cognitiveMode || 'dual';
     if (!context.allowMemoryWrites || !context.userId || context.userId === 'anonymous') {
       return {
         saved: false,
@@ -66,11 +74,15 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
     }
 
     try {
-      const content = `User: ${message}\n\nAssistant: ${response}`;
+      const inputMetadata = inputs.metadata && typeof inputs.metadata === 'object'
+        ? inputs.metadata
+        : {};
+      const content = `User: ${message.trim()}\n\nAssistant: ${response.trim()}`;
       const result: CaptureResult = captureEventWithDetails(content, {
         type: 'conversation',
         metadata: {
-          cognitiveMode: context.cognitiveMode as 'dual' | 'agent' | 'emulation' | 'environment',
+          ...inputMetadata,
+          cognitiveMode,
           sessionId: context.sessionId,
           userId: context.userId,
         },

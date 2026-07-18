@@ -37,19 +37,6 @@ export interface RequestContext {
 export type UserRole = 'owner' | 'standard' | 'guest';
 
 /**
- * Check if a user has administrator privileges
- * Administrators can edit system code and access all profiles
- *
- * Admin privileges are granted exclusively to users with 'owner' role.
- */
-export function isAdministrator(username?: string, role?: UserRole): boolean {
-  if (!username) return false;
-
-  // Owner role grants admin privileges
-  return role === 'owner';
-}
-
-/**
  * Session information extracted from request context
  */
 export interface SessionInfo {
@@ -57,7 +44,6 @@ export interface SessionInfo {
   id?: string;
   email?: string;
   username?: string;
-  isAdmin?: boolean;
 }
 
 /**
@@ -117,14 +103,12 @@ export interface SecurityPolicy {
   mode: CognitiveModeId;
   sessionId?: string;
   username?: string;
-  isAdmin: boolean;
 
   // Helper methods that throw SecurityError if not allowed
   requireWrite(): void;
   requireOperator(): void;
   requireOwner(): void;
   requireConfig(): void;
-  requireAdmin(): void;
   requireFileAccess(filePath: string): void;
   requireProfileRead(targetUsername: string): void;
   requireProfileWrite(targetUsername: string): void;
@@ -135,7 +119,7 @@ export interface SecurityPolicy {
  *
  * This is the core permission resolution logic.
  */
-function computeSecurityPolicy(
+export function computeSecurityPolicy(
   mode: CognitiveModeId,
   session: SessionInfo | null
 ): SecurityPolicy {
@@ -143,9 +127,9 @@ function computeSecurityPolicy(
   // If session is null, it means system operation or error case
   const role = session?.role ?? 'guest'; // Default to most restrictive role
   const username = session?.username;
-  const isAdmin = session?.isAdmin ?? false;
+  const isOwner = role === 'owner';
 
-  // Determine permissions based on mode + role + admin status
+  // Determine permissions based on mode + role
   const policy: SecurityPolicy = {
     // Memory reads: owner and standard users only (guests are read-only chat)
     canReadMemory: role === 'owner' || role === 'standard',
@@ -171,44 +155,40 @@ function computeSecurityPolicy(
     // Factory reset: owner only
     canFactoryReset: role === 'owner',
 
-    // Multi-user permissions
-    // System code editing: administrators only
-    canEditSystemCode: isAdmin,
+    // Owner permissions
+    canEditSystemCode: isOwner,
 
-    // Access all profiles: administrators only
-    canAccessAllProfiles: isAdmin,
+    canAccessAllProfiles: isOwner,
 
     // Edit own profile: owner and standard users only (guests are read-only)
     canEditOwnProfile: role === 'owner' || role === 'standard',
 
     // Path-based permissions (new tier system)
-    // Docs: everyone can read, only admins can write
+    // Docs: everyone can read, only the owner can write
     canReadDocs: true, // All authenticated users can read docs
-    canWriteDocs: isAdmin,
+    canWriteDocs: isOwner,
 
     // Profile access: function-based checks
     canReadProfile: (targetUsername: string) => {
-      if (isAdmin) return true; // Admins can read all profiles
+      if (isOwner) return true;
       if (role === 'guest') return false; // Guests cannot read profiles
       return targetUsername === username; // Standard users can read own profile
     },
 
     canWriteProfile: (targetUsername: string) => {
-      if (isAdmin) return true; // Admins can write all profiles
+      if (isOwner) return true;
       if (role === 'guest') return false; // Guests cannot write
-      if (role === 'standard') return targetUsername === username; // Standard users can write own profile
-      return targetUsername === username; // Owners can write own profile
+      return targetUsername === username; // Standard users can write own profile
     },
 
-    // System configs: admin or owner only
-    canAccessSystemConfigs: isAdmin || role === 'owner',
+    // System configs: owner only
+    canAccessSystemConfigs: isOwner,
 
     // Context
     role,
     mode,
     sessionId: session?.id,
     username,
-    isAdmin,
 
     // Helper methods
     requireWrite() {
@@ -257,17 +237,6 @@ function computeSecurityPolicy(
       }
     },
 
-    requireAdmin() {
-      if (!this.canEditSystemCode) {
-        throw new SecurityError('Administrator privileges required', {
-          reason: 'not_administrator',
-          role,
-          username,
-          required: 'admin privileges (owner role)',
-        });
-      }
-    },
-
     requireFileAccess(filePath: string) {
       if (!filePath || typeof filePath !== 'string') {
         throw new SecurityError('Invalid file path', {
@@ -297,17 +266,17 @@ function computeSecurityPolicy(
       const isSystemPath = systemDirs.some((dir) => normalizedPath.includes(dir));
 
       if (isSystemPath) {
-        // System code requires admin privileges
+        // System code requires the owner role
         if (!this.canEditSystemCode) {
           throw new SecurityError('Cannot edit system code', {
-            reason: 'not_administrator',
+            reason: 'not_owner',
             role,
             username,
             filePath: normalizedPath,
-            required: 'admin privileges (owner role)',
+            required: 'owner role',
           });
         }
-        return; // Admin can edit anything
+        return; // Owner can edit system code
       }
 
       // Profile-specific paths (profiles/{username}/)
@@ -329,18 +298,18 @@ function computeSecurityPolicy(
             return; // User can edit their own profile
           }
 
-          // Accessing another user's profile requires admin
+          // Accessing another user's profile requires the owner role
           if (!this.canAccessAllProfiles) {
             throw new SecurityError('Cannot access other user profiles', {
-              reason: 'not_administrator',
+              reason: 'not_owner',
               role,
               username,
               targetUsername,
               filePath: normalizedPath,
-              required: 'admin privileges (owner role)',
+              required: 'owner role',
             });
           }
-          return; // Admin can access any profile
+          return; // Owner can access any profile
         }
       }
 
@@ -352,20 +321,20 @@ function computeSecurityPolicy(
             role,
             username,
             filePath: normalizedPath,
-            required: 'admin privileges',
+            required: 'owner role',
           });
         }
-        return; // Admin can edit docs
+        return; // Owner can edit docs
       }
 
-      // Root-level files - admin only for safety
+      // Root-level files - owner only for safety
       if (!this.canEditSystemCode) {
         throw new SecurityError('Cannot edit root-level files', {
-          reason: 'not_administrator',
+          reason: 'not_owner',
           role,
           username,
           filePath: normalizedPath,
-          required: 'admin privileges (owner role)',
+          required: 'owner role',
         });
       }
     },
@@ -384,7 +353,7 @@ function computeSecurityPolicy(
           role,
           username,
           targetUsername,
-          required: role === 'guest' ? 'owner or standard role' : 'profile ownership or admin',
+          required: role === 'guest' ? 'owner or standard role' : 'profile ownership or owner role',
         });
       }
     },
@@ -403,7 +372,7 @@ function computeSecurityPolicy(
           role,
           username,
           targetUsername,
-          required: role === 'guest' ? 'standard user role' : 'profile ownership or admin',
+          required: role === 'guest' ? 'owner or standard role' : 'profile ownership or owner role',
         });
       }
     },
@@ -426,14 +395,12 @@ function extractSession(context?: RequestContext): SessionInfo | null {
     const user = getUserByUsername(context.username);
     const role = context.role ?? user?.role ?? 'guest';
     const username = user?.username ?? context.username;
-    const isAdmin = isAdministrator(username, role);
 
     return {
       role,
       id: context.userId ?? user?.id ?? context.sessionId,
       email: user?.metadata?.email,
       username,
-      isAdmin,
     };
   }
   
@@ -470,10 +437,7 @@ function extractSession(context?: RequestContext): SessionInfo | null {
     return null;
   }
 
-  // Check if user is administrator
-  // Owner role automatically grants admin privileges
   const username = user?.username;
-  const isAdmin = isAdministrator(username, session.role);
 
   // Return session info
   const sessionInfo = {
@@ -481,10 +445,9 @@ function extractSession(context?: RequestContext): SessionInfo | null {
     id: session.userId,
     email: user?.metadata?.email,
     username,
-    isAdmin,
   };
   
-  console.log(`${LOG_PREFIX} Session extracted successfully for user: ${username}, role: ${session.role}, isAdmin: ${isAdmin}`);
+  console.log(`${LOG_PREFIX} Session extracted successfully for user: ${username}, role: ${session.role}`);
   return sessionInfo;
 }
 
@@ -527,7 +490,6 @@ export function getSecurityPolicy(context?: RequestContext): SecurityPolicy {
         role: userContext.role,
         id: userContext.userId,
         username: userContext.username,
-        isAdmin: isAdministrator(userContext.username, userContext.role),
       };
     }
   } catch (error) {
@@ -567,7 +529,7 @@ export function getSecurityPolicy(context?: RequestContext): SecurityPolicy {
   const policy = computeSecurityPolicy(mode, session);
 
   console.log(`${LOG_PREFIX} Policy computed for user: ${policy.username}, role: ${policy.role}, mode: ${policy.mode}`);
-  console.log(`${LOG_PREFIX} Key permissions: read=${policy.canReadMemory}, write=${policy.canWriteMemory}, operator=${policy.canUseOperator}, admin=${policy.isAdmin}`);
+  console.log(`${LOG_PREFIX} Key permissions: read=${policy.canReadMemory}, write=${policy.canWriteMemory}, operator=${policy.canUseOperator}, owner=${policy.role === 'owner'}`);
 
   // Cache if we have context
   if (context) {

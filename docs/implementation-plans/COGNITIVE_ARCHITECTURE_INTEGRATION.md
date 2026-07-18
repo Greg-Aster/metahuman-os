@@ -53,7 +53,7 @@ This document describes how the **three-layer cognitive architecture** (Subconsc
 - Safety filters and boundary enforcement
 - Response refinement and editing
 
-**Model:** Curator or Planner (`qwen3:14b`, analytical reasoning)
+**Model:** Curator or Planner (`qwen3.5:9b`, analytical reasoning)
 **Output:** `ValidatedResponse` - approved response with metadata
 
 ---
@@ -352,7 +352,7 @@ interface ValidatedResponse {
 | Subconscious | `planner` | `qwen3-coder:30b` (18GB) | Operator task planning |
 | Subconscious | `coder` | `qwen3-coder:30b` (18GB) | Operator code skills |
 | Personality | `persona` | `qwen3-coder:30b` + LoRA (18GB) | Conversational voice |
-| Meta-Cognition | `curator` | `qwen3:14b` (9.3GB) | Value alignment validation |
+| Meta-Cognition | `curator` | `qwen3.5:9b` (6.6GB) | Value alignment validation |
 
 **Total Active Models:** 4 (orchestrator, planner/coder shared, persona, curator)
 **GPU Memory:** ~50GB peak (requires good VRAM or CPU offloading)
@@ -518,7 +518,7 @@ if (policy.canWriteMemory) {
 **Integration:**
 - Layer 1: Uses `orchestrator` role (`phi3:mini`)
 - Layer 2: Uses `persona` role (mode-specific: LoRA vs base vs frozen)
-- Layer 3: Uses `curator` role (`qwen3:14b`)
+- Layer 3: Uses `curator` role (`qwen3.5:9b`)
 
 **Code Example:**
 ```typescript

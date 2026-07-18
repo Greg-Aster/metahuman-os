@@ -84,6 +84,24 @@ export async function profilePath(username?: string): Promise<void> {
 }
 
 /**
+ * Print only the canonical voice configuration path for scripts.
+ *
+ * Keep this machine-readable surface on the existing profile command so shell
+ * launchers do not duplicate external/encrypted profile resolution.
+ */
+function printVoiceConfigPath(username?: string): never {
+  const user = username || getDefaultUsername();
+
+  try {
+    console.log(getProfilePaths(user).voiceConfig);
+    process.exit(0);
+  } catch (error) {
+    console.error(`Failed to resolve voice configuration for '${user}': ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+
+/**
  * Set new profile path (with migration)
  */
 export async function profilePathSet(
@@ -328,6 +346,10 @@ function handlePathCommand(args: string[]): void {
   const subsubcommand = args[0];
 
   switch (subsubcommand) {
+    case '--voice-config':
+      printVoiceConfigPath(args[1]);
+      break;
+
     case 'set':
       if (!args[1]) {
         console.error('Usage: mh profile path set <path>');
@@ -354,6 +376,7 @@ Usage: mh profile <command> [options]
 
 Commands:
   path                    Show current profile path configuration
+  path --voice-config     Print the resolved voice.json path for scripts
   path set <path>         Set new profile location (triggers migration)
   path reset              Reset to default location
   devices                 List available storage devices
@@ -365,6 +388,7 @@ Options:
 
 Examples:
   mh profile path
+  mh profile path --voice-config
   mh profile path set /media/usb-drive/metahuman/greggles
   mh profile path reset
   mh profile devices

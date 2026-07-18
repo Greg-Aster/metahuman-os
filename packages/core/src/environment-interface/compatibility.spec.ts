@@ -71,6 +71,33 @@ try {
   assert.equal(manager.getTask(stale.id)?.state, 'expired');
 
   resetState();
+  const motionPlan = enqueueEnvironmentAction({
+    type: 'robotMotionPlan',
+    sessionId: 'robot-1',
+    frames: [{
+      durationMs: 300,
+      targets: ['R1', 'R2', 'L1', 'L2', 'R4', 'R3', 'L3', 'L4'].map(joint => ({
+        joint: joint as 'R1',
+        degrees: 90,
+      })),
+    }],
+    endPose: 'hold',
+  });
+  const dispatchedPlan = dispatchEnvironmentActions('robot-1')[0];
+  assert.equal(dispatchedPlan?.id, motionPlan.id);
+  assert.equal(dispatchedPlan?.type, 'robotMotionPlan');
+  assert.equal(dispatchedPlan?.frames?.length, 1);
+  assert.equal(dispatchedPlan?.frames?.[0]?.targets.length, 8);
+  assert.equal(dispatchedPlan?.endPose, 'hold');
+  recordEnvironmentActionResult({
+    id: 'plan-completed',
+    timestamp: new Date().toISOString(),
+    type: 'completed',
+    message: 'done',
+    actionId: motionPlan.id,
+  });
+
+  resetState();
   const movement = enqueueEnvironmentAction({ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' });
   enqueueEnvironmentAction({ type: 'stop', sessionId: 'robot-1' });
   const dispatched = dispatchEnvironmentActions('robot-1');
@@ -299,7 +326,7 @@ try {
     instruction: 'Find the object in front of the robot.',
     images: imageOutput.images,
   }, {}, {});
-  const content = contextOutput.messages[0]?.content;
+  const content = contextOutput.messages.at(-1)?.content;
   assert.equal(Array.isArray(content), true);
   assert.deepEqual(content.at(-1), {
     type: 'image_url',
@@ -319,7 +346,7 @@ try {
     instruction: 'What is happening in France?',
     images: imageOutput.images,
   }, {}, {});
-  assert.equal(typeof generalQuestionContext.messages[0]?.content, 'string');
+  assert.equal(typeof generalQuestionContext.messages.at(-1)?.content, 'string');
   assert.deepEqual(generalQuestionContext.images, []);
   assert.doesNotMatch(String(generalQuestionContext.message), /Visual frame/);
 

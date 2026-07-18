@@ -19,7 +19,7 @@ import {
 
 // Import handlers (will be populated as we migrate routes)
 // For now, start with a few proof-of-concept routes
-import { handleBoot, handleAppInfo } from './handlers/system.js';
+import { handleAppInfo } from './handlers/app-info.js';
 import { handleGetStatus } from './handlers/status.js';
 import { handleCapture, handleListMemories, handleSearchMemories } from './handlers/memories.js';
 import { handleListTasks, handleCreateTask, handleUpdateTask, handleDeleteTask } from './handlers/tasks.js';
@@ -289,9 +289,13 @@ import { handleAgentsControl, handleRunAgent } from './handlers/agent.js';
 import {
   handleEnvironmentBridgeActionResult,
   handleEnvironmentBridgeControl,
+  handleEnvironmentBridgeDiagnosticAudio,
+  handleEnvironmentBridgeDiagnosticMedia,
+  handleEnvironmentBridgeDiagnostics,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStatus,
   handleEnvironmentBridgeStream,
+  handleEnvironmentBridgeTelemetry,
 } from './handlers/environment-bridge.js';
 import { handleGetChatHistory } from './handlers/chat-history.js';
 import { handleGetSimpleBuffer } from './handlers/buffer.js';
@@ -550,7 +554,6 @@ import { handleGetAdapters, handlePostAdapters } from './handlers/adapters.js';
 const routes: RouteDefinition[] = [
   // System
   { method: 'GET', pattern: '/api/status', handler: handleGetStatus },
-  { method: 'GET', pattern: '/api/boot', handler: handleBoot },
   { method: 'GET', pattern: '/api/app-info', handler: handleAppInfo },
   { method: 'GET', pattern: '/api/server-info', handler: handleGetServerInfo },
   { method: 'GET', pattern: '/api/profile-sync-state', handler: handleGetProfileSyncState, requiresAuth: true },
@@ -745,6 +748,10 @@ const routes: RouteDefinition[] = [
 
   // Environment bridge
   { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus, requiresAuth: true },
+  { method: 'GET', pattern: '/api/environment-bridge/diagnostics', handler: handleEnvironmentBridgeDiagnostics, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/environment-bridge/diagnostics/media', handler: handleEnvironmentBridgeDiagnosticMedia, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/environment-bridge/diagnostics/audio', handler: handleEnvironmentBridgeDiagnosticAudio, public: true, publicReason: 'service-token authenticated bounded diagnostic audio ingestion' },
+  { method: 'POST', pattern: '/api/environment-bridge/telemetry', handler: handleEnvironmentBridgeTelemetry, public: true, publicReason: 'service-token authenticated bounded diagnostic telemetry ingestion' },
   { method: 'POST', pattern: '/api/environment-bridge/observation', handler: handleEnvironmentBridgeObservation, public: true, publicReason: 'service-token authenticated environment observation ingestion' },
   { method: 'GET', pattern: '/api/environment-bridge/stream', handler: handleEnvironmentBridgeStream, public: true, publicReason: 'service-token authenticated environment action stream' },
   { method: 'POST', pattern: '/api/environment-bridge/action-result', handler: handleEnvironmentBridgeActionResult, public: true, publicReason: 'service-token authenticated environment action result ingestion' },

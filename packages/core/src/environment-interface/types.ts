@@ -4,8 +4,30 @@ export type EnvironmentActionType =
   | 'jump'
   | 'interact'
   | 'stop'
+  | 'captureImage'
   | 'robotCommand'
+  | 'robotMotionPlan'
   | 'sendText';
+
+export type EnvironmentMotionPlanJoint =
+  | 'R1'
+  | 'R2'
+  | 'L1'
+  | 'L2'
+  | 'R4'
+  | 'R3'
+  | 'L3'
+  | 'L4';
+
+export interface EnvironmentMotionPlanTarget {
+  joint: EnvironmentMotionPlanJoint;
+  degrees: number;
+}
+
+export interface EnvironmentMotionPlanFrame {
+  durationMs: number;
+  targets: EnvironmentMotionPlanTarget[];
+}
 
 export interface EnvironmentCapabilities {
   actions: EnvironmentActionType[];
@@ -24,6 +46,7 @@ export interface EnvironmentTextEvent {
   senderId?: string;
   senderName?: string;
   channel?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EnvironmentVisualFrame {
@@ -127,6 +150,7 @@ export interface EnvironmentObservation {
   visual?: EnvironmentVisualFrame;
   visuals?: EnvironmentVisualFrame[];
   feedback?: EnvironmentFeedback[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface EnvironmentAction {
@@ -142,6 +166,8 @@ export interface EnvironmentAction {
   amount?: number;
   durationMs?: number;
   target?: string;
+  frames?: EnvironmentMotionPlanFrame[];
+  endPose?: 'hold' | 'stand' | 'neutral';
   metadata?: Record<string, unknown>;
 }
 

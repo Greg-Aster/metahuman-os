@@ -53,6 +53,7 @@ function input(overrides: Record<string, unknown> = {}) {
   const manager = new UnifiedQueueManager();
   const engine = new ExecutionEngine({}, manager);
   assert.equal(engine.hasHandler('vector.append-event'), true, 'vector indexing must have a coordinator-owned executor');
+  assert.equal(engine.hasHandler('agency.desire-checkin'), true, 'long-running desire check-ins must have a coordinator-owned executor');
 }
 
 {

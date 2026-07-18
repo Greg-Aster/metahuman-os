@@ -32,6 +32,7 @@ export type EventType =
   | 'observation'
   | 'reflection'
   | 'dream'
+  | 'daydream'
   | 'task'
   | 'operator_feedback';  // Human-in-the-loop approval/rejection feedback for training
 
@@ -45,6 +46,7 @@ export type EventType =
  * Policy Rules:
  * - Dual Mode: All events can be written (full memory capture)
  * - Agent Mode: Only action-oriented events (tool invocations, approvals, summaries)
+ * - Environment Mode: Conversational exchanges and summaries
  * - Emulation Mode: No writes allowed (read-only)
  *
  * @param mode - Current cognitive mode
@@ -58,6 +60,14 @@ export function canWriteMemory(mode: CognitiveModeId, eventType: EventType): boo
   // Emulation mode: read-only (no writes)
   if (writeLevel === 'read_only') {
     return false;
+  }
+
+  if (writeLevel === 'conversation') {
+    const allowedEvents: EventType[] = [
+      'conversation',
+      'summary',
+    ];
+    return allowedEvents.includes(eventType);
   }
 
   // Agent mode: command_only (selective writes)
@@ -102,7 +112,11 @@ export function shouldCaptureTool(mode: CognitiveModeId, toolName: string): bool
     return false;
   }
 
-  // Agent mode: skip conversational tools (not real actions)
+  if (writeLevel === 'conversation') {
+    return false;
+  }
+
+  // Agent mode skips conversational tools and captures action tools only.
   if (writeLevel === 'command_only') {
     const conversationalTools = [
       'conversational_response',
@@ -428,7 +442,7 @@ export function canViewMemoryType(eventType: string, role: UserRole): boolean {
 
   // Members see most things except private reflections
   if (role === 'standard') {
-    const privateTypes = ['dream', 'inner_dialogue'];
+    const privateTypes = ['dream', 'daydream', 'inner_dialogue'];
     return !privateTypes.includes(eventType);
   }
 

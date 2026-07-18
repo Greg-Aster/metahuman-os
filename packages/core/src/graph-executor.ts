@@ -23,7 +23,8 @@ const DEFAULT_LLM_TIMEOUT = 900000;   // 15 minutes
 const LLM_NODE_TYPES = new Set([
   'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
   'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
-  'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer'
+  'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer',
+  'movement_generator',
 ]);
 
 /**
@@ -591,6 +592,32 @@ function getOutputPathNodes(routerId: string, graph: SvelteFlowGraph, backEdges:
   return Array.from(outputPath);
 }
 
+/** @internal Pure queue helper exported for loop-scheduling regression tests. */
+export function scheduleLoopIteration(
+  executionQueue: string[],
+  sortedLoopNodes: string[],
+  outputPathNodes: string[],
+  routerId: string,
+): string[] {
+  const deferredNodeSet = new Set([
+    ...sortedLoopNodes,
+    ...outputPathNodes,
+    routerId,
+  ]);
+  const remainingQueue = executionQueue.filter(id => !deferredNodeSet.has(id));
+  return [...sortedLoopNodes, routerId, ...remainingQueue];
+}
+
+/** @internal Pure queue helper exported for loop-scheduling regression tests. */
+export function scheduleAcceptedOutput(
+  executionQueue: string[],
+  sortedOutputPathNodes: string[],
+): string[] {
+  const outputPathSet = new Set(sortedOutputPathNodes);
+  const remainingQueue = executionQueue.filter(id => !outputPathSet.has(id));
+  return [...sortedOutputPathNodes, ...remainingQueue];
+}
+
 /**
  * Execute an entire graph
  * Accepts Svelte Flow format directly
@@ -734,9 +761,21 @@ export async function executeGraph(
               // Clear execution state for loop body nodes ONLY
               sortedLoopNodes.forEach((id: string) => executionState.delete(id));
 
-              // Add loop nodes back to queue in topological order, then re-queue router at the end
-              executionQueue.unshift(...sortedLoopNodes);
-              executionQueue.push(nodeId);  // Router runs after loop body
+              // Remove the current output path before scheduling another iteration.
+              // Those nodes may already be queued from the initial topological pass;
+              // allowing them to run here would commit/stream a rejected response.
+              const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
+              const scheduledQueue = scheduleLoopIteration(
+                executionQueue,
+                sortedLoopNodes,
+                outputPathNodes,
+                nodeId,
+              );
+
+              // The loop body and router must stay contiguous. Output nodes are
+              // scheduled only after the router accepts the refined response.
+              executionQueue.length = 0;
+              executionQueue.push(...scheduledQueue);
               log.debug(`   Re-queued ${sortedLoopNodes.length} nodes + router for iteration`);
             }
           } else {
@@ -747,14 +786,15 @@ export async function executeGraph(
             // This is needed because they may have already executed with old values during loop iterations
             const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
             if (outputPathNodes.length > 0) {
-              console.log(`[GraphExecutor] Re-queuing output path nodes: ${outputPathNodes.join(', ')}`);
-              // Clear execution state for output nodes so they can re-execute
-              outputPathNodes.forEach(id => executionState.delete(id));
-              // Remove any existing copies from queue first to prevent duplicates
               const outputPathSet = new Set(outputPathNodes);
-              const filteredQueue = executionQueue.filter(id => !outputPathSet.has(id));
+              const sortedOutputPathNodes = executionOrder.filter(id => outputPathSet.has(id));
+              console.log(`[GraphExecutor] Re-queuing output path nodes: ${sortedOutputPathNodes.join(', ')}`);
+              // Clear execution state for output nodes so they can re-execute
+              sortedOutputPathNodes.forEach(id => executionState.delete(id));
+              // Remove any existing copies from queue first to prevent duplicates
+              const scheduledQueue = scheduleAcceptedOutput(executionQueue, sortedOutputPathNodes);
               executionQueue.length = 0;
-              executionQueue.push(...outputPathNodes, ...filteredQueue);
+              executionQueue.push(...scheduledQueue);
             }
           }
           console.log(`[GraphExecutor] ================================================`);

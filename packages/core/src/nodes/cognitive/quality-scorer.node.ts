@@ -39,6 +39,8 @@ const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `Check if this response aligns with the p
 
 {{personaContext}}
 
+{{groundingContext}}
+
 Query: "{{originalQuery}}"
 Response: "{{responseText}}"
 
@@ -56,10 +58,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   // Extract properties
   const qualityThreshold = properties?.qualityThreshold ?? 0.7;
-  // Note: strictHallucinationCheck property exists but is not used for hard-coded checks.
-  // The LLM evaluation against persona values handles hallucination detection contextually.
+  const strictHallucinationCheck = properties?.strictHallucinationCheck !== false;
 
   const responseText = typeof response === 'string' ? response : (response?.text || response?.content || '');
+  const memoryList = Array.isArray(memories)
+    ? memories
+    : (Array.isArray(memories?.memories) ? memories.memories : []);
 
   console.log(`[quality_scorer] Persona-based evaluation for: "${originalQuery.substring(0, 60)}..."`);
   console.log(`[quality_scorer] Has persona: ${!!persona}, unknownSignal: ${unknownSignal}`);
@@ -76,33 +80,31 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  // If no persona provided, auto-pass (can't check values without them)
-  if (!persona) {
-    console.log(`[quality_scorer] No persona provided - auto-pass (no values to check against)`);
-    return {
-      qualityScore: 0.9,
+  // LoRA-only mode has no explicit persona contract to score. If the turn also
+  // has no personal-memory grounding concern, avoid an unnecessary evaluator
+  // LLM call and let the dedicated safety validator handle policy checks.
+  if (!persona && !unknownSignal && memoryList.length === 0) {
+    const result: QualityScorerResult = {
+      qualityScore: 1,
       issues: [],
       passesThreshold: true,
       needsRefinement: false,
       suggestions: [],
-      evaluation: 'No persona values to check against - response accepted',
+      evaluation: 'No explicit persona or personal-memory claim required evaluation',
+    };
+    return {
       response: responseText,
-      qualityResult: {
-        qualityScore: 0.9,
-        issues: [],
-        passesThreshold: true,
-        needsRefinement: false,
-        suggestions: [],
-        evaluation: 'No persona values to check against',
-      },
+      qualityResult: result,
+      ...result,
+      evaluationSkipped: true,
     };
   }
 
   // Extract ONLY essential persona data for alignment check
   // Full persona objects are too heavy (10KB+) - slim down to what's needed
-  const personaValues = persona.values || {};
-  const personaPersonality = persona.personality || {};
-  const personaIdentity = persona.identity || {};
+  const personaValues = persona?.values || {};
+  const personaPersonality = persona?.personality || {};
+  const personaIdentity = persona?.identity || {};
 
   // Extract only core values (the main alignment check)
   const coreValues = personaValues.core || [];
@@ -122,7 +124,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   // Build COMPACT persona context (only what's needed for alignment check)
   const personaContext = `
-PERSONA: ${personaIdentity.name || 'Unknown'}
+PERSONA: ${personaIdentity.name || 'No explicit persona configured'}
 CORE VALUES:
 ${coreValuesText}
 ${boundariesText ? `\nBOUNDARIES:\n${boundariesText}` : ''}
@@ -130,7 +132,14 @@ ${styleText ? `\nSTYLE: ${styleText}` : ''}
 `.trim();
 
   try {
-    const promptValues = { personaContext, originalQuery, responseText };
+    const groundingContext = strictHallucinationCheck
+      ? unknownSignal
+        ? 'GROUNDING: No relevant memory answered this query. The response must not claim that the persona remembers or knows unsupported personal facts.'
+        : memoryList.length > 0
+          ? `GROUNDING: Relevant memory evidence was supplied (${memoryList.length} item${memoryList.length === 1 ? '' : 's'}). Reject factual claims that contradict it.`
+          : 'GROUNDING: No personal-memory claim was requested. Evaluate ordinary conversational accuracy without inventing personal history.'
+      : '';
+    const promptValues = { personaContext, groundingContext, originalQuery, responseText };
     const systemPrompt = renderPromptTemplate(
       properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
       promptValues,
@@ -242,7 +251,7 @@ export const QualityScorerNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'response', type: 'string', description: 'Generated response to evaluate' },
     { name: 'originalQuery', type: 'string', description: 'Original user query' },
-    { name: 'memories', type: 'array', optional: true, description: 'Memories (for context, not grounding check)' },
+    { name: 'memories', type: 'array', optional: true, description: 'Retrieved memories used to check factual grounding' },
     { name: 'unknownSignal', type: 'boolean', optional: true, description: 'Whether search interpreter signaled unknown' },
     { name: 'persona', type: 'object', optional: true, description: 'Persona data (values, personality, identity) for alignment check' },
   ],
@@ -280,7 +289,7 @@ export const QualityScorerNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
       label: 'System Prompt',
-      description: 'Supports {{personaContext}}, {{originalQuery}}, and {{responseText}}.',
+      description: 'Supports {{personaContext}}, {{groundingContext}}, {{originalQuery}}, and {{responseText}}.',
       rows: 10,
     },
     userPromptTemplate: {
@@ -291,6 +300,6 @@ export const QualityScorerNode: NodeDefinition = defineNode({
       rows: 3,
     },
   },
-  description: 'Evaluates response against persona VALUES - not generic quality. Checks values alignment, privacy, and character consistency.',
+  description: 'Evaluates persona alignment, privacy, character consistency, and memory grounding.',
   execute,
 });

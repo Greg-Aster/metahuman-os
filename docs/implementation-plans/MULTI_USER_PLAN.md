@@ -295,13 +295,13 @@ export function saveUserConfig<T>(filename: string, data: T): void {
 import { loadUserConfig } from '@metahuman/core/config';
 
 const modelConfig = loadUserConfig('models.json', {
-  baseModel: 'qwen3-coder:30b',
+  baseModel: 'qwen3.5:9b',
   activeAdapter: null,
   roles: { /* defaults */ }
 });
 
 // Each user can have different base models!
-// Alice might use qwen3-coder:30b
+// Alice might use qwen3.5:9b
 // Bob might use llama3:8b
 ```
 
@@ -1165,19 +1165,11 @@ time ./bin/mh agent run organizer
 
 ---
 
-### For System Administrators
+### For the System Owner
 
-**Administrator Privileges:**
+MetaHuman OS uses the persisted **owner** role as its single full-system authority.
 
-MetaHuman OS includes a role-based access control system where specific users can be designated as **administrators** with elevated privileges.
-
-**Configuration:**
-```bash
-# .env file
-ADMIN_USERS=greggles,alice
-```
-
-**Administrator Capabilities:**
+**Owner Capabilities:**
 - ✅ **Edit system code** - Modify files in `brain/`, `packages/`, `apps/`, `bin/`
 - ✅ **Access all profiles** - View and edit any user's profile data
 - ✅ **Execute dangerous operations** - File system access, code editing
@@ -1196,20 +1188,20 @@ The security policy enforces file access restrictions at multiple levels:
 
 1. **API-level checks** - `policy.requireFileAccess(filePath)` throws SecurityError for unauthorized access
 2. **Path validation** - System paths vs. profile paths detected automatically
-3. **Admin detection** - Username checked against `ADMIN_USERS` env var
-4. **Audit logging** - All file operations logged with username and admin status
+3. **Owner detection** - The persisted user role is checked directly
+4. **Audit logging** - All file operations are logged with username and role
 
 **Example Security Flow:**
 ```typescript
 // Regular user tries to edit system code
 const policy = getSecurityPolicy(context);
 policy.requireFileAccess('brain/agents/organizer.ts');
-// ❌ Throws: "Cannot edit system code - admin privileges required"
+// ❌ Throws: "Cannot edit system code - owner role required"
 
-// Admin user edits system code
+// Owner edits system code
 const policy = getSecurityPolicy(context);
 policy.requireFileAccess('brain/agents/organizer.ts');
-// ✅ Allowed - user is in ADMIN_USERS list
+// ✅ Allowed - user has the owner role
 
 // Regular user edits own profile
 const policy = getSecurityPolicy(context);
@@ -1219,10 +1211,10 @@ policy.requireFileAccess('profiles/alice/persona/core.json');
 // Regular user tries to access another profile
 const policy = getSecurityPolicy(context);
 policy.requireFileAccess('profiles/bob/persona/core.json');
-// ❌ Throws: "Cannot access other user profiles - admin privileges required"
+// ❌ Throws: "Cannot access other user profiles - owner role required"
 ```
 
-**Administrator Commands:**
+**Owner Commands:**
 ```bash
 # Backup all profiles
 tar -czf profiles-backup-$(date +%Y%m%d).tar.gz profiles/
@@ -1244,19 +1236,13 @@ mv profiles/old-user profiles/_archive/old-user-$(date +%Y%m%d)
 
 ### Authentication Levels
 
-**anonymous** → Read-only, no memory writes
-**guest** → Read/write own profile, cannot manage users
-**owner** → Full access, can switch profiles, manage users
-**admin** → Elevated privileges, can edit system code (set via `ADMIN_USERS` env var)
+**unauthenticated** → Blocked at the authentication gate
+**guest** → Read-only chat access
+**standard** → Read/write access to the user's own profile
+**owner** → Full system access, can switch profiles and manage users
+### Owner Privileges
 
-### Administrator Privileges
-
-**Configuration:** Add usernames to `.env` file:
-```bash
-ADMIN_USERS=greggles,alice
-```
-
-**What Administrators Can Do:**
+**What the Owner Can Do:**
 - ✅ Edit system code (`brain/`, `packages/`, `apps/`, `bin/`)
 - ✅ Access all user profiles (not just own)
 - ✅ Modify root-level configuration
@@ -1270,32 +1256,26 @@ ADMIN_USERS=greggles,alice
 
 **Security Enforcement:**
 ```typescript
-// packages/core/src/security-policy.ts
-export function isAdministrator(username?: string): boolean {
-  const adminUsers = process.env.ADMIN_USERS || '';
-  return adminUsers.split(',').map(u => u.trim()).includes(username);
-}
-
 // In SecurityPolicy
 policy.requireFileAccess('brain/agents/organizer.ts');
-// ✅ Allowed for admins
+// ✅ Allowed for the owner
 // ❌ Throws SecurityError for regular users
 ```
 
 ### Authorization Matrix
 
-| Action | Anonymous | Guest | Owner | Admin |
-|--------|-----------|-------|-------|-------|
-| View own memories | ❌ | ✅ | ✅ | ✅ |
-| Create memories | ❌ | ✅ | ✅ | ✅ |
-| View other memories | ❌ | ❌ | ✅ | ✅ |
-| Edit own profile | ❌ | ✅ | ✅ | ✅ |
+| Action | Anonymous | Guest | Standard | Owner |
+|--------|-----------|-------|----------|-------|
+| View own memories | ❌ | ❌ | ✅ | ✅ |
+| Create memories | ❌ | ❌ | ✅ | ✅ |
+| View other memories | ❌ | ❌ | ❌ | ✅ |
+| Edit own profile | ❌ | ❌ | ✅ | ✅ |
 | Edit other profiles | ❌ | ❌ | ❌ | ✅ |
 | Edit system code | ❌ | ❌ | ❌ | ✅ |
-| Switch profiles | ❌ | ❌ | ✅ | ✅ |
-| Create users | ❌ | ❌ | ✅ | ✅ |
-| Delete users | ❌ | ❌ | ✅ | ✅ |
-| Manage system config | ❌ | ❌ | ✅ | ✅ |
+| Switch profiles | ❌ | ❌ | ❌ | ✅ |
+| Create users | ❌ | ❌ | ❌ | ✅ |
+| Delete users | ❌ | ❌ | ❌ | ✅ |
+| Manage system config | ❌ | ❌ | ❌ | ✅ |
 
 ### File Permissions
 

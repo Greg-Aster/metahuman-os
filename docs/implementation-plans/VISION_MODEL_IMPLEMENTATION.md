@@ -136,31 +136,16 @@ an Ollama image model.
 - Remote providers may coexist only through their already-supported provider
   routing. Image support does not create a new coexistence rule.
 
-### Earlier Qwen3 AWQ label versus loaded checkpoint
+### Retired AWQ label versus loaded checkpoint
 
-The earlier `Qwen/Qwen3-14B-AWQ` label in Greggles' Model Settings did not
-identify the checkpoint vLLM actually served that morning. Live artifact,
-vLLM telemetry, manifest, and launch-history inspection on 2026-07-15
-established:
-
-- the Hugging Face cache entry for `Qwen/Qwen3-14B-AWQ` is approximately 16 MB
-  and contains config/tokenizer metadata but no safetensors weight files;
-- no complete Qwen3 AWQ weight checkpoint was found in the currently mounted
-  local model stores;
-- vLLM telemetry records true Qwen3 AWQ/AWQ-Marlin runs on 2026-07-01, but
-  records Qwen3 GGUF for the 2026-07-15 morning runs;
-- the 2026-07-15 launch commands loaded the 9,001,753,536-byte Qwen3 14.8B
-  `Q4_K_M` GGUF for either `greggles-2025-12-03-fixed:latest` or
-  `greggles-2025-12-04:latest` from Ollama's blob store and supplied
-  `Qwen/Qwen3-14B-AWQ` only through vLLM's `--tokenizer` option.
-
-No AWQ weights were removed by this implementation. The two working Qwen3 GGUF
-blobs remain present under `/usr/share/ollama/.ollama/models/blobs/` and may
-coexist on disk with Qwen3.5. vLLM still loads one configured main checkpoint
-into GPU memory at a time. Complete-artifact discovery intentionally omits
-metadata-only or partial Hugging Face snapshots, which is why the AWQ label is
-not offered as if it were a complete installed checkpoint. The real Qwen3 GGUF
-artifacts remain normal selectable options under their actual model names.
+An earlier AWQ label in Greggles' Model Settings did not identify the checkpoint
+vLLM actually served that morning. Live artifact, telemetry, manifest, and
+launch-history inspection on 2026-07-15 established that the cached repository
+contained tokenizer/config metadata but no safetensors weights, while the launch
+used a GGUF from Ollama's blob store. Complete-artifact discovery therefore
+omits that partial snapshot instead of presenting it as an installed checkpoint.
+The later Qwen 3.5 migration removed the stale registry identity and retired
+incompatible adapter selections.
 
 ## Backend Model Compatibility Correction — 2026-07-15
 
@@ -571,10 +556,8 @@ This goal is complete only when:
   `vision`, `tools`, and `thinking`. It is a discovery/configuration target,
   not a core default.
 - [x] 2026-07-15: Confirmed Greggles' registry initially resolved Environment
-  Mode to `vllm.active` / `Qwen/Qwen3-14B-AWQ`, capabilities `[]`, with vLLM
-  active, then established that this was stale registry identity: the actual
-  vLLM launch used an Ollama-store Qwen3 GGUF and only used the AWQ repository
-  as a tokenizer reference. No provider was changed during this inspection.
+  Mode to a stale metadata-only AWQ identity while vLLM actually launched an
+  Ollama-store GGUF. The later Qwen 3.5 migration removed that stale identity.
 - [x] 2026-07-15: Reproduced the vLLM startup failure for the Ollama
   `qwen3.5:9b` GGUF and confirmed its architecture is `qwen35`, which the
   installed vLLM/Transformers GGUF loaders reject.
@@ -677,10 +660,8 @@ This goal is complete only when:
 - `pnpm --dir apps/site build`: pass with the repository's existing warnings;
   the upgraded Ollama settings and thin `/api/ollama/loras` transport compile
   into the production server/client bundles.
-- Direct profile launch-resolution check: pass. Greggles' five enabled
-  Qwen3-14B adapters resolve for an equivalent Qwen3-14B target and zero resolve
-  for Qwen3.5-9B, proving incompatible adapters are excluded without deleting
-  the user's profile configuration.
+- Direct profile launch-resolution check: pass. Retired adapters do not resolve
+  for the Qwen3.5-9B target, so incompatible training output cannot be selected.
 - `pnpm validate:graphs`: pass, 20 valid / 0 invalid.
 - `pnpm -s check:architecture`: pass, 0 current violations.
 - `pnpm --dir apps/site build`: pass. Existing repository warnings remain.

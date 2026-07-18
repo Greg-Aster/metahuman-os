@@ -199,6 +199,10 @@
 
 
   async function loadTrustOptions() {
+    if (!$isOwner) {
+      trustOptions = [];
+      return;
+    }
     try {
       const res = await apiFetch('/api/trust');
       const data = await res.json();
@@ -217,6 +221,7 @@
   }
 
   async function setTrust(level: string) {
+    if (!$isOwner) return;
     try {
       const res = await apiFetch('/api/trust', {
         method: 'POST',

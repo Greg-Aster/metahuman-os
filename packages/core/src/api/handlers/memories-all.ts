@@ -1,18 +1,19 @@
 /**
  * Memories All Handler
  *
- * Returns all memory types for the memory browser UI.
+ * Returns the profile's persisted memory inventory for the Persona Memory UI.
+ * The filesystem is authoritative; the vector index is only a search
+ * accelerator and must never decide which memories are visible here.
  */
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse, errorResponse, unauthorizedResponse, forbiddenResponse } from '../types.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getProfilePaths, ROOT } from '../../index.js';
+import type { UnifiedRequest, UnifiedResponse } from '../types.js';
+import { errorResponse, forbiddenResponse, successResponse, unauthorizedResponse } from '../types.js';
+import { getProfilePaths } from '../../index.js';
 import { getSecurityPolicy } from '../../security-policy.js';
-import { indexFilePath } from '../../vector-index.js';
 
-interface EpisodicItem {
+export interface EpisodicItem {
   id: string;
   timestamp: string;
   content: string;
@@ -22,7 +23,7 @@ interface EpisodicItem {
   links?: Array<{ type: string; target: string }>;
   relPath: string;
   validation?: { status?: 'correct' | 'incorrect'; by?: string; timestamp?: string };
-  metadata?: Record<string, any>; // For displayColor, dialogueSource, etc.
+  metadata?: Record<string, any>;
 }
 
 interface TaskItem {
@@ -34,419 +35,297 @@ interface TaskItem {
   relPath: string;
 }
 
-interface CuratedItem {
+export interface CuratedItem {
   name: string;
   relPath: string;
+  timestamp?: string;
 }
 
-interface CuriosityQuestion {
+export interface CuriosityQuestion {
   id: string;
   question: string;
   askedAt: string;
-  status: 'pending' | 'answered';
+  status: 'pending' | 'answered' | 'recorded';
   relPath: string;
   seedMemories?: string[];
   answeredAt?: string;
 }
 
-/**
- * Extract the actual type from a memory file.
- * Reads just the first ~500 bytes to find the type field efficiently.
- */
-function extractTypeFromFile(filePath: string): string {
-  try {
-    if (!fs.existsSync(filePath)) return 'observation';
-
-    // Read just the beginning of the file to find the type field
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(500);
-    fs.readSync(fd, buffer, 0, 500, 0);
-    fs.closeSync(fd);
-
-    const content = buffer.toString('utf8');
-    const typeMatch = content.match(/"type"\s*:\s*"([^"]+)"/);
-    if (typeMatch) {
-      return typeMatch[1];
-    }
-  } catch {
-    // Ignore read errors
-  }
-
-  // Fallback to path-based detection
-  if (filePath.includes('/reflections/')) return 'reflection';
-  if (filePath.includes('/dreams/')) return 'dream';
-  if (filePath.includes('/audio-dreams/')) return 'dream';
-  return 'observation';
+export interface EpisodicInventory {
+  episodic: EpisodicItem[];
+  reflections: EpisodicItem[];
+  dreams: EpisodicItem[];
+  curiosity: EpisodicItem[];
+  aiIngestor: EpisodicItem[];
+  audio: EpisodicItem[];
+  pruned: EpisodicItem[];
+  activeTotal: number;
 }
 
-function listEpisodic(profilePaths: ReturnType<typeof getProfilePaths>, username: string, limit?: number): EpisodicItem[] {
-  // Get the configured index path from vector-index.ts (respects embedding model settings)
-  const configuredIndexPath = indexFilePath(undefined, username);
+const REFLECTION_TYPES = new Set(['reflection', 'reflection_summary']);
+const DREAM_TYPES = new Set(['dream', 'daydream']);
+const CURIOSITY_TYPES = new Set(['curiosity', 'curiosity_question']);
 
-  let idx: { meta: any; data: any[] } | null = null;
-  let usedIndexPath: string | null = null;
+function normalizedType(item: EpisodicItem): string {
+  return (item.type || '').trim().toLowerCase();
+}
 
-  // Try the configured index first
+function normalizedTags(item: EpisodicItem): Set<string> {
+  return new Set((item.tags || []).map(tag => tag.trim().toLowerCase()));
+}
+
+function normalizedDialogueSource(item: EpisodicItem): string {
+  const source = item.metadata?.dialogueSource;
+  return typeof source === 'string' ? source.trim().toLowerCase() : '';
+}
+
+function isReflectionMemory(item: EpisodicItem): boolean {
+  const type = normalizedType(item);
+  if (REFLECTION_TYPES.has(type)) return true;
+  if (type !== 'inner_dialogue') return false;
+
+  const tags = normalizedTags(item);
+  const source = normalizedDialogueSource(item);
+  return source === 'reflector'
+    || source === 'reflection'
+    || tags.has('reflection')
+    || tags.has('self-reflection');
+}
+
+function isCuriosityMemory(item: EpisodicItem): boolean {
+  const type = normalizedType(item);
+  if (CURIOSITY_TYPES.has(type)) return true;
+  if (type !== 'inner_dialogue') return false;
+
+  const tags = normalizedTags(item);
+  const source = normalizedDialogueSource(item);
+  return source === 'curiosity'
+    || source === 'inner-curiosity'
+    || tags.has('curiosity')
+    || tags.has('inner-curiosity')
+    || tags.has('self-directed-question');
+}
+
+function isAiIngestorMemory(item: EpisodicItem): boolean {
+  const tags = normalizedTags(item);
+  return tags.has('ingested')
+    || tags.has('ai')
+    || (item.links || []).some(link => link.type === 'source');
+}
+
+function isAudioMemory(item: EpisodicItem): boolean {
+  const type = normalizedType(item);
+  const tags = normalizedTags(item);
+  return type === 'audio' || tags.has('audio') || tags.has('transcript');
+}
+
+function sortNewestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
+  return items.sort((a, b) => (a.timestamp || '') < (b.timestamp || '') ? 1 : -1);
+}
+
+function limited<T>(items: T[], limit?: number): T[] {
+  return limit ? items.slice(0, limit) : items;
+}
+
+function episodicItemFromFile(profileRoot: string, fullPath: string): EpisodicItem | null {
   try {
-    if (fs.existsSync(configuredIndexPath)) {
-      idx = JSON.parse(fs.readFileSync(configuredIndexPath, 'utf8'));
-      usedIndexPath = configuredIndexPath;
-      console.log(`[memories_all] Using configured index: ${path.basename(configuredIndexPath)} (${idx?.data?.length || 0} items)`);
-    }
-  } catch (err) {
-    console.warn(`[memories_all] Failed to load configured index:`, err);
+    const obj = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    if (!obj?.id || !obj?.timestamp || typeof obj.content !== 'string') return null;
+
+    return {
+      id: obj.id,
+      timestamp: obj.timestamp,
+      content: obj.content,
+      type: obj.type,
+      tags: Array.isArray(obj.tags) ? obj.tags : [],
+      entities: Array.isArray(obj.entities) ? obj.entities : [],
+      links: Array.isArray(obj.links) ? obj.links : [],
+      relPath: 'profile:' + path.relative(profileRoot, fullPath),
+      validation: obj.validation || undefined,
+      metadata: obj.metadata || undefined,
+    };
+  } catch {
+    return null;
   }
+}
 
-  // If configured index doesn't exist or is empty, scan for any available index
-  if (!idx || !idx.data || idx.data.length === 0) {
-    console.log('[memories_all] Configured index not found or empty, scanning for available indices...');
+/**
+ * Scan every persisted episodic category once, including current dated trees
+ * and nested _pruned directories, then partition records by stored type/tags.
+ */
+export function scanEpisodicInventory(
+  profileRoot: string,
+  episodicRoot: string,
+  limit?: number,
+): EpisodicInventory {
+  const active: EpisodicItem[] = [];
+  const pruned: EpisodicItem[] = [];
+  const seenIds = new Set<string>();
 
-    try {
-      const indexDir = profilePaths.indexDir;
-      if (fs.existsSync(indexDir)) {
-        const files = fs.readdirSync(indexDir).filter(f => f.startsWith('embeddings-') && f.endsWith('.json'));
+  const walk = (directory: string): void => {
+    if (!fs.existsSync(directory)) return;
 
-        for (const file of files) {
-          const indexPath = path.join(indexDir, file);
-          try {
-            const candidate = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-            const itemCount = candidate?.data?.length || 0;
-            console.log(`[memories_all] Found index: ${file} (${itemCount} items)`);
-
-            // Use the index with the most items
-            if (itemCount > (idx?.data?.length || 0)) {
-              idx = candidate;
-              usedIndexPath = indexPath;
-            }
-          } catch (err) {
-            console.warn(`[memories_all] Failed to load ${file}:`, err);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[memories_all] Failed to scan index directory:', err);
-    }
-  }
-
-  if (usedIndexPath) {
-    console.log(`[memories_all] Selected index: ${path.basename(usedIndexPath)} (${idx?.data?.length || 0} items)`);
-  } else {
-    console.warn('[memories_all] No vector index found, falling back to filesystem scan');
-  }
-
-  if (idx && idx.data && idx.data.length > 0) {
-    const items: EpisodicItem[] = idx.data
-      .filter((item: any) => item.type === 'episodic')
-      .map((item: any) => {
-        const textParts = item.text.split(' Tags:');
-        const contentPart = textParts[0];
-        const tagsAndEntities = textParts[1] || '';
-
-        const tagsMatch = tagsAndEntities.match(/^([^]*?) Entities:/);
-        const tags = tagsMatch
-          ? tagsMatch[1].trim().split(/\s+/).filter(Boolean)
-          : tagsAndEntities.trim().split(/\s+/).filter(Boolean);
-
-        const entitiesMatch = tagsAndEntities.match(/Entities:([^]*?)$/);
-        const entities = entitiesMatch
-          ? entitiesMatch[1].trim().split(/\s+/).filter(Boolean)
-          : [];
-
-        // Compute relPath relative to profile root (handles custom external storage)
-        // IMPORTANT: Always use profile: prefix so paths resolve to the user's actual profile location
-        // This handles the case where index contains old paths but files have been moved
-        const itemPath = item.path;
-        let relPath: string;
-
-        if (itemPath.startsWith(profilePaths.root)) {
-          // Path is already in current profile location
-          relPath = 'profile:' + path.relative(profilePaths.root, itemPath);
-        } else {
-          // Path is from old location (e.g., ROOT/profiles/username/...)
-          // Extract the portion after profiles/username/ and make it relative to current profile
-          const oldDefaultProfileRoot = path.join(ROOT, 'profiles', username);
-          if (itemPath.startsWith(oldDefaultProfileRoot)) {
-            // Convert old path to profile-relative path
-            const relativePart = path.relative(oldDefaultProfileRoot, itemPath);
-            relPath = 'profile:' + relativePart;
-          } else {
-            // Unknown path format - try to extract meaningful relative path
-            relPath = 'profile:' + path.relative(profilePaths.root, itemPath);
-          }
-        }
-
-        return {
-          id: item.id,
-          timestamp: item.timestamp || '',
-          content: contentPart,
-          type: extractTypeFromFile(item.path),
-          tags,
-          entities,
-          links: [],
-          relPath,
-          validation: undefined,
-        };
-      })
-      .sort((a: any, b: any) => (a.timestamp < b.timestamp ? 1 : -1));
-
-    return limit ? items.slice(0, limit) : items;
-  }
-
-  // Fallback to filesystem scan
-  const items: EpisodicItem[] = [];
-
-  if (!fs.existsSync(profilePaths.episodic)) return items;
-
-  const walkDirectory = (dir: string): void => {
-    if (!fs.existsSync(dir) || (limit && items.length >= limit)) return;
-
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (limit && items.length >= limit) break;
-
-      const fullPath = path.join(dir, entry.name);
-
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        walkDirectory(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const raw = fs.readFileSync(fullPath, 'utf8');
-          const obj = JSON.parse(raw);
-          if (obj && obj.id && obj.timestamp && obj.content) {
-            // Use profile: prefix for paths relative to profile root
-            const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
-            items.push({
-              id: obj.id,
-              timestamp: obj.timestamp,
-              content: obj.content,
-              type: obj.type,
-              tags: obj.tags || [],
-              entities: Array.isArray(obj.entities) ? obj.entities : [],
-              links: Array.isArray(obj.links) ? obj.links : [],
-              relPath,
-              validation: obj.validation || undefined,
-            });
-          }
-        } catch {}
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+
+      const item = episodicItemFromFile(profileRoot, fullPath);
+      if (!item || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+
+      const relativeParts = path.relative(episodicRoot, fullPath).split(path.sep);
+      if (relativeParts.includes('_pruned')) {
+        pruned.push(item);
+      } else {
+        active.push(item);
       }
     }
   };
 
-  walkDirectory(profilePaths.episodic);
-  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-  return items;
+  walk(episodicRoot);
+  sortNewestFirst(active);
+  sortNewestFirst(pruned);
+
+  const activeWindow = limited(active, limit);
+  const reflections = activeWindow.filter(item => isReflectionMemory(item) && !isCuriosityMemory(item));
+  const dreams = activeWindow.filter(item => DREAM_TYPES.has(normalizedType(item)));
+  const curiosity = activeWindow.filter(isCuriosityMemory);
+  const aiIngestor = activeWindow.filter(isAiIngestorMemory);
+  const audio = activeWindow.filter(isAudioMemory);
+  const episodic = activeWindow.filter(item => {
+    const type = normalizedType(item);
+    return !isReflectionMemory(item)
+      && !DREAM_TYPES.has(type)
+      && !isCuriosityMemory(item)
+      && !isAiIngestorMemory(item)
+      && !isAudioMemory(item);
+  });
+
+  return {
+    episodic,
+    reflections,
+    dreams,
+    curiosity,
+    aiIngestor,
+    audio,
+    pruned: limited(pruned, limit),
+    activeTotal: active.length,
+  };
 }
 
-function listActiveTasks(profilePaths: ReturnType<typeof getProfilePaths>): TaskItem[] {
-  const dir = path.join(profilePaths.tasks, 'active');
-  const out: TaskItem[] = [];
-  if (!fs.existsSync(dir)) return out;
+function listActiveTasks(profileRoot: string, tasksRoot: string): TaskItem[] {
+  const directory = path.join(tasksRoot, 'active');
+  if (!fs.existsSync(directory)) return [];
 
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.json')) continue;
+  const tasks: TaskItem[] = [];
+  for (const filename of fs.readdirSync(directory)) {
+    if (!filename.endsWith('.json')) continue;
     try {
-      const full = path.join(dir, f);
-      const obj = JSON.parse(fs.readFileSync(full, 'utf8'));
-      out.push({
+      const fullPath = path.join(directory, filename);
+      const obj = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      tasks.push({
         id: obj.id,
         title: obj.title,
         status: obj.status,
         priority: obj.priority,
         updated: obj.updated,
-        relPath: 'profile:' + path.relative(profilePaths.root, full),
+        relPath: 'profile:' + path.relative(profileRoot, fullPath),
       });
     } catch {}
   }
-  out.sort((a, b) => (a.updated && b.updated && a.updated < b.updated ? 1 : -1));
-  return out;
+
+  return tasks.sort((a, b) => (a.updated || '') < (b.updated || '') ? 1 : -1);
 }
 
-function listCurated(profilePaths: ReturnType<typeof getProfilePaths>): CuratedItem[] {
-  const roots = [profilePaths.semantic, profilePaths.procedural];
-  const out: CuratedItem[] = [];
+/** Load the JSON records written by curated_memory_saver. */
+export function listCuratedConversations(profileRoot: string, memoryRoot: string): CuratedItem[] {
+  const directory = path.join(memoryRoot, 'curated', 'conversations');
+  if (!fs.existsSync(directory)) return [];
 
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
-    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      const full = path.join(root, entry.name);
-      if (entry.isDirectory()) {
-        for (const e2 of fs.readdirSync(full, { withFileTypes: true })) {
-          const fp = path.join(full, e2.name);
-          if (e2.isFile() && (fp.endsWith('.md') || fp.endsWith('.mdx') || fp.endsWith('.txt'))) {
-            out.push({ name: e2.name, relPath: 'profile:' + path.relative(profilePaths.root, fp) });
-          }
-        }
-      } else if (entry.isFile() && (full.endsWith('.md') || full.endsWith('.mdx') || full.endsWith('.txt'))) {
-        out.push({ name: entry.name, relPath: 'profile:' + path.relative(profilePaths.root, full) });
-      }
-    }
-  }
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
-}
-
-/**
- * List pruned memories from _pruned subdirectories
- */
-function listPrunedMemories(profilePaths: ReturnType<typeof getProfilePaths>): EpisodicItem[] {
-  const items: EpisodicItem[] = [];
-  const episodicDir = profilePaths.episodic;
-
-  if (!fs.existsSync(episodicDir)) return items;
-
-  // Walk year directories looking for _pruned folders
-  const years = fs.readdirSync(episodicDir).filter(d => {
-    const full = path.join(episodicDir, d);
-    return fs.statSync(full).isDirectory() && /^\d{4}$/.test(d);
-  });
-
-  for (const year of years) {
-    const prunedDir = path.join(episodicDir, year, '_pruned');
-    if (!fs.existsSync(prunedDir)) continue;
-
-    const files = fs.readdirSync(prunedDir).filter(f => f.endsWith('.json'));
-
-    for (const file of files) {
-      const fullPath = path.join(prunedDir, file);
-      try {
-        const raw = fs.readFileSync(fullPath, 'utf8');
-        const obj = JSON.parse(raw);
-        if (obj && obj.id && obj.timestamp && obj.content) {
-          const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
-          items.push({
-            id: obj.id,
-            timestamp: obj.timestamp,
-            content: obj.content,
-            type: obj.type || 'pruned',
-            tags: obj.tags || [],
-            entities: Array.isArray(obj.entities) ? obj.entities : [],
-            links: Array.isArray(obj.links) ? obj.links : [],
-            relPath,
-            validation: obj.validation || undefined,
-          });
-        }
-      } catch {
-        // Skip invalid files
-      }
-    }
+  const items: CuratedItem[] = [];
+  for (const filename of fs.readdirSync(directory)) {
+    if (!filename.endsWith('.json')) continue;
+    try {
+      const fullPath = path.join(directory, filename);
+      const obj = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      const name = obj.conversationalEssence || obj.userMessage || filename;
+      items.push({
+        name,
+        relPath: 'profile:' + path.relative(profileRoot, fullPath),
+        timestamp: obj.curatedAt || obj.originalTimestamp,
+      });
+    } catch {}
   }
 
-  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-  return items;
+  return sortNewestFirst(items);
 }
 
-function listCuriosityQuestions(profilePaths: ReturnType<typeof getProfilePaths>): CuriosityQuestion[] {
-  const out: CuriosityQuestion[] = [];
-  const questionsDir = path.join(profilePaths.curiosity, 'questions');
-
-  if (!fs.existsSync(questionsDir)) return out;
-
-  const dirs = [
-    { dir: path.join(questionsDir, 'pending'), status: 'pending' as const },
-    { dir: path.join(questionsDir, 'answered'), status: 'answered' as const },
+export function listCuriosityQuestions(profileRoot: string, stateRoot: string): CuriosityQuestion[] {
+  const questionsRoot = path.join(stateRoot, 'curiosity', 'questions');
+  const questions: CuriosityQuestion[] = [];
+  const directories = [
+    { directory: path.join(questionsRoot, 'pending'), status: 'pending' as const },
+    { directory: path.join(questionsRoot, 'answered'), status: 'answered' as const },
   ];
 
-  for (const { dir, status } of dirs) {
-    if (!fs.existsSync(dir)) continue;
-
-    for (const file of fs.readdirSync(dir)) {
-      if (!file.endsWith('.json')) continue;
-
+  for (const { directory, status } of directories) {
+    if (!fs.existsSync(directory)) continue;
+    for (const filename of fs.readdirSync(directory)) {
+      if (!filename.endsWith('.json')) continue;
       try {
-        const fullPath = path.join(dir, file);
-        const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-
-        out.push({
-          id: content.id,
-          question: content.question,
-          askedAt: content.askedAt,
+        const fullPath = path.join(directory, filename);
+        const obj = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+        questions.push({
+          id: obj.id,
+          question: obj.question,
+          askedAt: obj.askedAt,
           status,
-          relPath: 'profile:' + path.relative(profilePaths.root, fullPath),
-          seedMemories: content.seedMemories,
-          answeredAt: content.answeredAt,
+          relPath: 'profile:' + path.relative(profileRoot, fullPath),
+          seedMemories: obj.seedMemories,
+          answeredAt: obj.answeredAt,
         });
-      } catch (err) {
-        console.warn(`Failed to load curiosity question ${file}:`, err);
-      }
+      } catch {}
     }
   }
 
-  out.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime());
-  return out;
+  return questions.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime());
 }
 
-/**
- * Scan a specific directory for all memories (no type filtering).
- * Used for categorized directories where all files are of the expected type.
- */
-function scanDirectoryForMemories(
-  profilePaths: ReturnType<typeof getProfilePaths>,
-  directory: string,
-  limit?: number
-): EpisodicItem[] {
-  const items: EpisodicItem[] = [];
-  const seenIds = new Set<string>();
+export function mergeCuriosityQuestions(
+  persistedQuestions: CuriosityQuestion[],
+  curiosityMemories: EpisodicItem[],
+): CuriosityQuestion[] {
+  const questions = [...persistedQuestions];
+  const seenText = new Set(
+    persistedQuestions.map(item => item.question.trim().toLowerCase()).filter(Boolean),
+  );
 
-  if (!fs.existsSync(directory)) return items;
+  for (const memory of curiosityMemories) {
+    const normalizedQuestion = memory.content.trim().toLowerCase();
+    if (!normalizedQuestion || seenText.has(normalizedQuestion)) continue;
+    seenText.add(normalizedQuestion);
+    questions.push({
+      id: memory.id,
+      question: memory.content,
+      askedAt: memory.timestamp,
+      status: 'recorded',
+      relPath: memory.relPath,
+    });
+  }
 
-  const walkDirectory = (dir: string): void => {
-    if (!fs.existsSync(dir) || (limit && items.length >= limit)) return;
-
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (limit && items.length >= limit) break;
-
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        // Skip _pruned directories
-        if (entry.name !== '_pruned') {
-          walkDirectory(fullPath);
-        }
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const raw = fs.readFileSync(fullPath, 'utf8');
-          const obj = JSON.parse(raw);
-
-          if (obj && obj.id && !seenIds.has(obj.id)) {
-            seenIds.add(obj.id);
-            const relPath = 'profile:' + path.relative(profilePaths.root, fullPath);
-            items.push({
-              id: obj.id,
-              timestamp: obj.timestamp || '',
-              content: obj.content || '',
-              type: obj.type,
-              tags: obj.tags || [],
-              entities: Array.isArray(obj.entities) ? obj.entities : [],
-              links: Array.isArray(obj.links) ? obj.links : [],
-              relPath,
-              validation: obj.validation || undefined,
-              metadata: obj.metadata || undefined, // Include metadata for displayColor, dialogueSource, etc.
-            });
-          }
-        } catch {
-          // Skip files that can't be read
-        }
-      }
-    }
-  };
-
-  walkDirectory(directory);
-  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-  return items;
+  return questions.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime());
 }
 
-/**
- * GET /api/memories/all - Get all memory types for browser
- */
+/** GET /api/memories_all - Get all memory types for the Persona Memory browser. */
 export async function handleGetAllMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
   if (!req.user.isAuthenticated) {
     return unauthorizedResponse('Authentication required. Please log in to view memories.');
   }
 
-  // Check security policy
   const policy = getSecurityPolicy({ username: req.user.username });
   if (!policy.canReadMemory) {
     return forbiddenResponse('Access not permitted. Please log in to view memories.');
@@ -454,49 +333,34 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
 
   try {
     const profilePaths = getProfilePaths(req.user.username);
-
-    // Parse limit from query (0 = no limit, max 10000 for safety)
-    const requestedLimit = parseInt(req.query?.limit || '500');
-    const limit = requestedLimit === 0 ? undefined : Math.min(requestedLimit, 10000);
-
-    const episodic = listEpisodic(profilePaths, req.user.username, limit);
-
-    // Scan the dedicated categorized directories for reflections and dreams
-    // These are stored in episodic/reflections/ and episodic/dreams/ subdirectories
-    const reflectionsDir = path.join(profilePaths.episodic, 'reflections');
-    const dreamsDir = path.join(profilePaths.episodic, 'dreams');
-
-    const reflections = scanDirectoryForMemories(profilePaths, reflectionsDir, limit);
-    const dreams = scanDirectoryForMemories(profilePaths, dreamsDir, limit);
-
-    // Reflection types for filtering episodic memories
-    const reflectionTypes = ['reflection', 'reflection_summary', 'inner_dialogue'];
-
-    // Episodic excludes reflections and dreams (shown in their own tabs)
-    const episodicFiltered = episodic.filter(item =>
-      !reflectionTypes.includes(item.type || '') && item.type !== 'dream'
-    );
-
-    const tasks = listActiveTasks(profilePaths);
-    const curated = listCurated(profilePaths);
-    const curiosityQuestions = listCuriosityQuestions(profilePaths);
-    const pruned = listPrunedMemories(profilePaths);
+    const requestedLimit = Number.parseInt(req.query?.limit || '500', 10);
+    const limit = requestedLimit === 0
+      ? undefined
+      : Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 10_000)
+        : 500;
+    const inventory = scanEpisodicInventory(profilePaths.root, profilePaths.episodic, limit);
 
     return successResponse({
-      episodic: episodicFiltered,
-      reflections,
-      dreams,
-      tasks,
-      curated,
-      curiosityQuestions,
-      pruned,
+      episodic: inventory.episodic,
+      reflections: inventory.reflections,
+      dreams: inventory.dreams,
+      aiIngestor: inventory.aiIngestor,
+      audio: inventory.audio,
+      pruned: inventory.pruned,
+      tasks: listActiveTasks(profilePaths.root, profilePaths.tasks),
+      curated: listCuratedConversations(profilePaths.root, profilePaths.memory),
+      curiosityQuestions: mergeCuriosityQuestions(
+        listCuriosityQuestions(profilePaths.root, profilePaths.state),
+        inventory.curiosity,
+      ),
       pagination: {
         limit,
-        returned: episodic.length,
-        hasMore: episodic.length === limit,
+        returned: limit ? Math.min(inventory.activeTotal, limit) : inventory.activeTotal,
+        hasMore: Boolean(limit && inventory.activeTotal > limit),
       },
     });
-  } catch (err) {
-    return errorResponse((err as Error).message, 500);
+  } catch (error) {
+    return errorResponse((error as Error).message, 500);
   }
 }

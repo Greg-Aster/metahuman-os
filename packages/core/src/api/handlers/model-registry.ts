@@ -455,7 +455,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         // Remote server model - runtime discovery from connected remote server
         // ID format: remote-server:remote-ollama-modelname or remote-server:remote-vllm-modelname
         const remoteId = modelId.replace(/^remote-server:/, '');
-        // Extract model name: remote-ollama-qwen3:14b -> qwen3:14b
+        // Extract model name: remote-ollama-qwen3.5:9b -> qwen3.5:9b
         const modelName = remoteId.replace(/^remote-(ollama|vllm)-/, '');
         const remoteProvider = remoteId.startsWith('remote-ollama') ? 'remote-ollama' : 'remote-vllm';
 

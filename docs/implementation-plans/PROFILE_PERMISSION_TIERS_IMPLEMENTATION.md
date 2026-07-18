@@ -12,7 +12,7 @@ Implemented a comprehensive three-tier permission system for MetaHuman OS that e
 
 ## Permission Tiers Implemented
 
-### 1. Owner/Admin (Full Access)
+### 1. Owner (Full Access)
 - **File Access:** All profiles, system code, documentation
 - **Capabilities:**
   - Create/delete any user profile
@@ -20,7 +20,7 @@ Implemented a comprehensive three-tier permission system for MetaHuman OS that e
   - Edit documentation (`docs/`)
   - Access all profile directories
   - Full operator and training access
-- **Configuration:** Set via `ADMIN_USERS` environment variable
+- **Configuration:** Persisted as the account's `owner` role
 
 ### 2. Standard User (Own Profile Access)
 - **File Access:** Own profile directory only + read-only docs
@@ -84,24 +84,24 @@ export interface SecurityPolicy {
 ```typescript
 // Docs access
 canReadDocs: true, // All users can read docs
-canWriteDocs: isAdmin, // Only admins can write docs
+canWriteDocs: isOwner, // Only the owner can write docs
 
 // Profile access (function-based checks)
 canReadProfile: (targetUsername: string) => {
-  if (isAdmin) return true;
+  if (isOwner) return true;
   if (role === 'anonymous' || role === 'guest') return false;
   return targetUsername === username; // Standard users: own profile only
 },
 
 canWriteProfile: (targetUsername: string) => {
-  if (isAdmin) return true;
+  if (isOwner) return true;
   if (role === 'anonymous' || role === 'guest') return false;
   if (role === 'standard') return targetUsername === username;
   return targetUsername === username;
 },
 
 // System configs
-canAccessSystemConfigs: isAdmin || role === 'owner',
+canAccessSystemConfigs: isOwner,
 ```
 
 #### Enhanced requireFileAccess()
@@ -238,7 +238,7 @@ const { username, password, displayName, email, role = 'standard' } = body;
 #### Added Permission Tiers Section
 - Comprehensive role descriptions with capabilities
 - Path-based access control examples
-- Administrator privileges documentation
+- Owner privileges documentation
 - Security error reference
 - Operator & skills integration details
 
@@ -249,7 +249,7 @@ const { username, password, displayName, email, role = 'standard' } = body;
    - Documentation access control
    - System configuration restrictions
    - Operator & skills access
-   - Administrator privileges
+   - Owner privileges
    - Security error messages
 
 ---
@@ -258,10 +258,9 @@ const { username, password, displayName, email, role = 'standard' } = body;
 
 ### Manual Test Scenarios
 
-#### Scenario 1: Admin Full Access
+#### Scenario 1: Owner Full Access
 **Setup:**
 ```bash
-export ADMIN_USERS="greggles"
 # Log in as greggles (owner role)
 ```
 
@@ -429,10 +428,10 @@ Multiple layers of protection:
 3. Skill-level enforcement (each skill checks policy)
 4. API middleware (auth + permission checks)
 
-### 4. Admin vs Owner
-- **Owner role:** User account type with elevated privileges
-- **Admin status:** Configured via `ADMIN_USERS` env var, can be any role
-- An admin with "standard" role has full filesystem access
+### 4. Single Owner Authority
+- The persisted `owner` role is the only full-system authority.
+- Standard users can manage only their own profile data.
+- There is no separate administrator status or username allowlist.
 
 ---
 
@@ -452,13 +451,8 @@ POST /api/profiles/create
 }
 ```
 
-### Administrator Setup
-Add to environment or `.env`:
-```bash
-ADMIN_USERS="greggles,alice"
-```
-
-Then restart the application.
+### Owner Setup
+The owner role is stored with the user account and does not require a separate environment setting.
 
 ---
 

@@ -6,7 +6,7 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { audit } from '../../audit.js';
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   const data = inputs.data ?? inputs[0];
   const category = properties?.category ?? 'agent';
   const event = properties?.event ?? 'node_execution';
@@ -17,8 +17,12 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
       category,
       level,
       event,
-      actor: 'cognitive-graph',
-      details: typeof data === 'object' ? data : { value: data },
+      actor: context.username || context.userId || 'cognitive-graph',
+      details: {
+        ...(Object.keys(inputs).length > 0 ? inputs : { value: data }),
+        cognitiveMode: context.cognitiveMode,
+        sessionId: context.sessionId,
+      },
     });
 
     return {
@@ -41,6 +45,7 @@ export const AuditLoggerNode: NodeDefinition = defineNode({
   category: 'cognitive',
   inputs: [
     { name: 'data', type: 'any', description: 'Data to log' },
+    { name: 'status', type: 'any', optional: true, description: 'Additional completion status' },
   ],
   outputs: [
     { name: 'success', type: 'boolean', description: 'Whether logging succeeded' },

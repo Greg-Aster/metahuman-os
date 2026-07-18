@@ -150,6 +150,7 @@
   }
 
   async function loadTrustLevel() {
+    if (!$isOwner) return;
     try {
       const res = await apiFetch('/api/trust');
       if (res.ok) {
@@ -218,6 +219,7 @@
   }
 
   async function updateTrustLevel(newLevel: string) {
+    if (!$isOwner) return;
     try {
       const res = await apiFetch('/api/trust', {
         method: 'POST',
@@ -431,4 +433,3 @@
     {/if}
   </div>
 {/if}
-

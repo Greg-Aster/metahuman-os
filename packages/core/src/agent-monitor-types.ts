@@ -1,3 +1,5 @@
+import type { EnvironmentBridgeDiagnosticsSnapshot } from './environment-interface/diagnostics.js';
+
 export interface AgentStatus {
   name: string;
   pid?: number;
@@ -110,6 +112,7 @@ export interface AgentDataPanel {
   variables: AgentVariableDescriptor[];
   logs: AgentLog[];
   errors: AgentError[];
+  diagnostics?: EnvironmentBridgeDiagnosticsSnapshot;
 }
 
 export interface AgentMonitorSnapshot {

@@ -32,6 +32,9 @@ export * as agencyConfig from './config.js';
 // Question generation service
 export * from './desire-questions.js';
 
+// Long-running goal check-in service
+export * from './desire-checkin.js';
+
 // Executor (graph-based execution) - exclude clearGraphCache (conflicts with graph-streaming)
 export {
   type DesireExecutionProgress,

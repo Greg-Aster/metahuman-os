@@ -228,11 +228,11 @@ mh user list
 mh user info <username>
 ```
 
-### Admin Privileges
+### Owner Privileges
 
 - Only **owner** users can perform administrative functions
-- Admin functions include managing other users, system configuration files, and cross-user operations
-- These privileges are determined by the `ADMIN_USERS` environment variable
+- Owner functions include managing other users, system configuration files, and cross-user operations
+- These privileges are determined solely by the account's `owner` role
 - Regular users are restricted to their own profile data and cannot access other users' files
 
 ---
@@ -711,7 +711,7 @@ cat profiles/bob/persona/core.json  # ❌ Permission denied
   - Implementation plans: `docs/implementation-plans/*.md`
   - Architecture docs: `docs/*.md`
 
-**Only admins/owners:**
+**Owner only:**
 - ✅ **Can write:** `docs/` directory
   - Edit documentation
   - Add new guides
@@ -722,7 +722,7 @@ cat profiles/bob/persona/core.json  # ❌ Permission denied
 
 #### 3. System Configuration Access
 
-**Admins/Owners only:**
+**Owner only:**
 - ✅ **Can access:** Root-level configs
   - `etc/models.json` - System-wide model registry
   - `etc/training.json` - Global training settings
@@ -740,39 +740,27 @@ Permission enforcement extends to the operator's filesystem skills:
 **fs_read skill:**
 - Checks profile ownership before reading profile files
 - Allows docs access for all users
-- Blocks system file reads for non-admins
+- Blocks system file reads for non-owners
 
 **fs_write skill:**
 - Enforces profile ownership for writes
-- Blocks documentation writes for non-admins
+- Blocks documentation writes for non-owners
 - Validates system config access
 
 **fs_list skill:**
 - Filters directory listings by permissions
 - Hides inaccessible profiles from standard users
 
-### Administrator Privileges
+### Owner Privileges
 
-**Setting Admin Users:**
+Owner authority comes directly from the persisted `owner` role. There is no separate administrator list or administrator status.
 
-Admins are configured via the `ADMIN_USERS` environment variable:
-
-```bash
-# Single admin
-export ADMIN_USERS="greggles"
-
-# Multiple admins (comma-separated)
-export ADMIN_USERS="greggles,alice,bob"
-```
-
-**Admin capabilities:**
+**Owner capabilities:**
 - Full filesystem access (all profiles, system code)
 - Can edit system-level configurations
 - Can modify documentation
 - Can create/delete any profile
 - Bypasses all path-based restrictions
-
-**Important:** Admin status is separate from user role. A "standard" user can be an admin if listed in `ADMIN_USERS`.
 
 ### Security Errors
 
@@ -796,7 +784,7 @@ Security check failed: Cannot edit system code
 **Role requirements:**
 ```
 Owner role required
-Administrator privileges required
+Owner role required
 ```
 
 These errors are logged to the audit trail for security monitoring.

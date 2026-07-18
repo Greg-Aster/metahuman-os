@@ -14,7 +14,7 @@ The fine-tuning pipeline now **fully integrates with RunPod** for remote GPU tra
 |--------|----------------|---------------------|
 | **Training script** | `train_unsloth.py` | `train_full_finetune.py` |
 | **Training mode** | `training_mode: "lora"` | `training_mode: "full_finetune"` |
-| **GPU required** | 16GB (RTX 4090) | 40-80GB (A100) |
+| **GPU required** | 24GB-class | 80GB recommended (A100/H100) |
 | **Training time** | 30-60 min | 2-6 hours |
 | **Learning rate** | 2e-4 | 5e-6 (much lower) |
 | **Output** | Adapter weights | Full model |
@@ -48,17 +48,14 @@ cat ~/.ssh/runpod_ed25519.pub
 ### 2. GPU Selection
 
 For full fine-tuning, you need:
-- **Minimum**: 40GB VRAM (A100-40GB)
-- **Recommended**: 80GB VRAM (A100-80GB)
-- **Alternative**: Use 8-bit loading for 30B models (fits in 40GB)
+- **Recommended**: 80GB VRAM (A100-80GB or H100-80GB)
+- **Preflight**: validate the full model, gradients, optimizer, sequence length, and dataset footprint before launch
+- **Quantization**: full fine-tuning does not use 8-bit loading
 
 Update `.env`:
 ```bash
-# For Qwen3-30B full fine-tune
+# For Qwen 3.5 9B full fine-tune
 RUNPOD_GPU_TYPE=NVIDIA A100-SXM4-80GB
-
-# Or 40GB version (requires load_in_8bit: true in config)
-RUNPOD_GPU_TYPE=NVIDIA A100-PCIE-40GB
 ```
 
 ---
@@ -83,7 +80,7 @@ This validates:
 
 ```bash
 # Full fine-tune with all cognitive modes
-tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder:30b
+tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
 ```
 
 **What happens**:
@@ -140,9 +137,9 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 
 ```
 🔥 Stage 4/6: Full fine-tuning model...
-⏱️  Expected duration: 2-6 hours for 30B model
+⏱️  Expected duration: dataset and accelerator dependent
 
-[10:15:23] ▶️  MODEL_DOWNLOAD - 📥 Downloading unsloth/Qwen3-Coder-30B-A3B-Instruct
+[10:15:23] ▶️  MODEL_DOWNLOAD - 📥 Downloading Qwen/Qwen3.5-9B
 [10:18:45] ▶️  MODEL_DOWNLOAD - ✅ Model loaded in 3.4 minutes (100%)
 [10:18:50] ▶️  TRAINING - 🔥 Starting FULL fine-tuning: 3 epochs, ~486 steps
 [10:18:50] ▶️  TRAINING - Estimated time: 972-1944 minutes (2-4 sec/step)
@@ -167,7 +164,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 ```
 
 - Downloads full GGUF model from RunPod
-- Large file (~15-20GB for 30B model)
+- Large full-model artifact; size depends on precision and conversion format
 - Uses base64 streaming for reliability
 
 ### Stage 6: Cleanup (1 min)
@@ -190,7 +187,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 
 ```json
 {
-  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
 
   "learning_rate": 5e-6,
@@ -214,14 +211,14 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 **Key settings**:
 - `learning_rate`: **5e-6** (much lower than LoRA's 2e-4)
 - `gradient_accumulation_steps`: **32** (effective batch size = 32)
-- `load_in_8bit`: Set to `true` for 40GB GPUs (slight quality loss)
+- `load_in_8bit`: Must remain `false` for full fine-tuning
 
 ### Model-Specific Configs
 
-**Qwen3-30B** (recommended):
+**Qwen3.5-9B** (maintained):
 ```json
 {
-  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "base_model": "Qwen/Qwen3.5-9B",
   "bf16": true,
   "load_in_8bit": false
 }
@@ -268,7 +265,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder
 
 ```bash
 # Watch training progress in terminal
-tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder:30b
+tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
 ```
 
 Output shows:

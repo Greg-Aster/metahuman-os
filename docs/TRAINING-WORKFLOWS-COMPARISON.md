@@ -135,22 +135,23 @@ const FILLER_PHRASES: RegExp[] = [
 
 ## 🎯 Training Parameters
 
-**Both workflows use identical parameters from** [etc/training.json](../etc/training.json):
+**The workflows share maintained Qwen 3.5 parameters from** [etc/training.json](../etc/training.json) **and** [etc/training-local.json](../etc/training-local.json):
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| `base_model` | `unsloth/Qwen3-14B` | HuggingFace model ID |
+| `base_model` | `Qwen/Qwen3.5-9B` or `unsloth/Qwen3.5-9B` | Official full-training ID or Unsloth LoRA mirror |
 | `max_seq_length` | 2048 | ~1500 words context |
 | `lora_rank` | 8 | LoRA capacity (balanced) |
 | `lora_alpha` | 16 | LoRA scaling (2x rank) |
-| `lora_dropout` | 0.05 | Regularization |
+| `lora_dropout` | 0 | Maintained Qwen 3.5 recommendation |
 | `num_train_epochs` | 3 | Training epochs |
 | `learning_rate` | 0.0002 | 2e-4 (standard for LoRA) |
 | `per_device_train_batch_size` | 1 | Batch size per GPU |
 | `gradient_accumulation_steps` | 16 | Effective batch = 16 |
 | `optimizer` | `paged_adamw_8bit` | Memory-efficient optimizer |
 | `dtype` | `bfloat16` | Training precision |
-| `load_in_4bit` | true | 4-bit quantization for training |
+| `load_in_4bit` | false | QLoRA disabled for Qwen 3.5 |
+| `load_in_16bit` | true | Supported 16-bit LoRA path |
 | `use_gradient_checkpointing` | true | Save VRAM |
 
 **To change training settings:**
@@ -159,7 +160,7 @@ const FILLER_PHRASES: RegExp[] = [
 nano etc/training.json
 
 # Or override base model via env var
-export METAHUMAN_BASE_MODEL="unsloth/Qwen3-Coder-30B"
+export METAHUMAN_BASE_MODEL="unsloth/Qwen3.5-9B"
 ```
 
 ---
@@ -220,7 +221,7 @@ run-summary.json                         # Training summary
 | **Quality Metrics** | ✅ Calculated | ✅ Calculated | ✅ Calculated |
 | **Model Size** | 8.4GB (Q4_K_M) | 8.4GB (Q4_K_M) | 12GB (Q6_K) |
 | **Training Time** | ~30-45 min | ~30-45 min | ~45-60 min |
-| **VRAM Usage** | ~10-14GB (RunPod) | ~24GB (local) | ~10-14GB (RunPod) |
+| **VRAM Usage** | ~22GB plus overhead (RunPod) | ~22GB plus overhead (local) | Hardware-dependent, substantially higher |
 | **Requirements** | RunPod API key | Python + unsloth + CUDA | RunPod API key |
 | **Use Case** | Quick iterations | Local dev/testing | Production |
 | **Retraining** | Requires safetensors | Requires safetensors | Full model available |
@@ -303,7 +304,7 @@ pnpm tsx brain/agents/full-cycle-local.ts --username greggles
 pnpm tsx brain/agents/fine-tune-cycle.ts \\
   --username greggles \\
   --monthly \\
-  --base-model unsloth/Qwen3-14B
+  --base-model Qwen/Qwen3.5-9B
 
 # With custom parameters
 pnpm tsx brain/agents/fine-tune-cycle.ts \\

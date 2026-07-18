@@ -78,20 +78,20 @@ assert.deepEqual(
 )
 
 assert.equal(
-  getVllmLoraModelCompatibilityKey('unsloth/qwen3-14b-unsloth-bnb-4bit'),
-  'qwen3:14b',
+  getVllmLoraModelCompatibilityKey('unsloth/qwen3.5-9b-unsloth-bnb-4bit'),
+  'qwen3.5:9b',
 )
 assert.equal(
   isVllmLoraCompatibleWithModel(
-    'unsloth/qwen3-14b-unsloth-bnb-4bit',
-    'Qwen/Qwen3-14B-AWQ',
+    'unsloth/qwen3.5-9b-unsloth-bnb-4bit',
+    'Qwen/Qwen3.5-9B-AWQ',
   ),
   true,
 )
 assert.equal(
   isVllmLoraCompatibleWithModel(
-    'unsloth/qwen3-14b-unsloth-bnb-4bit',
-    'Qwen/Qwen3.5-9B',
+    'unsloth/qwen3.5-9b-unsloth-bnb-4bit',
+    'Qwen/Qwen3-8B',
   ),
   false,
 )

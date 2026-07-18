@@ -301,7 +301,7 @@ export async function handleListWindows(req: UnifiedRequest): Promise<UnifiedRes
 }
 
 /**
- * GET /api/window-session/stats - Get window session statistics (admin)
+ * GET /api/window-session/stats - Get window session statistics (owner)
  */
 export async function handleWindowStats(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user } = req;

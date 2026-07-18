@@ -14,21 +14,7 @@
   "globalSettings": {
     "includePersonaSummary": false,
     "useAdapter": false,
-    "activeAdapter": {
-      "modelName": "greggles-2025-11-25",
-      "activatedAt": "2025-11-25T20:35:05.136Z",
-      "adapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/adapter.gguf",
-      "dataset": "2025-11-25-193635-d7e4e1",
-      "date": "2025-11-25",
-      "modelfilePath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/Modelfile",
-      "status": "ready_for_ollama_load",
-      "activatedBy": "full-cycle",
-      "isDualAdapter": false,
-      "runLabel": "2025-11-25-193635-d7e4e1",
-      "trainingMethod": "remote",
-      "ggufAdapterPath": "/home/greggles/metahuman/profiles/greggles/out/adapters/2025-11-25/2025-11-25-193635-d7e4e1/adapter.gguf",
-      "baseModel": "unsloth/Qwen3-14B"
-    }
+    "activeAdapter": null
   },
   "defaults": {
     "orchestrator": "default.orchestrator",
@@ -44,7 +30,7 @@
   "models": {
     "default.orchestrator": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "orchestrator",
@@ -66,13 +52,13 @@
         "priority": "high",
         "alwaysLoaded": true,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Executive function - intelligent intent routing and tool selection"
       }
     },
     "default.persona": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "persona",
@@ -90,12 +76,12 @@
         "priority": "high",
         "alwaysLoaded": true,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3
+        "sizeGB": 6.6
       }
     },
     "default.curator": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "curator",
@@ -113,13 +99,13 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Memory curation - clean data extraction and training prep"
       }
     },
     "default.coder": {
       "provider": "ollama",
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "coder",
@@ -141,14 +127,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Code specialist - generation, review, debugging, refactoring",
         "specialization": "code"
       }
     },
     "default.planner": {
       "provider": "ollama",
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "planner",
@@ -166,14 +152,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
         "specialization": "planning"
       }
     },
     "default.summarizer": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "summarizer",
@@ -191,14 +177,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Summarization specialist - condensing documents, extracting key points",
         "specialization": "summarization"
       }
     },
     "default.fallback": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "fallback",
@@ -214,12 +200,12 @@
         "priority": "low",
         "alwaysLoaded": true,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3
+        "sizeGB": 6.6
       }
     },
     "default.psychotherapist": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "psychotherapist",
@@ -237,7 +223,7 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "medium",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Persona generation and psychological analysis"
       }
     },
@@ -364,33 +350,6 @@
         "purpose": "Cloud GPU inference for high-capability tasks"
       }
     },
-    "cloud.qwen3-14b": {
-      "provider": "runpod_serverless",
-      "model": "Qwen3-14B-Instruct",
-      "adapters": [],
-      "roles": [
-        "orchestrator",
-        "persona",
-        "summarizer",
-        "fallback"
-      ],
-      "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
-      "options": {
-        "contextWindow": 8192,
-        "temperature": 0.7,
-        "topP": 0.95,
-        "repeatPenalty": 1.1
-      },
-      "metadata": {
-        "priority": "medium",
-        "alwaysLoaded": false,
-        "estimatedLatency": "fast",
-        "source": "runpod-serverless",
-        "endpointTier": "14b",
-        "coldStartWarning": "First request may take 20-30s if GPU is cold",
-        "purpose": "Cloud GPU inference for general tasks"
-      }
-    },
     "big-brother.claude": {
       "provider": "claude-code",
       "model": "claude-sonnet-4",
@@ -434,6 +393,22 @@
         "estimatedLatency": "fast",
         "sizeGB": 0.14,
         "purpose": "Semantic embeddings for memory search and vector indexing"
+      }
+    },
+    "ollama.qwen3.5:9b": {
+      "provider": "ollama",
+      "model": "qwen3.5:9b",
+      "roles": [
+        "orchestrator",
+        "persona",
+        "planner",
+        "summarizer"
+      ],
+      "adapters": [],
+      "description": "Qwen3.5 9B - maintained local chat model",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
       }
     }
   },

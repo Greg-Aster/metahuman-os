@@ -2,7 +2,7 @@
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
   import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore, userDisplayNameStore } from '../stores/navigation';
-  import { fetchSecurityPolicy, policyStore, isReadOnly } from '../stores/security-policy';
+  import { clearSecurityPolicy, fetchSecurityPolicy, policyStore, isOwner, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import { startWindowSession, stopWindowSession, isMultiWindow, windowCount } from '../lib/client/window-session';
   import UserMenu from './UserMenu.svelte';
@@ -240,6 +240,7 @@
   async function handleLogout() {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
+      clearSecurityPolicy();
       window.location.href = '/';
     } catch (err) {
       console.error('[ChatLayout] Logout failed:', err);
@@ -300,9 +301,6 @@
     setVH();
     window.addEventListener('resize', setVH);
     window.addEventListener('orientationchange', setVH);
-
-    // NOTE: Boot call removed - AuthGate already calls /api/boot during auth check
-    // Agents are started by bin/run-with-agents script and boot endpoint is idempotent
 
     // NOTE: Automatic warmup removed - models are warmed individually when assigned
     // This prevents duplicate warmup requests and race conditions with Ollama
@@ -611,7 +609,9 @@
   </header>
 
   <!-- Headless Mode Claim Banner -->
-  <HeadlessClaimBanner />
+  {#if $isOwner}
+    <HeadlessClaimBanner />
+  {/if}
 
   {#if modeError}
     <div class="px-4 py-2 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/60">

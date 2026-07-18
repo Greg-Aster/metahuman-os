@@ -113,6 +113,32 @@ assert.ok(
   'Active Operator control must use explicit three-state mode changes',
 );
 
+for (const scriptPath of [
+  'scripts/start-active-operator.ts',
+  'scripts/stop-active-operator.ts',
+  'scripts/active-operator-status.ts',
+]) {
+  const script = source(scriptPath);
+  assert.ok(
+    script.includes('requestActiveOperator')
+      && !script.includes('ActiveOperatorServiceStatus')
+      && !script.includes('ActiveOperatorService('),
+    `Active Operator CLI must control the server-owned runtime: ${scriptPath}`,
+  );
+}
+
+const agencyHandler = source('packages/core/src/api/handlers/agency.ts');
+assert.ok(
+  agencyHandler.includes('submitCoordinatorWork')
+    && agencyHandler.includes("handler: 'agency.desire-checkin'")
+    && !agencyHandler.includes('/api/active-operator/queue'),
+  'desire check-ins must use a registered durable coordinator handler',
+);
+assert.ok(
+  source('packages/core/src/queue/execution-engine.ts').includes("registerHandler('agency.desire-checkin'"),
+  'desire check-in work must have one coordinator-owned executor',
+);
+
 assert.ok(
   !source('packages/core/src/environment-interface/store.ts').includes('queuedActions'),
   'environment state must not own an executable action queue',

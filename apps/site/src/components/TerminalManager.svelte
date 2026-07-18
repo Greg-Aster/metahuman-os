@@ -3,6 +3,8 @@
   import { bigBrotherTerminal, bigBrotherTerminalOpened } from '../stores/bigBrotherTerminal';
   import { apiFetch } from '../lib/client/api-config';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
+  import { get } from 'svelte/store';
+  import { isOwner } from '../stores/security-policy';
   import DebugDashboard from './DebugDashboard.svelte';
 
   interface TerminalTab {
@@ -22,6 +24,7 @@
   let servicesTabId: string | null = null;
   let eventBusTabId: string | null = null;
   let terminalEventsHandle: ConnectionHandle | null = null;
+  let terminalAccessError = '';
 
   // Subscribe to Big Brother terminal requests
   const unsubscribe = bigBrotherTerminal.subscribe(state => {
@@ -37,15 +40,24 @@
     isBigBrother?: boolean;
   }
 
-  async function fetchRunningTerminals(): Promise<RunningTerminal[]> {
+  async function fetchRunningTerminals(): Promise<RunningTerminal[] | null> {
     try {
       const response = await apiFetch('/api/terminal/list');
-      if (!response.ok) return [];
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        terminalAccessError = response.status === 403
+          ? 'Terminal access is limited to the system owner. Your account is still signed in and can use the rest of the portal.'
+          : data.error || 'Terminal service is unavailable.';
+        return null;
+      }
+
+      terminalAccessError = '';
       const data = await response.json();
       return data.terminals || [];
     } catch (error) {
       console.warn('[TerminalManager] Failed to fetch running terminals:', error);
-      return [];
+      terminalAccessError = 'Terminal service is unavailable.';
+      return null;
     }
   }
 
@@ -71,9 +83,10 @@
     return { title: `💻 Terminal ${index + 1}`, isServices: false, isBigBrother: false };
   }
 
-  async function discoverAndRestoreTerminals() {
+  async function discoverAndRestoreTerminals(): Promise<number | null> {
     // Fetch actually running terminals from the server
     const runningTerminals = await fetchRunningTerminals();
+    if (runningTerminals === null) return null;
 
     // Load saved tabs from localStorage for title/metadata restoration
     let savedTabs: TerminalTab[] = [];
@@ -245,8 +258,14 @@
   }
 
   onMount(async () => {
+    if (!get(isOwner)) {
+      terminalAccessError = 'Terminal access is limited to the system owner. Your account is still signed in and can use the rest of the portal.';
+      return;
+    }
+
     // Discover and restore all running terminals (including orphaned ones)
     const restoredCount = await discoverAndRestoreTerminals();
+    if (restoredCount === null) return;
 
     // If no terminals were found, create default ones
     if (restoredCount === 0) {
@@ -476,6 +495,14 @@
 </script>
 
 <div class="flex flex-col h-full w-full bg-black">
+  {#if terminalAccessError}
+    <div class="flex h-full items-center justify-center p-6 text-center" role="status">
+      <div class="max-w-md rounded-lg border border-amber-700/60 bg-amber-950/30 p-5 text-amber-200">
+        <div class="mb-2 text-sm font-semibold">Terminal unavailable</div>
+        <p class="m-0 text-xs leading-relaxed">{terminalAccessError}</p>
+      </div>
+    </div>
+  {:else}
   <!-- Tab Bar -->
   <div class="flex items-center bg-[#0a0a0a] border-b border-gray-800 px-1 gap-1 min-h-[24px] flex-shrink-0">
     <div class="tabs-list flex gap-0.5 flex-1 overflow-x-auto">
@@ -533,6 +560,7 @@
       </div>
     {/each}
   </div>
+  {/if}
 </div>
 
 <style>

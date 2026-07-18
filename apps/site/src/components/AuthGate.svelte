@@ -6,6 +6,7 @@
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
   import { runTriggerNow } from '../lib/stores/trigger-manager';
+  import { clearSecurityPolicy, fetchSecurityPolicy } from '../stores/security-policy';
 
   function storeSession(sessionId: string, username: string): void {
     if (!isMobileApp()) return;
@@ -38,11 +39,10 @@
     handlingAuthFailure = true;
     console.warn('[AuthGate] API auth failure detected:', detail);
     clearStoredSession();
+    clearSecurityPolicy();
     await clearServerSessionCookie();
 
-    error = detail?.status === 403
-      ? 'Your current session does not have permission for that action. Log in as the owner to continue.'
-      : 'Your session expired or became invalid. Please log in again.';
+    error = 'Your session expired or became invalid. Please log in again.';
     view = 'login';
     isAuthenticated = false;
     isCheckingAuth = false;
@@ -77,7 +77,6 @@
   let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = 'splash';
   let isAuthenticated = false;
   let isCheckingAuth = true;
-  let bootData: any = null;
   let error = '';
   let loading = false;
   let showProfileSelector = false;
@@ -128,6 +127,7 @@
         const data = await res.json();
         if (data.user) {
           console.log('[AuthGate] Auth successful for:', data.user.username);
+          await fetchSecurityPolicy();
           isAuthenticated = true;
           isCheckingAuth = false;
           return;
@@ -155,19 +155,8 @@
 
     // No authentication found - show login screen
     console.log('[AuthGate] No auth found, showing login screen');
+    clearSecurityPolicy();
     isCheckingAuth = false;
-  }
-
-  // Load boot data (persona info for splash)
-  async function loadBootData() {
-    try {
-      const res = await apiFetch('/api/boot');
-      if (res.ok) {
-        bootData = await res.json();
-      }
-    } catch (error) {
-      console.warn('Failed to load boot data (may be offline):', error);
-    }
   }
 
   // Handle login - IDENTICAL for web and mobile
@@ -708,7 +697,6 @@
     window.addEventListener('mh:api-auth-failure', handleApiAuthFailure);
     window.addEventListener('mh:api-action', handleApiAction);
     checkAuth();
-    loadBootData();
     return () => {
       window.removeEventListener('mh:api-auth-failure', handleApiAuthFailure);
       window.removeEventListener('mh:api-action', handleApiAction);
@@ -794,11 +782,7 @@
         <div class="text-center">
           <div class="mb-8">
             <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-blue-400 to-purple-400 flex items-center justify-center shadow-lg shadow-blue-400/40">
-              {#if bootData?.persona?.identity?.icon}
-                <img src={bootData.persona.identity.icon} alt="Logo" class="w-full h-full rounded-full object-cover" />
-              {:else}
-                <span class="text-4xl font-bold text-white">🧠💻</span>
-              {/if}
+              <span class="text-4xl font-bold text-white">🧠💻</span>
             </div>
             <h1 class="text-3xl font-bold m-0 mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent
                        [html:not(.dark)_&]:from-blue-600 [html:not(.dark)_&]:to-purple-600">MetaHuman OS</h1>

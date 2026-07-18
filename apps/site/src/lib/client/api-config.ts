@@ -130,22 +130,13 @@ export async function testServerConnection(url: string): Promise<{
   const start = Date.now();
 
   try {
-    const response = await fetch(`${url}/api/boot`, {
+    const response = await fetch(`${url}/api/app-info`, {
       method: 'GET',
       credentials: 'include',
       signal: AbortSignal.timeout(5000)  // 5 second timeout
     });
 
     const latencyMs = Date.now() - start;
-
-    // 401/403 means server IS reachable, just needs auth - treat as connected
-    if (response.status === 401 || response.status === 403) {
-      return {
-        success: true,
-        latencyMs,
-        version: undefined  // Can't get version without auth
-      };
-    }
 
     if (!response.ok) {
       return {
@@ -203,6 +194,17 @@ function shouldReportAuthFailure(path: string): boolean {
     '/api/auth/reset-password',
     '/api/auth/logout',
   ].some(authPath => path.startsWith(authPath));
+}
+
+/**
+ * Only an unauthenticated response invalidates the current login.
+ *
+ * A 403 means the session is valid but the current role cannot perform the
+ * requested action. Reporting it as an auth failure would make AuthGate call
+ * logout and destroy an otherwise healthy standard-user session.
+ */
+export function isSessionAuthenticationFailure(status: number): boolean {
+  return status === 401;
 }
 
 function isMutatingMethod(method: string): boolean {
@@ -300,7 +302,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 
   try {
     const response = await fetch(url, options);
-    if (response.status === 401 || response.status === 403) {
+    if (isSessionAuthenticationFailure(response.status)) {
       void reportAuthFailure(path, response);
     }
     if (shouldReport) {

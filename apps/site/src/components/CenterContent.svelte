@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from 'svelte';
   import type { SvelteComponent } from 'svelte';
   import { apiFetch, isMobileApp } from '../lib/client/api-config';
+  import { isOwner } from '../stores/security-policy';
   
   // Safe wrapper for isMobileApp to prevent runtime errors
   let isMobileAppSafe = false;
@@ -22,6 +23,20 @@
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
+
+  const ownerSystemSections = new Set([
+    'settings',
+    'backend',
+    'network',
+    'addons',
+    'agent-catalog',
+    'trigger-manager',
+    'lifeline',
+  ]);
+
+  $: if (!$isOwner && ownerSystemSections.has($systemSection)) {
+    systemSection.set('chat');
+  }
 
   // All other components are loaded dynamically when needed
   // This reduces initial bundle size from ~33 components to just 1
@@ -189,6 +204,7 @@
     relPath: string
     validation?: { status?: 'correct' | 'incorrect'; by?: string; timestamp?: string }
     type?: string
+    metadata?: Record<string, any>
   }
 
 let events: EventItem[] = []
@@ -225,7 +241,7 @@ let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adap
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
-// Legacy expansion state (no longer used but kept to prevent errors)
+// Expansion and lazily loaded memory-content state
 let expanded: Record<string, boolean> = {}
 type MemoryContentState = { status: 'idle' | 'loading' | 'ready' | 'error'; content?: string; error?: string }
 let memoryContent: Record<string, MemoryContentState> = {}
@@ -279,32 +295,19 @@ async function loadEvents() {
       const episodicEvents = Array.isArray(data.episodic) ? data.episodic : [];
       const reflections = Array.isArray(data.reflections) ? data.reflections : [];
       const dreams = Array.isArray(data.dreams) ? data.dreams : [];
+      const aiIngestor = Array.isArray(data.aiIngestor) ? data.aiIngestor : [];
+      const audio = Array.isArray(data.audio) ? data.audio : [];
       const pruned = Array.isArray(data.pruned) ? data.pruned : [];
       tasksTab = Array.isArray(data.tasks) ? data.tasks : [];
       curatedTab = Array.isArray(data.curated) ? data.curated : [];
       curiosityQuestionsTab = Array.isArray(data.curiosityQuestions) ? data.curiosityQuestions : [];
 
-      // DEBUG: Log all fetched events
-      console.log('--- Memory Buckets Fetched ---', { episodicEvents, reflections, dreams, pruned });
-
       events = episodicEvents;
       reflectionMemories = reflections;
       dreamMemories = dreams;
+      aiIngestorMemories = aiIngestor;
+      audioTranscriptMemories = audio;
       prunedMemories = pruned;
-
-      // Filter for AI Ingestor memories (those with 'ingested' or 'ai' tags, or with source links)
-      aiIngestorMemories = events.filter(event => 
-        (event.tags && (event.tags.includes('ingested') || event.tags.includes('ai'))) ||
-        (event.links && event.links.some(link => link.type === 'source'))
-      );
-      
-      // Filter for Audio Transcript memories (those with 'audio' or 'transcript' tags)
-      audioTranscriptMemories = events.filter(event => 
-        event.tags && (event.tags.includes('audio') || event.tags.includes('transcript'))
-      );
-      
-      // DEBUG: Log filtered audio memories
-      console.log('--- Filtered Audio Memories ---', audioTranscriptMemories);
 
       const visibleItems = [
         ...events,
@@ -456,14 +459,10 @@ function getEventKey(item: { relPath?: string; id?: string; name?: string }): st
 
 function toggleExpanded(item: { relPath?: string; id?: string; name?: string }) {
   const key = getEventKey(item);
-  console.log('[toggleExpanded]', { key, item, currentlyExpanded: expanded[key || ''] });
   if (!key) return;
   const next = !expanded[key];
-  // REASSIGN to trigger Svelte reactivity
   expanded = { ...expanded, [key]: next };
-  console.log('[toggleExpanded] Updated expanded state:', { key, next, hasRelPath: !!item.relPath });
   if (next && item.relPath) {
-    console.log('[toggleExpanded] Loading memory content for:', item.relPath);
     loadMemoryContent(item.relPath);
   }
 }
@@ -612,13 +611,15 @@ async function loadMemoryContent(relPath: string) {
         break;
       case 'system':
         void loadComponent('ChatSettings');
-        void loadComponent('SystemSettings');
         void loadComponent('SecuritySettings');
         void loadComponent('ProfileLocation');
-        void loadComponent('NetworkServerSettings');
-        void loadComponent('AddonsManager');
-        void loadComponent('Lifeline');
-        void loadComponent('TriggerManagerSettings');
+        if ($isOwner) {
+          void loadComponent('SystemSettings');
+          void loadComponent('NetworkServerSettings');
+          void loadComponent('AddonsManager');
+          void loadComponent('Lifeline');
+          void loadComponent('TriggerManagerSettings');
+        }
         break;
       case 'terminal':
         void loadComponent('TerminalManager');
@@ -1287,12 +1288,13 @@ async function loadMemoryContent(relPath: string) {
                       on:click={() => toggleExpanded(event)}
                       aria-expanded={isOpen}
                     >
+                      <span class="dialogue-source-badge">{event.type === 'daydream' ? '☀️ Daydream' : '🌙 Dream'}</span>
                       <span class="event-card-title">{getPreview(event.content)}</span>
                       <span class="event-toggle-icon" aria-hidden="true">{isOpen ? '▲' : '▼'}</span>
                       <span class="sr-only">{isOpen ? 'Collapse memory' : 'Expand memory'}</span>
                     </button>
                     <div class="validation-controls">
-                      <button class="val-btn edit" title="Edit dream" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Dream')}>
+                      <button class="val-btn edit" title="Edit dream" on:click|stopPropagation={() => openMemoryEditor(event.relPath, event.type === 'daydream' ? 'Daydream' : 'Dream')}>
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                         </svg>
@@ -1339,7 +1341,7 @@ async function loadMemoryContent(relPath: string) {
             {#each curiosityQuestionsTab as question}
               <div class="event-card curiosity-question" class:pending={question.status === 'pending'} class:answered={question.status === 'answered'}>
                 <div class="event-card-header">
-                  <span class="event-icon">{question.status === 'pending' ? '❓' : '✅'}</span>
+                  <span class="event-icon">{question.status === 'pending' ? '❓' : question.status === 'answered' ? '✅' : '💭'}</span>
                   <div class="event-card-meta">
                     <span class="event-card-type">{question.status}</span>
                     <span class="event-card-time">{new Date(question.askedAt).toLocaleString()}</span>
@@ -1368,7 +1370,7 @@ async function loadMemoryContent(relPath: string) {
           {:else}
             <div class="empty-state">
               <div class="empty-icon">❓</div>
-              <div class="empty-title">No Curiosity Questions Yet</div>
+              <div class="empty-title">No curiosity records yet</div>
               <div class="empty-description">
                 The curiosity system asks thoughtful questions during idle periods.
                 Adjust settings in System → Settings to enable.
@@ -1486,15 +1488,19 @@ async function loadMemoryContent(relPath: string) {
       <div class="view-content">
         <div class="tab-group">
           <button class="tab-button" class:active={$systemSection==='chat'} on:click={() => systemSection.set('chat')}>Chat</button>
-          <button class="tab-button" class:active={$systemSection==='settings'} on:click={() => systemSection.set('settings')}>Settings</button>
-          <button class="tab-button" class:active={$systemSection==='backend'} on:click={() => systemSection.set('backend')}>Backend</button>
+          {#if $isOwner}
+            <button class="tab-button" class:active={$systemSection==='settings'} on:click={() => systemSection.set('settings')}>Settings</button>
+            <button class="tab-button" class:active={$systemSection==='backend'} on:click={() => systemSection.set('backend')}>Backend</button>
+          {/if}
           <button class="tab-button" class:active={$systemSection==='security'} on:click={() => systemSection.set('security')}>Security</button>
           <button class="tab-button" class:active={$systemSection==='storage'} on:click={() => systemSection.set('storage')}>Storage</button>
-          <button class="tab-button" class:active={$systemSection==='network'} on:click={() => systemSection.set('network')}>🌐 Network</button>
-          <button class="tab-button" class:active={$systemSection==='addons'} on:click={() => systemSection.set('addons')}>Addons</button>
-          <button class="tab-button" class:active={$systemSection==='agent-catalog'} on:click={() => systemSection.set('agent-catalog')}>Agent Catalog</button>
-          <button class="tab-button" class:active={$systemSection==='trigger-manager'} on:click={() => systemSection.set('trigger-manager')}>Trigger Manager</button>
-          <button class="tab-button" class:active={$systemSection==='lifeline'} on:click={() => systemSection.set('lifeline')}>Lifeline</button>
+          {#if $isOwner}
+            <button class="tab-button" class:active={$systemSection==='network'} on:click={() => systemSection.set('network')}>🌐 Network</button>
+            <button class="tab-button" class:active={$systemSection==='addons'} on:click={() => systemSection.set('addons')}>Addons</button>
+            <button class="tab-button" class:active={$systemSection==='agent-catalog'} on:click={() => systemSection.set('agent-catalog')}>Agent Catalog</button>
+            <button class="tab-button" class:active={$systemSection==='trigger-manager'} on:click={() => systemSection.set('trigger-manager')}>Trigger Manager</button>
+            <button class="tab-button" class:active={$systemSection==='lifeline'} on:click={() => systemSection.set('lifeline')}>Lifeline</button>
+          {/if}
         </div>
         {#if $systemSection === 'chat'}
           {#await loadComponent('ChatSettings')}

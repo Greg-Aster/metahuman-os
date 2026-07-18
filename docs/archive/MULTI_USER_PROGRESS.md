@@ -14,7 +14,7 @@ The multi-user profile system is **fully operational**! The core infrastructure 
 ✅ **Context-aware path resolution** - Automatically routes data to correct user profile
 ✅ **User tracking** - All memories, tasks, and audit logs include userId
 ✅ **Per-user configuration** - Each user can have different base models
-✅ **Security enforcement** - File access permissions based on admin privileges
+✅ **Security enforcement** - File access permissions based on the owner role
 ✅ **Chat functionality** - Users chat with their own persona, save to their own profile
 ✅ **Memory capture** - Observations saved to user-specific directories
 ✅ **Memory management** - Browse, view, and edit user's own memories
@@ -41,7 +41,7 @@ The multi-user profile system is **fully operational**! The core infrastructure 
 
 **Files Modified:**
 1. `packages/core/src/paths.ts` - Added context-aware Proxy pattern
-2. `.env` - Added ADMIN_USERS configuration
+2. User records - Added persisted owner-role authorization
 
 **Key Achievement:** Infrastructure in place for multi-user operation with zero breaking changes.
 
@@ -334,17 +334,14 @@ export interface AuditEntry {
 
 ## Security Model
 
-### Administrator Privileges
+### Owner Privileges
 
-**Configuration:** `.env` file
-```bash
-ADMIN_USERS=greggles,alice
-```
+**Configuration:** persisted `owner` role on the user record
 
 **Capabilities:**
 
-| Permission | Regular User | Administrator |
-|------------|--------------|---------------|
+| Permission | Regular User | Owner |
+|------------|--------------|-------|
 | Edit own profile | ✅ | ✅ |
 | Edit other profiles | ❌ | ✅ |
 | Edit system code (brain/, packages/) | ❌ | ✅ |

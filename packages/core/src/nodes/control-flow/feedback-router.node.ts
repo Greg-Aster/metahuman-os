@@ -23,9 +23,12 @@ interface QualityResult {
 }
 
 interface SafetyResult {
-  passed: boolean;
-  violations: string[];
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  safe?: boolean;
+  passed?: boolean;
+  issues?: Array<{ description?: string; severity?: 'low' | 'medium' | 'high' | 'critical' }>;
+  violations?: string[];
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  sanitized?: string;
 }
 
 interface FeedbackContext {
@@ -58,8 +61,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const iteration = typeof currentIteration === 'number' ? currentIteration : 1;
 
   // Check safety first (higher priority than quality)
-  const safetyPassed = safetyResult.passed ?? true;
-  const safetyCritical = safetyResult.severity === 'critical';
+  const safetyPassed = safetyResult.safe ?? safetyResult.passed ?? true;
+  const safetyIssues = safetyResult.issues || [];
+  const safetyCritical = safetyResult.severity === 'critical'
+    || safetyIssues.some(issue => issue.severity === 'critical');
 
   // Check quality
   const qualityPassed = qualityResult.passesThreshold ?? true;
@@ -112,7 +117,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     const specificIssues: string[] = [];
     if (!safetyPassed) {
-      specificIssues.push(`Safety issues: ${safetyResult.violations?.join(', ') || 'unknown'}`);
+      const safetyDescriptions = safetyIssues
+        .map(issue => issue.description)
+        .filter((description): description is string => Boolean(description));
+      specificIssues.push(`Safety issues: ${safetyDescriptions.join(', ') || safetyResult.violations?.join(', ') || 'unknown'}`);
     }
     if (!qualityPassed) {
       // Pass ALL issues - let the LLM decide what's important
@@ -142,6 +150,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   let finalResponse = responseText;
   if (safetyCritical) {
     finalResponse = 'I apologize, but I cannot provide that response due to safety constraints.';
+  } else if (reachedMaxIterations && !safetyPassed) {
+    finalResponse = safetyResult.sanitized
+      || 'I apologize, but I cannot provide that response safely.';
   } else if (reachedMaxIterations && !qualityPassed && !allowPartialSuccess) {
     finalResponse = `I'm having difficulty providing a good answer to "${context.userMessage?.substring(0, 50)}...". Could you rephrase your question?`;
   }

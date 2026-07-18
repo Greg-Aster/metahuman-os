@@ -173,6 +173,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
 });
 
 async function processRequest(context: any, next: any) {
+  // Hand resolved authentication to the Astro adapter so it does not repeat
+  // this session and user lookup. Custom Astro routes can keep using locals.
+  context.locals.authResolved = true;
+  context.locals.userContext = undefined;
 
   // Try to get session cookie
   const sessionCookie = context.cookies.get('mh_session');

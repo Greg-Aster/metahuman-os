@@ -86,7 +86,7 @@ See [Cognitive Modes](../training-personalization/cognitive-modes.md) for comple
 
 ### LoRA Adapters
 Low-Rank Adaptation layers trained on your conversations:
-- **Base Model**: Foundation LLM (e.g., Qwen2.5-Coder-30B)
+- **Base Model**: Foundation LLM (maintained default: Qwen3.5-9B)
 - **Historical Adapter**: Merged lifetime training data
 - **Recent Adapter**: Last 14 days of fresh conversations
 - **Dual-Adapter System**: Both load simultaneously for balanced personality

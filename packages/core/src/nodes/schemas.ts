@@ -279,6 +279,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'visual', type: 'object', optional: true, description: 'Optional graph-supplied visual frame' },
       { name: 'visuals', type: 'array', optional: true, description: 'Optional graph-supplied visual frames' },
       { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
+      { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
+      { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
     ],
     outputs: [
       { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
@@ -336,16 +338,46 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
       { name: 'instruction', type: 'string', optional: true, description: 'Original user instruction for narrow semantic command fallback' },
+      { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
     ],
     outputs: [
       { name: 'actions', type: 'array', description: 'Parsed environment actions' },
       { name: 'firstAction', type: 'object', description: 'First parsed action' },
+      { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
+      { name: 'movementRequested', type: 'boolean', description: 'Whether off-script generation was requested' },
       { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
       { name: 'error', type: 'string', description: 'Parser error message' },
       { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
     ],
     description: 'Separates a structured model response into conversational text and validated semantic actions.',
+  }),
+  defineSchema({
+    id: 'movement_generator',
+    name: 'Movement Generator',
+    category: 'environment',
+    inputs: [
+      { name: 'movementRequest', type: 'object', optional: true, description: 'Eligible structured off-script movement request' },
+      { name: 'instruction', type: 'string', optional: true, description: 'Original interpreted user instruction' },
+      { name: 'observation', type: 'object', optional: true, description: 'Robot capability and current-state observation' },
+      { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
+    ],
+    outputs: [
+      { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
+      { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
+      { name: 'valid', type: 'boolean', description: 'Whether a bounded plan was generated' },
+      { name: 'rejected', type: 'boolean', description: 'Whether a requested plan was rejected' },
+      { name: 'error', type: 'string', description: 'Validation or generation error' },
+      { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
+      { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
+    ],
+    properties: { role: 'orchestrator', maxTokens: 1536, temperature: 0.2 },
+    propertySchemas: {
+      role: { type: 'select', default: 'orchestrator', label: 'Model Role', options: ['orchestrator', 'persona', 'fallback'] },
+      maxTokens: { type: 'number', default: 1536, label: 'Max Tokens', min: 1024, max: 8192, step: 256 },
+      temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 0.5, step: 0.05 },
+    },
+    description: 'Generates and strictly validates one bounded off-script logical-joint trajectory.',
   }),
   defineSchema({
     id: 'environment_send_action',
@@ -354,7 +386,10 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
       { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
+      { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
+      { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
+      { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or rejection to show instead' },
     ],
     outputs: [
       { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -373,16 +408,16 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'activeSessionCount', type: 'number', description: 'Number of non-stale environment sessions' },
     ],
     properties: {
-      allowedActions: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'sendText'],
+      allowedActions: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'sendText'],
       maxDurationMs: 1500,
       defaultDurationMs: 0,
     },
     propertySchemas: {
       allowedActions: {
         type: 'multiselect',
-        default: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'sendText'],
+        default: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'sendText'],
         label: 'Allowed Actions',
-        options: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'sendText'],
+        options: ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'sendText'],
       },
       maxDurationMs: {
         type: 'number',
@@ -548,6 +583,8 @@ export const nodeSchemas: NodeSchema[] = [
     outputs: [
       { name: 'complexPath', type: 'object', description: 'Output for complex queries' },
       { name: 'simplePath', type: 'object', description: 'Output for simple queries' },
+      { name: 'routingDecision', type: 'string', description: 'Decision made (simple/complex)' },
+      { name: 'memoryHints', type: 'object', description: 'LLM-selected memory routing hints' },
     ],
     properties: { routeOnComplexity: true, simpleThreshold: 0.3 },
     description: 'Routes queries based on complexity analysis',
@@ -587,6 +624,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
       { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
       { name: 'memoryQuery', type: 'string', description: 'Optimized search query' },
+      { name: 'memoryTypes', type: 'array', description: 'Exact stored memory types selected semantically by the LLM' },
       { name: 'needsAction', type: 'boolean', description: 'Routes to Big Brother when true' },
       { name: 'actionType', type: 'string', description: 'LLM-interpreted action type' },
       { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
@@ -710,7 +748,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'scratchpad', type: 'array' },
       { name: 'context', type: 'object' },
       { name: 'persona', type: 'object', optional: true, description: 'Raw persona object (values, personality, identity)' },
-      { name: 'personaText', type: 'object', optional: true, description: 'Formatted persona text for voice synthesis' },
+      { name: 'personaText', type: 'string', optional: true, description: 'Formatted persona text for voice synthesis' },
+      { name: 'response', type: 'string', optional: true, description: 'Completed response to render in persona voice' },
     ],
     outputs: [{ name: 'response', type: 'string', description: 'Final natural language response' }],
     properties: { model: 'persona', style: 'default' },
@@ -1791,6 +1830,7 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'emulation',
     inputs: [
       { name: 'conversationHistory', type: 'array', optional: true },
+      { name: 'userMessage', type: 'string', optional: true },
       { name: 'response', type: 'any', optional: true },
     ],
     outputs: [
@@ -1798,7 +1838,11 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'messageCount', type: 'number' },
       { name: 'bufferPath', type: 'string' },
     ],
-    description: 'Persists conversation buffer to disk',
+    properties: { requireUserMessage: false },
+    propertySchemas: {
+      requireUserMessage: { type: 'toggle', default: false, label: 'Require User Message' },
+    },
+    description: 'Persists conversation buffer through the canonical shared buffer service',
   }),
   defineSchema({
     id: 'scratchpad_initializer',
@@ -1876,7 +1920,7 @@ export const nodeSchemas: NodeSchema[] = [
     name: 'Memory Router',
     category: 'memory',
     inputs: [
-      { name: 'orchestratorHints', type: 'object', description: 'Memory routing hints from orchestrator' },
+      { name: 'orchestratorHints', type: 'object', description: 'LLM-selected memory routing hints from orchestrator' },
       { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
     ],
     outputs: [{ name: 'memories', type: 'object', description: 'Retrieved memories with searchPerformed flag' }],

@@ -443,11 +443,20 @@ Controls the curiosity system behavior, which asks thoughtful questions during i
 - Agent documentation: [Autonomous Agents - Curiosity System](08-autonomous-agents.md#25-curiosity-system-3-agents)
 - Full implementation docs: `docs/curiosity-system-COMPLETED.md`
 
-### `profiles/<username>/etc/agent.json` - Default LLM Model
-Specifies which Ollama model to use for persona chat:
+### `profiles/<username>/etc/models.json` - Model Roles
+Assigns the authenticated user's chat roles to configured providers and models:
 ```json
 {
-  "model": "dolphin-mistral:latest"
+  "defaults": {
+    "orchestrator": "default.orchestrator",
+    "persona": "default.persona"
+  },
+  "models": {
+    "default.persona": {
+      "provider": "ollama",
+      "model": "qwen3.5:9b"
+    }
+  }
 }
 ```
 

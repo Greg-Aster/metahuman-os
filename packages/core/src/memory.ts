@@ -549,6 +549,7 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
           id: event.id,
           timestamp: event.timestamp,
           content: event.content,
+          type: event.type,
           tags: event.tags,
           entities: event.entities,
           path: filepath,

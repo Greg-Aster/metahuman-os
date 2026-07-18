@@ -626,7 +626,7 @@ The Node Editor is the **visual representation** of cognitive mode logic:
 **Editing Cognitive Modes:**
 1. Load cognitive mode template (e.g., `dual-mode`)
 2. Modify nodes and connections
-3. Save as built-in graph (requires admin access)
+3. Save as built-in graph (requires owner access)
 4. Restart system to apply changes
 
 **Warning:** Modifying cognitive mode graphs affects system behavior. Test thoroughly before saving as built-in.

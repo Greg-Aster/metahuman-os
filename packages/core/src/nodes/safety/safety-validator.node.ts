@@ -6,7 +6,7 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { checkResponseSafety } from '../../cognitive-layers/index.js';
 
-const execute: NodeExecutor = async (inputs, context) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract response string from various input formats
   // Use named inputs with positional fallback
   const inputData = inputs.response ?? inputs[0];
@@ -32,6 +32,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       userId: context?.userId || 'anonymous',
       logToConsole: false,
       auditIssues: true,
+      threshold: properties?.threshold ?? 0.9,
     });
 
     return {
@@ -42,10 +43,27 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   } catch (error) {
     console.error('[SafetyValidator] Error:', error);
+    const message = (error as Error).message;
+    const fallback = 'I apologize, but I cannot validate that response safely right now.';
     return {
-      response,
-      isSafe: true,
-      issues: [],
+      response: fallback,
+      isSafe: false,
+      issues: [{
+        type: 'validator_error',
+        severity: 'critical',
+        description: `Safety validation failed: ${message}`,
+      }],
+      safetyResult: {
+        safe: false,
+        score: 0,
+        severity: 'critical',
+        sanitized: fallback,
+        issues: [{
+          type: 'validator_error',
+          severity: 'critical',
+          description: `Safety validation failed: ${message}`,
+        }],
+      },
     };
   }
 };
@@ -63,8 +81,20 @@ export const SafetyValidatorNode: NodeDefinition = defineNode({
     { name: 'issues', type: 'array' },
     { name: 'safetyResult', type: 'object' },
   ],
-  properties: {},
-  propertySchemas: {},
+  properties: {
+    threshold: 0.9,
+  },
+  propertySchemas: {
+    threshold: {
+      type: 'slider',
+      default: 0.9,
+      label: 'Safety Threshold',
+      description: 'Minimum safety score required to pass validation',
+      min: 0.5,
+      max: 1,
+      step: 0.05,
+    },
+  },
   description: 'Checks response for safety/policy violations',
   execute,
 });

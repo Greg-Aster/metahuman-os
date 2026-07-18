@@ -13,20 +13,8 @@
   "description": "SYSTEM DEFAULT - Used ONLY for new user initialization. See profile-based models.json",
   "globalSettings": {
     "includePersonaSummary": false,
-    "useAdapter": true,
-    "activeAdapter": {
-      "modelName": "greggles-vllm-2025-12-31",
-      "activatedAt": "2025-12-31T17:28:31.276Z",
-      "adapterPath": "/media/greggles/STACK/metahuman-profiles/greggles/out/adapters/2025-12-31/2025-12-31-170539-325e9f/adapter",
-      "dataset": "2025-12-31",
-      "date": "2025-12-31",
-      "status": "loaded",
-      "activatedBy": "full-cycle",
-      "isDualAdapter": false,
-      "runLabel": "2025-12-31-170539-325e9f",
-      "trainingMethod": "unsloth-remote",
-      "baseModel": "Qwen/Qwen3-14B"
-    }
+    "useAdapter": false,
+    "activeAdapter": null
   },
   "defaults": {
     "orchestrator": "default.orchestrator",
@@ -41,7 +29,7 @@
   "models": {
     "default.orchestrator": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "orchestrator",
@@ -63,13 +51,13 @@
         "priority": "high",
         "alwaysLoaded": true,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Executive function - intelligent intent routing and tool selection"
       }
     },
     "default.persona": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "persona",
@@ -87,12 +75,12 @@
         "priority": "high",
         "alwaysLoaded": true,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3
+        "sizeGB": 6.6
       }
     },
     "default.curator": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "curator",
@@ -110,13 +98,13 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Memory curation - clean data extraction and training prep"
       }
     },
     "default.coder": {
       "provider": "ollama",
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "coder",
@@ -138,14 +126,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Code specialist - generation, review, debugging, refactoring",
         "specialization": "code"
       }
     },
     "default.planner": {
       "provider": "ollama",
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "planner",
@@ -163,14 +151,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Planning specialist - strategic thinking, task breakdown, roadmap creation",
         "specialization": "planning"
       }
     },
     "default.summarizer": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "summarizer",
@@ -188,14 +176,14 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "fast",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Summarization specialist - condensing documents, extracting key points",
         "specialization": "summarization"
       }
     },
     "default.psychotherapist": {
       "provider": "ollama",
-      "model": "qwen3:14b",
+      "model": "qwen3.5:9b",
       "adapters": [],
       "roles": [
         "psychotherapist",
@@ -213,7 +201,7 @@
         "priority": "medium",
         "alwaysLoaded": false,
         "estimatedLatency": "medium",
-        "sizeGB": 9.3,
+        "sizeGB": 6.6,
         "purpose": "Persona generation and psychological analysis"
       }
     },
@@ -265,22 +253,6 @@
         "source": "ollama-discovery"
       }
     },
-    "ollama.qwen3:14b": {
-      "provider": "ollama",
-      "model": "qwen3:14b",
-      "roles": [
-        "orchestrator",
-        "persona",
-        "planner",
-        "summarizer"
-      ],
-      "adapters": [],
-      "description": "Qwen3 14B - balanced performance model",
-      "options": {},
-      "metadata": {
-        "source": "ollama-discovery"
-      }
-    },
     "cloud.qwen3-coder-30b": {
       "provider": "runpod_serverless",
       "model": "Qwen3-Coder-30B-A3B-Instruct-AWQ",
@@ -308,32 +280,6 @@
         "endpointTier": "default",
         "coldStartWarning": "First request may take 30-60s if GPU is cold",
         "purpose": "Cloud GPU inference for high-capability tasks"
-      }
-    },
-    "cloud.qwen3-14b": {
-      "provider": "runpod_serverless",
-      "model": "Qwen3-14B-Instruct",
-      "adapters": [],
-      "roles": [
-        "orchestrator",
-        "persona",
-        "summarizer"
-      ],
-      "description": "Cloud-hosted Qwen3 14B via RunPod Serverless - balanced performance model",
-      "options": {
-        "contextWindow": 8192,
-        "temperature": 0.7,
-        "topP": 0.95,
-        "repeatPenalty": 1.1
-      },
-      "metadata": {
-        "priority": "medium",
-        "alwaysLoaded": false,
-        "estimatedLatency": "fast",
-        "source": "runpod-serverless",
-        "endpointTier": "14b",
-        "coldStartWarning": "First request may take 20-30s if GPU is cold",
-        "purpose": "Cloud GPU inference for general tasks"
       }
     },
     "big-brother.claude": {
@@ -379,6 +325,22 @@
         "estimatedLatency": "fast",
         "sizeGB": 1.2,
         "purpose": "Semantic embeddings for memory search and vector indexing"
+      }
+    },
+    "ollama.qwen3.5:9b": {
+      "provider": "ollama",
+      "model": "qwen3.5:9b",
+      "roles": [
+        "orchestrator",
+        "persona",
+        "planner",
+        "summarizer"
+      ],
+      "adapters": [],
+      "description": "Qwen3.5 9B - maintained local chat model",
+      "options": {},
+      "metadata": {
+        "source": "ollama-discovery"
       }
     }
   },

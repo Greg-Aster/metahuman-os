@@ -11,6 +11,7 @@ import { ROOT, audit, getActiveBackend } from '@metahuman/core';
 import { withUserContext } from '@metahuman/core/context';
 import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { storage } from '../services/storage-router.js';
+import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 
 interface MergeConfig {
   method: 'linear' | 'ties' | 'dare_ties' | 'slerp';
@@ -138,7 +139,7 @@ async function mergekitMerge(
   // mergekit config format for LoRA adapters
   // Read base model from training config or use default
   const trainingConfigPath = path.join(ROOT, 'etc', 'training.json');
-  let baseModel = 'unsloth/Qwen3-14B';  // Default to current training base
+  let baseModel = DEFAULT_TRAINING_MODEL;
   try {
     if (fs.existsSync(trainingConfigPath)) {
       const trainingConfig = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));

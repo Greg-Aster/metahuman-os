@@ -16,7 +16,7 @@ export interface CognitiveModeDefinition {
     recordingEnabled: boolean;
     proactiveAgents: boolean;
     trainingPipeline: 'enabled' | 'disabled' | 'dual_trigger';
-    memoryWriteLevel: 'full' | 'command_only' | 'read_only';
+    memoryWriteLevel: 'full' | 'conversation' | 'command_only' | 'read_only';
   };
 }
 
@@ -100,13 +100,14 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
     guidance: [
       'Read environment observations before responding.',
       'Prefer bounded semantic actions over raw device or keyboard commands.',
-      'Queue environment actions through the environment bridge adapter.'
+      'Queue environment actions through the environment bridge adapter.',
+      'Preserve user conversations in shared rolling and long-term memory.'
     ],
     defaults: {
       recordingEnabled: false,
       proactiveAgents: false,
       trainingPipeline: 'disabled',
-      memoryWriteLevel: 'command_only',
+      memoryWriteLevel: 'conversation',
     },
   },
 };

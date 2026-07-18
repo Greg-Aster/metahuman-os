@@ -38,12 +38,14 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
     { name: 'searchInterpretation', type: 'object', optional: true, description: 'Search interpreter result (unknownSignal, interpretation)' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration' },
     { name: 'persona', type: 'object', optional: true, description: 'Persona data (identity, personality, values, goals)' },
+    { name: 'analysis', type: 'object', optional: true, description: 'Orchestrator routing analysis' },
   ],
   outputs: [
     { name: 'context', type: 'context', description: 'Unified context package (includes persona)' },
     { name: 'unknownSignal', type: 'boolean', description: 'Whether to respond "I don\'t know"' },
     { name: 'iteration', type: 'number', description: 'Current iteration number' },
     { name: 'persona', type: 'object', description: 'Passthrough persona for downstream nodes (Quality Scorer)' },
+    { name: 'memories', type: 'array', description: 'Resolved relevant memories' },
   ],
   properties: {
     scratchpadMode: false,
@@ -76,6 +78,7 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
     const searchInterpretation = inputs.searchInterpretation || inputs[4] || null;
     const feedbackContext = inputs.feedbackContext || inputs[5] || null;
     const personaInput = inputs.persona || inputs[6] || null;
+    const analysis = inputs.analysis || inputs[7] || null;
 
     // Handle query - might be a string or object
     const query = typeof queryInput === 'string' ? queryInput : (queryInput?.message || context.userMessage || '');
@@ -122,13 +125,14 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
 
     // Build context payload
     const contextPayload: Record<string, any> = context.contextPackage
-      ? { ...context.contextPackage, query, mode, memories, persona }
+      ? { ...context.contextPackage, query, mode, memories, persona, analysis }
       : {
           query,
           mode,
           memories,
           conversationHistory,
           persona,
+          analysis,
           timestamp: new Date().toISOString(),
         };
 
@@ -161,6 +165,7 @@ export const ContextBuilderNode: NodeDefinition = defineNode({
       unknownSignal,
       iteration: currentIteration,
       persona, // Passthrough for Quality Scorer
+      memories,
     };
   },
 });

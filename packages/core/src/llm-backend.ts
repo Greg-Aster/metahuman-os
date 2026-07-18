@@ -21,6 +21,7 @@ import {
   resolveLocalModelArtifact,
   type LocalModelArtifact,
 } from './model-artifacts.js';
+import { DEFAULT_OLLAMA_CHAT_MODEL, DEFAULT_VLLM_CHAT_MODEL } from './model-defaults.js';
 
 const LOG_PREFIX = '[llm-backend]';
 
@@ -229,7 +230,7 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
     ollama: {
       endpoint: 'http://localhost:11434',
       autoStart: false,
-      defaultModel: 'qwen3:14b',
+      defaultModel: DEFAULT_OLLAMA_CHAT_MODEL,
       contextWindow: 8192,
       maxTokens: 2048,
       temperature: 0.7,
@@ -244,23 +245,24 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
     vllm: {
       endpoint: 'http://localhost:8000',
       autoStart: false,
-      model: 'Qwen/Qwen2.5-14B-Instruct',
-      loadFormat: 'auto',
+      model: DEFAULT_VLLM_CHAT_MODEL,
+      loadFormat: 'safetensors',
       tokenizer: undefined,
-      gpuMemoryUtilization: 0.7,
+      gpuMemoryUtilization: 0.75,
       gpuMemoryHeadroomGiB: 1.5,
       autoUtilizationMax: 0.95,
-      maxModelLen: 'auto',
+      maxModelLen: 4096,
       kvCacheMemoryGiB: null,
       cpuOffloadGiB: 0,
       kvOffloadingGiB: 0,
       kvOffloadingBackend: 'native',
       tensorParallelSize: 1,
-      dtype: 'auto',
-      quantization: null,
+      dtype: 'float16',
+      quantization: 'compressed-tensors',
       enforceEager: true, // Disable CUDA graphs to save GPU memory (recommended for 16GB GPUs)
       autoUtilization: false, // Set true to auto-detect optimal GPU allocation
-      startupTimeoutMs: 120000,
+      startupTimeoutMs: 240000,
+      servedModelName: DEFAULT_VLLM_CHAT_MODEL,
     },
     localModels: {
       enabled: true,

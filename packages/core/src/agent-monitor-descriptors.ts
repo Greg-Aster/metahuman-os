@@ -51,6 +51,11 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'inactivityThreshold',
   'adapterUrl',
   'graph',
+  'jitterMs',
+  'boredomMovementInactivityThreshold',
+  'boredomMovementJitterMs',
+  'maxCycleSteps',
+  'sessionId',
 ]);
 
 export const ENVIRONMENT_BRIDGE_FIELDS = new Set([
@@ -207,6 +212,28 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
     });
   }
 
+  if (typeof effective.jitterMs === 'number') {
+    variables.push({
+      key: 'jitterMs',
+      label: 'Timer Jitter Milliseconds',
+      type: 'number',
+      value: effective.jitterMs,
+      applyMode: 'restart',
+      writable: true,
+    })
+  }
+
+  if (typeof effective.maxCycleSteps === 'number') {
+    variables.push({
+      key: 'maxCycleSteps',
+      label: 'Maximum Observation Steps',
+      type: 'number',
+      value: effective.maxCycleSteps,
+      applyMode: 'restart',
+      writable: true,
+    })
+  }
+
   if (id === 'environment-bridge') {
     variables.push(
       {
@@ -228,6 +255,51 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         description: 'Cognitive graph mode used for returned observations.',
       },
     );
+  }
+
+  if (id === 'robot-operator') {
+    variables.push(
+      {
+        key: 'boredomMovementInactivityThreshold',
+        label: 'Boredom Movement Idle Seconds',
+        type: 'number',
+        value: typeof effective.boredomMovementInactivityThreshold === 'number'
+          ? effective.boredomMovementInactivityThreshold
+          : 600,
+        applyMode: 'restart',
+        writable: true,
+        description: 'How long the robot must remain idle before Boredom Movement becomes due.',
+      },
+      {
+        key: 'boredomMovementJitterMs',
+        label: 'Boredom Movement Jitter Milliseconds',
+        type: 'number',
+        value: typeof effective.boredomMovementJitterMs === 'number'
+          ? effective.boredomMovementJitterMs
+          : 120000,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Random variation applied around the Boredom Movement idle threshold.',
+      },
+      {
+        key: 'graph',
+        label: 'Observation Graph',
+        type: 'text',
+        value: typeof effective.graph === 'string' ? effective.graph : 'environment',
+        applyMode: 'restart',
+        writable: true,
+        description: 'Existing cognitive graph used after Robot Observer receives a correlated image.',
+      },
+      {
+        key: 'sessionId',
+        label: 'Target Robot Session',
+        type: 'text',
+        value: typeof effective.sessionId === 'string' ? effective.sessionId : '',
+        applyMode: 'restart',
+        writable: true,
+        description: 'Optional fixed robot session. Leave blank to use the current connected robot.',
+      },
+    )
   }
 
   return variables;
