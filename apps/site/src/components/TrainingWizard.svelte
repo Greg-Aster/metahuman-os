@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from '../lib/client/model-defaults';
   import TrainingDataControls from './TrainingDataControls.svelte';
 
   // Wizard state machine
@@ -64,16 +65,12 @@
   }
 
   const baseModelOptions: BaseModelOption[] = [
-    { value: 'unsloth/Qwen3-14B', label: 'Qwen3-14B (Ollama)', targets: ['ollama'], description: 'Standard 14B model for Ollama GGUF' },
-    { value: 'unsloth/Qwen3-8B', label: 'Qwen3-8B (Ollama)', targets: ['ollama'], description: 'Faster 8B model for Ollama GGUF' },
-    { value: 'unsloth/Qwen3-Coder-30B-A3B-Instruct', label: 'Qwen3-Coder-30B (Ollama)', targets: ['ollama'], description: 'Large coder model for Ollama' },
-    { value: 'Qwen/Qwen3-14B', label: 'Qwen3-14B (vLLM)', targets: ['vllm'], description: 'Train for vLLM (use with AWQ base)' },
-    { value: 'Qwen/Qwen3-8B', label: 'Qwen3-8B (vLLM)', targets: ['vllm'], description: 'Faster 8B for vLLM' },
-    { value: 'Qwen/Qwen2.5-14B-Instruct', label: 'Qwen2.5-14B-Instruct', targets: ['ollama', 'vllm', 'both'], description: 'Works with both Ollama and vLLM' },
+    { value: DEFAULT_TRAINING_MODEL, label: 'Qwen 3.5 9B (Ollama)', targets: ['ollama', 'both'], description: 'Maintained 16-bit LoRA base; approximately 22GB VRAM before dataset-dependent overhead' },
+    { value: DEFAULT_VLLM_TRAINING_MODEL, label: 'Qwen 3.5 9B (vLLM)', targets: ['vllm'], description: 'Maintained Qwen 3.5 base for safetensors adapters' },
   ];
 
   const loraConfigPresetOllama: TrainingConfig = {
-    base_model: 'unsloth/Qwen3-14B',
+    base_model: DEFAULT_TRAINING_MODEL,
     num_train_epochs: 5,
     max_samples: 3000,
     monthly_training: true,
@@ -90,7 +87,7 @@
   };
 
   const loraConfigPresetVllm: TrainingConfig = {
-    base_model: 'Qwen/Qwen3-14B',
+    base_model: DEFAULT_VLLM_TRAINING_MODEL,
     num_train_epochs: 5,
     max_samples: 3000,
     monthly_training: true,
@@ -109,7 +106,7 @@
   const loraConfigPreset = loraConfigPresetOllama;
 
   const fineTuneConfigPreset: TrainingConfig = {
-    base_model: 'unsloth/Qwen3-30B-Instruct',
+    base_model: DEFAULT_VLLM_TRAINING_MODEL,
     num_train_epochs: 2,
     max_samples: 5000,
     monthly_training: true,
@@ -782,7 +779,7 @@
           {#if trainingTarget === 'vllm'}
             <div class="flex items-start gap-3 mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm text-gray-400">
               <span class="shrink-0">ℹ️</span>
-              <span>vLLM training produces safetensors adapters. Make sure your vLLM server uses a compatible base model (e.g., Qwen/Qwen3-14B-AWQ).</span>
+              <span>vLLM training produces safetensors adapters from the maintained Qwen 3.5 base.</span>
             </div>
           {/if}
         </div>
@@ -803,7 +800,7 @@
 
             <div class="flex flex-col gap-2">
               <div class="text-sm flex items-center gap-2 {systemCapabilities.hasLocalGPU ? 'text-emerald-500' : ''}">
-                {systemCapabilities.hasLocalGPU ? '✅' : '❌'} NVIDIA GPU (10GB+ VRAM)
+                {systemCapabilities.hasLocalGPU ? '✅' : '❌'} NVIDIA GPU (24GB+ VRAM for Qwen 3.5 9B)
               </div>
               <div class="text-sm flex items-center gap-2 {systemCapabilities.hasUnsloth ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasUnsloth ? '✅' : '❌'} Python + unsloth

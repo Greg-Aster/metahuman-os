@@ -205,7 +205,7 @@ async function startServer(args: string[]): Promise<void> {
 
   // Parse arguments
   let port = 9882;
-  let lang = 'a';
+  let lang: string | undefined;
   let device = 'cpu'; // Default to CPU for Kokoro
 
   const portIndex = args.indexOf('--port');
@@ -237,7 +237,11 @@ async function startServer(args: string[]): Promise<void> {
   const logFile = path.join(systemPaths.logs, 'run', 'kokoro-server.log');
   const logFd = fs.openSync(logFile, 'a');
 
-  const server = spawn(pythonBin, [serverScript, '--port', port.toString(), '--lang', lang, '--device', device], {
+  const serverArgs = [serverScript, '--port', port.toString(), '--device', device];
+  if (lang) {
+    serverArgs.push('--lang', lang);
+  }
+  const server = spawn(pythonBin, serverArgs, {
     cwd: KOKORO_DIR,
     detached: true,
     stdio: ['ignore', logFd, logFd],

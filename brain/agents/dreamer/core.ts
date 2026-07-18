@@ -13,13 +13,10 @@
  * - Mobile: imported directly and run in-process
  */
 
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
-  storageClient,
   ROOT,
-  systemPaths,
   audit,
   recordSystemActivity,
   getTargetUser,
@@ -27,6 +24,8 @@ import {
   runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
+  loadSleepConfig as loadCoreSleepConfig,
+  type SleepConfig,
   type SvelteFlowGraph,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
@@ -34,12 +33,6 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface SleepConfig {
-  enabled: boolean;
-  maxDreamsPerNight: number;
-  evaluate: boolean;
-}
 
 export interface DreamerOptions {
   forceRun?: boolean;
@@ -75,20 +68,8 @@ function markBackgroundActivity() {
 }
 
 export function loadSleepConfig(): SleepConfig {
-  try {
-    // Try user-specific config first, fall back to system config
-    const result = storageClient.resolvePath({ category: 'config', subcategory: 'etc', relativePath: 'sleep.json' });
-    const configPath = result.success && result.path ? result.path : path.join(systemPaths.etc, 'sleep.json');
-    const data = fs.readFileSync(configPath, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.warn('[dreamer] Could not load sleep.json, using defaults');
-    return {
-      enabled: true,
-      maxDreamsPerNight: 3,
-      evaluate: true,
-    };
-  }
+  const username = process.env.MH_TRIGGER_PROFILE || process.env.MH_TRIGGER_USERNAME;
+  return loadCoreSleepConfig(username);
 }
 
 /**

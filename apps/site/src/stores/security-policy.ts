@@ -17,7 +17,7 @@ export interface SecurityPolicy {
   canChangeTrust: boolean;
   canAccessTraining: boolean;
   canFactoryReset: boolean;
-  role: 'owner' | 'guest' | 'anonymous';
+  role: 'owner' | 'standard' | 'guest' | 'anonymous';
   mode: 'dual' | 'agent' | 'emulation' | 'environment';
   sessionId?: string;
 }
@@ -65,6 +65,12 @@ export const currentMode = derived(
   policyStore,
   ($policy) => $policy?.mode ?? 'dual'
 );
+
+export function clearSecurityPolicy(): void {
+  policyStore.set(null);
+  policyError.set(null);
+  policyLoading.set(false);
+}
 
 /**
  * Fetch the current security policy from the API

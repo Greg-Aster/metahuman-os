@@ -7,7 +7,7 @@
   import ApprovalPrompt from './ApprovalPrompt.svelte';
   // Operator proposals are rendered inline by OperatorProposalCard.
   import TerminalManager from './TerminalManager.svelte';
-  import { canUseOperator, currentMode } from '../stores/security-policy';
+  import { canUseOperator, currentMode, isOwner } from '../stores/security-policy';
   import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
@@ -92,7 +92,7 @@
   // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
   let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
-  let ttsEnabled = false;
+  let ttsEnabled = true;
   // vLLM Thinking Mode (Qwen3)
   let thinkingModeEnabled = false;
   let thinkingModeLoading = false;
@@ -112,7 +112,6 @@
   // Initialize TTS composable
   const ttsApi = useTTS();
   const { isPlaying: ttsIsPlaying, isLoading: ttsIsLoading } = ttsApi;
-  let lastAutoSpoken: { text: string; at: number } | null = null;
 
   // Initialize Messages composable
   // Terminal mode doesn't use messages, default to 'conversation' for the messages API
@@ -227,11 +226,14 @@
       const raw = localStorage.getItem('chatPrefs');
       if (!raw) {
         console.log('[chat-prefs] No chatPrefs in localStorage, using defaults');
-        ttsEnabled = false;
+        ttsEnabled = true;
         return;
       }
       const p = JSON.parse(raw);
-      if (typeof p.ttsEnabled === 'boolean') ttsEnabled = p.ttsEnabled;
+      // Speech is enabled unless the user explicitly disabled it. The legacy
+      // ttsEnabled=false value is not authoritative because older builds wrote
+      // it automatically even when the user never pressed the speech button.
+      ttsEnabled = p.speechDisabled !== true;
       if (typeof p.reasoningDepth === 'number') {
         reasoningDepth = clampReasoningDepth(p.reasoningDepth);
       } else if (typeof p.reasoningEnabled === 'boolean') {
@@ -246,27 +248,33 @@
   }
   function saveChatPrefs() {
     try {
-      const prefs = {
-        ttsEnabled,
+      const raw = localStorage.getItem('chatPrefs');
+      const prefs = raw ? JSON.parse(raw) : {};
+      delete prefs.ttsEnabled;
+      Object.assign(prefs, {
+        speechDisabled: !ttsEnabled,
         reasoningDepth,
         reasoningEnabled: reasoningDepth > 0,
         bigBrotherEnabled,
         bigBrotherDelegateAll,
-      };
+      });
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
   }
 
   function assistantSpeechEnabled(): boolean {
-    return ttsEnabled || get(mic.isConversationMode) || get(mic.isContinuousMode);
+    return ttsEnabled;
   }
 
-  function enableAssistantSpeech(source: string): void {
-    if (ttsEnabled) return;
-    ttsEnabled = true;
+  function toggleAssistantSpeech(): void {
+    ttsEnabled = !ttsEnabled;
+    if (ttsEnabled) {
+      ttsApi.prefetchVoiceResources();
+    } else {
+      ttsApi.stopActiveAudio();
+      ttsApi.cancelInFlightTts();
+    }
     saveChatPrefs();
-    ttsApi.prefetchVoiceResources();
-    console.log(`[chat-tts] Enabled assistant speech from ${source}`);
   }
 
   // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
@@ -364,42 +372,45 @@
       ttsApi.prefetchVoiceResources();
     }
 
-    // Load Big Brother configuration from server (includes operator integration settings)
-    try {
-      const res = await apiFetch('/api/big-brother-config');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.config) {
-          bigBrotherEnabled = data.config.enabled ?? false;
-          bigBrotherDelegateAll = data.config.delegateAll ?? false;
-          bigBrotherProvider = data.config.provider || 'claude-code';
-          updateBigBrotherUiState();
-          saveChatPrefs(); // Save to local storage
-          console.log('[big-brother] Loaded configuration:', { 
-            enabled: bigBrotherEnabled, 
-            provider: data.config.provider,
-            delegateAll: bigBrotherDelegateAll 
-          });
+    // Big Brother is an owner capability. Avoid a request known in advance to
+    // be forbidden for standard/guest accounts.
+    if (get(isOwner)) {
+      try {
+        const res = await apiFetch('/api/big-brother-config');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.config) {
+            bigBrotherEnabled = data.config.enabled ?? false;
+            bigBrotherDelegateAll = data.config.delegateAll ?? false;
+            bigBrotherProvider = data.config.provider || 'claude-code';
+            updateBigBrotherUiState();
+            saveChatPrefs(); // Save to local storage
+            console.log('[big-brother] Loaded configuration:', {
+              enabled: bigBrotherEnabled,
+              provider: data.config.provider,
+              delegateAll: bigBrotherDelegateAll
+            });
 
-          // If Big Brother is enabled, check/start Claude session when provider is Claude
-          if (bigBrotherProvider !== 'claude-code') {
-            claudeSessionReady = false;
-          }
-          updateBigBrotherUiState();
+            // If Big Brother is enabled, check/start Claude session when provider is Claude
+            if (bigBrotherProvider !== 'claude-code') {
+              claudeSessionReady = false;
+            }
+            updateBigBrotherUiState();
 
-          if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
-            const status = await checkClaudeSessionStatus();
-            if (!status?.ready && status?.installed) {
-              await startClaudeSession();
-            } else if (status?.ready) {
-              claudeSessionReady = true;
-              updateBigBrotherUiState();
+            if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
+              const status = await checkClaudeSessionStatus();
+              if (!status?.ready && status?.installed) {
+                await startClaudeSession();
+              } else if (status?.ready) {
+                claudeSessionReady = true;
+                updateBigBrotherUiState();
+              }
             }
           }
         }
+      } catch (error) {
+        console.error('[big-brother] Failed to load config:', error);
       }
-    } catch (error) {
-      console.error('[big-brother] Failed to load config:', error);
     }
 
     // Poll Claude session status every 10 seconds when BB is enabled
@@ -725,32 +736,24 @@
     }
   }
 
-  async function speakAssistantResponse(text: string | undefined | null, source: string) {
+  async function playAdmittedTTSItem(text: string | undefined | null, source: string) {
     const speechText = text?.trim();
     const speechEnabled = assistantSpeechEnabled();
     if (!speechEnabled || !speechText) {
-      console.log(`[chat-tts] Skipping auto TTS from ${source} (speechEnabled=${speechEnabled}, ttsEnabled=${ttsEnabled}, conversationMode=${get(mic.isConversationMode)}, continuousMode=${get(mic.isContinuousMode)})`);
+      console.log(`[chat-tts] Skipping admitted TTS item from ${source} (speechEnabled=${speechEnabled}, ttsEnabled=${ttsEnabled}, conversationMode=${get(mic.isConversationMode)}, continuousMode=${get(mic.isContinuousMode)})`);
       return;
     }
-
-    const now = Date.now();
-    if (lastAutoSpoken?.text === speechText && now - lastAutoSpoken.at < 10000) {
-      console.log(`[chat-tts] Skipping duplicate auto TTS from ${source}`);
-      return;
-    }
-
-    const autoSpokenMarker = { text: speechText, at: now };
-    lastAutoSpoken = autoSpokenMarker;
 
     try {
-      console.log(`[chat-tts] Auto-speaking ${source} (${speechText.length} chars)`);
+      console.log(`[chat-tts] Playing node-admitted TTS item from ${source} (${speechText.length} chars)`);
       await ttsApi.ensureAudioUnlocked();
+      if (!assistantSpeechEnabled()) {
+        console.log(`[chat-tts] Speech disabled while preparing ${source}; skipping playback`);
+        return;
+      }
       await ttsApi.speak(speechText);
     } catch (err) {
-      if (lastAutoSpoken === autoSpokenMarker) {
-        lastAutoSpoken = null;
-      }
-      console.warn(`[chat-tts] Auto TTS failed from ${source}:`, err);
+      console.warn(`[chat-tts] Admitted TTS playback failed from ${source}:`, err);
     }
   }
 
@@ -781,7 +784,7 @@
     for (const item of items) {
       console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
-      void speakAssistantResponse(item.text, `queue:${item.source || item.mode || 'unknown'}`);
+      void playAdmittedTTSItem(item.text, `queue:${item.source || item.mode || 'unknown'}`);
     }
   }
 
@@ -869,8 +872,6 @@
         content: result.response,
         meta: { tier: result.tier, model: result.model },
       });
-
-      void speakAssistantResponse(result.response, 'offline');
 
       thinkingTraceApi.stop();
     } catch (err) {
@@ -999,7 +1000,6 @@
         } else if (type === 'answer') {
           thinkingTraceApi.stop();
           messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
-          void speakAssistantResponse(data?.tts?.text || data.response, data?.tts?.itemId ? `conversation-answer:${data.tts.itemId}` : 'conversation-answer');
           loading = false;
           close();
           restorePassiveChatStreams();
@@ -1418,7 +1418,6 @@
           pipelineTriggered: result.pipelineTriggered,
           dialogueSource: 'response-pipeline',
         });
-        void speakAssistantResponse(result.response, 'response-pipeline');
       } else {
         console.warn('[response-pipeline] No response text in result');
         thinkingTraceApi.appendTrace(`[${timestamp()}] ⚠️ No response text returned`, 10);
@@ -1962,11 +1961,6 @@
               reasoningStages = [];
             }
             messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
-            const answerSpeechText = data?.tts?.text || data.response;
-            const answerSpeechSource = data?.tts?.itemId
-              ? `conversation-answer:${data.tts.itemId}`
-              : 'conversation-answer';
-            void speakAssistantResponse(answerSpeechText, answerSpeechSource);
 
             loading = false;
             chatResponseStream?.close();
@@ -2670,13 +2664,9 @@
       <button
         class="icon-btn {ttsEnabled ? 'tts-active' : ''}"
         title={ttsEnabled ? 'Disable speech (all modes)' : 'Enable speech (conversation, inner dialogue, system)'}
-        on:click={() => {
-          ttsEnabled = !ttsEnabled;
-          if (ttsEnabled) {
-            ttsApi.prefetchVoiceResources();
-          }
-          saveChatPrefs();
-        }}>
+        aria-label={ttsEnabled ? 'Disable speech' : 'Enable speech'}
+        aria-pressed={ttsEnabled}
+        on:click={toggleAssistantSpeech}>
         <!-- Speaker icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
       </button>
@@ -2832,7 +2822,6 @@
         if ($micIsRecording) {
           mic.stopMic();
         } else {
-          enableAssistantSpeech('mic-click');
           messagesApi.pushMessage('system', '🎤 Starting microphone...');
           mic.startMic();
         }
@@ -2841,7 +2830,6 @@
         // Long-press: toggle conversation mode on ALL devices
         console.log('[chat-mic] Long press detected, toggling conversation mode');
         if (!$micIsConversationMode) {
-          enableAssistantSpeech('mic-long-press');
           messagesApi.pushMessage('system', '🎤 Conversation listening mode enabled. Speak when ready.');
         }
         mic.toggleConversationMode();
@@ -2850,7 +2838,6 @@
         // Right-click: toggle conversation mode on ALL devices
         console.log('[chat-mic] Right-click detected, toggling conversation mode');
         if (!$micIsConversationMode) {
-          enableAssistantSpeech('mic-context-menu');
           messagesApi.pushMessage('system', '🎤 Conversation listening mode enabled. Speak when ready.');
         }
         mic.toggleConversationMode();
@@ -2867,7 +2854,6 @@
         // If in conversation mode, VAD will auto-restart
         // If not, enter conversation mode
         if (!$micIsConversationMode) {
-          enableAssistantSpeech('tap-to-interrupt');
           mic.toggleConversationMode();
         }
       }}

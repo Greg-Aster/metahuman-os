@@ -158,8 +158,9 @@ const contextOutput = await environmentContextBuilderNode.execute({
   instruction: 'Inspect the environment in front of the robot.',
   images: imageOutput.images,
 }, {} as never, {});
-assert.equal(Array.isArray(contextOutput.messages[0]?.content), true);
-assert.deepEqual(contextOutput.messages[0]?.content[1], {
+const currentTaskContent = contextOutput.messages.at(-1)?.content;
+assert.equal(Array.isArray(currentTaskContent), true);
+assert.deepEqual(currentTaskContent[1], {
   type: 'image_url',
   image_url: { url: environmentDataUrl },
 });

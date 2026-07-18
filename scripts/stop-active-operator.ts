@@ -1,75 +1,39 @@
 #!/usr/bin/env tsx
-/**
- * Stop Active Operator from command line
- * 
- * Usage: 
- *   pnpm tsx scripts/stop-active-operator.ts
- */
+/** Return Active Operator to reactive mode through the server-owned runtime. */
 
-import { stopActiveOperatorService, getActiveOperatorServiceStatus } from '@metahuman/core/active-operator';
-import { audit } from '@metahuman/core';
+import {
+  parseActiveOperatorCliOptions,
+  requestActiveOperator,
+} from './active-operator-client.js';
 
 const LOG_PREFIX = '[stop-active-operator]';
 
 async function main() {
-  // Parse command line arguments
-  const args = process.argv.slice(2);
-  
-  for (const arg of args) {
-    if (arg === '--help' || arg === '-h') {
-      console.log('Usage: pnpm tsx scripts/stop-active-operator.ts');
-      console.log('');
-      console.log('Stops the Active Operator service if it is running.');
-      process.exit(0);
-    }
-  }
-
-  console.log(`${LOG_PREFIX} Stopping Active Operator...`);
-  
-  // Check current status
-  const statusBefore = getActiveOperatorServiceStatus();
-  if (!statusBefore.isRunning) {
-    console.log(`${LOG_PREFIX} Active Operator is not running.`);
-    process.exit(0);
-  }
-
-  console.log(`${LOG_PREFIX} Active Operator is currently running for user: ${statusBefore.username}`);
-  if (statusBefore.currentTask) {
-    console.log(`${LOG_PREFIX} Current task: ${statusBefore.currentTask.type}`);
-  }
-
-  // Stop the service
-  const result = await stopActiveOperatorService();
-  
-  if (result.success) {
-    console.log(`${LOG_PREFIX} ✓ ${result.message}`);
-    
-    // Audit the manual stop
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'active_operator_manual_stop',
-      actor: 'cli',
-      details: {
-        method: 'command_line_script',
-        previousUsername: statusBefore.username
-      }
-    });
-
-    // Show final status
-    const statusAfter = getActiveOperatorServiceStatus();
-    console.log(`${LOG_PREFIX} Status:`);
-    console.log(`  - Running: ${statusAfter.isRunning}`);
+  const options = parseActiveOperatorCliOptions(process.argv.slice(2));
+  if (options.help) {
+    console.log('Usage: pnpm tsx scripts/stop-active-operator.ts [options]');
     console.log('');
-    console.log(`${LOG_PREFIX} Active Operator has been stopped.`);
-    
-  } else {
-    console.error(`${LOG_PREFIX} ✗ Failed to stop: ${result.message}`);
-    process.exit(1);
+    console.log('Returns Active Operator to reactive mode. Existing non-policy work remains coordinator-owned.');
+    console.log('');
+    console.log('Options:');
+    console.log('  --username=USERNAME  Use the newest active session for this user (defaults to owner)');
+    console.log('  --session=TOKEN      Use an explicit mh_session token');
+    console.log('  --url=URL            MetaHuman server URL (defaults to http://127.0.0.1:4321)');
+    console.log('  --help, -h           Show this help message');
+    return;
   }
+
+  console.log(`${LOG_PREFIX} Returning Active Operator to reactive mode through ${options.serverUrl}...`);
+  const result = await requestActiveOperator<{ success: boolean; mode: string; message: string }>(
+    '/api/active-operator/control',
+    options,
+    { method: 'POST', body: JSON.stringify({ action: 'set-mode', mode: 'reactive' }) },
+  );
+  if (!result.success) throw new Error(result.message || 'Active Operator mode change failed');
+
+  console.log(`${LOG_PREFIX} ✓ ${result.message}`);
 }
 
-// Run the script
 main().catch((error) => {
   console.error(`${LOG_PREFIX} Fatal error:`, error);
   process.exit(1);

@@ -1,13 +1,13 @@
 /**
  * Smart Router Node
  *
- * Routes queries based on orchestrator complexity analysis
- * Simple queries skip operator overhead and go directly to response synthesis
+ * Normalizes orchestrator analysis into explicit memory-routing hints.
  *
  * Enhanced to pass through memory hints from orchestrator for tier-aware memory routing:
  * - needsMemory: Whether memory search is needed
  * - memoryTier: Which tier to search (hot, warm, cold, facts, all)
  * - memoryQuery: Refined search query from orchestrator
+ * - memoryTypes: Semantic record types selected by the orchestrator LLM
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
@@ -46,25 +46,27 @@ export const SmartRouterNode: NodeDefinition = defineNode({
       step: 0.1,
     },
   },
-  description: 'Routes queries based on complexity analysis - simple queries skip operator overhead',
+  description: 'Normalizes orchestrator analysis and decides whether memory retrieval is needed',
 
-  execute: async (inputs, context, properties) => {
-    const orchestratorAnalysis = inputs[0] || {};
+  execute: async (inputs, _context, properties) => {
+    const orchestratorAnalysis = inputs.orchestratorAnalysis ?? inputs.analysis ?? inputs[0] ?? {};
 
     // Extract complexity and metadata from orchestrator analysis
-    const complexity = orchestratorAnalysis.complexity || 0.5;
-    const needsMemory = orchestratorAnalysis.needsMemory || false;
-    const simpleThreshold = properties?.simpleThreshold || 0.3;
+    const complexity = Number(orchestratorAnalysis.complexity ?? 0.5);
+    const needsMemory = orchestratorAnalysis.needsMemory === true;
+    const simpleThreshold = properties?.simpleThreshold ?? 0.3;
+    const routeOnComplexity = properties?.routeOnComplexity !== false;
 
     // Extract memory routing hints from orchestrator
     const memoryHints = {
       needsMemory,
       memoryTier: orchestratorAnalysis.memoryTier || 'hot',
       memoryQuery: orchestratorAnalysis.memoryQuery || '',
+      memoryTypes: orchestratorAnalysis.memoryTypes || [],
     };
 
     // Determine routing decision
-    const isSimple = complexity < simpleThreshold && !needsMemory;
+    const isSimple = routeOnComplexity && complexity < simpleThreshold && !needsMemory;
 
     if (isSimple) {
       // Simple path: Goes directly to response synthesizer

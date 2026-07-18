@@ -9,13 +9,14 @@
  *
  * Three-tier architecture:
  * - Tier 1 (Offline): On-device Qwen3-1.7B via llama.cpp
- * - Tier 2 (Server): Home Ollama with Qwen3:14B
+ * - Tier 2 (Server): Home Ollama with Qwen3.5 9B
  * - Tier 3 (Cloud): RunPod with Qwen3-Coder-30B
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
 import { healthStatus } from './server-health';
 import { getApiBaseUrlAsync } from './api-config';
+import { DEFAULT_OLLAMA_CHAT_MODEL } from './model-defaults';
 
 // ============================================================================
 // Types
@@ -97,8 +98,8 @@ export const TIERS: Record<TierType, TierConfig> = {
   server: {
     id: 'server',
     name: 'Home Server',
-    description: 'Qwen3:14B on local Ollama server',
-    model: 'qwen3:14b',
+    description: 'Qwen3.5 9B on local Ollama server',
+    model: DEFAULT_OLLAMA_CHAT_MODEL,
     maxTokens: 8192,
     capabilities: ['chat', 'code', 'analysis', 'creative', 'memory-search', 'task-planning'],
     minBatteryPercent: 10,
@@ -244,7 +245,7 @@ async function checkServerTierAvailable(): Promise<TierStatus> {
   try {
     const serverUrl = await getApiBaseUrlAsync() || window.location.origin;
     const start = Date.now();
-    const response = await fetch(`${serverUrl}/api/boot`, {
+    const response = await fetch(`${serverUrl}/api/status`, {
       method: 'GET',
       credentials: 'include',
       signal: AbortSignal.timeout(5000),

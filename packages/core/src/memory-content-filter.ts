@@ -93,7 +93,7 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
 
     case 'agent':
       // Agent-only: return AI responses, dreams, system outputs
-      if (type === 'dream' || type === 'inner_dialogue') {
+      if (type === 'dream' || type === 'daydream' || type === 'inner_dialogue') {
         return content;
       }
       if (type === 'conversation') {
@@ -119,7 +119,7 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
       }
 
       // Dreams are creative AI output worth reflecting on (exception)
-      if (type === 'dream') {
+      if (type === 'dream' || type === 'daydream') {
         return content;
       }
 

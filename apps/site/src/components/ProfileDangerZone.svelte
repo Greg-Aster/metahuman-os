@@ -137,7 +137,7 @@
             window.location.href = '/';
           }, 2000);
         } else {
-          // Refresh profile list for admin users
+          // Refresh profile list for the owner
           await loadProfiles();
         }
       } else {
@@ -154,7 +154,7 @@
   function canDeleteProfile(profile: Profile): boolean {
     if (!currentUser) return false;
 
-    // Owner/admin can delete any non-owner, non-guest profiles (except their own)
+    // Owner can delete any non-owner, non-guest profiles (except their own)
     if (currentUser.role === 'owner') {
       if (profile.role === 'owner') return false;
       if (profile.username === currentUser.username) return false;

@@ -54,11 +54,18 @@ needsMemory=FALSE when:
 
 Default to FALSE for statements/observations. Only TRUE for actual recall questions.
 
+When needsMemory is true, choose the semantic search scope:
+- memoryQuery describes what should be recalled.
+- memoryTypes is an array of exact stored record types when the request targets a particular kind of memory; otherwise use [].
+- Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.
+- Decide from the meaning and context of the request. The memory router will execute your selection without keyword-based intent rules.
+
 Output JSON:
 {
   "needsMemory": boolean,
   "memoryTier": string,
   "memoryQuery": string,
+  "memoryTypes": string[],
   "needsAction": boolean,
   "actionType": string,
   "actionParams": object,
@@ -73,6 +80,13 @@ Output JSON:
 
 const DEFAULT_USER_PROMPT_TEMPLATE = `Analyze this message: "{{userMessage}}"`;
 
+function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis: T } {
+  return {
+    ...result,
+    analysis: result,
+  };
+}
+
 export const OrchestratorLLMNode: NodeDefinition = defineNode({
   id: 'orchestrator_llm',
   name: 'Orchestrator LLM',
@@ -84,9 +98,11 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
+    { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
     { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
     { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
     { name: 'memoryQuery', type: 'string', description: 'Optimized search query' },
+    { name: 'memoryTypes', type: 'array', description: 'Exact stored memory types selected semantically by the LLM; empty for broad recall' },
     { name: 'needsAction', type: 'boolean', description: 'Whether an action/skill is needed (routes to Big Brother)' },
     { name: 'actionType', type: 'string', description: 'Type of action to perform' },
     { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
@@ -157,10 +173,11 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const currentIteration = feedbackContext?.iteration ?? 1;
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
-      return {
+      return withAnalysis({
         needsMemory: false,
         memoryTier: 'hot',
         memoryQuery: '',
+        memoryTypes: [],
         needsAction: false,
         actionType: 'none',
         actionParams: {},
@@ -171,7 +188,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
         emotionalTone: 'neutral',
         conversationDepth: conversationLength,
         error: 'No user message provided',
-      };
+      });
     }
 
     // Build conversation context summary for the LLM
@@ -245,10 +262,11 @@ Adjust your routing based on this feedback. If memory search already failed, con
         const actionType = parsed.actionType || 'none';
         const triggersBigBrother = needsAction || complexity > 0.7 || actionType !== 'none';
 
-        return {
+        return withAnalysis({
           needsMemory: parsed.needsMemory ?? false,
           memoryTier: parsed.memoryTier || 'hot',
           memoryQuery: parsed.memoryQuery || '',
+          memoryTypes: Array.isArray(parsed.memoryTypes) ? parsed.memoryTypes : [],
           needsAction: triggersBigBrother,
           actionType: actionType,
           actionParams: parsed.actionParams || {},
@@ -260,7 +278,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
           conversationDepth: conversationLength,
           raw: response.content,
           thinking: response.thinking, // Pass through reasoning for graph executor
-        };
+        });
       } catch {
         // Fallback parsing for malformed JSON
         const needsMemoryMatch = response.content.match(/needsMemory[":]\s*(true|false)/i);
@@ -274,10 +292,11 @@ Adjust your routing based on this feedback. If memory search already failed, con
         const needsAction = needsActionMatch?.[1]?.toLowerCase() === 'true';
         const actionType = actionTypeMatch?.[1]?.toLowerCase() || 'none';
 
-        return {
+        return withAnalysis({
           needsMemory: needsMemoryMatch?.[1]?.toLowerCase() === 'true' || false,
           memoryTier: tierMatch?.[1]?.toLowerCase() || 'hot',
           memoryQuery: '',
+          memoryTypes: [],
           needsAction: needsAction || complexity > 0.7 || actionType !== 'none',
           actionType,
           actionParams: {},
@@ -289,14 +308,15 @@ Adjust your routing based on this feedback. If memory search already failed, con
           conversationDepth: conversationLength,
           raw: response.content,
           thinking: response.thinking, // Pass through reasoning for graph executor
-        };
+        });
       }
     } catch (error) {
       console.error('[OrchestratorLLM] Error:', error);
-      return {
+      return withAnalysis({
         needsMemory: false,
         memoryTier: 'hot',
         memoryQuery: '',
+        memoryTypes: [],
         needsAction: false,
         actionType: 'none',
         actionParams: {},
@@ -307,7 +327,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
         emotionalTone: 'neutral',
         conversationDepth: conversationLength,
         error: (error as Error).message,
-      };
+      });
     }
   },
 });

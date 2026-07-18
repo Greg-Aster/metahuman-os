@@ -226,7 +226,7 @@ async function fineTuneCycle(username: string, options: FineTuneOptions) {
 **CLI Interface**:
 ```bash
 # Full fine-tune for all modes
-./bin/mh fine-tune --username greggles --base-model qwen3-coder:30b
+./bin/mh fine-tune --username greggles --base-model Qwen/Qwen3.5-9B
 
 # Fine-tune only dual mode
 ./bin/mh fine-tune --username greggles --mode dual --min-samples 3000
@@ -349,7 +349,7 @@ const MODE_MAPPING: Record<string, CognitiveMode> = {
 | **Training** | Adapter weights only | All model weights |
 | **Data size** | 1000-2000 samples | 5000+ samples recommended |
 | **Training time** | 15-30 min | 2-6 hours |
-| **GPU memory** | 16GB (A10G) | 40-80GB (A100 required) |
+| **GPU memory** | 24GB-class | High-memory accelerator; 80GB recommended |
 | **Merging** | Required | Not needed |
 | **Quality** | Good for style | Better for deep personality |
 | **Cost per run** | $0.50-$1.00 | $5.00-$15.00 |
@@ -481,12 +481,12 @@ function validateOutputQuality(samples: CuratedSample[]): QualityReport {
 - Uses Hugging Face `Trainer` (not Unsloth LoRA)
 - Full model fine-tuning with low learning rate
 - Saves entire model checkpoint (no adapter merging)
-- Requires 40GB+ VRAM (A100 recommended)
+- Requires a high-memory accelerator; 80GB A100/H100 recommended
 
 **Hyperparameters** (`etc/fine-tune-config.json`):
 ```json
 {
-  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "base_model": "Qwen/Qwen3.5-9B",
   "learning_rate": 5e-6,
   "num_train_epochs": 3,
   "per_device_train_batch_size": 1,
@@ -532,7 +532,7 @@ Add fine-tuned models to `etc/models.json`:
     "model": "greggles-ft-2025-11-21",
     "trainingMethod": "full-finetune",
     "cognitiveModesSupported": ["dual", "emulation", "agent"],
-    "baseModel": "qwen3-coder:30b",
+    "baseModel": "Qwen/Qwen3.5-9B",
     "fineTunedAt": "2025-11-21T00:00:00Z"
   }
 }

@@ -5,6 +5,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../connection-pool';
+import { isOwner } from '../../../stores/security-policy';
 
 // Types
 interface AuditStreamEvent {
@@ -68,6 +69,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    * Ensure audit stream is connected
    */
   function ensureAuditStream(): void {
+    if (!get(isOwner)) return;
     if (auditHandle && auditHandle.getStatus() !== 'closed') {
       return;
     }

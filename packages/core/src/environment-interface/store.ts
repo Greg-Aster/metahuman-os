@@ -15,6 +15,10 @@ import type {
   EnvironmentSessionState,
   EnvironmentTextEvent,
 } from './types.js';
+import {
+  assertBoundedMotionPlanEncoding,
+  normalizeEnvironmentMotionPlanFields,
+} from './motion-plan.js';
 
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
 const STALE_AFTER_MS = 45_000;
@@ -24,10 +28,10 @@ const MAX_PROCESSED_TEXT_EVENTS = 1_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'sendText',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText',
 ]);
 const NON_REPLAYABLE_ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'robotCommand',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan',
 ]);
 
 type ActionSubscriber = () => void;
@@ -184,10 +188,16 @@ export function publishEnvironmentObservation(
     input: { observation, graph: options.graph },
     username: options.username || 'system',
     cognitiveMode: 'environment',
-    correlationId: observation.feedback?.find(item => item.actionId)?.actionId,
+    correlationId: typeof observation.metadata?.correlationId === 'string'
+      ? observation.metadata.correlationId
+      : observation.feedback?.find(item => item.actionId)?.actionId,
     idempotencyKey: `environment-observation:${observation.sessionId}:${observation.timestamp}`,
     maxAttempts: 1,
-    metadata: { producer: 'environment-bridge', sessionId: observation.sessionId },
+    metadata: {
+      producer: 'environment-bridge',
+      sessionId: observation.sessionId,
+      robotObserver: observation.metadata?.robotObserver,
+    },
   });
   return { summary, workId: work.id };
 }
@@ -258,6 +268,14 @@ function normalizeAction(
   }
   if (action.type === 'sendText' && !action.text?.trim()) throw new Error('Environment sendText action requires text');
   if (action.type === 'robotCommand' && !action.command?.trim()) throw new Error('Environment robotCommand action requires a semantic command');
+  const motionPlan = action.type === 'robotMotionPlan'
+    ? normalizeEnvironmentMotionPlanFields(action)
+    : undefined;
+  if (motionPlan) assertBoundedMotionPlanEncoding({
+    type: action.type,
+    frames: motionPlan.frames,
+    endPose: motionPlan.endPose,
+  });
 
   const sessionId = action.sessionId || options.sessionId || getLatestEnvironmentObservation()?.sessionId;
   if (!sessionId) throw new Error('Environment action requires a connected target session');
@@ -272,6 +290,8 @@ function normalizeAction(
     amount: typeof action.amount === 'number' ? Math.max(0, Math.min(1, action.amount)) : undefined,
     durationMs,
     target: action.target,
+    frames: motionPlan?.frames,
+    endPose: motionPlan?.endPose,
     metadata: action.metadata,
   };
 }

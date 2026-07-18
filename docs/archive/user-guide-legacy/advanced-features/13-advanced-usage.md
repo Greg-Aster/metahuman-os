@@ -950,7 +950,7 @@ The full fine-tuning pipeline consists of 6 steps:
 **Base config** (`etc/fine-tune-config.json`):
 ```json
 {
-  "base_model": "Qwen/Qwen3-14B",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
   "learning_rate": 5e-6,
   "num_train_epochs": 3,
@@ -1028,12 +1028,12 @@ The model registry tracks version history:
 
 ```json
 {
-  "original_base_model": "Qwen/Qwen3-14B",
+  "original_base_model": "Qwen/Qwen3.5-9B",
   "current_base_model": "/profiles/greggles/out/.../v3/model",
   "training_history": [
     {
       "version": 1,
-      "base_model_used": "Qwen/Qwen3-14B",
+      "base_model_used": "Qwen/Qwen3.5-9B",
       "samples_trained": 5247,
       "timestamp": "2025-11-01T10:00:00Z"
     },

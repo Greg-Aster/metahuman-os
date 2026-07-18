@@ -145,6 +145,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     }
 
     return {
+      history: messages,
       messages,
       summaryMarkers,
       count: messages.length,

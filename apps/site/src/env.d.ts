@@ -2,10 +2,11 @@
 
 declare namespace App {
   interface Locals {
+    authResolved?: boolean;
     userContext?: {
       userId: string;
       username: string;
-      role: 'owner' | 'standard' | 'guest' | 'anonymous';
+      role: 'owner' | 'standard' | 'guest';
       activeProfile?: string;
     };
   }

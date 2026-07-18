@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "description": "Boredom Movement agent policy. Robot Operator owns timing; this agent owns eligible in-place semantic commands.",
+  "stationaryCommands": [
+    "sit",
+    "stand",
+    "neutral",
+    "rest",
+    "wave",
+    "dance",
+    "swim",
+    "point",
+    "pushup",
+    "bow",
+    "cute",
+    "freaky",
+    "worm",
+    "shake",
+    "shrug",
+    "dead",
+    "crab"
+  ]
+}

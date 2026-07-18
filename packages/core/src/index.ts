@@ -94,6 +94,7 @@ export * from './intelligent-memory-retrieval';
 export * from './locks';
 export * from './logging';
 export * from './runtime-mode';
+export * from './sleep-config';
 export * from './transcription';
 export * from './adapters';
 // Skills - exclude queueForApproval and getPendingApprovals (conflicts with policy)
@@ -274,6 +275,7 @@ export {
 } from './model-registry.js';
 
 export * from './system-activity';
+export * from './robot-operator';
 export * from './training-cleanup';
 
 // Persona session manager - rename Session and getSessionStats to avoid conflicts
@@ -311,8 +313,6 @@ export type {
 export {
   getAuthenticatedUser,
   getUserPaths,
-  hasPermission,
-  requirePermission,
   AuthRequiredError,
 } from './auth.js';
 
@@ -623,6 +623,9 @@ export {
 } from './connectors/chat-ingestor.js';
 export * from './connectors/voice-memo-ingestor.js';
 export * from './connectors/clip-tagger.js';
+
+// Maintained inference and training defaults
+export * from './model-defaults.js';
 
 // Version
 export const VERSION = '0.1.0';

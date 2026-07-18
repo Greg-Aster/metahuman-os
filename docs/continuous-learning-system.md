@@ -11,7 +11,7 @@ The MetaHuman fine-tuning pipeline supports **continuous learning** - each train
 ### Concept
 
 ```
-Original Base Model (Qwen/Qwen3-14B from HuggingFace)
+Original Base Model (Qwen/Qwen3.5-9B from HuggingFace)
         ↓
     [Train on memories 1-1000]
         ↓
@@ -42,7 +42,7 @@ Tracks:
 
 ```json
 {
-  "original_base_model": "Qwen/Qwen3-14B",
+  "original_base_model": "Qwen/Qwen3.5-9B",
   "current_base_model": "profiles/greggles/out/fine-tuned-models/2025-11-21/.../model",
   "model_type": "local",
 
@@ -51,7 +51,7 @@ Tracks:
       "version": 1,
       "run_id": "abc123",
       "timestamp": "2025-11-21T10:00:00Z",
-      "base_model_used": "Qwen/Qwen3-14B",
+      "base_model_used": "Qwen/Qwen3.5-9B",
       "output_model_path": "profiles/greggles/out/.../v1/model",
       "gguf_path": "profiles/greggles/out/.../v1/model.gguf",
       "samples_trained": 3247,
@@ -85,7 +85,7 @@ After each training run, **two versions** of the model are saved:
 
 ### 1. **Unquantized Model** (Safetensors)
 - **Format**: PyTorch Safetensors
-- **Size**: ~28 GB (for 14B model)
+- **Size**: depends on precision and the current 9B base
 - **Purpose**: Base for next fine-tuning run
 - **Location**: `profiles/{user}/out/fine-tuned-models/{date}/{run-id}/model/`
 - **Files**:
@@ -97,7 +97,7 @@ After each training run, **two versions** of the model are saved:
 
 ### 2. **Quantized GGUF** (Q8_0)
 - **Format**: GGUF (llama.cpp format)
-- **Size**: ~8-10 GB (for 14B model)
+- **Size**: depends on quantization and the current 9B base
 - **Purpose**: Fast local inference with Ollama
 - **Location**: `profiles/{user}/out/fine-tuned-models/{date}/{run-id}/model.gguf`
 
@@ -116,8 +116,8 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles
 
 **Process**:
 1. Checks `model-registry.json`
-2. Sees `current_base_model: "unsloth/Qwen3-14B-Instruct"`
-3. Downloads `Qwen/Qwen3-14B` model from HuggingFace
+2. Sees `current_base_model: "unsloth/Qwen3.5-9B-Instruct"`
+3. Downloads `Qwen/Qwen3.5-9B` model from HuggingFace
 4. Trains on your memories
 5. Saves:
    - Unquantized model → `/out/.../model/`
@@ -159,7 +159,7 @@ When you run fine-tuning, the base model is determined by:
 
 1. **User Override** (`--base-model` flag) ← Highest priority
    ```bash
-   tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3-14B
+   tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
    ```
    Use this to:
    - Switch to a different base model
@@ -173,7 +173,7 @@ When you run fine-tuning, the base model is determined by:
    Uses latest trained model automatically
 
 3. **Hardcoded Fallback** (if registry missing)
-   - `Qwen/Qwen3-14B`
+   - `Qwen/Qwen3.5-9B`
 
 ---
 
@@ -206,7 +206,7 @@ history.forEach((run) => {
 import { resetToOriginalBase } from '@metahuman/core';
 
 resetToOriginalBase();
-// Next run will use Qwen/Qwen3-14B again
+// Next run will use Qwen/Qwen3.5-9B again
 ```
 
 Or via CLI:
@@ -320,7 +320,7 @@ GGUF (8GB) ← Information loss here
 **HuggingFace model** (first run):
 ```python
 model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen3-14B",  # Downloads from internet
+    "Qwen/Qwen3.5-9B",  # Downloads from internet
     torch_dtype=torch.bfloat16,
 )
 ```

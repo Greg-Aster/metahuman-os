@@ -1,5 +1,5 @@
 {
-  "base_model": "Qwen/Qwen3-14B",
+  "base_model": "Qwen/Qwen3.5-9B",
   "num_train_epochs": 5,
   "max_samples": 3000,
   "monthly_training": true,
@@ -17,5 +17,8 @@
   "gguf_conversion": {
     "enabled": false,
     "quantization_type": "Q4_K_M"
-  }
+  },
+  "lora_dropout": 0,
+  "load_in_4bit": false,
+  "load_in_16bit": true
 }

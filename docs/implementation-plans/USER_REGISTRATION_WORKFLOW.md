@@ -149,7 +149,7 @@ profiles/{username}/
 **Default Configuration:**
 - **Cognitive Mode:** `dual` (default operational mode)
 - **Model Preferences:** Inherits system defaults
-- **Training Config:** Qwen3-Coder-30B base model, LoRA rank 8
+- **Training Config:** Qwen 3.5 9B base model, LoRA rank 8
 - **Boredom Service:** 30-minute reflection interval
 - **Sleep Schedule:** 2 AM - 8 AM (America/New_York)
 - **Audio:** Disabled by default

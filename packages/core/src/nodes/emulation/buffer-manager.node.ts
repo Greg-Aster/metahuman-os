@@ -4,12 +4,26 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import {
+  appendToUserBuffer,
+  getBufferPathForUser,
+  type ConversationBufferMode,
+} from '../../conversation-buffer.js';
 
-const execute: NodeExecutor = async (inputs, context) => {
-  const mode = context.mode || context.dialogueType || 'conversation';
+function resolveMode(value: unknown): ConversationBufferMode {
+  return value === 'inner' || value === 'system' ? value : 'conversation';
+}
+
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  const mode = resolveMode(context.mode || context.dialogueType);
   const sessionId = context.sessionId;
   const username = context.username;
-  const userMessage = context.userMessage;
+  const explicitUserMessage = inputs.userMessage;
+  const userMessage = typeof explicitUserMessage === 'string'
+    ? explicitUserMessage.trim()
+    : typeof context.userMessage === 'string'
+      ? context.userMessage.trim()
+      : '';
 
   if (!username) {
     return {
@@ -19,124 +33,82 @@ const execute: NodeExecutor = async (inputs, context) => {
   }
 
   try {
-    const { getProfilePaths, systemPaths } = await import('../../paths.js');
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-
-    const profilePaths = getProfilePaths(username);
-    const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
-
-    fs.mkdirSync(profilePaths.state, { recursive: true });
-
-    // Load existing buffer
-    let existingMessages: any[] = [];
-    let summaryMarkers: any[] = [];
-    try {
-      if (fs.existsSync(bufferPath)) {
-        const existingRaw = fs.readFileSync(bufferPath, 'utf-8');
-        const existing = JSON.parse(existingRaw);
-        existingMessages = existing.messages || [];
-        summaryMarkers = existing.summaryMarkers || [];
-      }
-    } catch {}
-
     // Get response from named input first, then positional fallback
-    const rawResponse = inputs.response ?? inputs[1];
+    const rawResponse = inputs.response ?? inputs[2] ?? inputs[1];
     const assistantResponse = typeof rawResponse === 'string'
       ? rawResponse
       : rawResponse?.response || rawResponse?.content || rawResponse?.text || rawResponse;
+    const responseText = typeof assistantResponse === 'string' ? assistantResponse.trim() : '';
 
-    console.log('[BufferManager] Received response:', assistantResponse ? `${String(assistantResponse).substring(0, 50)}...` : 'none');
+    console.log('[BufferManager] Received response:', responseText ? `${responseText.substring(0, 50)}...` : 'none');
 
-    // Build updated message list
-    const updatedMessages = [...existingMessages];
-
-    if (userMessage) {
-      // Check if user message was already saved early (dedup check)
-      // Early save happens in persona-chat.ts before graph execution
-      const lastMsg = existingMessages[existingMessages.length - 1];
-      const alreadySaved = lastMsg?.role === 'user' && lastMsg?.content === userMessage;
-
-      if (!alreadySaved) {
-        // Build meta object with reply-to context (for desire discussions, curiosity replies, etc.)
-        const meta: Record<string, any> = {};
-        if (context.replyToDesireId) {
-          meta.replyToDesireId = context.replyToDesireId;
-        }
-        if (context.replyToDesireTitle) {
-          meta.replyToDesireTitle = context.replyToDesireTitle;
-        }
-        if (context.replyToQuestionId) {
-          meta.replyToQuestionId = context.replyToQuestionId;
-        }
-        if (context.replyToContent) {
-          meta.replyToContent = context.replyToContent;
-        }
-
-        updatedMessages.push({
-          role: 'user',
-          content: userMessage,
-          timestamp: Date.now(),
-          ...(Object.keys(meta).length > 0 ? { meta } : {}),
-        });
-      } else {
-        console.log('[BufferManager] User message already saved (early save), skipping duplicate');
-      }
+    if (properties?.requireUserMessage === true && !userMessage) {
+      return {
+        persisted: false,
+        reason: 'No conversational user message',
+        mode,
+        messageCount: 0,
+        sessionId,
+        bufferPath: getBufferPathForUser(username, mode),
+      };
     }
 
-    if (assistantResponse) {
-      // Include reply-to metadata on assistant response too, so the full conversation
-      // can be traced back to the desire/question being discussed
-      const assistantMeta: Record<string, any> = {};
-      if (context.replyToDesireId) {
-        assistantMeta.replyToDesireId = context.replyToDesireId;
-      }
-      if (context.replyToDesireTitle) {
-        assistantMeta.replyToDesireTitle = context.replyToDesireTitle;
-      }
+    const historyInput = inputs.conversationHistory;
+    const existingMessages = Array.isArray(historyInput)
+      ? historyInput
+      : Array.isArray(historyInput?.messages)
+        ? historyInput.messages
+        : [];
+    const lastMessage = existingMessages[existingMessages.length - 1];
+    const userAlreadySaved = Boolean(
+      userMessage
+      && lastMessage?.role === 'user'
+      && lastMessage?.content === userMessage,
+    );
+    let appendedCount = 0;
 
-      updatedMessages.push({
+    if (userMessage && !userAlreadySaved) {
+      const userMeta: Record<string, unknown> = {};
+      if (context.replyToDesireId) userMeta.replyToDesireId = context.replyToDesireId;
+      if (context.replyToDesireTitle) userMeta.replyToDesireTitle = context.replyToDesireTitle;
+      if (context.replyToQuestionId) userMeta.replyToQuestionId = context.replyToQuestionId;
+      if (context.replyToContent) userMeta.replyToContent = context.replyToContent;
+      if (context.cognitiveMode) userMeta.cognitiveMode = context.cognitiveMode;
+      if (sessionId) userMeta.sessionId = sessionId;
+
+      if (await appendToUserBuffer(username, mode, {
+        role: 'user',
+        content: userMessage,
+        meta: Object.keys(userMeta).length > 0 ? userMeta : undefined,
+      })) {
+        appendedCount++;
+      }
+    } else if (userAlreadySaved) {
+      console.log('[BufferManager] User message already saved, skipping duplicate');
+    }
+
+    if (responseText) {
+      const assistantMeta: Record<string, unknown> = {};
+      if (context.replyToDesireId) assistantMeta.replyToDesireId = context.replyToDesireId;
+      if (context.replyToDesireTitle) assistantMeta.replyToDesireTitle = context.replyToDesireTitle;
+      if (context.cognitiveMode) assistantMeta.cognitiveMode = context.cognitiveMode;
+      if (sessionId) assistantMeta.sessionId = sessionId;
+
+      if (await appendToUserBuffer(username, mode, {
         role: 'assistant',
-        content: assistantResponse,
-        timestamp: Date.now(),
-        ...(Object.keys(assistantMeta).length > 0 ? { meta: assistantMeta } : {}),
-      });
-    }
-
-    // Filter out system messages
-    const conversationMessages = updatedMessages.filter((msg: any) => msg.role !== 'system');
-
-    // Load max messages from settings
-    let maxMessages = 80;
-    try {
-      const settingsPath = path.join(profilePaths.root, 'chat-settings.json');
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        maxMessages = settings.settings?.maxHistoryMessages?.value ?? 80;
+        content: responseText,
+        meta: Object.keys(assistantMeta).length > 0 ? assistantMeta : undefined,
+      })) {
+        appendedCount++;
       }
-    } catch {}
-
-    // Hard prune if over max
-    let finalMessages = conversationMessages;
-    if (conversationMessages.length > maxMessages) {
-      finalMessages = conversationMessages.slice(-maxMessages);
     }
-
-    const payload = {
-      summaryMarkers,
-      messages: finalMessages,
-      lastSummarizedIndex: null,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
 
     return {
-      persisted: true,
+      persisted: appendedCount > 0,
       mode,
-      messageCount: finalMessages.length,
+      messageCount: existingMessages.length + appendedCount,
       sessionId,
-      bufferPath,
+      bufferPath: getBufferPathForUser(username, mode),
     };
   } catch (error) {
     console.error('[BufferManager] Error:', error);
@@ -153,6 +125,7 @@ export const BufferManagerNode: NodeDefinition = defineNode({
   category: 'emulation',
   inputs: [
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Conversation history' },
+    { name: 'userMessage', type: 'string', optional: true, description: 'Current user message (defaults to execution context)' },
     { name: 'response', type: 'any', optional: true, description: 'Assistant response' },
   ],
   outputs: [
@@ -160,8 +133,17 @@ export const BufferManagerNode: NodeDefinition = defineNode({
     { name: 'messageCount', type: 'number' },
     { name: 'bufferPath', type: 'string' },
   ],
-  properties: {},
-  propertySchemas: {},
+  properties: {
+    requireUserMessage: false,
+  },
+  propertySchemas: {
+    requireUserMessage: {
+      type: 'toggle',
+      default: false,
+      label: 'Require User Message',
+      description: 'Skip persistence when the execution was not triggered by conversational user text.',
+    },
+  },
   description: 'Persists conversation buffer to disk',
   execute,
 });

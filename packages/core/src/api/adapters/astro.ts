@@ -13,6 +13,7 @@
  */
 
 import { handleHttpRequest } from './http.js';
+import type { UnifiedUser } from '../types.js';
 
 /**
  * Minimal Astro-compatible types (no dependency on astro package)
@@ -23,6 +24,14 @@ interface AstroAPIContext {
   url: URL;
   cookies: unknown; // We don't use Astro's cookies, we handle them via headers
   params: Record<string, string | undefined>;
+  locals?: {
+    authResolved?: boolean;
+    userContext?: {
+      userId: string;
+      username: string;
+      role: 'owner' | 'standard' | 'guest';
+    };
+  };
   [key: string]: unknown;
 }
 
@@ -36,6 +45,14 @@ type AstroAPIRoute = (context: AstroAPIContext) => Response | Promise<Response>;
  */
 export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
   const { request, url } = context;
+  const resolvedUser: UnifiedUser | null | undefined = context.locals?.authResolved
+    ? context.locals.userContext
+      ? {
+          ...context.locals.userContext,
+          isAuthenticated: true,
+        }
+      : null
+    : undefined;
 
   // Parse body for non-GET requests
   let body: unknown;
@@ -117,6 +134,8 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     headers,
     cookieHeader: request.headers.get('cookie'),
     signal: request.signal,
+    resolvedUser,
+    userContextEstablished: Boolean(resolvedUser?.isAuthenticated),
   });
 
   // Handle streaming responses (SSE)

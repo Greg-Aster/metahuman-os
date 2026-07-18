@@ -79,6 +79,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const searchResults = inputs.searchResults ?? inputs[0] ?? { memories: [] };
   const userQuery = inputs.userQuery ?? inputs[1] ?? context.userMessage ?? '';
   const orchestratorIntent = inputs.orchestratorIntent ?? inputs[2] ?? {};
+  const memoryRequested = orchestratorIntent.needsMemory ?? searchResults.searchPerformed ?? true;
 
   // Extract properties
   const relevanceThreshold = properties?.relevanceThreshold ?? 0.6;
@@ -91,13 +92,23 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // Early return if no results
   if (memories.length === 0) {
     console.log('[search_interpreter] No search results to interpret');
-    return {
+    const result: InterpretationResult = {
       relevantMemories: [],
       hasRelevantResults: false,
-      unknownSignal: true,
-      interpretation: 'No memories found for this query.',
+      hasPartialResults: false,
+      unknownSignal: memoryRequested,
+      interpretation: memoryRequested
+        ? 'No memories found for this query.'
+        : 'Memory search was not requested for this query.',
+      summary: memoryRequested
+        ? 'No memories found for this query.'
+        : 'Memory search was not requested for this query.',
       rejectedCount: 0,
       confidence: 1.0,
+    };
+    return {
+      ...result,
+      fullResult: result,
       searchPerformed: searchResults.searchPerformed ?? false,
     };
   }
@@ -260,7 +271,7 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
   name: 'Search Interpreter',
   category: 'memory',
   inputs: [
-    { name: 'searchResults', type: 'object', description: 'Memory search results from memory_router' },
+    { name: 'searchResults', type: 'any', description: 'Memory array or full search result from memory_router' },
     { name: 'userQuery', type: 'string', description: 'Original user query' },
     { name: 'orchestratorIntent', type: 'object', optional: true, description: 'Intent hints from orchestrator' },
   ],

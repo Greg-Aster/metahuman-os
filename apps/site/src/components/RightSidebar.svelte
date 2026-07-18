@@ -4,6 +4,7 @@
   import QueuePanel from './QueuePanel.svelte';
   import ServerStatus from './ServerStatus.svelte';
   import { rightSidebarOpen, systemCoderDisabled } from '../stores/navigation';
+  import { isOwner } from '../stores/security-policy';
 
   let activeTab = 'queue';
   let preferencesLoaded = false;
@@ -20,13 +21,16 @@
       if (savedTab !== null && ['coder', 'queue', 'monitor', 'servers'].includes(savedTab)) {
         activeTab = savedTab;
       }
+      if (!$isOwner && (activeTab === 'coder' || activeTab === 'monitor')) activeTab = 'queue';
     } catch {}
     preferencesLoaded = true;
   });
 
-  $: if ($systemCoderDisabled && activeTab === 'coder') {
+  $: if (($systemCoderDisabled || !$isOwner) && activeTab === 'coder') {
     activeTab = 'queue';
   }
+
+  $: if (!$isOwner && activeTab === 'monitor') activeTab = 'queue';
 
   // Save active tab to localStorage
   $: if (preferencesLoaded && typeof activeTab !== 'undefined') {
@@ -42,14 +46,14 @@
   }
 
   $: tabs = [
-    ...($systemCoderDisabled ? [] : [{ id: 'coder', label: 'System Coder', icon: '🔧' }]),
+    ...($systemCoderDisabled || !$isOwner ? [] : [{ id: 'coder', label: 'System Coder', icon: '🔧' }]),
     { id: 'queue', label: 'Queue', icon: '☷' },
-    { id: 'monitor', label: 'Agent Monitor', icon: '🤖' },
+    ...($isOwner ? [{ id: 'monitor', label: 'Agent Monitor', icon: '🤖' }] : []),
     { id: 'servers', label: 'Server Status', icon: '🖥️' },
   ] as Tab[];
 
   // Lazy load SystemCoderDashboard when coder tab is selected
-  $: if (!$systemCoderDisabled && activeTab === 'coder' && !SystemCoderDashboard && !coderLoading) {
+  $: if ($isOwner && !$systemCoderDisabled && activeTab === 'coder' && !SystemCoderDashboard && !coderLoading) {
     coderLoading = true;
     import('./SystemCoderDashboard.svelte')
       .then(module => {

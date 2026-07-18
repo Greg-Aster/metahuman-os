@@ -65,7 +65,7 @@ This phased rollout plan breaks the personality analyzer and persona generation 
        ```json
        "default.psychotherapist": {
          "provider": "ollama",
-         "model": "qwen3:14b",
+         "model": "qwen3.5:9b",
          "adapters": [],
          "roles": ["psychotherapist", "interviewer", "analyzer"],
          "description": "Specialized interviewer for persona analysis using motivational interviewing techniques",

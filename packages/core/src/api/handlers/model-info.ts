@@ -9,6 +9,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { getActiveAdapter } from '../../adapters.js';
 import { loadModelRegistry } from '../../model-resolver.js';
+import { DEFAULT_OLLAMA_CHAT_MODEL } from '../../model-defaults.js';
 
 /**
  * GET /api/model-info - Get current model and adapter info
@@ -18,13 +19,13 @@ export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedRe
 
   try {
     // Get base model from model registry (user-specific if authenticated)
-    let baseModel = 'qwen3:14b';
+    let baseModel = DEFAULT_OLLAMA_CHAT_MODEL;
     try {
       const username = user.isAuthenticated ? user.username : undefined;
       const registry = loadModelRegistry(false, username);
       const defaultId = registry.defaults?.orchestrator || 'default.orchestrator';
       const defaultModel = registry.models?.[defaultId];
-      baseModel = defaultModel?.model || 'qwen3:14b';
+      baseModel = defaultModel?.model || DEFAULT_OLLAMA_CHAT_MODEL;
     } catch {
       // Use default if config not found
     }

@@ -14,6 +14,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from server_defaults import SynthesisDefaults, load_synthesis_defaults
+
 try:
     from kokoro import KPipeline
 except ImportError:
@@ -26,6 +28,7 @@ app = FastAPI(title="Kokoro TTS Server")
 # Global pipeline instance
 pipeline: Optional[KPipeline] = None
 voices_dir: Optional[Path] = None
+synthesis_defaults = SynthesisDefaults()
 
 
 class SynthesizeRequest(BaseModel):
@@ -40,18 +43,25 @@ class SynthesizeRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize Kokoro pipeline on server startup"""
-    global pipeline, voices_dir
+    global pipeline, voices_dir, synthesis_defaults
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lang", default="a", help="Default language code")
+    parser.add_argument("--lang", help="Default language code override")
     parser.add_argument("--voices-dir", type=Path, help="Custom voices directory")
     parser.add_argument("--port", type=int, default=9882)
     parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
     args, _ = parser.parse_known_args()
 
     voices_dir = args.voices_dir
+    synthesis_defaults = load_synthesis_defaults()
     device = args.device if args.device in ['cpu', 'cuda'] else 'cpu'
-    pipeline = KPipeline(lang_code=args.lang, device=device)
-    print(f"✓ Kokoro pipeline initialized (lang_code={args.lang}, device={device})")
+    lang_code = args.lang or synthesis_defaults.lang_code
+    pipeline = KPipeline(lang_code=lang_code, device=device)
+    print(f"✓ Kokoro pipeline initialized (lang_code={lang_code}, device={device})")
+    print(
+        "✓ Kokoro server defaults loaded "
+        f"(voice={synthesis_defaults.voice}, speed={synthesis_defaults.speed}, "
+        f"custom_voicepack={synthesis_defaults.custom_voicepack is not None})"
+    )
 
 
 @app.get("/health")
@@ -63,79 +73,108 @@ async def health():
     return {
         "status": "ok",
         "lang": pipeline.lang_code if hasattr(pipeline, 'lang_code') else "unknown",
-        "voices_dir": str(voices_dir) if voices_dir else None
+        "voices_dir": str(voices_dir) if voices_dir else None,
+        "defaults": {
+            "voice": synthesis_defaults.voice,
+            "speed": synthesis_defaults.speed,
+            "custom_voicepack": synthesis_defaults.custom_voicepack is not None,
+            "normalize": synthesis_defaults.normalize,
+        },
     }
+
+
+def render_speech(
+    text: str,
+    *,
+    lang_code: str,
+    voice: str,
+    speed: float,
+    custom_voicepack: Optional[str],
+    normalize: bool,
+) -> bytes:
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    voice_to_use = custom_voicepack if (
+        custom_voicepack and Path(custom_voicepack).exists()
+    ) else voice
+    print("[Kokoro Server] Synthesize request:")
+    print(f"  text: {text[:50]}...")
+    print(f"  voice: {voice}")
+    print(f"  custom_voicepack: {custom_voicepack is not None}")
+    print(f"  voice_to_use: {voice_to_use}")
+    print(f"  lang_code: {lang_code}")
+    print(f"  speed: {speed}")
+    print(f"  normalize: {normalize}")
+
+    gen = pipeline(
+        text,
+        voice=voice_to_use,
+        speed=speed,
+        split_pattern=r'\n+'
+    )
+    audio_chunks = [result.output.audio.cpu().numpy() for result in gen]
+    if not audio_chunks:
+        raise ValueError("Kokoro produced no audio")
+
+    import numpy as np
+    audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
+    if normalize:
+        max_val = np.abs(audio).max()
+        if max_val > 0:
+            target_peak = 0.707
+            gain = target_peak / max_val
+            audio = audio * gain
+            print(f"[Kokoro Server] Applied normalization: gain={gain:.3f}x")
+
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, 24000, format='WAV')
+    buffer.seek(0)
+    print(f"[Kokoro Server] Successfully generated {len(audio)} samples")
+    return buffer.read()
 
 
 @app.post("/synthesize")
 async def synthesize(request: SynthesizeRequest):
-    """Synthesize speech from text"""
-    if pipeline is None:
-        raise HTTPException(status_code=503, detail="Pipeline not initialized")
-
+    """Synthesize speech using request-provided settings."""
     try:
-        # Determine which voice to use
-        voice_to_use = request.custom_voicepack if (request.custom_voicepack and Path(request.custom_voicepack).exists()) else request.voice
-
-        # Debug logging
-        print(f"[Kokoro Server] Synthesize request:")
-        print(f"  text: {request.text[:50]}...")
-        print(f"  voice: {request.voice}")
-        print(f"  custom_voicepack: {request.custom_voicepack}")
-        print(f"  voice_to_use: {voice_to_use}")
-        print(f"  lang_code: {request.lang_code}")
-        print(f"  speed: {request.speed}")
-        print(f"  normalize: {request.normalize}")
-
-        # Generate audio - pipeline returns a generator of Result objects
-        gen = pipeline(
+        audio = render_speech(
             request.text,
-            voice=voice_to_use,
+            lang_code=request.lang_code,
+            voice=request.voice,
             speed=request.speed,
-            split_pattern=r'\n+'
+            custom_voicepack=request.custom_voicepack,
+            normalize=request.normalize,
         )
-
-        # Collect audio from all results
-        audio_chunks = []
-        for result in gen:
-            # Audio is in result.output.audio (torch.Tensor)
-            audio_tensor = result.output.audio
-            # Convert to numpy array
-            audio_np = audio_tensor.cpu().numpy()
-            audio_chunks.append(audio_np)
-
-        # Concatenate all chunks
-        import numpy as np
-        audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
-
-        # Normalize audio if requested (typically for custom voicepacks)
-        # Target peak of -3 dB (0.707 of max range)
-        if request.normalize:
-            max_val = np.abs(audio).max()
-            if max_val > 0:
-                target_peak = 0.707  # -3 dB
-                gain = target_peak / max_val
-                audio = audio * gain
-                print(f"[Kokoro Server] Applied normalization: gain={gain:.3f}x")
-
-        # Kokoro uses 24kHz sample rate
-        sr = 24000
-
-        # Convert to WAV bytes
-        buffer = io.BytesIO()
-        sf.write(buffer, audio, sr, format='WAV')
-        buffer.seek(0)
-
-        print(f"[Kokoro Server] Successfully generated {len(audio)} samples")
-
-        return Response(
-            content=buffer.read(),
-            media_type="audio/wav"
-        )
+        return Response(content=audio, media_type="audio/wav")
 
     except Exception as e:
         import traceback
         print(f"[Kokoro Server] ERROR: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
+
+
+class DefaultSynthesizeRequest(BaseModel):
+    text: str
+
+
+@app.post("/synthesize-default")
+async def synthesize_default(request: DefaultSynthesizeRequest):
+    """Synthesize speech using the voice preset loaded when the server started."""
+    try:
+        audio = render_speech(
+            request.text,
+            lang_code=synthesis_defaults.lang_code,
+            voice=synthesis_defaults.voice,
+            speed=synthesis_defaults.speed,
+            custom_voicepack=synthesis_defaults.custom_voicepack,
+            normalize=synthesis_defaults.normalize,
+        )
+        return Response(content=audio, media_type="audio/wav")
+    except Exception as e:
+        import traceback
+        print(f"[Kokoro Server] DEFAULT SYNTHESIS ERROR: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
@@ -150,8 +189,11 @@ class StreamSynthesizeRequest(BaseModel):
     normalize: bool = False
 
 
-@app.post("/synthesize-stream")
-async def synthesize_stream(request: StreamSynthesizeRequest):
+class DefaultStreamSynthesizeRequest(BaseModel):
+    text: str
+
+
+def streaming_response(request: StreamSynthesizeRequest):
     """
     PARAGRAPH-LEVEL speech synthesis streaming.
     Returns Server-Sent Events (SSE) with base64-encoded WAV chunks.
@@ -403,6 +445,27 @@ async def synthesize_stream(request: StreamSynthesizeRequest):
     )
 
 
+@app.post("/synthesize-stream")
+async def synthesize_stream(request: StreamSynthesizeRequest):
+    """Stream paragraph WAV chunks using request-provided settings."""
+    return streaming_response(request)
+
+
+@app.post("/synthesize-stream-default")
+async def synthesize_stream_default(request: DefaultStreamSynthesizeRequest):
+    """Stream paragraph WAV chunks using the server's active voice preset."""
+    return streaming_response(
+        StreamSynthesizeRequest(
+            text=request.text,
+            lang_code=synthesis_defaults.lang_code,
+            voice=synthesis_defaults.voice,
+            speed=synthesis_defaults.speed,
+            custom_voicepack=synthesis_defaults.custom_voicepack,
+            normalize=synthesis_defaults.normalize,
+        )
+    )
+
+
 @app.get("/voices")
 async def list_voices():
     """List available voices"""
@@ -421,7 +484,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=9882)
-    parser.add_argument("--lang", default="a")
+    parser.add_argument("--lang")
     parser.add_argument("--voices-dir", type=Path)
     parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
     args = parser.parse_args()

@@ -34,37 +34,11 @@ else:
 import importlib
 import subprocess
 
-# BUGFIX: Physically remove xFormers from the environment
-# RTX 5090 (capability 12.0) is incompatible with the xFormers build in this container
-# We must uninstall it completely before importing Unsloth
-import sys
-
-print("[train_unsloth] 🔧 Attempting to uninstall xFormers to prevent RTX 5090 incompatibility...")
-
-try:
-    # Try to uninstall xformers using pip
-    subprocess.run(
-        [sys.executable, "-m", "pip", "uninstall", "-y", "xformers"],
-        check=False,
-        capture_output=True,
-        timeout=30
-    )
-    print("[train_unsloth] ✅ xFormers uninstalled successfully")
-except Exception as e:
-    print(f"[train_unsloth] ⚠️  Could not uninstall xFormers: {e}")
-
-# Clear any cached xFormers modules from sys.modules
-xformers_modules = [key for key in sys.modules.keys() if key.startswith('xformers')]
-for mod in xformers_modules:
-    del sys.modules[mod]
-    print(f"[train_unsloth] 🗑️  Cleared cached module: {mod}")
-
 print("[train_unsloth] ✅ Environment prepared for SDPA-only training")
 
 from unsloth import FastLanguageModel
 from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
 from datasets import load_dataset
-from transformers import AutoTokenizer
 
 # Progress tracking helper
 def log_progress(stage, message, percent=None):
@@ -152,15 +126,17 @@ def main():
 
     # Defaults matching etc/training.json; can be overridden by config.json
     cfg = {
-        "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+        "base_model": "unsloth/Qwen3.5-9B",
         "lora_rank": 8,
         "lora_alpha": 16,
-        "lora_dropout": 0.05,
+        "lora_dropout": 0,
         "num_train_epochs": 2,
         "learning_rate": 0.0002,  # 2e-4
         "per_device_train_batch_size": 1,
         "gradient_accumulation_steps": 16,
         "max_seq_length": 2048,
+        "load_in_4bit": False,
+        "load_in_16bit": True,
     }
 
     if os.path.exists(config_path):
@@ -182,14 +158,19 @@ def main():
     # Step 2: Download and load model with 4-bit quantization
     log_progress("MODEL_DOWNLOAD", f"📥 Downloading {cfg['base_model']}")
 
-    # Use 4-bit quantization from config (default: True for memory efficiency)
-    load_in_4bit = cfg.get("load_in_4bit", True)
+    # Qwen 3.5 text-only LoRA follows Unsloth's supported 16-bit path. Its
+    # current guide discourages 4-bit QLoRA for this model family.
+    load_in_4bit = cfg.get("load_in_4bit", False)
+    load_in_16bit = cfg.get("load_in_16bit", not load_in_4bit)
     dtype = cfg.get("dtype", "bfloat16")
+
+    if load_in_4bit and load_in_16bit:
+        raise ValueError("Choose either load_in_4bit or load_in_16bit, not both")
 
     if load_in_4bit:
         log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 4-bit quantized {dtype}")
     else:
-        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in full {dtype} (requires ~60GB VRAM for 30B models)")
+        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 16-bit {dtype} for supported Qwen 3.5 LoRA training")
 
     model_start = time.time()
 
@@ -198,10 +179,14 @@ def main():
     # SDPA is PyTorch's native implementation and works on all GPUs
     log_progress("MODEL_DOWNLOAD", "Using PyTorch SDPA attention (compatible with all GPUs)")
 
+    is_qwen35 = 'qwen3.5' in cfg['base_model'].lower()
+
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             cfg["base_model"],
             load_in_4bit=load_in_4bit,
+            load_in_16bit=load_in_16bit,
+            full_finetuning=False,
             dtype=dtype,
             use_gradient_checkpointing="unsloth",  # Use Unsloth's checkpointing, not FA2
             max_seq_length=cfg["max_seq_length"],
@@ -213,6 +198,8 @@ def main():
         model, tokenizer = FastLanguageModel.from_pretrained(
             cfg["base_model"],
             load_in_4bit=load_in_4bit,
+            load_in_16bit=load_in_16bit,
+            full_finetuning=False,
             dtype=dtype,
             use_gradient_checkpointing="unsloth",
             max_seq_length=cfg["max_seq_length"],
@@ -334,7 +321,10 @@ def main():
 
     # Auto-detect target modules based on model architecture
     base_model_name = cfg['base_model'].lower()
-    if 'qwen' in base_model_name:
+    if is_qwen35:
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        log_progress("LORA_SETUP", "Detected Qwen 3.5 text-only training - using attention and MLP modules")
+    elif 'qwen' in base_model_name:
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
         log_progress("LORA_SETUP", "Detected Qwen architecture - using attention-only target modules")
     elif 'gpt' in base_model_name or 'llama' in base_model_name or 'mistral' in base_model_name:
@@ -345,15 +335,18 @@ def main():
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
         log_progress("LORA_SETUP", f"Unknown architecture, using full target modules")
 
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=int(cfg["lora_rank"]),
-        lora_alpha=int(cfg.get("lora_alpha", 16)),
-        lora_dropout=float(cfg.get("lora_dropout", 0.05)),
-        target_modules=target_modules,
-        use_gradient_checkpointing=True,
-    )
-    log_progress("LORA_SETUP", f"✅ LoRA adapters configured with modules: {target_modules}", 100)
+    peft_options = {
+        "r": int(cfg["lora_rank"]),
+        "lora_alpha": int(cfg.get("lora_alpha", 16)),
+        "lora_dropout": float(cfg.get("lora_dropout", 0.05)),
+        "use_gradient_checkpointing": "unsloth",
+    }
+
+    peft_options["target_modules"] = target_modules
+    model = FastLanguageModel.get_peft_model(model, **peft_options)
+    target_description = str(target_modules)
+
+    log_progress("LORA_SETUP", f"✅ LoRA adapters configured for: {target_description}", 100)
 
     # Step 5: Training
     total_steps = len(dataset) // (cfg["per_device_train_batch_size"] * cfg["gradient_accumulation_steps"]) * cfg["num_train_epochs"]
@@ -365,7 +358,7 @@ def main():
         per_device_train_batch_size=int(cfg["per_device_train_batch_size"]),
         gradient_accumulation_steps=int(cfg["gradient_accumulation_steps"]),
         learning_rate=float(cfg["learning_rate"]),
-        fp16=False,  # Qwen3 uses bfloat16, not fp16
+        fp16=False,  # Qwen models use bfloat16, not fp16
         bf16=True,   # Use bfloat16 precision
         logging_steps=10,
         save_strategy="epoch",

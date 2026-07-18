@@ -8,6 +8,18 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { queryIndex } from '../../vector-index.js';
 
+export function normalizeRequestedMemoryTypes(value: unknown): string[] | undefined {
+  const values = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' ? [value] : []);
+  const normalized = values
+    .filter((type): type is string => typeof type === 'string')
+    .map(type => type.trim().toLowerCase())
+    .filter(Boolean);
+
+  return normalized.length > 0 ? [...new Set(normalized)] : undefined;
+}
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract inputs
   const orchestratorHints = inputs.orchestratorHints ?? inputs[0] ?? {};
@@ -77,21 +89,36 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       };
     }
 
-    console.log(`[memory_router] Searching with topK=${searchTopK}, threshold=${threshold}, query="${query.substring(0, 80)}"`);
-    const results = await queryIndex(query, { topK: searchTopK });
+    // Semantic memory scope is selected by the orchestrator LLM. This node
+    // only normalizes and executes that decision; it does not infer intent.
+    const memoryTypes = normalizeRequestedMemoryTypes(orchestratorHints.memoryTypes);
+    const hasScopedRecall = Boolean(memoryTypes?.length);
+
+    console.log(`[memory_router] Searching with topK=${searchTopK}, threshold=${threshold}, types=${memoryTypes?.join(',') ?? 'all'}, query="${query.substring(0, 80)}"`);
+    const results = await queryIndex(query, {
+      topK: searchTopK,
+      username: context.username,
+      memoryTypes,
+    });
 
     // Filter by threshold and format results
-    const memories = results
-      .filter(r => r.score >= threshold)
+    const aboveThreshold = results.filter(r => r.score >= threshold);
+    // A scoped result has already passed the orchestrator's semantic type
+    // decision. Preserve its best candidate for the Search Interpreter LLM,
+    // which owns the final relevance decision.
+    const selectedResults = hasScopedRecall && aboveThreshold.length === 0 && results.length > 0
+      ? results.slice(0, 1)
+      : aboveThreshold;
+    const memories = selectedResults
       .map(r => ({
         content: r.item.text || '',
         timestamp: r.item.timestamp,
-        type: r.item.type || 'observation',
+        type: r.item.memoryType || r.item.type || 'observation',
         score: r.score,
         id: r.item.id,
       }));
 
-    console.log(`[memory_router] Found ${memories.length} memories above threshold ${threshold}`);
+    console.log(`[memory_router] Selected ${memories.length} memories (${aboveThreshold.length} above threshold ${threshold})`);
     // Log first 3 memory snippets for debugging
     memories.slice(0, 3).forEach((m, i) => {
       console.log(`[memory_router] Memory ${i + 1} (score=${m.score.toFixed(3)}): "${m.content.substring(0, 100)}..."`);
@@ -103,6 +130,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       query,
       resultCount: memories.length,
       memoryTier,
+      memoryTypes: memoryTypes || [],
     };
   } catch (error) {
     console.error('[memory_router] Search error:', error);
@@ -119,7 +147,7 @@ export const MemoryRouterNode: NodeDefinition = defineNode({
   name: 'Memory Router',
   category: 'memory',
   inputs: [
-    { name: 'orchestratorHints', type: 'object', description: 'Memory routing hints from orchestrator (needsMemory, memoryTier, memoryQuery)' },
+    { name: 'orchestratorHints', type: 'object', description: 'LLM-selected memory routing hints (needsMemory, memoryTier, memoryQuery, memoryTypes)' },
     { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
   ],
   outputs: [

@@ -12,6 +12,8 @@ import { audit } from '../audit.js';
 import { ROOT } from '../paths.js';
 import { systemPaths } from '../path-builder.js';
 import { readSystemActivityTimestamp } from '../system-activity.js';
+import { loadSleepConfig } from '../sleep-config.js';
+import { readRobotObserverCycle } from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
 import {
   buildAgentNodePath,
@@ -111,15 +113,16 @@ export class ExecutionEngine {
 
     this.registerHandler('vector.append-event', async (task) => {
       const { appendEventToIndex } = await import('../vector-index.js');
-      await appendEventToIndex({
+      const indexed = await appendEventToIndex({
         id: task.input.id,
         timestamp: task.input.timestamp,
         content: task.input.content,
+        type: task.input.type,
         tags: task.input.tags,
         entities: task.input.entities,
         path: task.input.path,
-      });
-      return { eventId: task.input.id };
+      }, { username: task.username });
+      return { eventId: task.input.id, indexed };
     });
 
     this.registerHandler('vector.semantic-search', async (task) => {
@@ -150,8 +153,13 @@ export class ExecutionEngine {
       const { executeOperatorPolicyWork } = await import('./operator-policy-handler.js');
       return executeOperatorPolicyWork(task, context);
     });
+    this.registerHandler('agency.desire-checkin', async (task, context) => {
+      const { executeDesireCheckinWork } = await import('./desire-checkin-handler.js');
+      return executeDesireCheckinWork(task, context);
+    });
     this.registerHandler('environment.observation', async (task, context) => {
       const observation = task.input.observation ?? task.input;
+      const robotObserver = readRobotObserverCycle(observation);
       const graphName = task.input.graph;
       if (!graphName || task.username === 'system') {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
@@ -167,19 +175,24 @@ export class ExecutionEngine {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false, reason: 'automatic_step_limit' };
       }
 
-      const [{ getUsers }, { loadGraphForMode }, { runGraph }, { withUserContext }] = await Promise.all([
+      const [{ getUsers }, { loadGraphForMode }, { runGraph }, { withUserContext }, { canWriteMemory }] = await Promise.all([
         import('../users.js'),
         import('../graph-streaming.js'),
         import('../graph-runtime.js'),
         import('../context.js'),
+        import('../cognitive-mode.js'),
       ]);
       const user = getUsers().find(candidate => candidate.username === task.username);
       if (!user) throw new Error(`Environment bridge user not found: ${task.username}`);
       const loaded = await loadGraphForMode(graphName, user.username);
       if (!loaded) throw new Error(`Environment graph not found: ${graphName}`);
       const text = (observation.text ?? []).map((event: any) => event.text).filter(Boolean).join('\n');
-      const prompt = text || (observation.visual || observation.visuals?.length
-        ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
+      const taskInstruction = text || (robotObserver
+        ? robotObserver.step === 1
+          ? 'Inspect the current robot camera image after inactivity. Briefly describe anything worth responding to, and choose at most one useful semantic robot action or another camera observation only if needed.'
+          : 'Inspect the returned robot camera image after the previous action. Briefly describe what changed, and choose at most one next semantic action or another camera observation only if it is still useful.'
+        : observation.visual || observation.visuals?.length
+          ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
         : 'Review the returned environment state and choose the next semantic action if one is needed.');
       const graphState = await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
@@ -188,12 +201,18 @@ export class ExecutionEngine {
           signal: context.signal,
           context: {
             sessionId: observation.sessionId,
-            userMessage: prompt,
+            userMessage: text,
             userId: user.id,
             username: user.username,
             cognitiveMode: 'environment',
+            mode: 'conversation',
+            dialogueType: 'conversation',
+            allowMemoryWrites: canWriteMemory('environment'),
             environment: 'server',
             environmentObservation: observation,
+            environmentTaskInstruction: taskInstruction,
+            environmentActionSource: robotObserver?.triggerSource,
+            robotObserver,
             abortSignal: context.signal,
           },
         }),
@@ -204,14 +223,20 @@ export class ExecutionEngine {
         sessionId: observation.sessionId,
         graphExecuted: true,
         graph: graphName,
+        robotObserver,
       };
+    });
+    this.registerHandler('workflow.robot-observer', async (task, context) => {
+      const { executeRobotObserverWork } = await import('./robot-observer-handler.js');
+      return executeRobotObserverWork(task, context);
+    });
+    this.registerHandler('workflow.boredom-movement', async (task, context) => {
+      const { executeBoredomMovementWork } = await import('./boredom-movement-handler.js');
+      return executeBoredomMovementWork(task, context);
     });
 
     this.registerHandler('workflow.sleep', async (task, context) => {
-      const configPath = path.join(systemPaths.etc, 'sleep.json');
-      const config = fs.existsSync(configPath)
-        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-        : { enabled: true, window: { start: '23:00', end: '06:30' }, minIdleMins: 15 };
+      const config = loadSleepConfig(task.username);
       if (!config.enabled) return { skipped: true, reason: 'sleep_disabled' };
 
       const manuallyRequested = task.source === 'user' || task.input.force === true;

@@ -146,12 +146,9 @@ await withUserContext(
 
 ## Security Features
 
-### Administrator Privileges (Already Implemented in Previous Session)
+### Owner Privileges (Already Implemented in Previous Session)
 
-**Configuration:** `.env` file
-```bash
-ADMIN_USERS=greggles,alice
-```
+**Configuration:** persisted `owner` role on the user record
 
 **Capabilities:**
 - ✅ Edit system code (brain/, packages/, apps/, bin/)

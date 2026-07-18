@@ -67,7 +67,7 @@ export async function handleListProfiles(req: UnifiedRequest): Promise<UnifiedRe
   const { user } = req;
 
   try {
-    // Determine if user can see all profiles (owner/admin only)
+    // Determine if user can see all profiles (owner only)
     const canSeeAll = user.role === 'owner';
 
     // Get appropriate profile list

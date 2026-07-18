@@ -17,6 +17,24 @@
       "graph": "environment",
       "comment": "Generic event-driven environment adapter connection."
     },
+    "robot-operator": {
+      "id": "robot-operator",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "services/robot-operator.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": true,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "inactivityThreshold": 300,
+      "jitterMs": 60000,
+      "boredomMovementInactivityThreshold": 600,
+      "boredomMovementJitterMs": 120000,
+      "maxCycleSteps": 3,
+      "graph": "environment",
+      "comment": "Robot autonomy controller. Dormant in reactive mode; owns the Robot Observer and Boredom Movement inactivity timers in semi and full modes."
+    },
     "maintenance-service": {
       "id": "maintenance-service",
       "enabled": true,

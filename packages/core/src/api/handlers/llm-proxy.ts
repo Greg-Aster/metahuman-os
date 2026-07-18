@@ -19,6 +19,7 @@ import { successResponse, errorResponse } from '../types.js';
 import { audit } from '../../audit.js';
 import { resolveModelById } from '../../model-resolver.js';
 import { ProviderInputError } from '../../providers/types.js';
+import { DEFAULT_OLLAMA_CHAT_MODEL } from '../../model-defaults.js';
 import {
   loadToolExecutorConfig,
   saveToolExecutorConfig,
@@ -51,7 +52,7 @@ async function ensureLlmFunctions(): Promise<boolean> {
  *
  * Request body:
  * {
- *   model: string,        // Model name (e.g., "qwen3:14b")
+ *   model: string,        // Model name (e.g., "qwen3.5:9b")
  *   messages: Array<{role: string, content: string}>,
  *   options?: {
  *     temperature?: number,
@@ -95,7 +96,7 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
     const provider = backendStatus.resolvedBackend || 'ollama';
 
     // Determine model to use
-    const modelToUse = model || backendStatus.model || 'qwen3:14b';
+    const modelToUse = model || backendStatus.model || DEFAULT_OLLAMA_CHAT_MODEL;
 
     console.log(`[llm-proxy] Chat request: provider=${provider}, model=${modelToUse}, messages=${messages.length}`);
 

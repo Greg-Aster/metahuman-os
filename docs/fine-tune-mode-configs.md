@@ -50,7 +50,7 @@ When running fine-tuning with a mode filter, configs are loaded in this order:
 ```bash
 tsx brain/agents/fine-tune-cycle.ts \
   --username greggles \
-  --base-model qwen3-coder:30b \
+  --base-model Qwen/Qwen3.5-9B \
   --mode dual
 ```
 
@@ -87,7 +87,7 @@ tsx brain/agents/fine-tune-cycle.ts \
 ```bash
 tsx brain/agents/fine-tune-cycle.ts \
   --username greggles \
-  --base-model qwen3-coder:30b \
+  --base-model Qwen/Qwen3.5-9B \
   --mode emulation
 ```
 
@@ -125,7 +125,7 @@ tsx brain/agents/fine-tune-cycle.ts \
 ```bash
 tsx brain/agents/fine-tune-cycle.ts \
   --username greggles \
-  --base-model qwen3-coder:30b \
+  --base-model Qwen/Qwen3.5-9B \
   --mode agent
 ```
 
@@ -151,7 +151,7 @@ To train on **all modes** without filtering (uses general config):
 ```bash
 tsx brain/agents/fine-tune-cycle.ts \
   --username greggles \
-  --base-model qwen3-coder:30b
+  --base-model Qwen/Qwen3.5-9B
 # No --mode flag = uses etc/fine-tune-config.json
 ```
 
@@ -172,7 +172,7 @@ All mode configs follow this schema:
   "notes": ["Training tips and context"],
 
   "cognitive_mode": "dual|emulation|agent",
-  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
 
   "learning_rate": 5e-6,
@@ -221,7 +221,7 @@ To customize a mode's training:
 
 - **Small Dataset** (< 3000 samples): Reduce `num_train_epochs` to 2, increase `warmup_steps`
 - **Large Dataset** (> 15000 samples): Increase `num_train_epochs` to 4, lower `learning_rate`
-- **40GB GPU**: Set `load_in_8bit: true` in config
+- **GPU sizing**: Keep `load_in_8bit: false` and validate full-training memory before launch
 - **Faster Training**: Increase `gradient_accumulation_steps` to 64 (larger effective batch)
 
 ---
@@ -234,7 +234,7 @@ Test the pipeline with a small sample first:
 # Test dual mode with 100 samples
 tsx brain/agents/fine-tune-cycle.ts \
   --username greggles \
-  --base-model qwen3-coder:30b \
+  --base-model Qwen/Qwen3.5-9B \
   --mode dual \
   --max 100
 ```

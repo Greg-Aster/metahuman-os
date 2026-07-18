@@ -14,6 +14,25 @@ import { validateSession } from '../../sessions.js';
 import { getUser } from '../../users.js';
 import { withUserContext } from '../../context.js';
 
+export interface HttpRequestParams {
+  path: string;
+  method: string;
+  body?: unknown;
+  rawBody?: Buffer;
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  cookieHeader?: string | null;
+  signal?: AbortSignal;
+  /**
+   * Authentication already resolved by the host transport.
+   * `undefined` preserves cookie resolution for direct/mobile callers;
+   * `null` explicitly represents an unauthenticated request.
+   */
+  resolvedUser?: UnifiedUser | null;
+  /** True when the host transport already established AsyncLocalStorage context. */
+  userContextEstablished?: boolean;
+}
+
 /**
  * Parse cookies from Cookie header string
  */
@@ -86,21 +105,14 @@ export class HttpAuthRequiredError extends Error {
  * The router will check route.requiresAuth and reject with 401 if needed.
  * This allows auth routes (login, guest, etc.) to work without prior auth.
  */
-export function buildUnifiedRequest(params: {
-  path: string;
-  method: string;
-  body?: unknown;
-  rawBody?: Buffer;
-  query?: Record<string, string>;
-  headers?: Record<string, string>;
-  cookieHeader?: string | null;
-  signal?: AbortSignal;
-}): UnifiedRequest {
+export function buildUnifiedRequest(params: HttpRequestParams): UnifiedRequest {
   const cookies = parseCookies(params.cookieHeader);
   const sessionToken = cookies['mh_session'];
 
   // Session cookie is the ONLY authentication method (no Basic Auth - security risk)
-  let user = resolveUserFromCookie(sessionToken);
+  let user = params.resolvedUser === undefined
+    ? resolveUserFromCookie(sessionToken)
+    : params.resolvedUser;
 
   // If no valid session, create unauthenticated user object
   // Router will check route.requiresAuth and reject if needed
@@ -182,16 +194,7 @@ export interface HttpResponse {
  *
  * If user is not authenticated, returns 401 with redirect hint to auth gate
  */
-export async function handleHttpRequest(params: {
-  path: string;
-  method: string;
-  body?: unknown;
-  rawBody?: Buffer;
-  query?: Record<string, string>;
-  headers?: Record<string, string>;
-  cookieHeader?: string | null;
-  signal?: AbortSignal;
-}): Promise<HttpResponse> {
+export async function handleHttpRequest(params: HttpRequestParams): Promise<HttpResponse> {
   // Build unified request - may throw HttpAuthRequiredError
   let request: UnifiedRequest;
   try {
@@ -221,7 +224,7 @@ export async function handleHttpRequest(params: {
   // Handlers check req.user.isAuthenticated directly, so they don't need context for auth
   let response: UnifiedResponse;
   try {
-    if (request.user.isAuthenticated) {
+    if (request.user.isAuthenticated && !params.userContextEstablished) {
       // Wrap handler in user context so getUserContext() returns the authenticated user
       response = await withUserContext(
         {
@@ -232,8 +235,8 @@ export async function handleHttpRequest(params: {
         () => routeRequest(request)
       );
     } else {
-      // Unauthenticated requests - route WITHOUT user context
-      // getUserContext() will return undefined, storage router will use system paths
+      // Unauthenticated requests route without user context. Astro-authenticated
+      // requests also arrive here because middleware already established it.
       response = await routeRequest(request);
     }
   } catch (error) {

@@ -5,8 +5,15 @@ import {
   summarizeEnvironmentBridgeState,
   type EnvironmentActionType,
 } from '../../environment-interface/index.js';
+import { getOperatorMode } from '../../active-operator/mode-controller.js';
+import {
+  isRobotObserverEnabled,
+  nextRobotObserverCycle,
+  robotObserverSourceAllowed,
+  type RobotObserverCycleMetadata,
+} from '../../robot-operator.js';
 
-const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'sendText'];
+const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'sendText'];
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
 
 function selectedActions(value: unknown): EnvironmentActionType[] {
@@ -28,8 +35,10 @@ export const environmentSendActionNode = defineNode({
   inputs: [
     { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
     { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
+    { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
+    { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or rejection to show instead' },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -81,14 +90,23 @@ export const environmentSendActionNode = defineNode({
   async execute(inputs, context, properties) {
     const requestedActions = [
       ...(Array.isArray(inputs.actions) ? inputs.actions : []),
+      ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
     const hasStop = requestedActions.some(action => action && typeof action === 'object' && action.type === 'stop');
     const rawActions = hasStop
       ? requestedActions.filter(action => action && typeof action === 'object' && action.type === 'stop')
       : requestedActions;
+    const robotObserver = context.robotObserver && typeof context.robotObserver === 'object'
+      ? context.robotObserver as RobotObserverCycleMetadata
+      : null;
+    const nextObserverStep = robotObserver ? nextRobotObserverCycle(robotObserver) : null;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
-    const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
+    const generatedResponse = typeof inputs.generatedResponse === 'string'
+      ? inputs.generatedResponse.trim()
+      : '';
+    const conversationalResponse = generatedResponse
+      || (typeof inputs.response === 'string' ? inputs.response.trim() : '');
     const commands = [];
     const rejectedActions = [];
     const options = {
@@ -115,6 +133,18 @@ export const environmentSendActionNode = defineNode({
       status = 'no_actions';
       reason = 'no_actions';
       message = 'No environment action was produced from this message, so nothing was sent to the robot bridge.';
+    } else if (robotObserver && !isRobotObserverEnabled()) {
+      status = 'rejected';
+      reason = 'robot_observer_disabled';
+      message = 'The robot action was stopped because Robot Observer is disabled.';
+    } else if (robotObserver && !robotObserverSourceAllowed(getOperatorMode(), robotObserver.triggerSource)) {
+      status = 'rejected';
+      reason = 'active_operator_reactive';
+      message = 'The autonomous robot action was stopped because Active Operator is now in reactive mode.';
+    } else if (robotObserver && !nextObserverStep) {
+      status = 'rejected';
+      reason = 'robot_observer_step_limit';
+      message = `The Robot Observer cycle reached its ${robotObserver.maxSteps}-step limit, so no further robot action was queued.`;
     } else if (!bridgeSummary.enabled) {
       status = 'bridge_disabled';
       reason = 'environment_bridge_disabled';
@@ -131,12 +161,18 @@ export const environmentSendActionNode = defineNode({
       for (const action of rawActions) {
         try {
           commands.push(enqueueEnvironmentAction(
-            { ...action, sessionId: action.sessionId ?? targetSessionId },
+            {
+              ...action,
+              sessionId: action.sessionId ?? targetSessionId,
+              metadata: nextObserverStep
+                ? { ...(action.metadata ?? {}), robotObserver: nextObserverStep }
+                : action.metadata,
+            },
             {
               ...options,
               username: context.username,
-              correlationId: context.sessionId,
-              source: 'user',
+              correlationId: robotObserver?.cycleId ?? context.sessionId,
+              source: robotObserver?.triggerSource ?? 'user',
             },
           ));
         } catch (error) {

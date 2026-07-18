@@ -2,6 +2,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
+  import { get } from 'svelte/store';
+  import { isOwner } from '../stores/security-policy';
+  import EnvironmentBridgeDiagnostics from './EnvironmentBridgeDiagnostics.svelte';
+  import type { EnvironmentBridgeDiagnosticsSnapshot } from '../lib/client/environment-bridge-diagnostics-types';
 
   type AgentKind = 'service' | 'scheduled' | 'manual' | 'connection' | 'one-shot';
   type AgentStatus = 'running' | 'stopped' | 'error';
@@ -94,6 +98,7 @@
     variables: AgentVariable[];
     logs: AgentLog[];
     errors: AgentError[];
+    diagnostics?: EnvironmentBridgeDiagnosticsSnapshot;
   }
 
   let connected = false;
@@ -374,6 +379,8 @@
   }
 
   onMount(async () => {
+    if (!get(isOwner)) return;
+
     eventSourceHandle = connectionPool.request({
       id: 'agent-monitor-stream',
       name: 'Agent Monitor Stream',
@@ -666,6 +673,10 @@
               <div class="rounded bg-gray-50 px-2 py-2 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-300">
                 {selectedAgent.latestTask}
               </div>
+            {/if}
+
+            {#if selectedAgent.agentId === 'environment-bridge' && selectedAgent.diagnostics}
+              <EnvironmentBridgeDiagnostics diagnostics={selectedAgent.diagnostics} />
             {/if}
 
             {#if selectedAgent.variables.length > 0}

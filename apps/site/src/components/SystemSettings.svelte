@@ -895,7 +895,7 @@
       </div>
       <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
         {#if nodePipelineLocked}
-          Node pipeline controlled by server environment. Contact an administrator to change it.
+          Node pipeline controlled by server environment. Contact the owner to change it.
         {:else if nodePipelineEnabled}
           Node pipeline preference is enabled. Current chat flow uses cognitive graphs.
         {:else}

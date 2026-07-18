@@ -95,14 +95,14 @@ getModeDefinition(mode) // Get mode configuration
 
 | Role | Model | Temp | Purpose |
 |------|-------|------|---------|
-| **orchestrator** | qwen3:14b | 0.1 | Intent routing and tool selection |
-| **persona** | qwen3:14b | 0.8 | Conversational responses |
-| **curator** | qwen3:14b | 0.3 | Memory curation and training data prep |
+| **orchestrator** | qwen3.5:9b | 0.1 | Intent routing and tool selection |
+| **persona** | qwen3.5:9b | 0.8 | Conversational responses |
+| **curator** | qwen3.5:9b | 0.3 | Memory curation and training data prep |
 | **coder** | qwen3-coder:30b | 0.2 | Code generation/review |
 | **planner** | qwen3-coder:30b | 0.4 | Strategic planning and task breakdown |
-| **summarizer** | qwen3:14b | 0.3 | Document/conversation summarization |
+| **summarizer** | qwen3.5:9b | 0.3 | Document/conversation summarization |
 | **psychotherapist** | qwen3:30b | 0.7 | Persona analysis (motivational interviewing) |
-| **fallback** | qwen3:14b | 0.7 | General purpose backup |
+| **fallback** | qwen3.5:9b | 0.7 | General purpose backup |
 
 #### 2.2 Cognitive Mode Mappings
 

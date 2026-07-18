@@ -22,6 +22,7 @@ import { audit } from '../../audit.js';
 import { systemPaths } from '../../paths.js';
 import { loadModelRegistry } from '../../model-resolver.js';
 import { getQueueSystem } from '../../queue/queue-system.js';
+import { loadSleepConfig, saveSleepConfig } from '../../sleep-config.js';
 
 function ownerRequired(req: UnifiedRequest, message: string): UnifiedResponse | null {
   if (!req.user.isAuthenticated) {
@@ -243,17 +244,8 @@ export async function handleGetAdapters(req: UnifiedRequest): Promise<UnifiedRes
     const autoApproval = readAutoApprovalConfig();
     const activeAdapter = getActiveAdapter();
     const recentLogs = readRecentAdapterLogs(10);
-    let loraEnabled = false;
-
-    try {
-      const sleepPath = path.join(systemPaths.etc, 'sleep.json');
-      if (fs.existsSync(sleepPath)) {
-        const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
-        loraEnabled = Boolean(sleep?.adapters?.lora);
-      }
-    } catch {
-      // Preserve legacy best-effort behavior.
-    }
+    const sleep = loadSleepConfig(req.user.username);
+    const loraEnabled = sleep.adapters.lora;
 
     return successResponse({
       success: true,
@@ -293,22 +285,19 @@ export async function handlePostAdapters(req: UnifiedRequest): Promise<UnifiedRe
         return successResponse({ success: true, model });
       }
       case 'sleep': {
-        const sleepPath = path.join(systemPaths.etc, 'sleep.json');
-        if (!fs.existsSync(sleepPath)) throw new Error('sleep.json not found');
-        const sleep = JSON.parse(fs.readFileSync(sleepPath, 'utf-8'));
+        const sleep = loadSleepConfig(req.user.username);
         if (typeof body.loraEnabled === 'boolean') {
-          sleep.adapters = sleep.adapters || {};
           sleep.adapters.lora = body.loraEnabled;
         }
-        fs.writeFileSync(sleepPath, JSON.stringify(sleep, null, 2));
+        const savedSleep = saveSleepConfig(sleep, req.user.username);
         audit({
           level: 'info',
           category: 'action',
           event: 'sleep_config_updated',
-          details: { adapters: sleep.adapters },
+          details: { adapters: savedSleep.adapters },
           actor: req.user.username,
         });
-        return successResponse({ success: true, sleep: { loraEnabled: Boolean(sleep.adapters?.lora) } });
+        return successResponse({ success: true, sleep: { loraEnabled: savedSleep.adapters.lora } });
       }
       case 'runBuilder': {
         backgroundTrainingScript('adapter-builder.ts');

@@ -4,6 +4,7 @@ import type { UnifiedHandler } from '../types.js';
 import { streamResponse } from '../types.js';
 import { getAgentMonitorSnapshot } from '../../agent-monitor.js';
 import { subscribeEnvironmentBridgeState } from '../../environment-interface/index.js';
+import { subscribeEnvironmentBridgeDiagnostics } from '../../environment-interface/diagnostics.js';
 import { systemPaths } from '../../path-builder.js';
 
 function sse(data: Record<string, unknown>): string {
@@ -76,6 +77,7 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
   push({ type: 'connected' });
   sendSnapshot();
   const unsubscribeBridgeState = subscribeEnvironmentBridgeState(scheduleSnapshot);
+  const unsubscribeBridgeDiagnostics = subscribeEnvironmentBridgeDiagnostics(scheduleSnapshot);
 
   watchPath(path.join(systemPaths.logs, 'agents'));
   watchPath(path.join(systemPaths.run, 'locks'));
@@ -99,6 +101,7 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
       clearTimeout(debounceTimer);
     }
     unsubscribeBridgeState();
+    unsubscribeBridgeDiagnostics();
     for (const watcher of watchers) {
       watcher.close();
     }

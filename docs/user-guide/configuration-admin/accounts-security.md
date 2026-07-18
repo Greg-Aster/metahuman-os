@@ -10,7 +10,7 @@ MetaHuman OS has three account roles:
 
 | Role | Description | Permissions |
 |------|-------------|-------------|
-| **Owner** | System administrator | Full access: all settings, mode switching, trust levels, user management |
+| **Owner** | System owner | Full access: all settings, mode switching, trust levels, user management |
 | **Standard** | Regular user | Read/write memories, chat, tasks. Cannot change system settings or trust levels |
 | **Guest** | Read-only visitor | View-only access. Cannot create memories, modify data, or access sensitive settings |
 

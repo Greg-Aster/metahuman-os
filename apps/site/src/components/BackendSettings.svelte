@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import { DEFAULT_OLLAMA_CHAT_MODEL, DEFAULT_VLLM_CHAT_MODEL } from '../lib/client/model-defaults';
   import { statusRefreshTrigger } from '../stores/navigation';
   import LocalModelsSettings from './LocalModelsSettings.svelte';
 
@@ -123,7 +124,7 @@
   let statusWarning: string | null = null;
 
   let ollamaEndpoint = 'http://localhost:11434';
-  let ollamaModel = 'qwen3:14b';
+  let ollamaModel = DEFAULT_OLLAMA_CHAT_MODEL;
   let ollamaModelSelection = '__custom__';
   let ollamaArtifacts: LocalModelArtifact[] = [];
   let selectedOllamaArtifact: LocalModelArtifact | null = null;
@@ -296,7 +297,7 @@
     preferredLocalBackend = config.preferredLocalBackend === 'ollama' ? 'ollama' : 'vllm';
 
     ollamaEndpoint = config.ollama?.endpoint || 'http://localhost:11434';
-    ollamaModel = config.ollama?.defaultModel || 'qwen3:14b';
+    ollamaModel = config.ollama?.defaultModel || DEFAULT_OLLAMA_CHAT_MODEL;
     ollamaContextWindow = config.ollama?.contextWindow ?? 8192;
     ollamaMaxTokens = config.ollama?.maxTokens ?? 2048;
     ollamaTemperature = config.ollama?.temperature ?? 0.7;
@@ -1370,7 +1371,7 @@
             {:else}
               <label class="block text-sm">
                 <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Custom model ID</span>
-                <input class="input-field font-mono" bind:value={vllmModel} placeholder="Qwen/Qwen3-14B-AWQ" />
+                <input class="input-field font-mono" bind:value={vllmModel} placeholder={DEFAULT_VLLM_CHAT_MODEL} />
                 <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">Use a Hugging Face model ID or open Advanced for a local path.</span>
               </label>
             {/if}

@@ -27,7 +27,6 @@ import {
   initializeStageIterations,
   getSourceWeight,
   executeDesireViaGraph,
-  recordDesireCheckin,
   type Desire,
   type DesireExecution,
   type DesireStatus,
@@ -40,6 +39,7 @@ import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { queueTTS } from '../../nodes/output/tts.node.js';
 import { appendAgencyMessageToConversation } from '../../conversation-buffer.js';
+import { submitCoordinatorWork } from '../../queue/index.js';
 
 // Valid DesireStatus values from types.ts
 const ALL_STATUSES: DesireStatus[] = [
@@ -1237,7 +1237,7 @@ export async function handleAnswerDesireQuestions(req: UnifiedRequest): Promise<
  * POST /api/agency/desires/:id/checkin - Request a long-running desire check-in.
  */
 export async function handleCheckinDesire(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, params, body, headers } = req;
+  const { user, params, body } = req;
 
   if (!user.isAuthenticated) {
     return { status: 401, error: 'Authentication required.' };
@@ -1260,33 +1260,22 @@ export async function handleCheckinDesire(req: UnifiedRequest): Promise<UnifiedR
       return { status: 400, error: 'Check-ins are only available for long-running goals.' };
     }
 
-    await recordDesireCheckin(id, user.username, 'User-requested check-in');
-
-    try {
-      const operatorResponse = await fetch('http://localhost:4321/api/active-operator/queue', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cookie': headers?.cookie || '',
-        },
-        body: JSON.stringify({
-          taskType: 'desire_checkin',
-          payload: {
-            type: 'desire_checkin',
-            desireId: id,
-            checkProgress: true,
-            force: true,
-          },
-          priority: 'high',
-        }),
-      });
-
-      if (!operatorResponse.ok) {
-        console.warn('[agency-handler] Failed to queue check-in task, but recorded the request');
-      }
-    } catch (queueError) {
-      console.warn('[agency-handler] Could not queue check-in task:', queueError);
-    }
+    const task = await submitCoordinatorWork({
+      type: 'desire_checkin',
+      handler: 'agency.desire-checkin',
+      resource: 'local-llm',
+      source: 'user',
+      priority: 'high',
+      input: {
+        desireId: id,
+        checkProgress: true,
+        force,
+      },
+      username: user.username,
+      maxAttempts: 2,
+      idempotencyKey: `desire-checkin:${id}`,
+      metadata: { producer: 'agency-api', desireId: id },
+    });
 
     audit({
       category: 'agent',
@@ -1299,6 +1288,8 @@ export async function handleCheckinDesire(req: UnifiedRequest): Promise<UnifiedR
         progress: desire.goalProgress?.progressPercent || 0,
         currentMilestone: desire.goalProgress?.currentMilestone || 0,
         force,
+        taskId: task.id,
+        taskState: task.state,
       },
     });
 
@@ -1306,7 +1297,9 @@ export async function handleCheckinDesire(req: UnifiedRequest): Promise<UnifiedR
       success: true,
       desireId: id,
       title: desire.title,
-      message: `Check-in requested for "${desire.title}". The system will evaluate progress shortly.`,
+      taskId: task.id,
+      taskState: task.state,
+      message: `Check-in queued for "${desire.title}".`,
       currentProgress: {
         percent: desire.goalProgress?.progressPercent || 0,
         currentMilestone: desire.goalProgress?.currentMilestone || 0,

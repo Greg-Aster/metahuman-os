@@ -145,7 +145,7 @@ mh build-dataset <username>      # Build curated dataset only
 
 **Supported models**:
 - Any model configured in `etc/models.json` for curator role
-- Examples: qwen3:14b, phi3:medium, claude-sonnet, deepseek-coder
+- Examples: qwen3.5:9b, phi3:medium, claude-sonnet, deepseek-coder
 
 **Model Router Integration**:
 ```typescript
@@ -194,7 +194,7 @@ const response = await callLLM({
 ```bash
 # Step 1: Configure curator model in web UI
 # Navigate to status widget → curator section
-# Select preferred model (e.g., qwen3:14b, phi3:medium)
+# Select preferred model (e.g., qwen3.5:9b, phi3:medium)
 
 # Step 2: Build curated dataset for user
 mh build-dataset greggles

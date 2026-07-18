@@ -31,7 +31,7 @@ You'll see the welcome screen with options to log in or create an account. All u
    - ✅ Ethical Use Policy (no impersonation without consent, no malicious AI)
 4. Click **Create Account**
 
-> **First User = Owner:** The first account created automatically becomes the system **owner** with full administrative privileges. See [Accounts & Security](../configuration-admin/accounts-security.md) for details on account types.
+> **First User = Owner:** The first account created automatically becomes the system **owner** with full system access. See [Accounts & Security](../configuration-admin/accounts-security.md) for details on account types.
 
 ---
 
@@ -111,7 +111,7 @@ Guest sessions:
 - Always forced into emulation mode (read-only)
 - Useful for demonstrations or showing your digital twin to others
 
-**Creating Guest Accounts**: Owners can create guest accounts through the admin interface (future UI) or via API. See [Authentication](../configuration-admin/authentication.md) for details.
+**Creating Guest Accounts**: Owners can create guest accounts through the owner interface (future UI) or via API. See [Authentication](../configuration-admin/authentication.md) for details.
 
 ---
 

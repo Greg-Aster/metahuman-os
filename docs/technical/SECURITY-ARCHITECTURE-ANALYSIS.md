@@ -22,9 +22,7 @@ The current authentication and authorization system has **significant architectu
 ```typescript
 // packages/core/src/auth.ts
 export function getAuthenticatedUser(cookies: Cookies): AuthenticatedUser
-export function getUserOrAnonymous(cookies: Cookies): User
 export function getUserPaths(user: User)
-export function hasPermission(user: User, permission): boolean
 ```
 
 - **Pros**: Simple, explicit, no magic
@@ -293,13 +291,14 @@ const handler = async ({ cookies }) => {
 
 ### Proposed Pattern
 
-#### Core Functions (Keep from `auth.ts`)
+#### Core Authentication and Policy Functions
 ```typescript
 // packages/core/src/auth.ts
 export function getAuthenticatedUser(cookies: Cookies): AuthenticatedUser
-export function getUserOrAnonymous(cookies: Cookies): User
-export function requireRole(user: User, allowedRoles: Role[]): void
-export function requirePermission(user: User, resource: string, action: string): void
+export function getUserPaths(user: User): ProfilePaths
+
+// packages/core/src/security-policy.ts
+export function getSecurityPolicy(context?: RequestContext): SecurityPolicy
 ```
 
 #### API Handler Pattern
@@ -307,13 +306,15 @@ export function requirePermission(user: User, resource: string, action: string):
 // apps/site/src/pages/api/example.ts
 import { getAuthenticatedUser } from '@metahuman/core';
 import { getProfilePaths } from '@metahuman/core';
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 
-export const POST: APIRoute = async ({ cookies, request }) => {
+export const POST: APIRoute = async (context) => {
+  const { cookies, request } = context;
   // 1. Auth check (explicit, at top)
   const user = getAuthenticatedUser(cookies); // Throws 401 if not authed
 
   // 2. Authorization check (explicit)
-  requirePermission(user, 'memories:write'); // Throws 403 if forbidden
+  getSecurityPolicy(context).requireWrite(); // Throws 403 if forbidden
 
   // 3. Get paths (explicit, never throws)
   const paths = getProfilePaths(user.username);

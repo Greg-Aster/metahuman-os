@@ -285,7 +285,7 @@ View past interviews:
 - `finalized`: Applied to persona
 - `aborted`: Cancelled without applying
 
-## Admin Operations
+## Owner Operations
 
 **Purge All Sessions:**
 - Deletes all session data (active and completed)

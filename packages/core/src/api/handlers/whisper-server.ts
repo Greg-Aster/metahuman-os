@@ -55,7 +55,7 @@ async function getWhisperServerStatus(username: string) {
       if (response.ok) {
         healthData = await response.json() as Record<string, unknown>;
         running = true;
-        healthy = healthData.status === 'ok';
+        healthy = healthData.status === 'ok' || healthData.status === 'ready';
       }
     } catch {
       // Server is not responding.

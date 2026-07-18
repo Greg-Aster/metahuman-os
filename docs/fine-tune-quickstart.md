@@ -43,7 +43,7 @@ Once the test passes, run the full pipeline:
 
 ```bash
 # Full fine-tune with all modes
-tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder:30b
+tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
 ```
 
 **What happens**:
@@ -85,7 +85,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles --mode agent
 ### Model Selection
 
 Supported model families:
-- **Qwen** (qwen3-coder, qwen3-instruct) - Default
+- **Qwen 3.5 9B** - Maintained default
 - **LLaMA** (llama3-70b, llama3-8b)
 - **Phi** (phi-3-medium, phi-3-mini)
 - **GPT-J** (gpt-j-6b)
@@ -101,7 +101,7 @@ Edit `etc/fine-tune-config.json`:
 
 ```json
 {
-  "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
   "learning_rate": 5e-6,
   "num_train_epochs": 3,
@@ -114,7 +114,7 @@ Edit `etc/fine-tune-config.json`:
 |---------|------|----------------|
 | Learning rate | 2e-4 | 5e-6 |
 | Training time | 15-30 min | 2-6 hours |
-| GPU required | 16GB (A10G) | 40GB+ (A100) |
+| GPU required | 24GB-class | High-memory accelerator; 80GB recommended |
 | Data needed | 1000+ samples | 5000+ samples |
 
 ---
@@ -248,7 +248,7 @@ const MODE_MAPPING: Record<string, CognitiveMode> = {
 | **Training** | Adapter weights only | All model weights |
 | **Data size** | 1000-2000 samples | 5000+ samples |
 | **Time** | 15-30 minutes | 2-6 hours |
-| **GPU** | 16GB A10G | 40-80GB A100 |
+| **GPU** | 24GB-class | 80GB A100/H100 recommended |
 | **Cost** | $0.50-$1.00 | $5.00-$15.00 |
 | **Quality** | Good for style | Better for personality |
 | **Merging** | Required | Not needed |

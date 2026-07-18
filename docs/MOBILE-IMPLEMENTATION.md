@@ -14,7 +14,7 @@ The MetaHuman OS mobile app now has a complete three-tier architecture framework
 | Tier | Model | Use Case | Status |
 |------|-------|----------|--------|
 | **Offline** | Qwen3-1.7B (on-device) | No internet, airplane mode | Framework ready |
-| **Server** | Qwen3:14B (Ollama) | Home network, full features | Working |
+| **Server** | Qwen3.5:9B (Ollama) | Home network, full features | Working |
 | **Cloud** | Qwen3-Coder-30B (RunPod) | Away from home, complex tasks | Endpoint ready |
 
 ---
@@ -326,7 +326,7 @@ All tiers use the **Qwen3 family** for consistent behavior:
 |------|-------|------|-------|---------|
 | Offline | Qwen3-1.7B-Q4_K_M | 1.1GB | ~18 tok/s | Very Good |
 | Offline (alt) | Qwen3-4B-Q4_K_M | 2.5GB | ~8 tok/s | Excellent |
-| Server | Qwen3:14B | - | ~20 tok/s | Excellent |
+| Server | Qwen3.5:9B | - | ~20 tok/s | Excellent |
 | Cloud | Qwen3-Coder-30B | - | ~15 tok/s | Superior |
 
 ---

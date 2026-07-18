@@ -83,7 +83,7 @@ export async function checkHealth(): Promise<HealthStatus> {
   const start = Date.now();
 
   // Determine health check URL based on platform
-  // Use lightweight /api/status for health checks - NOT /api/boot which starts services
+  // Use the lightweight, side-effect-free status endpoint for health checks.
   const healthUrl = isReactNativeWebView()
     ? 'http://127.0.0.1:4322/api/status'
     : '/api/status';

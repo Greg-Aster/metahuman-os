@@ -11,7 +11,7 @@ import {
 
 assert.equal(isOllamaSafetensorsAdapterFamilySupported('meta-llama/Llama-3.1-8B'), true)
 assert.equal(isOllamaSafetensorsAdapterFamilySupported('mistralai/Mistral-7B-v0.3'), true)
-assert.equal(isOllamaSafetensorsAdapterFamilySupported('Qwen/Qwen3-14B'), false)
+assert.equal(isOllamaSafetensorsAdapterFamilySupported('Qwen/Qwen3.5-9B'), false)
 assert.equal(buildOllamaLoraModelName('llama3.1:8b', 'persona-2026-07-15'), 'llama3.1-persona-2026-07-15:latest')
 assert.equal(buildOllamaLoraModelfile('llama3.1:8b', '/tmp/example adapter', {
   numCtx: 8192,
@@ -26,19 +26,19 @@ try {
   fs.mkdirSync(adapterDir, { recursive: true })
   fs.writeFileSync(path.join(adapterDir, 'adapter_model.safetensors'), 'adapter')
   fs.writeFileSync(path.join(adapterDir, 'adapter_config.json'), JSON.stringify({
-    base_model_name_or_path: 'Qwen/Qwen3-14B',
+    base_model_name_or_path: 'Qwen/Qwen3.5-9B',
     r: 64,
   }))
 
-  const compatibleButUnsupported = await discoverOllamaLoraAdapters(profileOut, 'qwen3:14b')
+  const compatibleButUnsupported = await discoverOllamaLoraAdapters(profileOut, 'qwen3.5:9b')
   assert.equal(compatibleButUnsupported.length, 1)
   assert.equal(compatibleButUnsupported[0].compatibleWithTarget, true)
   assert.equal(compatibleButUnsupported[0].supportedByOllama, false)
   assert.match(compatibleButUnsupported[0].unavailableReason || '', /not supported by Ollama/)
 
-  const mismatched = await discoverOllamaLoraAdapters(profileOut, 'qwen3.5:9b')
+  const mismatched = await discoverOllamaLoraAdapters(profileOut, 'qwen3:8b')
   assert.equal(mismatched[0].compatibleWithTarget, false)
-  assert.match(mismatched[0].unavailableReason || '', /not qwen3.5:9b/)
+  assert.match(mismatched[0].unavailableReason || '', /not qwen3:8b/)
 } finally {
   fs.rmSync(profileOut, { recursive: true, force: true })
 }

@@ -691,7 +691,7 @@ async function callVLLMProvider(
 ): Promise<ProviderResponse> {
   const backendConfig = loadBackendConfig();
   // Always use the vLLM backend's configured model - vLLM only loads one model at startup
-  // and doesn't understand Ollama model names (e.g., qwen3:14b vs Qwen/Qwen3-14B-AWQ)
+  // and doesn't understand Ollama model names (e.g., qwen3.5:9b vs a Hugging Face model ID)
   let vllmStartConfig: VLLMConfig = buildVLLMStartConfig(backendConfig);
   const username = getUserContext()?.username;
   if (username) {

@@ -300,7 +300,7 @@ Full configuration example:
 Each user has isolated voice settings and training data:
 - **Voice samples**: Stored per-profile
 - **Preferences**: Independent voice.json per user
-- **Shared voices**: System administrators can install voices in `out/voices/` for all users
+- **Shared voices**: Owners can install voices in `out/voices/` for all users
 - **Personal models**: User-trained RVC models stay private
 
 ## Best Practices

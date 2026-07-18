@@ -94,7 +94,7 @@ User Message → Memory Search → Single LLM → Response
 - Can run continuously in background
 
 **Proposed Models:**
-- `curator` role (qwen3:14b) - Already configured for memory work
+- `curator` role (qwen3.5:9b) - Configured for memory work
 - `orchestrator` role (phi3:mini) - Fast pattern recognition
 - Future: Specialized "subconscious" model with optimized context assembly
 
@@ -340,7 +340,7 @@ User Message
 - Pattern detection identifies recurring themes
 
 **Models Involved:**
-- `curator` (qwen3:14b) for memory processing
+- `curator` (qwen3.5:9b) for memory processing
 - `orchestrator` (phi3:mini) for pattern recognition
 
 ### Phase 2: Personality Core Refinement (2-4 weeks)

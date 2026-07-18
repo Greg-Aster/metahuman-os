@@ -326,6 +326,23 @@ export async function persistBuffer(
 import { getProfilePaths } from './paths.js';
 import { getUser, getUserByUsername } from './users.js';
 
+function getConversationBufferLimit(username: string): number {
+  const fallback = 50;
+
+  try {
+    const settingsPath = path.join(getProfilePaths(username).root, 'etc', 'chat-settings.json');
+    if (!fs.existsSync(settingsPath)) return fallback;
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const configured = Number(settings.settings?.maxHistoryMessages?.value);
+    if (!Number.isFinite(configured)) return fallback;
+
+    return Math.max(5, Math.min(500, Math.floor(configured)));
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Get buffer path for a specific user (by username)
  * Used by agents that run outside web request context
@@ -459,10 +476,11 @@ export async function appendToUserBuffer(
         buffer.userMessageCount = existingUserCount;
       }
 
-      // Auto-prune to last 50 messages
-      const MAX_MESSAGES = 50;
-      if (buffer.messages.length > MAX_MESSAGES) {
-        buffer.messages = buffer.messages.slice(-MAX_MESSAGES);
+      // Keep pruning policy in the canonical buffer owner so graph nodes and
+      // API handlers cannot drift into competing limits or settings paths.
+      const maxMessages = getConversationBufferLimit(usernameForBuffer);
+      if (buffer.messages.length > maxMessages) {
+        buffer.messages = buffer.messages.slice(-maxMessages);
       }
 
       // Save

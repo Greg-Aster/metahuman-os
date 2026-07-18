@@ -11,7 +11,7 @@
  * 7. Load fine-tuned model to Ollama
  *
  * Usage:
- *   tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model qwen3-coder:30b
+ *   tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
  */
 
 import fs from 'node:fs';
@@ -24,6 +24,7 @@ import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { applySchemaBatch } from '@metahuman/core/schema-manager';
 import type { FormattedSample } from '@metahuman/core/schema-manager';
 import { getCurrentBaseModel, registerTrainingRun } from '@metahuman/core/model-registry';
+import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 import { storage } from '../services/storage-router.js';
 
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
@@ -503,7 +504,7 @@ async function main() {
       }
     } catch (error) {
       // Registry not found or error reading, use default
-      finalBaseModel = 'unsloth/Qwen3-14B-Instruct';
+      finalBaseModel = DEFAULT_TRAINING_MODEL;
       modelSource = 'default';
       console.log(`[fine-tune-cycle] Registry not available, using default: ${finalBaseModel}`);
     }

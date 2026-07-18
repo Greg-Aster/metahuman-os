@@ -162,7 +162,7 @@ async function main() {
     // First apply schema
     console.log('Applying Qwen schema...');
     const { applySchemaBatch } = await import('../packages/core/src/schema-manager.js');
-    const schemaAppliedSamples = applySchemaBatch(formattedSamples, 'qwen3-coder:30b');
+    const schemaAppliedSamples = applySchemaBatch(formattedSamples, 'Qwen/Qwen3.5-9B');
 
     const SCHEMA_PATH = path.join(testDir, 'schema_applied.json');
     fs.writeFileSync(SCHEMA_PATH, JSON.stringify(schemaAppliedSamples, null, 2));

@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store';
 import { apiFetch } from '../client/api-config';
 import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../client/connection-pool';
 import type { AutonomyMode } from '../client/active-operator-modes';
+import { isOwner } from '../../stores/security-policy';
 
 export type TriggerLifecycle = 'scheduled-work' | 'workflow' | 'service';
 export type TriggerType = 'interval' | 'time-of-day' | 'event' | 'activity' | 'manual';
@@ -95,6 +96,7 @@ function applySnapshot(snapshot: TriggerManagerSnapshot | undefined): void {
 }
 
 export async function refreshTriggerManager(): Promise<TriggerManagerSnapshot> {
+  if (!get(isOwner)) throw new Error('Owner role required for Trigger Manager');
   const response = await apiFetch('/api/trigger-manager', { cache: 'no-store' });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.success === false || !data.snapshot) {
@@ -105,7 +107,7 @@ export async function refreshTriggerManager(): Promise<TriggerManagerSnapshot> {
 }
 
 function connect(): void {
-  if (streamHandle || typeof window === 'undefined') return;
+  if (!get(isOwner) || streamHandle || typeof window === 'undefined') return;
   triggerManagerConnection.set('connecting');
   streamHandle = connectionPool.request({
     id: 'trigger-manager-shared-stream',
@@ -132,6 +134,7 @@ function connect(): void {
 }
 
 export function useTriggerManager(): () => void {
+  if (!get(isOwner)) return () => {};
   users += 1;
   if (users === 1) {
     void refreshTriggerManager().catch(error => triggerManagerError.set((error as Error).message));
@@ -151,6 +154,7 @@ export function useTriggerManager(): () => void {
 }
 
 async function control(action: string, extra: Record<string, unknown> = {}): Promise<any> {
+  if (!get(isOwner)) throw new Error('Owner role required for Trigger Manager');
   const response = await apiFetch('/api/trigger-manager/control', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -191,6 +195,7 @@ export async function runTriggerNow(triggerId: string, args: string[] = []): Pro
 }
 
 export async function patchTriggerConfig(patch: Record<string, unknown>): Promise<TriggerManagerSnapshot> {
+  if (!get(isOwner)) throw new Error('Owner role required for Trigger Manager');
   const response = await apiFetch('/api/trigger-manager/config', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

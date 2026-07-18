@@ -26,6 +26,7 @@ import {
 } from './agent-monitor-registry.js';
 import {
   getEnvironmentActionSubscriberCount,
+  getEnvironmentBridgeDiagnosticsSnapshot,
   summarizeEnvironmentBridgeState,
 } from './environment-interface/index.js';
 import type {
@@ -227,6 +228,9 @@ function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor):
     variables: descriptor.variables,
     logs,
     errors,
+    diagnostics: card.name === 'environment-bridge'
+      ? getEnvironmentBridgeDiagnosticsSnapshot()
+      : undefined,
   };
 }
 
@@ -254,6 +258,9 @@ function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor
     variables: descriptor.variables,
     logs: [...logs, failureLog].slice(-80),
     errors: [errorFromFailure(failure)],
+    diagnostics: card.name === 'environment-bridge'
+      ? getEnvironmentBridgeDiagnosticsSnapshot()
+      : undefined,
   };
 }
 

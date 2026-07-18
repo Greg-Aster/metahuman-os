@@ -830,7 +830,7 @@
 
   /**
    * Request a check-in for a long-running desire.
-   * Queues a desire_checkin task for the active operator.
+   * Queues durable desire_checkin work through the Work Coordinator.
    */
   async function requestCheckin(id: string) {
     processingId = id;

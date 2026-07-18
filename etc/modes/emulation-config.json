@@ -9,7 +9,7 @@
 
   "cognitive_mode": "emulation",
 
-  "base_model": "Qwen/Qwen3-14B",
+  "base_model": "Qwen/Qwen3.5-9B",
   "training_mode": "full_finetune",
 
   "learning_rate": 5e-6,

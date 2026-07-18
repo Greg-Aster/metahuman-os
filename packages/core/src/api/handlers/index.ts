@@ -4,7 +4,7 @@
  * All unified handlers exported from one place.
  */
 
-export * from './system.js';
+export * from './app-info.js';
 export * from './memories.js';
 export * from './tasks.js';
 export * from './auth.js';

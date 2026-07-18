@@ -223,7 +223,7 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles \
 | `--old-samples <N>` | Number of old samples to include | `--old-samples 4000` |
 | `--max <N>` | Maximum total samples | `--max 6000` |
 | `--mode <mode>` | Filter by cognitive mode | `--mode dual` |
-| `--base-model <model>` | Override base model | `--base-model Qwen/Qwen3-14B` |
+| `--base-model <model>` | Override base model | `--base-model Qwen/Qwen3.5-9B` |
 
 ---
 
@@ -546,7 +546,7 @@ tsx brain/agents/fine-tune-cycle.ts \
 
 ### Q: Can I use this with LoRA training instead?
 
-**A**: The workflow supports both full fine-tuning and LoRA. For LoRA, the memory requirements are lower (16GB vs 70GB), and training is faster (30-60 min vs 1-2 hours). See [lora-training.md](lora-training.md) for details.
+**A**: The workflow supports both full fine-tuning and LoRA. Qwen 3.5 9B LoRA has lower memory requirements than full fine-tuning, but the maintained 16-bit path still needs about 22GB before dataset-dependent overhead. See [lora-training.md](lora-training.md) for details.
 
 ### Q: What if I want to completely retrain?
 

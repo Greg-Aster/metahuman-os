@@ -190,24 +190,23 @@ import {
   getAuthenticatedUser,
   AuthRequiredError,
   getUserPaths,
-  hasPermission,
-  requirePermission,
   getProfilePaths,
   systemPaths
 } from '@metahuman/core';
+
+import { getSecurityPolicy } from '@metahuman/core/security-policy';
 ```
 
 **Core Auth Functions**:
 
 - **`getAuthenticatedUser(auth)`** - Get user from cookies (web) or session token (mobile). Throws `AuthRequiredError` if not authenticated.
 - **`getUserPaths(user)`** - Get profile paths for authenticated user (resolves custom storage).
-- **`hasPermission(user, permission)`** - Check if user has 'read', 'write', or 'admin' permission.
-- **`requirePermission(user, permission)`** - Throw error if user lacks permission.
+- **`getSecurityPolicy(context)`** - Resolve all permissions from cognitive mode and the persisted user role.
 
 **Permission Model**:
 - **guest**: read only
 - **standard**: read + write
-- **owner**: read + write + admin
+- **owner**: full system access
 
 #### User Management API
 
@@ -231,7 +230,7 @@ import {
 
 **Password Management**:
 - `changePassword(userId, oldPassword, newPassword)` - User-initiated change
-- `updatePassword(userId, newPassword)` - Admin password reset (no verification)
+- `updatePassword(userId, newPassword)` - Owner-authorized password reset (no password verification inside this low-level function)
 
 **Profile Management**:
 - `updateProfileVisibility(userId, 'public' | 'private')` - Control guest access

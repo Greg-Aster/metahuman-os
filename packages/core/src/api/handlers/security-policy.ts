@@ -8,11 +8,13 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { loadCognitiveMode, type CognitiveModeId } from '../../cognitive-mode.js';
+import { computeSecurityPolicy, type SessionInfo } from '../../security-policy.js';
 
 /**
  * GET /api/security/policy - Get current security policy for the UI
  * Returns all permission flags so UI can reactively show/hide features
- * Safe for anonymous users - returns restricted permissions
+ * Unauthenticated requests receive the same restricted guest policy used by
+ * every other core authorization path.
  */
 export async function handleGetSecurityPolicy(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user } = req;
@@ -27,51 +29,54 @@ export async function handleGetSecurityPolicy(req: UnifiedRequest): Promise<Unif
       // Use default
     }
 
-    // Determine permissions based on user role and cognitive mode
     const isAuthenticated = user.isAuthenticated;
-    const role = user.role || 'anonymous';
-    const isOwner = role === 'owner';
-    const isGuest = role === 'guest';
+    const session: SessionInfo | null = isAuthenticated
+      ? {
+          id: user.userId,
+          username: user.username,
+          role: user.role,
+        }
+      : null;
+    const policy = computeSecurityPolicy(cognitiveMode, session);
+    const isOwner = policy.role === 'owner';
+    const isGuest = policy.role === 'guest';
     const isAnonymous = !isAuthenticated;
 
-    // Write permissions based on auth status and cognitive mode
-    const canWriteMemory = isAuthenticated && cognitiveMode !== 'emulation';
-    const canUseOperator = isAuthenticated && cognitiveMode !== 'emulation' && cognitiveMode !== 'environment' && isOwner;
-    const canModifyPersona = isAuthenticated && isOwner;
+    // UI-specific names are projections of the core policy, not a second
+    // permission calculation.
+    const canModifyPersona = policy.canEditOwnProfile;
     const canAccessSettings = isAuthenticated;
-    const canManageUsers = isAuthenticated && isOwner;
-    const canViewAudit = isAuthenticated && isOwner;
-    const canManageAgents = isAuthenticated && isOwner;
-    const canTrain = isAuthenticated && isOwner;
-    const canApprove = isAuthenticated && isOwner;
+    const canManageUsers = policy.canAccessAllProfiles;
+    const canViewAudit = policy.canEditSystemCode;
+    const canManageAgents = policy.canEditSystemCode;
+    const canApprove = isOwner;
 
     return successResponse({
       success: true,
       policy: {
         // Permission flags
-        canWriteMemory,
-        canUseOperator,
+        canWriteMemory: policy.canWriteMemory,
+        canUseOperator: policy.canUseOperator,
         canModifyPersona,
         canAccessSettings,
         canManageUsers,
         canViewAudit,
         canManageAgents,
-        canTrain,
+        canTrain: policy.canAccessTraining,
         canApprove,
 
-        // Missing permissions expected by frontend
-        canChangeMode: isOwner,
-        canChangeTrust: isOwner,
-        canAccessTraining: canTrain,
-        canFactoryReset: isOwner,
+        canChangeMode: policy.canChangeMode,
+        canChangeTrust: policy.canChangeTrust,
+        canAccessTraining: policy.canAccessTraining,
+        canFactoryReset: policy.canFactoryReset,
 
         // Context
-        role,
-        mode: cognitiveMode,
+        role: policy.role,
+        mode: policy.mode,
         sessionId: user.sessionId,
 
         // Computed helpers for UI
-        isReadOnly: !canWriteMemory,
+        isReadOnly: !policy.canWriteMemory,
         isOwner,
         isGuest,
         isAnonymous,

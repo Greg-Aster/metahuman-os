@@ -67,7 +67,7 @@ The Training Wizard guides you through the entire process:
 - **Cost**: Free (uses your hardware)
 - **Time**: 30-60 minutes
 - **Best for**: Users with capable GPUs, privacy-conscious
-- **Models supported**: Qwen3-14B, Llama-3.1-20B
+- **Maintained model**: Qwen3.5-9B
 
 **Remote LoRA (RunPod)**
 - **Requirements**: RunPod API key
@@ -81,7 +81,7 @@ The Training Wizard guides you through the entire process:
 - **Cost**: $5-15 per run (RunPod)
 - **Time**: 2-4 hours
 - **Best for**: Advanced users wanting maximum quality
-- **Models supported**: Qwen3-30B-Instruct
+- **Maintained model**: Qwen3.5-9B
 
 ### Step 2: Configure RunPod (if Remote)
 
@@ -133,8 +133,8 @@ Newest Memory: 2025-11-25
 
 **Basic Settings:**
 - **Base Model**: Which model to fine-tune
-  - `unsloth/Qwen3-14B` (LoRA default, balanced)
-  - `unsloth/Qwen3-30B-Instruct` (Fine-tune, higher quality)
+  - `unsloth/Qwen3.5-9B` (maintained LoRA default, balanced)
+  - `Qwen/Qwen3.5-9B` (full fine-tune)
 - **Training Epochs**: 3 (LoRA) or 2 (Fine-tune)
 - **Max Samples**: 3000 (LoRA) or 5000 (Fine-tune)
 
@@ -290,7 +290,7 @@ out/adapters/2025-11-25/
 
 **Modelfile Example:**
 ```
-FROM unsloth/Qwen3-14B
+FROM unsloth/Qwen3.5-9B
 ADAPTER ./adapter.gguf
 PARAMETER temperature 0.7
 PARAMETER top_p 0.9
@@ -319,7 +319,7 @@ out/adapters/2025-11-25/
     "historical": "out/adapters/_history/history-merged.gguf",
     "recent": "out/adapters/2025-11-25/adapter.gguf"
   },
-  "baseModel": "unsloth/Qwen3-14B",
+  "baseModel": "unsloth/Qwen3.5-9B",
   "trainingMethod": "local-lora",
   "runLabel": "monthly-2025-11-25"
 }
@@ -418,7 +418,7 @@ profiles/<username>/out/adapters/
 
 ```json
 {
-  "base_model": "unsloth/Qwen3-14B",
+  "base_model": "unsloth/Qwen3.5-9B",
   "num_train_epochs": 3,
   "max_samples": 3000,
   "monthly_training": true,
@@ -435,7 +435,7 @@ profiles/<username>/out/adapters/
 **Environment Override**:
 ```bash
 # Use different base model
-export METAHUMAN_BASE_MODEL="unsloth/Qwen3-30B-Instruct"
+export METAHUMAN_BASE_MODEL="unsloth/Qwen3.5-9B"
 ```
 
 ### Auto-Approval Config
@@ -528,9 +528,9 @@ export METAHUMAN_BASE_MODEL="unsloth/Qwen3-30B-Instruct"
 ### GPU Requirements
 
 **Local Training:**
-- LoRA (14B model): 24GB VRAM
+- LoRA (9B model): validate against the selected quantization and sequence length
 - LoRA (20B model): 32GB VRAM
-- Fine-Tuning (30B model): 40GB+ VRAM
+- Full fine-tuning (9B model): high-memory accelerator; validate the complete optimizer/dataset footprint before launch
 
 **RunPod Recommendations:**
 - H100: Best performance, ~$2/hour
@@ -563,7 +563,7 @@ export METAHUMAN_BASE_MODEL="unsloth/Qwen3-30B-Instruct"
 ### Out of Memory (OOM)
 - Reduce batch size to 1
 - Reduce gradient accumulation steps
-- Use smaller base model (7B instead of 14B)
+- Use a smaller base model or shorter sequence length
 - Use RunPod with larger GPU
 
 ### Training Stuck/Frozen

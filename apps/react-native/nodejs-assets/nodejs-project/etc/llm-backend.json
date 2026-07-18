@@ -3,20 +3,22 @@
   "ollama": {
     "endpoint": "http://localhost:11434",
     "autoStart": false,
-    "defaultModel": "qwen3:14b"
+    "defaultModel": "qwen3.5:9b"
   },
   "vllm": {
     "endpoint": "http://localhost:8000",
     "autoStart": false,
-    "model": "Qwen/Qwen3-14B-AWQ",
+    "model": "sanskar003/Qwen3.5-9B-AWQ",
     "gpuMemoryUtilization": 0.85,
     "maxModelLen": 4096,
     "tensorParallelSize": 1,
-    "dtype": "auto",
-    "quantization": "awq",
+    "dtype": "float16",
+    "quantization": "compressed-tensors",
     "enforceEager": true,
     "autoUtilization": false,
-    "enableThinking": false
+    "enableThinking": false,
+    "loadFormat": "safetensors",
+    "servedModelName": "sanskar003/Qwen3.5-9B-AWQ"
   },
   "localModels": {
     "enabled": true,

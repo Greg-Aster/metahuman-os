@@ -23,6 +23,7 @@ else:
     os.environ['HF_DATASETS_CACHE'] = os.path.join(cache_dir, 'datasets')
 
 import importlib
+import importlib.metadata
 import subprocess
 
 # Progress tracking helper
@@ -37,11 +38,18 @@ def log_progress(stage, message, percent=None):
 
 def ensure_packages(packages):
     """Ensure required packages are installed"""
+    def package_available(spec, import_name):
+        try:
+            importlib.import_module(import_name or spec)
+            if spec == "transformers>=5":
+                return int(importlib.metadata.version("transformers").split('.', 1)[0]) >= 5
+            return True
+        except (ImportError, importlib.metadata.PackageNotFoundError, ValueError):
+            return False
+
     missing = []
     for pkg, import_name in packages:
-        try:
-            importlib.import_module(import_name or pkg)
-        except ImportError:
+        if not package_available(pkg, import_name):
             missing.append(pkg)
 
     if not missing:
@@ -57,13 +65,7 @@ def ensure_packages(packages):
     for cmd in installers:
         try:
             subprocess.run(cmd, check=True)
-            all_available = True
-            for pkg, import_name in packages:
-                try:
-                    importlib.import_module(import_name or pkg)
-                except ImportError:
-                    all_available = False
-                    break
+            all_available = all(package_available(pkg, import_name) for pkg, import_name in packages)
             if all_available:
                 log_progress("DEPENDENCIES", f"Packages ready via {' '.join(cmd[:2])}")
                 return
@@ -74,9 +76,7 @@ def ensure_packages(packages):
 
     still_missing = []
     for pkg, import_name in packages:
-        try:
-            importlib.import_module(import_name or pkg)
-        except ImportError:
+        if not package_available(pkg, import_name):
             still_missing.append(pkg)
 
     raise RuntimeError(
@@ -99,7 +99,7 @@ def main():
     # Install dependencies before importing (A100 templates don't have transformers pre-installed)
     log_progress("DEPENDENCIES", "Checking required packages...")
     ensure_packages([
-        ("transformers", "transformers"),
+        ("transformers>=5", "transformers"),
         ("datasets", "datasets"),
         ("torch", "torch"),
         ("accelerate", "accelerate"),
@@ -109,6 +109,8 @@ def main():
     # Import after packages are installed
     from transformers import (
         AutoModelForCausalLM,
+        AutoModelForMultimodalLM,
+        AutoProcessor,
         AutoTokenizer,
         Trainer,
         TrainingArguments,
@@ -132,7 +134,7 @@ def main():
 
     # Defaults matching etc/fine-tune-config.json
     cfg = {
-        "base_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct",
+        "base_model": "Qwen/Qwen3.5-9B",
         "training_mode": "full_finetune",
         "learning_rate": 3e-5,  # Default within recommended full fine-tune range
         "num_train_epochs": 3,
@@ -195,7 +197,13 @@ def main():
 
     # Step 2: Load tokenizer
     log_progress("TOKENIZER", f"📥 Loading tokenizer for {cfg['base_model']}")
-    tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"], use_fast=True)
+    is_qwen35 = 'qwen3.5' in cfg['base_model'].lower()
+    processor = None
+    if is_qwen35:
+        processor = AutoProcessor.from_pretrained(cfg["base_model"])
+        tokenizer = processor.tokenizer
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"], use_fast=True)
 
     # Ensure tokenizer has pad token
     if tokenizer.pad_token is None:
@@ -232,7 +240,7 @@ def main():
 
     # Step 4: Load model
     log_progress("MODEL_DOWNLOAD", f"📥 Downloading {cfg['base_model']}")
-    log_progress("MODEL_DOWNLOAD", "⚠️  FULL fine-tuning requires ~70GB VRAM for 14B models")
+    log_progress("MODEL_DOWNLOAD", "⚠️  Full fine-tuning requires substantially more VRAM than LoRA training")
 
     load_in_8bit = cfg.get("load_in_8bit", False)
     if load_in_8bit:
@@ -244,7 +252,8 @@ def main():
     dtype = torch.bfloat16 if cfg.get("bf16", True) else torch.float16
 
     model_start = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
+    model_class = AutoModelForMultimodalLM if is_qwen35 else AutoModelForCausalLM
+    model = model_class.from_pretrained(
         cfg["base_model"],
         load_in_8bit=load_in_8bit,
         torch_dtype=dtype,
@@ -315,7 +324,10 @@ def main():
     # Step 7: Save final model
     log_progress("SAVE_MODEL", "Saving fine-tuned model...")
     model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
+    if processor is not None:
+        processor.save_pretrained(output_dir)
+    else:
+        tokenizer.save_pretrained(output_dir)
     log_progress("SAVE_MODEL", "✅ Model saved", 100)
 
     # Step 8: GGUF conversion skipped - will be done locally after download

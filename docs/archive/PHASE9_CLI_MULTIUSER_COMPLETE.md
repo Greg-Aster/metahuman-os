@@ -54,7 +54,7 @@ $ mh user list
 
 Registered Users:
 ──────────────────────────────────────────────────
-● greggles [ADMIN]
+● greggles
   Role: owner
   ID: f1be5026-fd95-4c58-a033-8c05e061f82d
   Last Login: 11/6/2025, 11:46:56 AM
@@ -62,7 +62,7 @@ Registered Users:
 
 **Features:**
 - Purple dot (●) for owner, cyan for guest
-- Shows [ADMIN] badge for users in ADMIN_USERS env var
+- Shows each user's persisted role
 - Displays role, ID, and last login time
 
 #### `mh user whoami`
@@ -143,31 +143,13 @@ async function main() {
 
 ### 4. Security Implementation ✅
 
-**Admin Users Configuration:**
+**Owner Configuration:**
 
-From `.env` file:
-```bash
-# ADMIN_USERS
-# Comma-separated list of usernames with administrator privileges
-# Administrators can:
-# - Edit system code (brain/, packages/, apps/, bin/)
-# - Modify system configuration (logs/run/, root-level files)
-# - Access and manage all user profiles
-# - Execute dangerous operations (code editing, file system access)
-# - Install packages, modify dependencies
-#
-# Regular users can ONLY:
-# - Edit files within their own profile (profiles/{username}/)
-# - Cannot modify system code or other users' data
-# - Cannot access brain/, packages/, apps/, bin/ directories
-#
-# SECURITY: Only add trusted users to this list!
-# Example: ADMIN_USERS=greggles,alice
-ADMIN_USERS=greggles
-```
+Full-system authority comes directly from the persisted `owner` role. There is
+no separate administrator environment setting.
 
 **Security Enforcement:**
-- Admin privileges checked via `ADMIN_USERS` environment variable
+- Owner privileges checked directly from the user role
 - Regular users restricted to their profile directory
 - All user operations isolated via `withUserContext()`
 - Audit logs track all operations with userId
@@ -191,8 +173,9 @@ Examples:
   mh user list
 
 Security:
-  - Admin users (ADMIN_USERS in .env) can modify system files
-  - Regular users can only modify files in their own profile
+  - Owners can modify system files and manage all profiles
+  - Standard users can only modify files in their own profile
+  - Guests have read-only access
   - All data isolated per user in profiles/<username>/
 ```
 
@@ -387,9 +370,9 @@ mh --user bob capture "text"
 # → Saved to: profiles/bob/memory/episodic/...
 ```
 
-### 2. Admin Privileges ✅
+### 2. Owner Privileges ✅
 
-**Admin Users (from ADMIN_USERS in .env):**
+**Owners:**
 - Can access system directories (brain/, packages/, apps/)
 - Can manage all user profiles
 - Can execute system-level operations
@@ -400,7 +383,7 @@ mh --user bob capture "text"
 - Cannot modify system code
 
 **Enforcement:**
-- Checked via `ADMIN_USERS` environment variable
+- Checked directly from the persisted `owner` role
 - Security policy enforces restrictions
 - All operations audited with userId
 
@@ -530,7 +513,7 @@ captureEvent("text")
 ✅ User management commands (list, whoami, info)
 ✅ Automatic user context wrapping
 ✅ Complete data isolation per user
-✅ Admin privileges configuration
+✅ Owner-role privileges configuration
 ✅ Security enforcement
 ✅ Help documentation updated
 ✅ Backward compatibility maintained
