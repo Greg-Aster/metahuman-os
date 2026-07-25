@@ -178,7 +178,18 @@
       });
 
       const data = await res.json();
-      console.log('[AuthGate] Login response:', data);
+      console.log('[AuthGate] Login response received:', {
+        ok: res.ok,
+        status: res.status,
+        username: data.user?.username || data.username,
+        encryptionLocked: Boolean(data.encryptionLocked),
+      });
+
+      if (data.encryptionLocked || data.encryptionError) {
+        error = data.error || data.encryptionError || 'Encrypted profile could not be unlocked.';
+        showSyncHint = false;
+        return;
+      }
 
       if (data.success && data.user) {
         // Store session ID in localStorage (mobile needs this, web uses cookie)

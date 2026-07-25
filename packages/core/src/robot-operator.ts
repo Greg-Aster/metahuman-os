@@ -16,7 +16,7 @@ export interface RobotObserverCycleMetadata {
   maxSteps: number
   triggerSource: RobotObserverTriggerSource
   graph: string
-  requestedBy: 'robot-observer'
+  requestedBy: 'robot-observer' | 'environment-perception'
 }
 
 export interface BoredomMovementMetadata {
@@ -190,6 +190,7 @@ export function readRobotObserverCycle(
   const step = typeof record.step === 'number' ? Math.floor(record.step) : 0
   const maxSteps = typeof record.maxSteps === 'number' ? Math.floor(record.maxSteps) : 0
   const triggerSource = record.triggerSource
+  const requestedBy = record.requestedBy
   const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
     ? record.graph
     : 'environment'
@@ -200,6 +201,10 @@ export function readRobotObserverCycle(
     || maxSteps > 10
     || step > maxSteps
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
+    || (
+      requestedBy !== 'robot-observer'
+      && requestedBy !== 'environment-perception'
+    )
   ) return null
   return {
     cycleId,
@@ -207,7 +212,26 @@ export function readRobotObserverCycle(
     maxSteps,
     triggerSource,
     graph,
-    requestedBy: 'robot-observer',
+    requestedBy,
+  }
+}
+
+export function beginEnvironmentPerceptionCycle(
+  cycleId: string,
+  graph: string,
+  maxSteps: number,
+): RobotObserverCycleMetadata | null {
+  const normalizedCycleId = cycleId.trim()
+  const normalizedGraph = /^[a-zA-Z0-9_-]{1,80}$/.test(graph) ? graph : 'environment'
+  const boundedSteps = Math.floor(maxSteps)
+  if (!normalizedCycleId || boundedSteps < 1 || boundedSteps > 10) return null
+  return {
+    cycleId: normalizedCycleId,
+    step: 1,
+    maxSteps: boundedSteps,
+    triggerSource: 'user',
+    graph: normalizedGraph,
+    requestedBy: 'environment-perception',
   }
 }
 

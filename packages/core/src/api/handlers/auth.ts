@@ -15,6 +15,7 @@ import { unlockProfile, lockProfile, getEncryptionStatus } from '../../encryptio
 import { audit } from '../../audit.js';
 import { getSession } from '../../sessions.js';
 import { generateRecoveryCodes, saveRecoveryCodes, verifyRecoveryCode } from '../../recovery-codes.js';
+import { getProfilePaths } from '../../paths.js';
 
 /**
  * POST /api/auth/login - Authenticate user
@@ -47,28 +48,32 @@ export async function handleLogin(req: UnifiedRequest): Promise<UnifiedResponse>
     };
   }
 
-  // Create session
-  const session = createSession(user.id, user.role);
-
-  console.log(`[auth-handler] User ${username} logged in, session: ${session.id.slice(0, 8)}...`);
-
   // Auto-unlock encrypted storage if using login password
   let encryptionUnlocked = false;
   let encryptionError: string | undefined;
+  let encryptionType: string | undefined;
 
   try {
     const storageConfig = getProfileStorageConfig(user.username);
     const encType = storageConfig?.encryption?.type;
     const useLoginPassword = storageConfig?.encryption?.useLoginPassword;
+    encryptionType = encType;
 
     // Auto-unlock for LUKS or AES-256 when using login password
     if ((encType === 'luks' || encType === 'aes256') && useLoginPassword) {
       const unlockResult = await unlockProfile(user.id, password);
       encryptionUnlocked = unlockResult.success;
       if (!unlockResult.success) {
-        encryptionError = unlockResult.error;
+        encryptionError = unlockResult.error || 'Encrypted profile unlock failed without an error message';
         console.warn('[auth-handler] Failed to auto-unlock encrypted storage:', unlockResult.error);
       } else {
+        // A successful LUKS command is not enough: the profile root must be
+        // the configured mapper mount and be writable before authentication
+        // is allowed to continue.
+        if (encType === 'luks') {
+          getProfilePaths(user.username);
+        }
+
         audit({
           level: 'info',
           category: 'security',
@@ -86,6 +91,38 @@ export async function handleLogin(req: UnifiedRequest): Promise<UnifiedResponse>
     console.error('[auth-handler] Error during auto-unlock:', unlockError);
     encryptionError = (unlockError as Error).message;
   }
+
+  if (encryptionError) {
+    audit({
+      level: 'warn',
+      category: 'security',
+      event: 'encryption_auto_unlock_failed',
+      details: {
+        userId: user.id,
+        username: user.username,
+        encryptionType,
+        error: encryptionError,
+      },
+      actor: user.id,
+    });
+
+    return {
+      status: 423,
+      data: {
+        success: false,
+        error: `Encrypted profile could not be unlocked: ${encryptionError}`,
+        encryptionLocked: true,
+        encryptionType,
+        username: user.username,
+      },
+    };
+  }
+
+  // Do not create an authenticated session until encrypted profile readiness
+  // has succeeded. This prevents a valid login from bypassing a failed unlock.
+  const session = createSession(user.id, user.role);
+
+  console.log(`[auth-handler] User ${username} logged in, session: ${session.id.slice(0, 8)}...`);
 
   // Audit the login
   audit({

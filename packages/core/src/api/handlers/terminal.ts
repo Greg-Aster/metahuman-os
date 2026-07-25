@@ -1,92 +1,185 @@
-import { exec, spawn } from 'node:child_process';
+import { exec, spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { audit } from '../../audit.js';
-import { bigBrotherTerminal } from '../../big-brother-terminal.js';
+import {
+  BIG_BROTHER_SESSION_PORT,
+  getBigBrotherSessionState,
+  stopBigBrotherSession,
+} from '../../big-brother-session.js';
+import { ROOT as REPO_ROOT } from '../../path-builder.js';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 
 const execAsync = promisify(exec);
 
-const REPO_ROOT = path.resolve(process.cwd(), '../..');
 const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
 const TTYD_BIN = path.join(REPO_ROOT, 'bin/ttyd');
 const BASE_PORT = 3001;
 const MAX_TERMINALS = 10;
-const BIG_BROTHER_PORT = 3099;
+const TERMINAL_HOST = '127.0.0.1';
+const TERMINAL_START_TIMEOUT_MS = 5000;
+const TERMINAL_START_POLL_MS = 50;
 
-interface RunningTerminal {
-  pid: number;
+export interface RunningTerminal {
+  pid: number | null;
   port: number;
   command?: string;
   cwd?: string;
   isBigBrother?: boolean;
+  bigBrotherProvider?: string | null;
 }
 
 const activeTerminals = new Map<number, { pid: number; port: number }>();
+let terminalSpawnQueue: Promise<void> = Promise.resolve();
 
-async function isPortInUse(port: number): Promise<boolean> {
+async function withTerminalSpawnLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = terminalSpawnQueue;
+  let release = () => {};
+  terminalSpawnQueue = new Promise<void>(resolve => {
+    release = resolve;
+  });
+
+  await previous;
   try {
-    await fetch(`http://localhost:${port}`, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(500),
-    });
-    return true;
-  } catch {
-    return false;
+    return await operation();
+  } finally {
+    release();
   }
 }
 
-function unauthenticatedTerminalError(): Error {
-  return new Error('No session - redirect to auth gate');
+export function parseTtydProcesses(stdout: string): RunningTerminal[] {
+  const terminals: RunningTerminal[] = [];
+
+  for (const line of stdout.trim().split('\n').filter(Boolean)) {
+    const pidMatch = line.match(/^(\d+)\s+/);
+    const portMatch = line.match(/--port\s+(\d+)/);
+    const cwdMatch = line.match(/--cwd\s+(\S+)/);
+    if (!pidMatch || !portMatch) continue;
+
+    let command: string | undefined;
+    const bashIndex = line.indexOf(' bash');
+    if (bashIndex > -1) {
+      const afterBash = line.substring(bashIndex + 5).trim();
+      if (afterBash.startsWith('-c ')) {
+        command = afterBash.substring(3).trim();
+      }
+    }
+
+    terminals.push({
+      pid: Number.parseInt(pidMatch[1], 10),
+      port: Number.parseInt(portMatch[1], 10),
+      command,
+      cwd: cwdMatch?.[1],
+    });
+  }
+
+  return terminals;
+}
+
+async function listTtydProcesses(): Promise<RunningTerminal[]> {
+  const { stdout } = await execAsync("pgrep -fa '[t]tyd .*--port' || true");
+  return parseTtydProcesses(stdout);
+}
+
+export async function isTerminalPortInUse(
+  port: number,
+  host = TERMINAL_HOST,
+  timeoutMs = 500,
+): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+
+    const finish = (inUse: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(inUse);
+    };
+
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(timeoutMs, () => finish(false));
+  });
+}
+
+export async function findAvailableTerminalPort(
+  reservedPorts: ReadonlySet<number>,
+  portInUse: (port: number) => Promise<boolean> = isTerminalPortInUse,
+): Promise<number | null> {
+  for (let candidate = BASE_PORT; candidate < BASE_PORT + MAX_TERMINALS; candidate++) {
+    if (reservedPorts.has(candidate)) continue;
+    if (!await portInUse(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+async function waitForTerminalReady(child: ChildProcess, port: number): Promise<void> {
+  const deadline = Date.now() + TERMINAL_START_TIMEOUT_MS;
+  let spawnError: Error | null = null;
+  const handleError = (error: Error) => {
+    spawnError = error;
+  };
+  child.once('error', handleError);
+
+  try {
+    while (Date.now() < deadline) {
+      if (spawnError) throw spawnError;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        const reason = child.signalCode ? `signal ${child.signalCode}` : `code ${child.exitCode}`;
+        throw new Error(`ttyd exited before opening port ${port} (${reason})`);
+      }
+      if (await isTerminalPortInUse(port)) return;
+      await new Promise(resolve => setTimeout(resolve, TERMINAL_START_POLL_MS));
+    }
+  } finally {
+    child.off('error', handleError);
+  }
+
+  throw new Error(`ttyd did not become ready on port ${port} within ${TERMINAL_START_TIMEOUT_MS}ms`);
+}
+
+function terminalPidPath(port: number): string {
+  return path.join(LOG_DIR, `terminal-${port}.pid`);
+}
+
+function removeOwnedPidFile(port: number, pid?: number): void {
+  const pidFile = terminalPidPath(port);
+  try {
+    if (!fs.existsSync(pidFile)) return;
+    if (pid !== undefined && fs.readFileSync(pidFile, 'utf8').trim() !== String(pid)) return;
+    fs.unlinkSync(pidFile);
+  } catch (error) {
+    console.warn(`[terminal] Failed to remove PID file for port ${port}:`, error);
+  }
+}
+
+function terminalUrl(port: number): string {
+  return `http://localhost:${port}`;
 }
 
 export async function handleListTerminals(): Promise<UnifiedResponse> {
   try {
-    const { stdout } = await execAsync('pgrep -fa "ttyd --port" || true');
-    const terminals: RunningTerminal[] = [];
+    const terminals = await listTtydProcesses();
 
-    if (stdout.trim()) {
-      const lines = stdout.trim().split('\n');
-
-      for (const line of lines) {
-        const pidMatch = line.match(/^(\d+)\s+/);
-        const portMatch = line.match(/--port\s+(\d+)/);
-        const cwdMatch = line.match(/--cwd\s+(\S+)/);
-
-        if (pidMatch && portMatch) {
-          const pid = parseInt(pidMatch[1], 10);
-          const port = parseInt(portMatch[1], 10);
-
-          let command: string | undefined;
-          const bashIndex = line.indexOf(' bash');
-          if (bashIndex > -1) {
-            const afterBash = line.substring(bashIndex + 5).trim();
-            if (afterBash.startsWith('-c ')) {
-              command = afterBash.substring(3).trim();
-            }
-          }
-
-          terminals.push({
-            pid,
-            port,
-            command: command || undefined,
-            cwd: cwdMatch?.[1],
-          });
-        }
-      }
-    }
-
-    const bigBrotherState = bigBrotherTerminal.getState();
-    if (bigBrotherState.isRunning && bigBrotherState.pid) {
+    const bigBrotherState = getBigBrotherSessionState();
+    if (bigBrotherState.sessionOpen) {
       const existingBigBrother = terminals.find(t => t.port === bigBrotherState.port);
-      if (!existingBigBrother) {
+      if (existingBigBrother) {
+        existingBigBrother.isBigBrother = true;
+        existingBigBrother.bigBrotherProvider = bigBrotherState.provider;
+        existingBigBrother.command = `big-brother:${bigBrotherState.provider || 'unknown'}`;
+      } else {
         terminals.push({
           pid: bigBrotherState.pid,
           port: bigBrotherState.port,
-          command: 'claude --dangerously-skip-permissions',
+          command: `big-brother:${bigBrotherState.provider || 'unknown'}`,
           isBigBrother: true,
+          bigBrotherProvider: bigBrotherState.provider,
         });
       }
     }
@@ -111,224 +204,144 @@ export async function handleListTerminals(): Promise<UnifiedResponse> {
 }
 
 export async function handleSpawnTerminal(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    let command = 'bash';
-    let args: string[] = [];
+  return withTerminalSpawnLock(async () => {
+    try {
+      let command = 'bash';
+      let args: string[] = [];
+      const body = req.body;
+      const purpose = body && typeof body === 'object' && typeof body.purpose === 'string'
+        ? body.purpose
+        : 'adhoc';
 
-    const body = req.body;
-    if (body && typeof body === 'object' && 'command' in body) {
-      const requestedCommand = (body as { command?: unknown }).command;
-      if (typeof requestedCommand === 'string' && requestedCommand) {
-        command = 'bash';
-        args = ['-c', requestedCommand];
-      } else if (Array.isArray(requestedCommand) && requestedCommand) {
-        command = requestedCommand[0] as string;
-        args = requestedCommand.slice(1);
+      if (body && typeof body === 'object' && 'command' in body) {
+        const requestedCommand = (body as { command?: unknown }).command;
+        if (typeof requestedCommand === 'string' && requestedCommand) {
+          command = 'bash';
+          args = ['-c', requestedCommand];
+        } else if (Array.isArray(requestedCommand) && requestedCommand.length > 0) {
+          command = requestedCommand[0] as string;
+          args = requestedCommand.slice(1) as string[];
+        }
       }
-    }
 
-    let port = BASE_PORT;
-    let portsChecked = 0;
+      const runningTerminals = await listTtydProcesses();
+      const reusable = purpose === 'services'
+        ? runningTerminals.find(terminal => terminal.command?.includes('start-services'))
+        : purpose === 'default-shell'
+          ? runningTerminals.find(terminal => !terminal.command && !terminal.isBigBrother)
+          : undefined;
 
-    while (portsChecked < MAX_TERMINALS) {
-      const inUse = await isPortInUse(port);
-      if (!inUse) {
-        break;
+      if (reusable) {
+        return successResponse({
+          port: reusable.port,
+          pid: reusable.pid,
+          url: terminalUrl(reusable.port),
+          alreadyRunning: true,
+        });
       }
-      port++;
-      portsChecked++;
-    }
 
-    if (portsChecked >= MAX_TERMINALS) {
-      return {
-        status: 429,
-        data: {
-          error: `Maximum number of terminals reached (${MAX_TERMINALS})`,
-        },
-      };
-    }
+      const processPorts = new Set(runningTerminals.map(terminal => terminal.port));
+      for (const activePort of activeTerminals.keys()) {
+        processPorts.add(activePort);
+      }
+      const port = await findAvailableTerminalPort(processPorts);
 
-    if (!fs.existsSync(LOG_DIR)) {
+      if (port === null) {
+        return {
+          status: 429,
+          data: { error: `Maximum number of terminals reached (${MAX_TERMINALS})` },
+        };
+      }
+
       fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
+      const logFile = path.join(LOG_DIR, `terminal-${port}.log`);
+      const pidFile = terminalPidPath(port);
+      const logFd = fs.openSync(logFile, 'a');
+      let ttydProcess: ChildProcess;
 
-    const logFile = path.join(LOG_DIR, `terminal-${port}.log`);
-    const pidFile = path.join(LOG_DIR, `terminal-${port}.pid`);
+      try {
+        ttydProcess = spawn(TTYD_BIN, [
+          '--interface', TERMINAL_HOST,
+          '--port', port.toString(),
+          '--writable',
+          '--cwd', REPO_ROOT,
+          command,
+          ...args,
+        ], {
+          detached: true,
+          stdio: ['ignore', logFd, logFd],
+        });
+      } finally {
+        fs.closeSync(logFd);
+      }
 
-    const ttydProcess = spawn(TTYD_BIN, [
-      '--port', port.toString(),
-      '--writable',
-      '--cwd', REPO_ROOT,
-      command,
-      ...args,
-    ], {
-      detached: true,
-      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
-    });
+      const pid = ttydProcess.pid;
+      if (!pid) throw new Error('ttyd did not return a process ID');
 
-    ttydProcess.unref();
+      activeTerminals.set(port, { pid, port });
 
-    fs.writeFileSync(pidFile, ttydProcess.pid!.toString());
-    activeTerminals.set(port, { pid: ttydProcess.pid!, port });
+      ttydProcess.once('exit', () => {
+        if (activeTerminals.get(port!)?.pid === pid) {
+          activeTerminals.delete(port!);
+        }
+        removeOwnedPidFile(port!, pid);
+      });
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+      try {
+        await waitForTerminalReady(ttydProcess, port);
+      } catch (error) {
+        activeTerminals.delete(port);
+        removeOwnedPidFile(port, pid);
+        if (ttydProcess.exitCode === null && ttydProcess.signalCode === null) {
+          ttydProcess.kill('SIGTERM');
+        }
+        throw error;
+      }
 
-    return successResponse({
-      port,
-      pid: ttydProcess.pid,
-      url: `http://localhost:${port}`,
-    });
-  } catch (error) {
-    console.error('[Terminal Spawn] Error:', error);
-    return {
-      status: 500,
-      data: {
-        error: error instanceof Error ? error.message : 'Failed to spawn terminal',
-      },
-    };
-  }
-}
+      fs.writeFileSync(pidFile, String(pid));
+      ttydProcess.unref();
 
-export async function handleSpawnClaudeTerminal(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    if (!req.user.isAuthenticated) {
-      throw unauthenticatedTerminalError();
-    }
-
-    if (req.user.role !== 'owner') {
-      return {
-        status: 403,
-        data: {
-          error: 'Only owners can spawn Big Brother terminal',
-        },
-      };
-    }
-
-    const currentState = bigBrotherTerminal.getState();
-
-    if (currentState.isRunning) {
       audit({
         level: 'info',
         category: 'action',
-        event: 'big_brother_terminal_already_running',
-        details: { port: currentState.port, pid: currentState.pid },
+        event: 'terminal_spawned',
+        details: { port, pid, purpose, command },
         actor: req.user.username,
       });
 
       return successResponse({
-        port: currentState.port,
-        pid: currentState.pid,
-        url: `http://localhost:${currentState.port}`,
-        alreadyRunning: true,
+        port,
+        pid,
+        url: terminalUrl(port),
+        alreadyRunning: false,
       });
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_terminal_spawning',
-      details: { port: BIG_BROTHER_PORT },
-      actor: req.user.username,
-    });
-
-    const started = await bigBrotherTerminal.start();
-
-    if (!started) {
-      throw new Error('Failed to start Big Brother terminal');
-    }
-
-    const newState = bigBrotherTerminal.getState();
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_terminal_spawned',
-      details: { port: newState.port, pid: newState.pid },
-      actor: req.user.username,
-    });
-
-    return successResponse({
-      port: newState.port,
-      pid: newState.pid,
-      url: `http://localhost:${newState.port}`,
-      alreadyRunning: false,
-    });
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'big_brother_terminal_spawn_failed',
-      details: { error: error instanceof Error ? error.message : 'Unknown error' },
-      actor: 'system',
-    });
-
-    return {
-      status: 500,
-      data: {
-        error: error instanceof Error ? error.message : 'Failed to spawn Big Brother terminal',
-      },
-    };
-  }
-}
-
-export async function handleStopClaudeTerminal(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    if (!req.user.isAuthenticated) {
-      throw unauthenticatedTerminalError();
-    }
-
-    const currentState = bigBrotherTerminal.getState();
-
-    if (!currentState.isRunning) {
-      return successResponse({
-        success: true,
-        message: 'No Big Brother terminal running',
+    } catch (error) {
+      console.error('[Terminal Spawn] Error:', error);
+      audit({
+        level: 'error',
+        category: 'action',
+        event: 'terminal_spawn_failed',
+        details: { error: error instanceof Error ? error.message : 'Unknown error' },
+        actor: req.user.username,
       });
+      return {
+        status: 500,
+        data: {
+          error: error instanceof Error ? error.message : 'Failed to spawn terminal',
+        },
+      };
     }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_terminal_stopping',
-      details: { port: currentState.port, pid: currentState.pid },
-      actor: req.user.username,
-    });
-
-    await bigBrotherTerminal.stop();
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_terminal_killed',
-      details: { port: currentState.port, pid: currentState.pid },
-      actor: req.user.username,
-    });
-
-    return successResponse({
-      success: true,
-      message: 'Big Brother terminal stopped',
-    });
-  } catch (error) {
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'big_brother_terminal_kill_failed',
-      details: { error: error instanceof Error ? error.message : 'Unknown error' },
-      actor: 'system',
-    });
-
-    return {
-      status: 500,
-      data: {
-        error: error instanceof Error ? error.message : 'Failed to stop terminal',
-      },
-    };
-  }
+  });
 }
 
 export async function handleCleanupTerminals(): Promise<UnifiedResponse> {
   try {
     const { stdout } = await execAsync('pkill -f ttyd || true');
+    await stopBigBrotherSession('All terminals cleaned up by user');
+    activeTerminals.clear();
+    for (let port = BASE_PORT; port < BASE_PORT + MAX_TERMINALS; port++) {
+      removeOwnedPidFile(port);
+    }
 
     return successResponse({
       success: true,
@@ -348,17 +361,24 @@ export async function handleCleanupTerminals(): Promise<UnifiedResponse> {
 
 export async function handleTerminalStatus(): Promise<UnifiedResponse> {
   try {
-    const { stdout } = await execAsync('pgrep -fa ttyd || echo "No terminals running"');
-
-    const lines = stdout.trim().split('\n').filter(line => line && !line.includes('No terminals running'));
-    const terminals = lines.map(line => {
-      const match = line.match(/--port (\d+)/);
-      return {
-        pid: line.split(' ')[0],
-        port: match ? match[1] : 'unknown',
-        command: line,
-      };
-    });
+    const terminals = await listTtydProcesses();
+    const bigBrotherState = getBigBrotherSessionState();
+    if (bigBrotherState.sessionOpen) {
+      const existingBigBrother = terminals.find(terminal => terminal.port === bigBrotherState.port);
+      if (existingBigBrother) {
+        existingBigBrother.isBigBrother = true;
+        existingBigBrother.bigBrotherProvider = bigBrotherState.provider;
+        existingBigBrother.command = `big-brother:${bigBrotherState.provider || 'unknown'}`;
+      } else {
+        terminals.push({
+          pid: bigBrotherState.pid,
+          port: bigBrotherState.port,
+          command: `big-brother:${bigBrotherState.provider || 'unknown'}`,
+          isBigBrother: true,
+          bigBrotherProvider: bigBrotherState.provider,
+        });
+      }
+    }
 
     return successResponse({
       count: terminals.length,
@@ -390,10 +410,26 @@ export async function handleKillTerminal(req: UnifiedRequest): Promise<UnifiedRe
   }
 
   try {
-    const { stdout: pgrepOut } = await execAsync(`pgrep -f "ttyd --port ${port}" || true`);
-    const pids = pgrepOut.trim().split('\n').filter(Boolean);
+    if (port === BIG_BROTHER_SESSION_PORT) {
+      const state = getBigBrotherSessionState();
+      await stopBigBrotherSession('Big Brother terminal killed by user');
+      return successResponse({
+        success: true,
+        message: 'Stopped Big Brother terminal',
+        port,
+        killed: state.sessionOpen || state.processRunning,
+        pids: state.pid ? [state.pid] : [],
+      });
+    }
+
+    const pids = (await listTtydProcesses())
+      .filter(terminal => terminal.port === port)
+      .map(terminal => terminal.pid)
+      .filter((pid): pid is number => pid !== null);
 
     if (pids.length === 0) {
+      activeTerminals.delete(port);
+      removeOwnedPidFile(port);
       return successResponse({
         success: true,
         message: 'No terminal found on this port',
@@ -404,19 +440,22 @@ export async function handleKillTerminal(req: UnifiedRequest): Promise<UnifiedRe
 
     for (const pid of pids) {
       try {
-        await execAsync(`kill ${pid}`);
+        process.kill(pid, 'SIGTERM');
         console.log(`[terminal/kill] Killed ttyd process ${pid} on port ${port}`);
       } catch (killError) {
         console.warn(`[terminal/kill] Failed to kill PID ${pid}:`, killError);
       }
     }
 
+    activeTerminals.delete(port);
+    removeOwnedPidFile(port);
+
     return successResponse({
       success: true,
       message: `Killed terminal on port ${port}`,
       port,
       killed: true,
-      pids: pids.map(p => parseInt(p, 10)),
+      pids,
     });
   } catch (error) {
     console.error(`[terminal/kill] Error killing terminal on port ${port}:`, error);

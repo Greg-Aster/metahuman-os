@@ -1,15 +1,17 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
 import { badRequestResponse, streamResponse } from '../types.js';
-import { getBufferNotificationPath } from '../../conversation-buffer.js';
-import { getProfilePaths } from '../../path-builder.js';
+import {
+  getBufferNotificationPath,
+  getBufferPathForUser,
+  loadBufferForUser,
+} from '../../conversation-buffer.js';
 
-type BufferMode = 'conversation' | 'inner' | 'system';
+type BufferMode = 'conversation' | 'inner' | 'system' | 'robot';
 
 function isBufferMode(value: string | undefined): value is BufferMode {
-  return value === 'conversation' || value === 'inner' || value === 'system';
+  return value === 'conversation' || value === 'inner' || value === 'system' || value === 'robot';
 }
 
 function sse(data: Record<string, unknown>): string {
@@ -19,7 +21,7 @@ function sse(data: Record<string, unknown>): string {
 export const handleBufferStream: UnifiedHandler = async (req) => {
   const mode = req.query?.mode;
   if (!isBufferMode(mode)) {
-    return badRequestResponse('mode query param required (conversation|inner|system)');
+    return badRequestResponse('mode query param required (conversation|inner|system|robot)');
   }
 
   if (!req.user.isAuthenticated) {
@@ -28,8 +30,9 @@ export const handleBufferStream: UnifiedHandler = async (req) => {
     })());
   }
 
-  const { bufferPath, notifyPath } = resolveBufferPaths(req.user.username, req.user.role, req.sessionId, mode);
-  const response = streamResponse(streamBufferUpdates(req.signal, mode, bufferPath, notifyPath));
+  const bufferPath = getBufferPathForUser(req.user.username, mode);
+  const notifyPath = getBufferNotificationPath(req.user.username, mode);
+  const response = streamResponse(streamBufferUpdates(req.signal, req.user.username, mode, bufferPath, notifyPath));
   return {
     ...response,
     headers: {
@@ -39,27 +42,9 @@ export const handleBufferStream: UnifiedHandler = async (req) => {
   };
 };
 
-function resolveBufferPaths(username: string, role: string, sessionId: string | undefined, mode: BufferMode) {
-  if (role === 'guest') {
-    const safeSessionId = sessionId?.substring(0, 16) || 'default';
-    const guestTempDir = path.join(os.tmpdir(), 'metahuman-guest', safeSessionId);
-    if (!fs.existsSync(guestTempDir)) fs.mkdirSync(guestTempDir, { recursive: true });
-
-    return {
-      bufferPath: path.join(guestTempDir, `conversation-buffer-${mode}.json`),
-      notifyPath: path.join(guestTempDir, `.buffer-notify-${mode}`),
-    };
-  }
-
-  const profilePaths = getProfilePaths(username);
-  return {
-    bufferPath: path.join(profilePaths.state, `conversation-buffer-${mode}.json`),
-    notifyPath: getBufferNotificationPath(username, mode),
-  };
-}
-
 async function* streamBufferUpdates(
   signal: AbortSignal | undefined,
+  username: string,
   mode: BufferMode,
   bufferPath: string,
   notifyPath: string,
@@ -88,14 +73,9 @@ async function* streamBufferUpdates(
   const sendBufferUpdate = () => {
     if (closed) return;
     try {
-      if (!fs.existsSync(bufferPath)) {
-        push(sse({ type: 'update', messages: [], mode }));
-        return;
-      }
-
-      const buffer = JSON.parse(fs.readFileSync(bufferPath, 'utf-8'));
+      const buffer = loadBufferForUser(username, mode);
       const messages = (buffer.messages || [])
-        .filter((msg: any) => mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker)
+        .filter((msg: any) => !msg.meta?.summaryMarker)
         .map((msg: any) => ({
           role: msg.role,
           content: msg.content,

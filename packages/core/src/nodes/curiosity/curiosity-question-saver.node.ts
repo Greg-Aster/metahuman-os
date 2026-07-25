@@ -6,7 +6,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { audit, getProfilePaths, appendToUserBuffer } from '../../index.js';
+import { audit, getProfilePaths } from '../../index.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   // Access inputs by handle name with fallbacks for flexible edge connections
@@ -91,8 +91,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       'utf-8'
     );
 
-    // Add question to conversation buffer so it appears in chat UI
-    const bufferSuccess = appendToUserBuffer(username, 'conversation', {
+    const entry = {
       role: 'assistant',
       content: questionText,
       meta: {
@@ -102,16 +101,12 @@ const execute: NodeExecutor = async (inputs, context) => {
         seedMemories,
         askedAt,
       },
-    });
-
-    if (!bufferSuccess) {
-      console.warn('[CuriosityQuestionSaver] Failed to append question to conversation buffer');
-    }
+    } as const;
 
     return {
       questionId,
       saved: true,
-      buffered: bufferSuccess,
+      entry,
       username,
       askedAt
     };
@@ -136,6 +131,7 @@ export const CuriosityQuestionSaverNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'questionId', type: 'string' },
     { name: 'saved', type: 'boolean' },
+    { name: 'entry', type: 'message', description: 'Typed user-facing conversation entry' },
   ],
   properties: {},
   propertySchemas: {},

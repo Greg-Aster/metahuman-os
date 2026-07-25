@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Buffer Admission",
+  "description": "Admits one structured robot bridge record through the canonical Robot Buffer node.",
+  "last_modified": "2026-07-19",
+  "nodes": [
+    {
+      "id": "robot-buffer",
+      "type": "outputNode",
+      "position": { "x": 120, "y": 120 },
+      "data": {
+        "nodeType": "robot_buffer",
+        "label": "Robot Buffer",
+        "properties": { "recordNoAction": true }
+      }
+    }
+  ],
+  "edges": []
+}

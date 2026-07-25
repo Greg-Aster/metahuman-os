@@ -24,6 +24,7 @@ import { execSync, spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { audit } from './audit.js';
+import { getMountForDevice } from './external-storage.js';
 
 /**
  * Path to the polkit helper script
@@ -222,30 +223,16 @@ export function isLuksOpen(mapperName: string): boolean {
  * Check if a LUKS device is mounted
  */
 export function isLuksMounted(mapperName: string): boolean {
-  if (!isLuksOpen(mapperName)) {
-    return false;
-  }
-
-  try {
-    const mapperPath = `/dev/mapper/${mapperName}`;
-    execSync(`findmnt -n ${mapperPath}`, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
+  if (!/^metahuman-[a-zA-Z0-9_-]+$/.test(mapperName)) return false;
+  return getMountForDevice(`/dev/mapper/${mapperName}`) !== null;
 }
 
 /**
  * Get mount point for a LUKS volume
  */
 export function getLuksMountPoint(mapperName: string): string | null {
-  try {
-    const mapperPath = `/dev/mapper/${mapperName}`;
-    const output = execSync(`findmnt -n -o TARGET ${mapperPath}`, { encoding: 'utf-8' });
-    return output.trim() || null;
-  } catch {
-    return null;
-  }
+  if (!/^metahuman-[a-zA-Z0-9_-]+$/.test(mapperName)) return null;
+  return getMountForDevice(`/dev/mapper/${mapperName}`)?.mountPoint || null;
 }
 
 /**

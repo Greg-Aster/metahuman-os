@@ -38,6 +38,8 @@
 		"validate:node-defaults": "tsx scripts/validate-node-defaults.ts",
 		"validate:tts-node-ownership": "tsx packages/core/src/tts-node-ownership.spec.ts",
 		"validate:tts-startup-profile": "tsx packages/core/src/tts-startup-profile.spec.ts",
+		"validate:terminal-lifecycle": "tsx packages/core/src/api/handlers/terminal.spec.ts",
+		"validate:big-brother-session": "tsx packages/core/src/big-brother-session.spec.ts",
 		"audit:graph-executors": "tsx scripts/audit-graph-executors.ts",
 		"check:architecture": "tsx scripts/check-architecture.ts",
 		"check:architecture:update-baseline": "tsx scripts/check-architecture.ts --update-baseline",

@@ -5,6 +5,7 @@
 
   export let input: string = '';
   export let loading: boolean = false;
+  export let composeTarget: 'conversation' | 'inner' = 'conversation';
 
   // Auto-expanding textarea
   let textareaElement: HTMLTextAreaElement;
@@ -201,7 +202,7 @@
       bind:value={input}
       on:keypress={handleKeyPress}
       on:input={adjustTextareaHeight}
-      placeholder="Message your MetaHuman..."
+      placeholder={composeTarget === 'inner' ? 'Add an unvoiced thought...' : 'Message your MetaHuman...'}
       rows="1"
       class="chat-input {loading ? 'queuing' : ''}"
     />

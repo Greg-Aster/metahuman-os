@@ -13,9 +13,23 @@ import type { CardComponent, GoalLabelConfig } from './card-types';
 export function getCardComponent(message: ChatMessage): CardComponent {
   const { role, meta } = message;
 
+  // Canonical System and Robot Buffer records always use the source-badged
+  // system card, regardless of producer-specific metadata.
+  if (meta?.bufferSource === 'system' || meta?.bufferSource === 'robot') {
+    return 'SystemMessageCard';
+  }
+
   // Reasoning messages always use ReasoningCard
   if (role === 'reasoning') {
     return 'ReasoningCard';
+  }
+
+  if (role === 'thought') {
+    return 'UserMessageCard';
+  }
+
+  if (role === 'robot') {
+    return 'SystemMessageCard';
   }
 
   // Dream messages (including daydreams)
@@ -85,8 +99,8 @@ export function isVisibleInMode(
   if (mode === 'combined') return true;
 
   const { role } = message;
-  const isInnerContent = role === 'reflection' || role === 'dream' || role === 'daydream' || role === 'reasoning';
-  const isSystemContent = role === 'system';
+  const isInnerContent = role === 'thought' || role === 'reflection' || role === 'dream' || role === 'daydream' || role === 'reasoning';
+  const isSystemContent = role === 'system' || role === 'robot';
 
   // System messages shown in any mode when showSystemMessages is true
   if (showSystemMessages && isSystemContent) {

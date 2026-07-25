@@ -10,8 +10,9 @@ import path from 'path';
 import { systemPaths } from './path-builder.js';
 import { generateUUID } from './uuid.js';
 import { audit } from './audit.js';
-import { getUser } from './users.js';
+import { getUser, getUserByUsername } from './users.js';
 import type { SafeUser } from './users.js';
+import { readLastActiveUsername } from './system-activity.js';
 
 const LOG_PREFIX = '[sessions]';
 
@@ -571,16 +572,30 @@ export function getMostRecentlyActiveUser(): { userId: string; username: string;
 }
 
 /**
+ * Resolve the authenticated user who most recently interacted with the system.
+ * The immediate activity marker wins when that user still has a valid session;
+ * the session timestamp remains the fallback for non-chat/API activity.
+ */
+export function getCurrentlyActiveUser(): { userId: string; username: string; role: string } | null {
+  const activityUsername = readLastActiveUsername();
+  if (activityUsername) {
+    const activeSessionUser = getLoggedInUsers().find(user => user.username === activityUsername);
+    if (activeSessionUser) return activeSessionUser;
+  }
+  return getMostRecentlyActiveUser();
+}
+
+/**
  * Get the target user for agent execution
  *
  * Priority order:
  * 1. Explicit username option (from --user CLI arg)
  * 2. MH_TRIGGER_USERNAME environment variable (set by API when user triggers agent)
- * 3. getMostRecentlyActiveUser() fallback (for scheduler-triggered agents)
+ * 3. getCurrentlyActiveUser() fallback (for scheduler-triggered agents)
  *
  * This ensures that:
  * - API-triggered agents ALWAYS process the authenticated user's data
- * - Scheduler-triggered agents process the most recently active user
+ * - Scheduler-triggered agents process the currently active authenticated user
  * - CLI can override with explicit --user flag
  *
  * @param options - Optional object with username property
@@ -589,15 +604,17 @@ export function getMostRecentlyActiveUser(): { userId: string; username: string;
 export function getTargetUser(options?: { username?: string }): { userId: string; username: string; role: string } | null {
   // Priority 1: Explicit username from options (--user CLI arg)
   if (options?.username) {
-    return { userId: options.username, username: options.username, role: 'owner' };
+    const user = getUserByUsername(options.username);
+    return user ? { userId: user.id, username: user.username, role: user.role } : null;
   }
 
   // Priority 2: MH_TRIGGER_USERNAME from API (user who clicked the button)
   const triggerUsername = process.env.MH_TRIGGER_USERNAME;
   if (triggerUsername) {
-    return { userId: triggerUsername, username: triggerUsername, role: 'owner' };
+    const user = getUserByUsername(triggerUsername);
+    return user ? { userId: user.id, username: user.username, role: user.role } : null;
   }
 
-  // Priority 3: Most recently active user (scheduler fallback)
-  return getMostRecentlyActiveUser();
+  // Priority 3: Current authenticated user (scheduler fallback)
+  return getCurrentlyActiveUser();
 }

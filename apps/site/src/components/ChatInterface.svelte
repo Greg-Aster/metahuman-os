@@ -8,16 +8,14 @@
   // Operator proposals are rendered inline by OperatorProposalCard.
   import TerminalManager from './TerminalManager.svelte';
   import { canUseOperator, currentMode, isOwner } from '../stores/security-policy';
-  import { triggerClearAuditStream } from '../stores/clear-events';
   import { yoloModeStore } from '../stores/navigation';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
   import { useTTS } from '../lib/client/composables/useTTS';
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
-  import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type MessageRole, type ReasoningStage } from '../lib/client/composables/useMessages';
-  // Offline support
+  import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type ReasoningStage } from '../lib/client/composables/useMessages';
+  // Offline inference remains transient; canonical buffer persistence is server graph-owned.
   import { forceHealthCheck } from '../lib/client/server-health';
-  import { getDisplayMessages, appendToBuffer, clearBuffer, type BufferMode, type BufferMessage } from '../lib/client/local-memory';
   import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
   import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import {
@@ -31,6 +29,7 @@
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import { autonomyModeDefinition, nextAutonomyMode, type AutonomyMode } from '../lib/client/active-operator-modes';
   import { setActiveOperatorMode, triggerManagerSnapshot, useTriggerManager } from '../lib/stores/trigger-manager';
+  import { projectBufferFeed, replaceBufferSlice, stampBufferSource } from '../lib/client/buffer-feed';
 
   // Component state
   let input = '';
@@ -45,48 +44,39 @@
   let bigBrotherProvider = 'claude-code';
   let bigBrotherReady = false;
   let bigBrotherProviderLabel = 'Claude Code';
-  let claudeSessionReady = false;
-  let claudeSessionChecking = false;
   let chatResponseHandle: ConnectionHandle | null = null;
+  let bigBrotherVisibilityHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
   let activeChatTaskId: string | null = null;
   let reconcilingChatTaskId: string | null = null;
   let queuedChatStreams = new Map<string, EventSource>();
   let innerDialogueHandle: ConnectionHandle | null = null;
   let innerDialogueStream: EventSource | null = null;
+  let robotHandle: ConnectionHandle | null = null;
+  let robotStream: EventSource | null = null;
   let ttsQueueHandle: ConnectionHandle | null = null;
   let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
   let isTabVisible = true;
-  let lastInnerMessageCount = 0; // Track previous message count for inner dialogue TTS detection
-  let lastConversationMessageCount = 0; // Track previous message count for conversation TTS detection
   // View selection: VS Code-style multi-select
   // All three tabs can be combined for unified feed
   // - Conversation: user/assistant messages from conversation buffer
   // - Inner: reflection/dream/reasoning from inner buffer
-  // - System: execution/system messages from system buffer + split panel
+  // - System: chronological System Buffer + Robot Buffer records
   let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner', 'system']);
 
-  // Show terminal split panel when system tab is selected
-  $: showSystemTerminal = selectedViews.has('system');
+  // Terminal is a control surface, not a buffer tab.
+  let terminalVisible = false;
   let terminalMinimized = false;
   let terminalHeight = 300; // Default height in pixels
   let isResizing = false;
   let resizeStartY = 0;
   let resizeStartHeight = 0;
 
-  // Compute display mode based on selected views
-  // 'combined' = show all messages, 'conversation' = only chat, 'inner' = only reflections/dreams
-  let displayMode: 'conversation' | 'inner' | 'combined' = 'combined';
-  $: displayMode = (selectedViews.has('conversation') && selectedViews.has('inner'))
-    ? 'combined'
-    : selectedViews.has('inner')
-      ? 'inner'
-      : 'conversation';
-
-  // Displaying both buffers must not turn a normal user message into inner
-  // dialogue. Only an explicitly inner-only view submits to the inner buffer.
-  let mode: 'conversation' | 'inner' = 'conversation';
-  $: mode = displayMode === 'inner' ? 'inner' : 'conversation';
+  // Read selection and write target are intentionally independent.
+  let composeTarget: 'conversation' | 'inner' = 'conversation';
+  $: mode = composeTarget;
+  let transientStatus = '';
+  let transientStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
   // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
@@ -96,9 +86,6 @@
   // vLLM Thinking Mode (Qwen3)
   let thinkingModeEnabled = false;
   let thinkingModeLoading = false;
-  // Curiosity questions
-  let curiosityQuestions: any[] = [];
-  let lastQuestionCheck = 0;
   let yoloMode = false;
   // Active Operator three-state control
   let autonomyMode: AutonomyMode = 'reactive';
@@ -120,7 +107,8 @@
     onMessagesChange: (msgs) => {
       // This handles any side effects when messages change
       // (currently none needed, but useful for future extensions)
-    }
+    },
+    onTransientSystemMessage: showTransientSystemMessage,
   });
   const {
     messages,
@@ -128,6 +116,42 @@
     selectedMessageIndex,
     conversationSessionId
   } = messagesApi;
+
+  $: displayMessages = projectBufferFeed($messages, selectedViews);
+
+  function showTransientSystemMessage(message: string) {
+    transientStatus = message;
+    if (transientStatusTimer) clearTimeout(transientStatusTimer);
+    transientStatusTimer = setTimeout(() => {
+      transientStatus = '';
+      transientStatusTimer = null;
+    }, 10_000);
+  }
+
+  function pushComposedInput(content: string, target: 'conversation' | 'inner' = composeTarget) {
+    messagesApi.pushMessage(
+      target === 'inner' ? 'thought' : 'user',
+      content,
+      undefined,
+      {
+        bufferSource: target,
+        ...(target === 'inner' ? { type: 'user_thought', unvoiced: true } : {}),
+      },
+    );
+  }
+
+  function pushGeneratedResponse(
+    content: string,
+    target: 'conversation' | 'inner' = composeTarget,
+    meta: Record<string, any> = {},
+  ) {
+    messagesApi.pushMessage(
+      target === 'inner' ? 'reflection' : 'assistant',
+      content,
+      undefined,
+      { ...meta, bufferSource: target },
+    );
+  }
 
   // Initialize Activity Tracking
   const activityApi = useActivityTracking();
@@ -277,8 +301,6 @@
     saveChatPrefs();
   }
 
-  // persistToInnerBuffer removed - agents now write directly to buffer via appendReflectionToBuffer/appendDreamToBuffer
-
   function updateReasoningDepth(value: number, persist = false) {
     const clamped = clampReasoningDepth(value);
     if (clamped !== reasoningDepth) {
@@ -391,35 +413,38 @@
               delegateAll: bigBrotherDelegateAll
             });
 
-            // If Big Brother is enabled, check/start Claude session when provider is Claude
-            if (bigBrotherProvider !== 'claude-code') {
-              claudeSessionReady = false;
-            }
-            updateBigBrotherUiState();
-
-            if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
-              const status = await checkClaudeSessionStatus();
-              if (!status?.ready && status?.installed) {
-                await startClaudeSession();
-              } else if (status?.ready) {
-                claudeSessionReady = true;
-                updateBigBrotherUiState();
-              }
-            }
           }
         }
       } catch (error) {
         console.error('[big-brother] Failed to load config:', error);
       }
-    }
 
-    // Poll Claude session status every 10 seconds when BB is enabled
-    const claudeStatusInterval = setInterval(async () => {
-    if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
-      await checkClaudeSessionStatus();
-      updateBigBrotherUiState();
+      // Active Operator can escalate without a user pressing Send. Keep one
+      // lightweight owner-only listener so that path can reveal the same
+      // terminal split while the server-owned provider process is running.
+      try {
+        bigBrotherVisibilityHandle = connectionPool.request({
+          id: 'big-brother-visibility-stream',
+          name: 'Big Brother Terminal Visibility',
+          url: '/api/big-brother/terminal-events',
+          priority: ConnectionPriority.LOW,
+          viewDependency: 'chat',
+          defer: true,
+          onMessage: event => {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === 'open_tab' || data.type === 'terminal_ready') {
+                terminalVisible = true;
+              }
+            } catch {
+              // Ignore malformed observer events; chat and terminal state remain server-owned.
+            }
+          },
+        });
+      } catch (error) {
+        console.warn('[big-brother] Could not subscribe to terminal visibility events:', error);
+      }
     }
-  }, 10000);
 
     // Check LLM backend health status
     backendApi.checkStatus();
@@ -475,7 +500,10 @@
         const needsReconnect =
           (selectedViews.has('conversation') && (!conversationStream || conversationStream.readyState === EventSource.CLOSED)) ||
           (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) ||
-          (selectedViews.has('system') && (!systemStream || systemStream.readyState === EventSource.CLOSED));
+          (selectedViews.has('system') && (
+            !systemStream || systemStream.readyState === EventSource.CLOSED ||
+            !robotStream || robotStream.readyState === EventSource.CLOSED
+          ));
 
         if (needsReconnect) {
           console.log('[chat] Tab visible, reconnecting buffer streams');
@@ -507,6 +535,7 @@
       queuedChatStreams.forEach(stream => stream.close());
       queuedChatStreams.clear();
       innerDialogueStream?.close();
+      robotStream?.close();
       disconnectAllBufferStreams();
       disconnectTTSQueueStream();
       disconnectProposalsStream();
@@ -536,10 +565,10 @@
 
   /**
    * Fetch buffer content directly (for initial load and tab switches)
-   * Always tries server first, falls back to local IndexedDB on error.
-   * Returns messages array without setting the store - caller handles merging.
+   * Canonical history is server-owned. A failed read returns no persisted
+   * messages rather than reviving the removed IndexedDB buffer authority.
    */
-  async function fetchSingleBuffer(streamMode: 'conversation' | 'inner' | 'system'): Promise<ChatMessage[]> {
+  async function fetchSingleBuffer(streamMode: 'conversation' | 'inner' | 'system' | 'robot'): Promise<ChatMessage[]> {
     // Always try server first - don't rely on isConnected which may not be accurate yet
     try {
       console.log(`[chat] Fetching ${streamMode} buffer from server...`);
@@ -548,31 +577,15 @@
         const data = await response.json();
         if (Array.isArray(data.messages)) {
           console.log(`[chat] Loaded ${data.messages.length} messages from ${streamMode} buffer`);
-          return data.messages;
+          return data.messages.map((message: ChatMessage) => stampBufferSource(message, streamMode));
         }
       }
-      // Non-OK response - fall through to local fallback
+      // Non-OK response - canonical history is temporarily unavailable.
       console.warn('[chat] Buffer fetch returned non-OK status:', response.status);
     } catch (err) {
-      console.warn('[chat] Server buffer fetch failed, trying local storage:', err);
+      console.warn('[chat] Server buffer fetch failed:', err);
     }
-
-    // Fallback to local IndexedDB
-    try {
-      console.log(`[chat] Fetching ${streamMode} from local storage...`);
-      const localMessages = await getDisplayMessages(streamMode as BufferMode);
-      console.log(`[chat] Loaded ${localMessages.length} messages from local storage`);
-      // Convert BufferMessage to ChatMessage format
-      return localMessages.map(m => ({
-        role: m.role as MessageRole,
-        content: m.content,
-        timestamp: m.timestamp,
-        meta: m.meta,
-      }));
-    } catch (err) {
-      console.error('[chat] Local buffer fetch also failed:', err);
-      return [];
-    }
+    return [];
   }
 
   // Concurrency guard for buffer fetches - prevents overlapping requests
@@ -603,10 +616,10 @@
     try {
       // Map selected views directly to buffer modes (1:1 mapping now)
       // System buffer only fetched when system tab is selected
-      const bufferModes: ('conversation' | 'inner' | 'system')[] = [];
+      const bufferModes: ('conversation' | 'inner' | 'system' | 'robot')[] = [];
       if (selectedViews.has('conversation')) bufferModes.push('conversation');
       if (selectedViews.has('inner')) bufferModes.push('inner');
-      if (selectedViews.has('system')) bufferModes.push('system');
+      if (selectedViews.has('system')) bufferModes.push('system', 'robot');
 
       console.log(`[chat] Fetching buffers for views:`, Array.from(selectedViews), '→ modes:', bufferModes);
 
@@ -623,17 +636,8 @@
       // Sort by timestamp (oldest first for chat display)
       allMessages.sort((a, b) => a.timestamp - b.timestamp);
 
-      // Remove duplicates (same timestamp + content)
-      const seen = new Set<string>();
-      const uniqueMessages = allMessages.filter(msg => {
-        const key = `${msg.timestamp}-${msg.content.substring(0, 50)}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-
-      console.log(`[chat] Merged ${uniqueMessages.length} unique messages from ${bufferModes.length} buffer(s)`);
-      messages.set(uniqueMessages);
+      console.log(`[chat] Projected ${allMessages.length} messages from ${bufferModes.length} authoritative buffer(s)`);
+      messages.set(allMessages);
     } finally {
       fetchInProgress = false;
 
@@ -660,6 +664,11 @@
       systemHandle.close();
       systemHandle = null;
       systemStream = null;
+    }
+    if (robotHandle) {
+      robotHandle.close();
+      robotHandle = null;
+      robotStream = null;
     }
   }
 
@@ -798,6 +807,8 @@
     chatResponseStream?.close();
     queuedChatStreams.forEach(stream => stream.close());
     queuedChatStreams.clear();
+    bigBrotherVisibilityHandle?.close();
+    bigBrotherVisibilityHandle = null;
     disconnectAllBufferStreams();
     disconnectTTSQueueStream();
     disconnectProposalsStream(); // Clean up proposals SSE stream
@@ -806,6 +817,7 @@
     thinkingTraceApi.cleanup();
     unsubscribeYolo();
     releaseTriggerManager?.();
+    if (transientStatusTimer) clearTimeout(transientStatusTimer);
 
     // A navigation can destroy the chat while a foreground request has the
     // shared pool suspended. Release the suspension so streams owned by the
@@ -841,13 +853,14 @@
   async function sendMessageOffline() {
     const userMessage = input.trim();
     if (!userMessage) return;
+    const requestComposeTarget = composeTarget;
 
     input = '';
     messagesApi.clearSelection();
 
-    // Add user message to UI and local buffer
-    messagesApi.pushMessage('user', userMessage);
-    await appendToBuffer(mode as BufferMode, { role: 'user', content: userMessage });
+    // Offline output is intentionally transient. Canonical persistence is
+    // admitted only by server-side graph nodes.
+    pushComposedInput(userMessage, requestComposeTarget);
 
     loading = true;
     thinkingTraceApi.start();
@@ -861,16 +874,11 @@
 
       console.log(`[sendMessage-offline] Response from tier: ${result.tier} (${result.model})`);
 
-      // Add assistant response to UI and local buffer
-      messagesApi.pushMessage('assistant', result.response, undefined, {
+      // Add the transient generated response to the UI.
+      pushGeneratedResponse(result.response, requestComposeTarget, {
         tier: result.tier,
         model: result.model,
         latencyMs: result.latencyMs,
-      });
-      await appendToBuffer(mode as BufferMode, {
-        role: 'assistant',
-        content: result.response,
-        meta: { tier: result.tier, model: result.model },
       });
 
       thinkingTraceApi.stop();
@@ -982,7 +990,7 @@
       try {
         const { type, data } = parseConversationStreamEvent(event.data);
         if (type === 'queued_task_started') {
-          messagesApi.pushMessage('user', userMessage);
+          pushComposedInput(userMessage, queuedMode);
           loading = true;
           thinkingTraceApi.setActive(true);
           thinkingTraceApi.setStatusLabel('Queued message started');
@@ -994,12 +1002,10 @@
           thinkingTraceApi.setActive(true);
           thinkingTraceApi.appendTrace(String(data.message), 15);
         } else if (type === 'reasoning') {
-          if (queuedMode === 'inner') {
-            messagesApi.pushMessage('reasoning', typeof data === 'string' ? data : String(data?.content || ''));
-          }
+          thinkingTraceApi.appendTrace(typeof data === 'string' ? data : String(data?.content || ''), 15);
         } else if (type === 'answer') {
           thinkingTraceApi.stop();
-          messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
+          pushGeneratedResponse(data.response, queuedMode, { facet: data.facet });
           loading = false;
           close();
           restorePassiveChatStreams();
@@ -1051,7 +1057,7 @@
     const originalMessage = message;
 
     // Add user message to UI
-    messagesApi.pushMessage('user', message);
+    pushComposedInput(message, 'conversation');
 
     loading = true;
     thinkingTraceApi.start();
@@ -1409,7 +1415,7 @@
 
       // Add assistant response to UI with response pipeline metadata
       if (result.response) {
-        messagesApi.pushMessage('assistant', result.response, undefined, {
+        pushGeneratedResponse(result.response, 'conversation', {
           source: 'response_pipeline',
           cardType,
           desireId: cardData.desireId,
@@ -1497,6 +1503,13 @@
 
     sendInProgress = true;
 
+    // Claude Code and Codex are exposed through the visible system terminal.
+    // Mount the terminal manager before escalation so the live transcript and
+    // close-to-cancel control appear as soon as the server starts the process.
+    if (bigBrotherEnabled && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')) {
+      terminalVisible = true;
+    }
+
     // Health checks are ordinary fetches and need an available browser
     // connection. Free background SSE slots before consulting connectivity;
     // otherwise a saturated page can falsely route a healthy server to offline.
@@ -1532,6 +1545,7 @@
     activityApi.signalActivity();
 
     const userMessage = input.trim();
+    const requestComposeTarget = composeTarget;
     input = '';
 
     // Capture replyTo metadata if any message is selected
@@ -1552,7 +1566,7 @@
     // Route ALL selected card responses through the dedicated response pipeline
     // This provides focused context and routes through Big Brother for tool execution
     // The response pipeline handles ANY card type - not just agency cards
-    if (wasReplying && replyToContent) {
+    if (wasReplying && replyToContent && requestComposeTarget === 'conversation') {
       sendInProgress = false; // Reset guard before delegating
 
       // Determine the card type for context - use the card's type or derive from role/source
@@ -1584,7 +1598,7 @@
         const llm_opts = readLlmOptions();
         const params = buildConversationParams({
           message: userMessage,
-          mode,
+          mode: requestComposeTarget,
           sessionId: $conversationSessionId,
           reasoningDepth,
           yoloMode,
@@ -1600,7 +1614,7 @@
           kind: 'persona-chat',
           personaChat: Object.fromEntries(params.entries()),
         });
-        openQueuedBackgroundStream(task.id, userMessage, mode);
+        openQueuedBackgroundStream(task.id, userMessage, requestComposeTarget);
       } catch (err) {
         input = userMessage;
         messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Could not queue message.'}`);
@@ -1610,7 +1624,7 @@
       return;
     }
 
-    messagesApi.pushMessage('user', userMessage);
+    pushComposedInput(userMessage, requestComposeTarget);
 
     loading = true;
     sendInProgress = false; // loading now takes over as the guard
@@ -1638,7 +1652,7 @@
 
       const params = buildConversationParams({
         message: userMessage,
-        mode,
+        mode: requestComposeTarget,
         sessionId: $conversationSessionId,
         reasoningDepth,
         yoloMode,
@@ -1689,13 +1703,10 @@
           if (elapsed >= 10 && !notificationShown) {
             notificationShown = true;
             console.warn('[sendMessage] ⚠️  AUTH CHECK TAKING LONGER THAN EXPECTED (>10s)');
-            const msg = {
-              id: crypto.randomUUID(),
-              role: 'system' as const,
-              content: '⏳ **Session Check Slow**\n\nVerifying your session is taking longer than expected (>10s). Still trying...',
-              timestamp: Date.now(),
-            };
-            messages.update(m => [...m, msg]);
+            messagesApi.pushMessage(
+              'system',
+              '⏳ **Session Check Slow**\n\nVerifying your session is taking longer than expected (>10s). Still trying...',
+            );
           }
 
           if (elapsed >= 30) {
@@ -1724,13 +1735,10 @@
           thinkingTraceApi.setStatusLabel('🔒 Session Expired');
           loading = false;
           // Show error to user
-          const errorMsg = {
-            id: crypto.randomUUID(),
-            role: 'system' as const,
-            content: '⚠️ **Session Expired**\n\nYour session has expired or is invalid. Please refresh the page and log in again.',
-            timestamp: Date.now(),
-          };
-          messages.update(m => [...m, errorMsg]);
+          messagesApi.pushMessage(
+            'system',
+            '⚠️ **Session Expired**\n\nYour session has expired or is invalid. Please refresh the page and log in again.',
+          );
           return;
         }
         console.log('[sendMessage] Auth check passed');
@@ -1888,6 +1896,10 @@
                 thinkingTraceApi.setStatusLabel('✓ Completed, finalizing...');
                 thinkingTraceApi.appendTrace(`[${timestamp()}] ✓ ${progressMsg}`, 15);
               } else if (data.step?.startsWith('big_brother_')) {
+                terminalVisible = true;
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('metahuman:big-brother-session-starting'));
+                }
                 // Big Brother status updates - show prominent status WITH TIMESTAMPS
                 if (data.step === 'big_brother_init') {
                   thinkingTraceApi.setStatusLabel('🤖 Big Brother initializing...');
@@ -1951,16 +1963,10 @@
             thinkingTraceApi.stop();
             if (reasoningStages.length > 0) {
               // Only persist reasoning to messages in inner dialogue mode
-              // In conversation mode, reasoning is shown live then disappears
-              if (mode === 'inner') {
-                reasoningStages.forEach(stage => {
-                  const label = `${messagesApi.formatReasoningLabel(stage)} · ${messagesApi.formatTime(stage.timestamp)}`;
-                  messagesApi.pushMessage('reasoning', stage.content, undefined, { stage, label });
-                });
-              }
+              // Persisted reasoning arrives only from the Inner Dialogue Buffer stream.
               reasoningStages = [];
             }
-            messagesApi.pushMessage('assistant', data.response, data?.saved?.assistantRelPath, { facet: data.facet });
+            pushGeneratedResponse(data.response, requestComposeTarget, { facet: data.facet });
 
             loading = false;
             chatResponseStream?.close();
@@ -2122,70 +2128,6 @@
     }
   }
 
-  async function checkClaudeSessionStatus() {
-    try {
-      const res = await apiFetch('/api/claude-session');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.status) {
-          claudeSessionReady = data.status.ready;
-          updateBigBrotherUiState();
-          return data.status;
-        }
-      }
-    } catch (error) {
-      console.error('[claude-session] Failed to check status:', error);
-    }
-    return null;
-  }
-
-  async function startClaudeSession() {
-    if (claudeSessionChecking) return;
-
-    claudeSessionChecking = true;
-    try {
-      console.log('[claude-session] Starting Claude CLI session...');
-      const res = await apiFetch('/api/claude-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start' })
-      });
-
-      const data = await res.json();
-      if (data.success && data.status) {
-        claudeSessionReady = data.status.ready;
-        updateBigBrotherUiState();
-        console.log('[claude-session] Status:', data.message);
-
-        // Open the Big Brother terminal for visibility
-        if (claudeSessionReady) {
-          const { openBigBrotherTerminal } = await import('../stores/bigBrotherTerminal');
-          openBigBrotherTerminal();
-        }
-      } else {
-        console.error('[claude-session] Failed to start:', data.error);
-        updateBigBrotherUiState();
-      }
-    } catch (error) {
-      console.error('[claude-session] Error starting session:', error);
-    } finally {
-      claudeSessionChecking = false;
-    }
-  }
-
-  async function stopClaudeSession() {
-    try {
-      await apiFetch('/api/claude-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'stop' })
-      });
-      claudeSessionReady = false;
-    } catch (error) {
-      console.error('[claude-session] Error stopping session:', error);
-    }
-  }
-
   // View toggle functions for VS Code-style multi-select tabs
   function toggleView(view: 'conversation' | 'inner' | 'system') {
     const newSet = new Set(selectedViews);
@@ -2219,10 +2161,10 @@
    * Connect to buffer streams for all selected views
    * Handles real-time updates from multiple sources
    *
-   * Three distinct buffers:
+   * Four canonical buffers projected through three views:
    * - conversation view → conversation buffer stream
    * - inner view → inner buffer stream
-   * - system view → system buffer stream
+   * - system view → system and robot buffer streams
    */
   function connectMultipleBufferStreams() {
     if (typeof document !== 'undefined' && document.hidden) {
@@ -2245,9 +2187,14 @@
       systemHandle = null;
       systemStream = null;
     }
+    if (robotHandle) {
+      robotHandle.close();
+      robotHandle = null;
+      robotStream = null;
+    }
 
-    // Connect to streams for each selected view (1:1 mapping)
-    // System stream only connected when system tab is selected
+    // Connect to streams for each selected view. System intentionally owns a
+    // two-buffer read projection; this does not merge their persistence.
     if (selectedViews.has('conversation')) {
       connectBufferStreamForMode(
         'conversation',
@@ -2268,6 +2215,11 @@
         (stream) => { systemStream = stream; },
         (handle) => { systemHandle = handle; }
       );
+      connectBufferStreamForMode(
+        'robot',
+        (stream) => { robotStream = stream; },
+        (handle) => { robotHandle = handle; }
+      );
     }
   }
 
@@ -2276,28 +2228,26 @@
    * Now uses connection pool for priority-based allocation
    */
   function connectBufferStreamForMode(
-    streamMode: 'conversation' | 'inner' | 'system',
+    streamMode: 'conversation' | 'inner' | 'system' | 'robot',
     setStream: (stream: EventSource | null) => void,
     setHandle: (handle: ConnectionHandle | null) => void
   ) {
     console.log(`[chat] Requesting ${streamMode} buffer stream from connection pool...`);
 
+    // Conversation TTS is a user-facing output contract. The optional Robot
+    // Buffer projection must yield its pool slot when the TTS queue needs one.
+    const isPassiveRobotStream = streamMode === 'robot';
+
     const handle = connectionPool.request({
       id: `buffer-${streamMode}`,
       name: `Buffer Stream (${streamMode})`,
       url: `/api/buffer-stream?mode=${streamMode}`,
-      priority: ConnectionPriority.HIGH,
+      priority: isPassiveRobotStream ? ConnectionPriority.LOW : ConnectionPriority.HIGH,
       viewDependency: 'chat',
-      defer: false,
+      defer: isPassiveRobotStream,
       onOpen: (source) => {
         console.log(`[chat] ${streamMode} buffer stream opened via pool`);
         setStream(source);
-        const currentCount = get(messages).length;
-        if (streamMode === 'inner') {
-          lastInnerMessageCount = currentCount;
-        } else {
-          lastConversationMessageCount = currentCount;
-        }
       },
       onClose: () => {
         console.log(`[chat] ${streamMode} buffer stream closed via pool`);
@@ -2308,12 +2258,6 @@
           const data = JSON.parse(event.data);
           if (data.type === 'connected') {
             console.log(`[chat] ${streamMode} buffer stream connected`);
-            const currentCount = get(messages).length;
-            if (streamMode === 'inner') {
-              lastInnerMessageCount = currentCount;
-            } else {
-              lastConversationMessageCount = currentCount;
-            }
             return;
           }
           if (data.type === 'error') {
@@ -2321,17 +2265,8 @@
             return;
           }
           if (data.type === 'update' && Array.isArray(data.messages)) {
-            if (streamMode !== 'conversation' && data.messages.length > 0) {
-              console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
-              messages.update(msgs => {
-                const existingContent = new Set(msgs.map(m => `${m.role}-${m.content}`));
-                const newMsgs = data.messages.filter((m: any) => !existingContent.has(`${m.role}-${m.content}`));
-                if (newMsgs.length > 0) {
-                  return [...msgs, ...newMsgs].sort((a, b) => a.timestamp - b.timestamp);
-                }
-                return msgs;
-              });
-            }
+            console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
+            messages.update(msgs => replaceBufferSlice(msgs, streamMode, data.messages));
           }
         } catch (err) {
           console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
@@ -2340,7 +2275,9 @@
       onError: (err) => {
         console.error(`[chat] ${streamMode} buffer stream error:`, err);
         setTimeout(() => {
-          const isSelected = selectedViews.has(streamMode);
+          const isSelected = streamMode === 'robot'
+            ? selectedViews.has('system')
+            : selectedViews.has(streamMode);
           if (isComponentMounted && !document.hidden && isSelected) {
             connectBufferStreamForMode(streamMode, setStream, setHandle);
           }
@@ -2401,12 +2338,6 @@
       });
       updateBigBrotherUiState();
 
-      // Start or stop Claude session based on BB mode (only for Claude provider)
-      if (bigBrotherEnabled && bigBrotherProvider === 'claude-code') {
-        await startClaudeSession();
-      } else if (bigBrotherProvider === 'claude-code') {
-        await stopClaudeSession();
-      }
     } catch (error) {
       console.error('[big-brother] Error updating config:', error);
       // Revert on failure
@@ -2427,7 +2358,7 @@
       'codex': 'Codex',
     };
     bigBrotherProviderLabel = providerLabels[bigBrotherProvider] || bigBrotherProvider;
-    bigBrotherReady = bigBrotherEnabled && (bigBrotherProvider !== 'claude-code' || claudeSessionReady);
+    bigBrotherReady = bigBrotherEnabled;
   }
 
   async function cycleActiveOperatorMode() {
@@ -2461,7 +2392,6 @@
   }
 
   async function clearChat() {
-    messagesApi.clearMessages();
     reasoningStages = [];
     thinkingTraceApi.stop();
 
@@ -2473,31 +2403,14 @@
       messagesApi.generateSessionId();
     }
 
-    // Clear the audit stream display in the right sidebar
-    triggerClearAuditStream();
-
-    // Clear audit log files from disk for privacy
-    try {
-      const response = await apiFetch('/api/audit/clear', {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        console.warn('Failed to clear audit logs:', response.statusText);
-      } else {
-        const result = await response.json();
-        console.log('Audit logs cleared:', result.message);
-      }
-    } catch (error) {
-      console.warn('Error clearing audit logs:', error);
-    }
-
-    // CRITICAL: Clear server-side conversation buffer
+    // Clear only the explicit compose target. Read-tab selection never decides
+    // which canonical buffer is mutated.
     const serverCleared = await messagesApi.clearServerBuffer();
     if (serverCleared) {
-      console.log('[ChatInterface] Server buffer cleared successfully');
+      console.log(`[ChatInterface] ${composeTarget} buffer cleared successfully`);
+      await fetchAllSelectedBuffers();
     } else {
-      console.warn('[ChatInterface] Failed to clear server buffer');
+      console.warn(`[ChatInterface] Failed to clear ${composeTarget} buffer`);
     }
   }
 
@@ -2587,13 +2500,22 @@
         <span class="mode-label">Inner Dialogue</span>
       </button>
       <button
-        class="mode-btn {showSystemTerminal ? 'active' : ''}"
+        class="mode-btn {selectedViews.has('system') ? 'active' : ''}"
         on:click={() => toggleView('system')}
         aria-label="Toggle system view"
-        title="Toggle system view (split view below chat)"
+        title="Toggle merged System and Robot Buffer feed"
       >
         <span class="mode-icon" aria-hidden="true">💻</span>
         <span class="mode-label">System</span>
+      </button>
+      <button
+        class="mode-btn {terminalVisible ? 'active' : ''}"
+        on:click={() => { terminalVisible = !terminalVisible; }}
+        aria-label="Toggle terminal controls"
+        title="Toggle Terminal controls"
+      >
+        <span class="mode-icon" aria-hidden="true">⌨️</span>
+        <span class="mode-label">Terminal</span>
       </button>
     </div>
 
@@ -2621,14 +2543,10 @@
         : bigBrotherDelegateAll
           ? bigBrotherReady
             ? `Big Brother FULL DELEGATION - All tasks go to ${bigBrotherProviderLabel} ⚡`
-            : bigBrotherProvider === 'claude-code'
-              ? 'Big Brother delegation mode - Starting Claude CLI...'
-              : `Big Brother delegation mode - ${bigBrotherProviderLabel} pending...`
+            : `Big Brother delegation mode - ${bigBrotherProviderLabel} pending...`
           : bigBrotherReady
             ? `Big Brother escalation mode - Escalates via ${bigBrotherProviderLabel} ⚠️`
-            : bigBrotherProvider === 'claude-code'
-              ? 'Big Brother escalation mode - Starting Claude CLI...'
-              : `Big Brother escalation mode - ${bigBrotherProviderLabel} pending...`}
+            : `Big Brother escalation mode - ${bigBrotherProviderLabel} pending...`}
       on:click={() => toggleBigBrother(false)}
       on:contextmenu|preventDefault={() => toggleBigBrother(true)}
     >
@@ -2638,8 +2556,6 @@
           <span class="big-brother-badge delegate-all">⚡</span>
         {:else if bigBrotherReady}
           <span class="big-brother-badge ready">⚠️</span>
-        {:else if claudeSessionChecking}
-          <span class="big-brother-badge checking">⋯</span>
         {:else}
           <span class="big-brother-badge">BB</span>
         {/if}
@@ -2672,7 +2588,7 @@
       </button>
     </div>
 
-    {#if $messages.length > 0}
+    {#if displayMessages.length > 0}
       <button class="clear-btn" on:click={clearChat} title="Clear chat history">
         <span class="clear-icon" aria-hidden="true">🗑️</span>
         <span class="clear-text">Clear</span>
@@ -2720,11 +2636,11 @@
   {/if}
 
   <!-- Main chat area with optional terminal split -->
-  <div class="chat-main-area" class:with-terminal-split={showSystemTerminal}>
+  <div class="chat-main-area" class:with-terminal-split={terminalVisible}>
     <!-- Messages panel -->
-    <div class="messages-panel" class:split={showSystemTerminal}>
+    <div class="messages-panel" class:split={terminalVisible}>
       <div class="messages-container" bind:this={messagesContainer}>
-        {#if $messages.length === 0}
+        {#if displayMessages.length === 0}
           <div class="welcome-screen">
             <div class="welcome-icon">🧠 => 💻</div>
             <h2 class="welcome-title">MetaHuman OS</h2>
@@ -2751,9 +2667,9 @@
           </div>
         {:else}
           <MessageList
-            messages={$messages}
-            mode={displayMode}
-            showSystemMessages={selectedViews.has('system')}
+            messages={displayMessages}
+            mode="combined"
+            showSystemMessages={true}
             selectedMessageIndex={$selectedMessageIndex}
             {loading}
             {reasoningStages}
@@ -2789,9 +2705,28 @@
 
   <!-- Input Area -->
   <div class="input-container">
+    <div class="compose-target" aria-label="Compose target">
+      <span class="compose-label">Send as</span>
+      <button
+        class:active={composeTarget === 'conversation'}
+        on:click={() => { composeTarget = 'conversation'; }}
+        aria-pressed={composeTarget === 'conversation'}
+        title="Voiced conversation input"
+      >💬 Conversation</button>
+      <button
+        class:active={composeTarget === 'inner'}
+        on:click={() => { composeTarget = 'inner'; }}
+        aria-pressed={composeTarget === 'inner'}
+        title="Unvoiced thought input"
+      >💭 Unvoiced thought</button>
+    </div>
+    {#if transientStatus}
+      <div class="transient-status" role="status">{transientStatus}</div>
+    {/if}
     <InputArea
       bind:input
       {loading}
+      {composeTarget}
       selectedMessage={$selectedMessage}
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}
@@ -2864,7 +2799,7 @@
     <!-- End messages-panel -->
 
     <!-- Terminal split panel (system terminal, not Claude CLI) -->
-    {#if showSystemTerminal}
+    {#if terminalVisible}
       <!-- Resize handle -->
       <div
         class="terminal-resize-handle"
@@ -2888,7 +2823,7 @@
         style={`height: ${terminalHeight}px; flex: none;`}
       >
         <div class="terminal-content">
-          <TerminalManager />
+          <TerminalManager watchBigBrother={bigBrotherEnabled && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')} />
         </div>
       </div>
     {/if}
@@ -2897,6 +2832,48 @@
 </div>
 
 <style>
+  .compose-target {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.75rem 0;
+  }
+
+  .compose-label {
+    color: var(--text-muted, #9ca3af);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .compose-target button {
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    background: transparent;
+    color: var(--text-muted, #9ca3af);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .compose-target button.active {
+    border-color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.14);
+    color: #ede9fe;
+  }
+
+  .transient-status {
+    margin: 0.45rem 0.75rem 0;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 0.5rem;
+    background: rgba(245, 158, 11, 0.08);
+    color: #fcd34d;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+  }
+
   .big-brother-toggle.delegate-all {
     background: linear-gradient(135deg, #ff6b6b, #ee5a24);
     box-shadow: 0 0 20px rgba(255, 107, 107, 0.4);

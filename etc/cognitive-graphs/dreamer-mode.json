@@ -141,7 +141,7 @@
       },
       "data": {
         "label": "Inner Dialogue",
-        "nodeType": "inner_dialogue_capture",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": [
             "dream",
@@ -149,7 +149,9 @@
             "inner"
           ],
           "displayColor": "#3b82f6",
-          "dialogueSource": "dreamer"
+          "dialogueSource": "dreamer",
+          "role": "dream",
+          "captureMemory": false
         },
         "title": "Inner Dialogue"
       },
@@ -232,10 +234,12 @@
       },
       "data": {
         "label": "Save Reasoning",
-        "nodeType": "reasoning_capture",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
           "dialogueSource": "dreamer",
-          "displayColor": "#8b5cf6"
+          "displayColor": "#8b5cf6",
+          "role": "reasoning",
+          "captureMemory": false
         }
       },
       "width": 180,

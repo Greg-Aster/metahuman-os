@@ -436,8 +436,7 @@ export async function processApprovedDesires(username?: string): Promise<{
       },
     });
 
-    // Note: Inner dialogue and TTS are now handled by the graph pipeline
-    // The inner_dialogue_capture and tts nodes in the graph handle this automatically
+    // Inner Dialogue Buffer admission and TTS are owned by the graph pipeline.
   }
 
   return { executed, succeeded, failed };

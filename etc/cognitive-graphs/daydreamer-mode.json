@@ -85,7 +85,7 @@
       },
       "data": {
         "label": "Inner Dialogue",
-        "nodeType": "inner_dialogue_capture",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": [
             "daydream",
@@ -94,7 +94,8 @@
           ],
           "displayColor": "#a78bfa",
           "dialogueSource": "daydreamer",
-          "role": "daydream"
+          "role": "daydream",
+          "captureMemory": false
         },
         "title": "Inner Dialogue"
       },

@@ -2,7 +2,7 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Response Pipeline (Card Responses)",
-  "description": "Focused 5-node pipeline for card-based responses. No memory search, no conversation buffer - only loads the selected card as context. Single-pass LLM with card-type-specific prompts. Works across all cognitive modes (dual, agent, emulation).",
+  "description": "Focused card-response pipeline with explicit response-context, memory, and Conversation Buffer ownership.",
   "last_modified": "2026-01-09T00:00:00.000Z",
   "nodes": [
     {
@@ -78,12 +78,23 @@
       "width": 180,
       "height": 80,
       "data": {
-        "nodeType": "dual_writer",
+        "nodeType": "response_context_writer",
         "properties": {
-          "saveMemory": true,
-          "memoryMode": "conversation"
+          "saveMemory": true
         },
-        "title": "Dual Writer"
+        "title": "Response Context Writer"
+      }
+    },
+    {
+      "id": "6",
+      "type": "outputNode",
+      "position": { "x": 1390, "y": 200 },
+      "width": 200,
+      "height": 90,
+      "data": {
+        "nodeType": "conversation_buffer",
+        "properties": {},
+        "title": "Conversation Buffer"
       }
     }
   ],
@@ -270,6 +281,30 @@
       "sourceHandle": "desire",
       "target": "5",
       "targetHandle": "desire",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-6-message",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "6",
+      "targetHandle": "userMessage",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e5-6-response",
+      "source": "5",
+      "sourceHandle": "response",
+      "target": "6",
+      "targetHandle": "response",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e5-6-responseBufferId",
+      "source": "5",
+      "sourceHandle": "responseBufferId",
+      "target": "6",
+      "targetHandle": "responseBufferId",
       "type": "smoothstep"
     }
   ]

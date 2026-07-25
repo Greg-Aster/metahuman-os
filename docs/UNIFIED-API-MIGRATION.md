@@ -118,7 +118,7 @@ These routes have deep dependencies on multiple modules or use streaming/SSE:
 - `/api/model-registry` - Ollama/vLLM model discovery
 - `/api/profile-path` - Migration with SSE streaming
 - `/api/node-pipeline` - Node.js pipeline
-- `/api/claude-session` - Claude API integration
+- `/api/big-brother-status` - Shared Claude Code/Codex terminal-session status and cancellation
 - `/api/kokoro-addon` - Kokoro addon management
 - `/api/rvc-addon` - RVC addon management
 

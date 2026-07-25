@@ -7,6 +7,7 @@ import {
   acquireLock,
   audit,
   getOperatorMode,
+  getCurrentlyActiveUser,
   initGlobalLogger,
   isBoredomMovementEnabled,
   isRobotObserverEnabled,
@@ -49,10 +50,6 @@ function clearChildTimer(child: RobotChild): void {
 function clearTimers(): void {
   clearChildTimer('robot-observer')
   clearChildTimer('boredom-movement')
-}
-
-function username(): string {
-  return process.env.MH_TRIGGER_USERNAME?.trim() || 'system'
 }
 
 function childEnabled(child: RobotChild): boolean {
@@ -120,6 +117,12 @@ async function onDeadline(child: RobotChild): Promise<void> {
   }
 
   const admittedAt = Date.now()
+  const activeUser = getCurrentlyActiveUser()
+  if (!activeUser || activeUser.role !== 'owner') {
+    console.log(`[${SERVICE_ID}] ${child} waiting because no authorized owner is active`)
+    armChild(child, 'no-active-user', RETRY_DELAY_MS)
+    return
+  }
   try {
     const task = await submitCoordinatorWork({
       type: 'generic',
@@ -127,7 +130,7 @@ async function onDeadline(child: RobotChild): Promise<void> {
       resource: 'system',
       source: 'autonomy',
       priority: 'background',
-      username: username(),
+      username: activeUser.username,
       cognitiveMode: 'environment',
       input: {
         agentId: child,

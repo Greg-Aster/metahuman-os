@@ -38,7 +38,7 @@ import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { queueTTS } from '../../nodes/output/tts.node.js';
-import { appendAgencyMessageToConversation } from '../../conversation-buffer.js';
+import { submitAgencyConversationEntry } from '../../buffer-admission.js';
 import { submitCoordinatorWork } from '../../queue/index.js';
 
 // Valid DesireStatus values from types.ts
@@ -1651,7 +1651,7 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
       'agency-feedback'
     );
 
-    await appendAgencyMessageToConversation(
+    await submitAgencyConversationEntry(
       user.username,
       `📝 **Feedback Received:** "${desire.title}"\n\n` +
       `Your input: "${trimmedMessage.length > 200 ? trimmedMessage.substring(0, 200) + '...' : trimmedMessage}"\n\n` +

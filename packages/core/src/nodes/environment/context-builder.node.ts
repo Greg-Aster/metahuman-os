@@ -77,23 +77,6 @@ function coerceVisualFrames(visual: unknown, visuals: unknown): EnvironmentVisua
   });
 }
 
-export function shouldUseEnvironmentImages(instruction: string): boolean {
-  const normalized = instruction.trim().toLowerCase();
-  if (!normalized) return false;
-
-  if (/\b(?:image|photo|picture|camera|snapshot|visual|frame)\b/.test(normalized)) return true;
-  if (/\b(?:what|which)\s+(?:can\s+)?(?:do\s+)?you\s+see\b/.test(normalized)) return true;
-  if (/\b(?:what(?:'s|\s+is)\s+happening|what\s+is\s+going\s+on)\s+(?:here|nearby|around\s+(?:you|the\s+robot)|in\s+front\s+of\s+(?:you|the\s+robot))\b/.test(normalized)) return true;
-  if (/\b(?:find|locate|spot|look\s+for|search\s+for)\b/.test(normalized)) {
-    return !/\b(?:find\s+out|information|news|facts?|answer|online|internet|web|about)\b/.test(normalized);
-  }
-  if (/\b(?:identify|recognize|describe|inspect|examine)\b.*\b(?:this|that|these|those|object|thing|scene|room|environment|surroundings|in\s+front)\b/.test(normalized)) return true;
-  if (/\b(?:read|count)\b.*\b(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
-  if (/\bwhere\s+(?:is|are)\s+(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
-  if (/\bwhat\s+colou?r\s+(?:is|are)\s+(?:the|a|an|this|that|these|those|my|your)\b/.test(normalized)) return true;
-  return false;
-}
-
 export const environmentContextBuilderNode = defineNode({
   id: 'environment_context_builder',
   name: 'Environment Context Builder',
@@ -141,7 +124,7 @@ export const environmentContextBuilderNode = defineNode({
       step: 1,
     },
   },
-  description: 'Builds environment context and attaches optional vision only when the instruction is visually grounded.',
+  description: 'Builds environment context and attaches only fresh event-correlated robot vision.',
   async execute(inputs, context, properties) {
     const observation = inputs.observation as EnvironmentObservation | undefined;
     if (!observation) {
@@ -188,7 +171,10 @@ export const environmentContextBuilderNode = defineNode({
     const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
       ? Math.max(0, Number(properties?.recentHistoryLimit))
       : 4;
-    const useImages = shouldUseEnvironmentImages(rawInstruction);
+    const correlatedVisual = visualFrames.some(frame => (
+      typeof frame.metadata?.correlationId === 'string'
+    )) || typeof effectiveObservation.metadata?.correlationId === 'string';
+    const useImages = correlatedVisual;
     const selectedImages = useImages ? images : [];
     const promptObservation = useImages
       ? effectiveObservation

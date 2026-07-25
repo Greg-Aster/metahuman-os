@@ -17,6 +17,7 @@
     "./ollama": "./src/ollama.ts",
     "./llm": "./src/llm.ts",
     "./agent-monitor": "./src/agent-monitor.ts",
+    "./agent-catalog-definitions": "./src/agent-catalog-definitions.ts",
     "./agent-executable-resolver": "./src/agent-executable-resolver.ts",
     "./skills": "./src/skills.ts",
     "./cognitive-mode": "./src/cognitive-mode.ts",

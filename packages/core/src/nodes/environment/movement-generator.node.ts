@@ -219,6 +219,13 @@ export const movementGeneratorNode = defineNode({
     const observation = inputs.observation && typeof inputs.observation === 'object'
       ? inputs.observation as EnvironmentObservation
       : undefined;
+    const sessionId = typeof inputs.sessionId === 'string' && inputs.sessionId.trim()
+      ? inputs.sessionId.trim()
+      : request.sessionId || observation?.sessionId;
+    if (!sessionId) {
+      const error = 'Off-script movement requires a connected target session.';
+      return { action: null, actions: [], valid: false, rejected: true, error, response: error, planSummary: null };
+    }
     if (!observation?.capabilities?.actions?.includes('robotMotionPlan')) {
       const error = 'Off-script movement is unavailable because robotMotionPlan is not advertised.';
       return {
@@ -231,14 +238,6 @@ export const movementGeneratorNode = defineNode({
         planSummary: null,
       };
     }
-    const sessionId = typeof inputs.sessionId === 'string' && inputs.sessionId.trim()
-      ? inputs.sessionId.trim()
-      : request.sessionId || observation.sessionId;
-    if (!sessionId) {
-      const error = 'Off-script movement requires a connected target session.';
-      return { action: null, actions: [], valid: false, rejected: true, error, response: error, planSummary: null };
-    }
-
     try {
       const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const messages = movementGeneratorPrompt(request, instruction, observation);

@@ -7,7 +7,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
-// Note: Buffer append is now handled by inner_dialogue_capture node in the graph
+// Inner Dialogue Buffer admission is handled by the designated downstream node.
 
 interface Memory {
   id: string;
@@ -57,8 +57,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       actor: 'dreamer',
     });
 
-    // Buffer append is handled by inner_dialogue_capture node in the graph
-    // This prevents duplicate entries when using the graph workflow
+    // The downstream Inner Dialogue Buffer node persists the dream once.
 
     return {
       saved: true,

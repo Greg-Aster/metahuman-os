@@ -1,11 +1,11 @@
 /**
  * Path Builder - Core Path Construction
  *
- * Pure path building functions with NO dependencies on context system.
+ * Path building functions with no dependency on request context.
  * This file breaks the circular dependency between paths.ts and context.ts.
  *
  * Import hierarchy:
- * - path-builder.ts (this file) → no internal dependencies (except lazy imports)
+ * - path-builder.ts (this file) → low-level mount inspection + lazy user config
  * - context.ts → imports from path-builder.ts
  * - paths.ts → imports from path-builder.ts AND context.ts (for Proxy)
  *
@@ -18,6 +18,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { getMountForDevice, isMountWritable } from './external-storage.js';
 
 /**
  * Profile path resolution result
@@ -42,6 +43,8 @@ interface ProfileStorageConfigFull {
   encryption?: {
     type: 'none' | 'aes256' | 'luks' | 'veracrypt';
     unlocked?: boolean;
+    mapperName?: string;
+    mountPoint?: string;
     [key: string]: unknown;  // Allow additional fields from ProfileEncryptionConfig
   };
 }
@@ -202,6 +205,69 @@ function handleFallback(
   };
 }
 
+function assertLuksProfileReady(
+  username: string,
+  customPath: string,
+  config: ProfileStorageConfigFull
+): void {
+  if (config.encryption?.type !== 'luks') return;
+
+  const mapperName = config.encryption.mapperName || `metahuman-${username}`;
+  if (!/^metahuman-[a-zA-Z0-9_-]+$/.test(mapperName)) {
+    throw new Error(
+      `[path-builder] SECURITY: Invalid LUKS mapper name configured for user ${username}. ` +
+      'Encrypted profile access is blocked.'
+    );
+  }
+
+  const configuredMountPoint = config.encryption.mountPoint;
+  if (configuredMountPoint && path.resolve(configuredMountPoint) !== path.resolve(customPath)) {
+    throw new Error(
+      `[path-builder] SECURITY: LUKS mount point does not match the configured profile path for user ${username}. ` +
+      'Encrypted profile access is blocked.'
+    );
+  }
+
+  const mapperPath = `/dev/mapper/${mapperName}`;
+  if (!fs.existsSync(mapperPath)) {
+    throw new Error(
+      `[path-builder] SECURITY: Encrypted profile is locked for user ${username}; ` +
+      `the ${mapperName} LUKS mapper is not open. No unencrypted fallback is allowed.`
+    );
+  }
+
+  const mount = getMountForDevice(mapperPath);
+  if (!mount) {
+    throw new Error(
+      `[path-builder] SECURITY: Encrypted profile is locked for user ${username}; ` +
+      `the ${mapperName} LUKS mapper is not mounted. No unencrypted fallback is allowed.`
+    );
+  }
+
+  if (path.resolve(mount.mountPoint) !== path.resolve(customPath)) {
+    throw new Error(
+      `[path-builder] SECURITY: ${mapperName} is mounted at an unexpected path for user ${username}. ` +
+      'Encrypted profile access is blocked.'
+    );
+  }
+
+  if (!isMountWritable(mount)) {
+    throw new Error(
+      `[path-builder] SECURITY: Encrypted profile for user ${username} is mounted read-only. ` +
+      'Read/write profile access is required.'
+    );
+  }
+
+  try {
+    fs.accessSync(customPath, fs.constants.R_OK | fs.constants.W_OK);
+  } catch {
+    throw new Error(
+      `[path-builder] SECURITY: Encrypted profile for user ${username} is not readable and writable. ` +
+      'Profile access is blocked.'
+    );
+  }
+}
+
 /**
  * Check if running on mobile (nodejs-mobile)
  */
@@ -251,6 +317,11 @@ export function resolveProfileRoot(username: string): ProfilePathResolution {
   }
 
   const customPath = storageConfig.path;
+
+  // Managed volume encryption must be backed by the configured live mapper.
+  // A visible directory at the mount point is not sufficient: when LUKS is
+  // locked that directory may expose the underlying host filesystem.
+  assertLuksProfileReady(username, customPath, storageConfig);
 
   // Validate the custom path
   // 1. Must be absolute

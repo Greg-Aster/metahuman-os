@@ -35,7 +35,7 @@ import {
   saveDesireManifest,
   addScratchpadEntryToFolder,
   isAgencyEnabled,
-  appendAgencyMessageToConversation,
+  submitAgencyConversationEntry,
   getProfilePaths,
 } from '@metahuman/core';
 import { randomUUID } from 'crypto';
@@ -344,7 +344,7 @@ async function processUserDesires(username: string): Promise<ExplorerStats> {
           .map((q, i) => `${i + 1}. ${q.text}`)
           .join('\n');
 
-        await appendAgencyMessageToConversation(
+        await submitAgencyConversationEntry(
           username,
           `💭 Help me plan this better\n${questionsList}`,
           {

@@ -1,29 +1,11 @@
 /**
  * Local Memory Database
  *
- * IndexedDB-based local storage for complete offline operation.
- * All data is stored locally first, then synced to server when connected.
+ * IndexedDB-based local storage for offline memories, profile data, tasks,
+ * settings, and authentication. Canonical dialogue buffers are server-owned.
  */
 
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-
-// Conversation buffer types
-export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
-export type BufferMode = 'conversation' | 'inner' | 'system';
-
-export interface BufferMessage {
-  role: MessageRole;
-  content: string;
-  timestamp: number;
-  meta?: Record<string, any>;
-}
-
-export interface ConversationBuffer {
-  mode: BufferMode;
-  messages: BufferMessage[];
-  lastUpdated: string;
-  messageLimit: number;
-}
+import { openDB, unwrap, type DBSchema, type IDBPDatabase } from 'idb';
 
 // Database schema
 interface LocalMemoryDB extends DBSchema {
@@ -47,11 +29,6 @@ interface LocalMemoryDB extends DBSchema {
       'by-synced': boolean;
       'by-deleted': boolean;
     };
-  };
-  // Conversation buffers for offline chat
-  conversationBuffers: {
-    key: string;  // 'conversation', 'inner', or 'system'
-    value: ConversationBuffer;
   };
   persona: {
     key: string;
@@ -128,9 +105,7 @@ export type LocalPersona = LocalMemoryDB['persona']['value'];
 export type LocalTask = LocalMemoryDB['tasks']['value'];
 
 const DB_NAME = 'metahuman-local';
-const DB_VERSION = 3;  // Bumped for conversationBuffers store
-
-const DEFAULT_MESSAGE_LIMIT = 50;
+const DB_VERSION = 4;  // Removes the obsolete browser-owned dialogue buffers.
 
 let dbInstance: IDBPDatabase<LocalMemoryDB> | null = null;
 
@@ -179,9 +154,11 @@ export async function getDB(): Promise<IDBPDatabase<LocalMemoryDB>> {
         userStore.createIndex('by-profileType', 'profileType');
       }
 
-      // Conversation buffers store for offline chat
-      if (!db.objectStoreNames.contains('conversationBuffers')) {
-        db.createObjectStore('conversationBuffers', { keyPath: 'mode' });
+      // Dialogue history is owned by the four server-side graph buffers. Drop
+      // the old IndexedDB copy so it cannot resurface as a competing authority.
+      const nativeDb = unwrap(db);
+      if (nativeDb.objectStoreNames.contains('conversationBuffers')) {
+        nativeDb.deleteObjectStore('conversationBuffers');
       }
     },
   });
@@ -835,100 +812,6 @@ export async function markVerificationFailed(username: string): Promise<LocalUse
 
   await db.put('users', updatedUser);
   return updatedUser;
-}
-
-// ============ Conversation Buffer Operations ============
-
-/**
- * Get conversation buffer (local-first for offline support)
- */
-export async function getConversationBuffer(mode: BufferMode): Promise<ConversationBuffer> {
-  const db = await getDB();
-  const buffer = await db.get('conversationBuffers', mode);
-
-  if (!buffer) {
-    return {
-      mode,
-      messages: [],
-      lastUpdated: new Date().toISOString(),
-      messageLimit: DEFAULT_MESSAGE_LIMIT,
-    };
-  }
-
-  return buffer;
-}
-
-/**
- * Append a message to the conversation buffer
- */
-export async function appendToBuffer(
-  mode: BufferMode,
-  message: Omit<BufferMessage, 'timestamp'> & { timestamp?: number }
-): Promise<ConversationBuffer> {
-  const db = await getDB();
-  let buffer = await db.get('conversationBuffers', mode);
-
-  if (!buffer) {
-    buffer = {
-      mode,
-      messages: [],
-      lastUpdated: new Date().toISOString(),
-      messageLimit: DEFAULT_MESSAGE_LIMIT,
-    };
-  }
-
-  // Add timestamp if not present
-  const newMessage: BufferMessage = {
-    ...message,
-    timestamp: message.timestamp || Date.now(),
-  };
-
-  buffer.messages.push(newMessage);
-
-  // Auto-prune if over limit
-  if (buffer.messages.length > buffer.messageLimit) {
-    const excess = buffer.messages.length - buffer.messageLimit;
-    buffer.messages = buffer.messages.slice(excess);
-  }
-
-  buffer.lastUpdated = new Date().toISOString();
-  await db.put('conversationBuffers', buffer);
-
-  return buffer;
-}
-
-/**
- * Clear conversation buffer
- */
-export async function clearBuffer(mode: BufferMode): Promise<void> {
-  const db = await getDB();
-  await db.delete('conversationBuffers', mode);
-}
-
-/**
- * Replace entire buffer (for syncing from server)
- */
-export async function replaceBuffer(buffer: ConversationBuffer): Promise<void> {
-  const db = await getDB();
-  await db.put('conversationBuffers', buffer);
-}
-
-/**
- * Get all buffers (for syncing)
- */
-export async function getAllBuffers(): Promise<ConversationBuffer[]> {
-  const db = await getDB();
-  return db.getAll('conversationBuffers');
-}
-
-/**
- * Get buffer messages filtered for display
- */
-export async function getDisplayMessages(mode: BufferMode): Promise<BufferMessage[]> {
-  const buffer = await getConversationBuffer(mode);
-  return buffer.messages.filter(
-    msg => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker)
-  );
 }
 
 // ============ Local Session Management ============

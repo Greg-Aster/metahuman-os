@@ -188,6 +188,7 @@ export interface EnvironmentActionQueueOptions {
   source?: 'user' | 'system' | 'timer' | 'autonomy' | 'environment';
   correlationId?: string;
   idempotencyKey?: string;
+  originatingInstruction?: string;
 }
 
 export interface EnvironmentSessionState {

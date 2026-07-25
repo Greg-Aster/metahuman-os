@@ -5,9 +5,10 @@ import {
   acquireLock,
   transcribeAudio,
 } from '@metahuman/core';
-import type {
-  EnvironmentFeedback,
-  EnvironmentObservation,
+import {
+  applyRobotStatusToEnvironmentObservation,
+  type EnvironmentFeedback,
+  type EnvironmentObservation,
 } from '@metahuman/core/environment-interface';
 import { ROOT } from '@metahuman/core/paths';
 import {
@@ -17,6 +18,8 @@ import {
   type AudioUtteranceMetadata,
   type ParsedAudioUtterance,
 } from './audio-transport.js';
+import { AudioVisualObservationJoin } from './audio-visual-join.js';
+import { attachCorrelatedFeedback } from './feedback-correlation.js';
 
 const LOG_PREFIX = '[environment-bridge]';
 const PROTOCOL_VERSION = 1;
@@ -73,7 +76,6 @@ interface BridgeConfig {
   coreUrl: string;
   serviceToken: string;
   graph: string;
-  username: string;
 }
 
 interface ServiceConfig {
@@ -102,7 +104,6 @@ function readConfig(): BridgeConfig {
   const serviceToken = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN?.trim() || '';
   const coreUrl = process.env.MH_ENVIRONMENT_CORE_URL?.trim()
     || 'http://127.0.0.1:4321';
-  const username = process.env.MH_TRIGGER_USERNAME?.trim() || '';
 
   if (!adapterUrl) throw new Error('Environment adapter URL is not configured');
   const parsed = new URL(adapterUrl);
@@ -111,7 +112,6 @@ function readConfig(): BridgeConfig {
   }
   if (!adapterToken) throw new Error('MH_ENVIRONMENT_ADAPTER_TOKEN is not configured');
   if (!serviceToken) throw new Error('MH_ENVIRONMENT_BRIDGE_TOKEN is not configured');
-  if (!username) throw new Error('Environment bridge requires an owner user context');
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(graph)) {
     throw new Error('Environment graph name is invalid');
   }
@@ -122,7 +122,6 @@ function readConfig(): BridgeConfig {
     coreUrl: new URL(coreUrl).toString().replace(/\/$/, ''),
     serviceToken,
     graph,
-    username,
   };
 }
 
@@ -171,7 +170,6 @@ async function postJson(
     headers: {
       Authorization: `Bearer ${config.serviceToken}`,
       'Content-Type': 'application/json',
-      'X-MetaHuman-Environment-User': config.username,
       'X-MetaHuman-Environment-Graph': config.graph,
     },
     body: JSON.stringify(payload),
@@ -292,6 +290,21 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       audioBytes: 0,
       events: [],
     };
+    const audioVisualJoin = new AudioVisualObservationJoin({
+      maxPending: MAX_PENDING_AUDIO_UTTERANCES,
+      publish: async observation => {
+        await postJson(
+          config,
+          '/api/environment-bridge/observation',
+          observation as unknown as Record<string, unknown>,
+        );
+        latestObservation = observation;
+      },
+      onError: error => {
+        console.error(`${LOG_PREFIX} audio/visual join failed: ${error.message}`);
+        websocket.close(1011, 'audio/visual join failed');
+      },
+    });
 
     const diagnosticEvent = (event: DiagnosticEvent) => {
       diagnostics.events.push(event);
@@ -484,8 +497,22 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         sendAudioResult(utterance.metadata, 'failed', 'Transcription queue is full');
         return;
       }
+      if (!audioVisualJoin.register(utterance.metadata)) {
+        sendAudioResult(utterance.metadata, 'failed', 'Perception join queue is full');
+        return;
+      }
 
       const sourceObservation = latestObservation;
+      const visualExpected = (
+        sourceObservation.capabilities.visual === true
+        && sourceObservation.capabilities.actions.includes('captureImage')
+      );
+      if (!visualExpected) {
+        void audioVisualJoin.expire(utterance.metadata.utteranceId).catch(error => {
+          console.error(`${LOG_PREFIX} audio/visual join failed: ${(error as Error).message}`);
+          websocket.close(1011, 'audio/visual join failed');
+        });
+      }
       pendingAudioUtterances += 1;
       const processUtterance = async () => {
         try {
@@ -498,16 +525,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           );
           if (!observation) {
             diagnostics.transcriptionStatus = 'ignored';
+            audioVisualJoin.drop(utterance.metadata.utteranceId);
             sendAudioResult(utterance.metadata, 'ignored', 'No speech was transcribed');
             return;
           }
           if (localAbort.signal.aborted) return;
-          await postJson(
-            config,
-            '/api/environment-bridge/observation',
-            observation as unknown as Record<string, unknown>,
+          await audioVisualJoin.submitTranscript(
+            utterance.metadata.utteranceId,
+            observation,
           );
-          latestObservation = observation;
           diagnostics.transcriptionStatus = 'completed';
           diagnostics.transcript = observation.text?.[0]?.text;
           diagnosticEvent({
@@ -523,6 +549,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           );
         } catch (error) {
           const message = (error as Error).message;
+          audioVisualJoin.drop(utterance.metadata.utteranceId);
           diagnostics.transcriptionStatus = 'failed';
           diagnosticEvent({
             timestamp: new Date().toISOString(),
@@ -588,20 +615,23 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               diagnosticSessionId = receivedObservation.sessionId;
               recordVisual(receivedObservation);
               recordFreestyleMovement(receivedObservation);
-              const enriched = { ...receivedObservation };
+              let enriched = { ...receivedObservation };
               if (pendingFeedback) {
-                enriched.feedback = [
-                  ...(Array.isArray(enriched.feedback) ? enriched.feedback : []),
-                  pendingFeedback,
-                ];
-                pendingFeedback = undefined;
+                const pendingFeedbackId = pendingFeedback.id;
+                enriched = attachCorrelatedFeedback(enriched, pendingFeedback);
+                if (enriched.feedback?.some(item => item.id === pendingFeedbackId)) {
+                  pendingFeedback = undefined;
+                }
               }
               latestObservation = enriched;
-              await postJson(
-                config,
-                '/api/environment-bridge/observation',
-                enriched as unknown as Record<string, unknown>,
-              );
+              const joined = await audioVisualJoin.submitVisual(enriched);
+              if (!joined) {
+                await postJson(
+                  config,
+                  '/api/environment-bridge/observation',
+                  enriched as unknown as Record<string, unknown>,
+                );
+              }
             }
             return;
           }
@@ -616,6 +646,12 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                 diagnostics.microphoneLevel = Math.max(0, Math.min(1, value.level));
               } else if (value.kind === 'robot.status') {
                 diagnostics.robotStatus = { ...value };
+                if (latestObservation) {
+                  latestObservation = applyRobotStatusToEnvironmentObservation(
+                    latestObservation,
+                    value,
+                  );
+                }
               } else if (value.kind === 'movement.plan') {
                 const status = typeof value.status === 'string' ? value.status : 'unknown';
                 diagnostics.movementPlan = {
@@ -677,6 +713,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       localAbort.signal.addEventListener('abort', () => resolve(), { once: true });
     });
     localAbort.abort();
+    audioVisualJoin.close();
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     await audioQueue;
     await Promise.allSettled(mediaUploads);

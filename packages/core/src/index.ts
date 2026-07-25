@@ -208,7 +208,27 @@ export {
 export * from './trust-coupling';
 export * from './path-resolver';
 export * from './context-window';
-export * from './conversation-buffer';
+export {
+  loadBufferForUser,
+  type CanonicalBufferMode,
+  type ConversationBuffer,
+  type ConversationBufferSummary,
+  type ConversationMessage,
+} from './conversation-buffer.js';
+export {
+  submitConversationEntry,
+  submitConversationSummary,
+  submitInnerDialogue,
+  submitSystemEvent,
+  submitAgencyConversationEntry,
+  submitInnerReflection,
+  submitInnerDream,
+  submitInnerDaydream,
+  submitInnerReasoning,
+  submitExecutionProgress,
+  type BufferAdmissionOptions,
+  type BufferEntry,
+} from './buffer-admission.js';
 export * from './response-buffer';
 
 // Response pipeline handlers
@@ -427,7 +447,7 @@ export type { EncryptionStatus, UnlockResult, EncryptionCapabilities } from './e
 
 // Big Brother Mode - Escalation Backend Abstraction
 export * from './big-brother';
-export * from './big-brother-terminal';
+export * from './big-brother-session';
 // Escalation backend - exclude isEscalationAvailable (conflicts with big-brother), rename getActiveBackend
 export {
   type EscalationOptions,

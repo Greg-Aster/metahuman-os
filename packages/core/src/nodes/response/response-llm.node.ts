@@ -634,34 +634,6 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
       try {
         const prompt = buildBigBrotherPrompt(cardType, cardContext, message, desire, properties);
 
-        if (preferredBackend === 'claude-code') {
-          // Dynamic import to avoid circular dependencies
-          const { bigBrotherTerminal, ensureBigBrotherTerminal, isBigBrotherReady } = await import('../../big-brother-terminal.js');
-
-          // Ensure Big Brother is running
-          const started = await ensureBigBrotherTerminal(username);
-          if (!started || !isBigBrotherReady()) {
-            console.warn(`${LOG_PREFIX} Big Brother not available, falling back to local LLM`);
-            const fallback = await fallbackToLocalLLM(cardType, cardContext, message, desire, properties);
-            return { ...fallback, usedBigBrother: false, fallbackReason: 'Big Brother not available' };
-          }
-
-          console.log(`${LOG_PREFIX} Sending prompt to Big Brother terminal (${prompt.length} chars)`);
-          const rawResponse = await bigBrotherTerminal.sendPromptAndWait(prompt, username);
-          console.log(`${LOG_PREFIX} Received response from Big Brother terminal (${rawResponse.length} chars)`);
-
-          const parsed = parseBigBrotherResponse(rawResponse);
-          console.log(`${LOG_PREFIX} ✅ Big Brother response parsed, action: ${parsed.suggestedAction}`);
-
-          return {
-            response: parsed.response,
-            suggestedAction: parsed.suggestedAction,
-            actionData: parsed.actionData,
-            rawOutput: { bigBrotherResponse: rawResponse, parsed, backend: 'claude-code' },
-            usedBigBrother: true,
-          };
-        }
-
         const { escalate } = await import('../../escalation-backend.js');
         console.log(`${LOG_PREFIX} Sending prompt to Big Brother backend (${preferredBackend || 'default'})`);
 

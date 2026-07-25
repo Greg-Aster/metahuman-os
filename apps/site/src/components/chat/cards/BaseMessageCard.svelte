@@ -24,7 +24,7 @@
     // If a custom roleLabel is provided, always use it
     if (roleLabel) return roleLabel;
     // Otherwise fall back to role-based defaults
-    if (message.role === 'user') return $userDisplayNameStore;
+    if (message.role === 'user' || message.role === 'thought') return $userDisplayNameStore;
     if (message.role === 'assistant') return $personaNameStore;
     // For other roles, derive from role
     return message.role;
@@ -70,9 +70,9 @@
   }
 </script>
 
-<div class="card-wrapper" class:align-right={message.role === 'user'}>
+<div class="card-wrapper" class:align-right={message.role === 'user' || message.role === 'thought'}>
   <!-- Header outside card -->
-  <div class="card-outer-header" class:align-right={message.role === 'user'}>
+  <div class="card-outer-header" class:align-right={message.role === 'user' || message.role === 'thought'}>
     <span class="text-[0.8125rem] font-semibold text-gray-100 flex items-center gap-1" style={accentColor ? `color: ${accentColor}` : ''}>
       {#if displayIcon}<span class="text-sm">{displayIcon}</span>{/if}
       {displayName}
@@ -163,6 +163,8 @@
 
   /* Role-specific backgrounds */
   .card-user { --card-bg: rgba(59, 130, 246, 0.1); --card-border: rgba(59, 130, 246, 0.2); --card-accent: #3b82f6; }
+  .card-thought { --card-bg: rgba(139, 92, 246, 0.1); --card-border: rgba(139, 92, 246, 0.25); --card-accent: #8b5cf6; }
+  .card-robot { --card-bg: rgba(20, 184, 166, 0.1); --card-border: rgba(20, 184, 166, 0.25); --card-accent: #14b8a6; }
   .card-assistant { --card-bg: var(--bg-secondary, #1e1e1e); }
   .card-reflection { --card-bg: rgba(139, 92, 246, 0.1); --card-border: rgba(139, 92, 246, 0.2); --card-accent: #8b5cf6; }
   .card-dream { --card-bg: rgba(99, 102, 241, 0.1); --card-border: rgba(99, 102, 241, 0.2); --card-accent: #6366f1; }

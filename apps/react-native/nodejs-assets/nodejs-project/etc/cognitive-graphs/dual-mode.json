@@ -286,7 +286,7 @@
       },
       "data": {
         "label": "Conversation Buffer",
-        "nodeType": "buffer_manager",
+        "nodeType": "conversation_buffer",
         "properties": {}
       }
     },

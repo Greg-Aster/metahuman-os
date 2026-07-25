@@ -49,7 +49,7 @@ export interface StorageEvent {
 /**
  * Mount entry from /proc/mounts
  */
-interface MountEntry {
+export interface MountEntry {
   device: string;
   mountPoint: string;
   fsType: string;
@@ -57,31 +57,76 @@ interface MountEntry {
 }
 
 /**
- * Parse /proc/mounts to get mounted filesystems
+ * Parse Linux /proc/mounts content.
+ *
+ * Kept as a pure exported helper so profile-storage security checks and tests
+ * use the same mount-table interpretation as the storage-device UI.
  */
-function parseProcMounts(): MountEntry[] {
-  try {
-    const content = fs.readFileSync('/proc/mounts', 'utf-8');
-    const entries: MountEntry[] = [];
+export function parseProcMounts(content: string): MountEntry[] {
+  const entries: MountEntry[] = [];
 
-    for (const line of content.split('\n')) {
-      if (!line.trim()) continue;
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
 
-      const parts = line.split(' ');
-      if (parts.length >= 4) {
-        entries.push({
-          device: parts[0],
-          mountPoint: parts[1].replace(/\\040/g, ' '), // Handle spaces
-          fsType: parts[2],
-          options: parts[3],
-        });
-      }
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 4) {
+      entries.push({
+        device: decodeProcMountField(parts[0]),
+        mountPoint: decodeProcMountField(parts[1]),
+        fsType: parts[2],
+        options: parts[3],
+      });
     }
+  }
 
-    return entries;
+  return entries;
+}
+
+function decodeProcMountField(value: string): string {
+  return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
+    String.fromCharCode(Number.parseInt(octal, 8))
+  );
+}
+
+/**
+ * Read the current process mount table.
+ */
+export function readProcMounts(): MountEntry[] {
+  try {
+    return parseProcMounts(fs.readFileSync('/proc/self/mounts', 'utf-8'));
   } catch {
     return [];
   }
+}
+
+function normalizeDevicePath(devicePath: string): string {
+  if (!devicePath.startsWith('/')) return devicePath;
+
+  try {
+    return fs.realpathSync(devicePath);
+  } catch {
+    return path.resolve(devicePath);
+  }
+}
+
+/**
+ * Find the mount backed by a specific device path. Device-mapper symlinks are
+ * resolved so `/dev/mapper/name` and `/dev/dm-N` compare as the same device.
+ */
+export function getMountForDevice(
+  devicePath: string,
+  mounts: MountEntry[] = readProcMounts()
+): MountEntry | null {
+  const normalizedDevice = normalizeDevicePath(devicePath);
+  return mounts.find((mount) => normalizeDevicePath(mount.device) === normalizedDevice) || null;
+}
+
+/**
+ * Whether a mount is explicitly available read/write.
+ */
+export function isMountWritable(mount: MountEntry): boolean {
+  const options = new Set(mount.options.split(','));
+  return options.has('rw') && !options.has('ro');
 }
 
 /**
@@ -223,7 +268,7 @@ function isPathWritable(mountPath: string): boolean {
  * @returns Array of detected storage devices
  */
 export async function detectStorageDevices(): Promise<StorageDevice[]> {
-  const mounts = parseProcMounts();
+  const mounts = readProcMounts();
   const lsblkInfo = getLsblkInfo();
   const devices: StorageDevice[] = [];
 
@@ -280,7 +325,7 @@ export async function detectStorageDevices(): Promise<StorageDevice[]> {
  */
 export function isExternalStorage(targetPath: string): boolean {
   const normalized = path.resolve(targetPath);
-  const mounts = parseProcMounts();
+  const mounts = readProcMounts();
   const lsblkInfo = getLsblkInfo();
 
   // Find the mount that contains this path
@@ -311,7 +356,7 @@ export function isExternalStorage(targetPath: string): boolean {
  */
 export function getStorageInfo(targetPath: string): StorageDevice | null {
   const normalized = path.resolve(targetPath);
-  const mounts = parseProcMounts();
+  const mounts = readProcMounts();
   const lsblkInfo = getLsblkInfo();
 
   // Find the mount that contains this path

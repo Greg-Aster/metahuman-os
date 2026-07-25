@@ -15,8 +15,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire } from '../../agency/types.js';
-import fs from 'node:fs';
-import path from 'node:path';
+import { loadBufferForUser } from '../../conversation-buffer.js';
 
 interface ConversationMessage {
   role: 'system' | 'user' | 'assistant';
@@ -28,13 +27,6 @@ interface ConversationMessage {
     [key: string]: unknown;
   };
   timestamp?: number;
-}
-
-interface ConversationBuffer {
-  messages: ConversationMessage[];
-  summaryMarkers?: ConversationMessage[];
-  lastSummarizedIndex?: number | null;
-  lastUpdated?: string;
 }
 
 /**
@@ -89,31 +81,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   try {
-    // Load the conversation buffer
-    const { getProfilePaths } = await import('../../paths.js');
-    const profilePaths = getProfilePaths(username);
-    const bufferPath = path.join(profilePaths.state, 'conversation-buffer-conversation.json');
-
-    if (!fs.existsSync(bufferPath)) {
-      console.log('[desire-conversation-loader] Conversation buffer not found');
-      return {
-        conversation: 'No conversation buffer found.',
-        messages: [],
-        messageCount: 0,
-      };
-    }
-
-    const raw = fs.readFileSync(bufferPath, 'utf-8');
-    const buffer: ConversationBuffer = JSON.parse(raw);
-
-    if (!buffer.messages || !Array.isArray(buffer.messages)) {
-      console.log('[desire-conversation-loader] No messages in buffer');
-      return {
-        conversation: 'No messages in conversation buffer.',
-        messages: [],
-        messageCount: 0,
-      };
-    }
+    const buffer = loadBufferForUser(username, 'conversation') as { messages: ConversationMessage[] };
 
     // Filter messages that are tagged with this desire ID
     const desireMessages = buffer.messages.filter((msg) => {

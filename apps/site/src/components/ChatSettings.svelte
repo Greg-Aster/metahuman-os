@@ -16,10 +16,11 @@
   let temperature = 0.6;
   let semanticSearchThreshold = 0.62;
   let maxContextChars = 900;
-  let maxHistoryMessages = 30;
+  let conversationBufferLimit = 30;
+  let innerBufferLimit = 80;
+  let systemBufferLimit = 100;
+  let robotBufferLimit = 100;
   let userInputPriority = true;
-  let innerDialogHistoryLimit = 80;
-  let innerDialogHistoryDays = 7;
   let unifiedConsciousness = false;
 
   onMount(async () => {
@@ -43,10 +44,11 @@
         temperature = settings.temperature;
         semanticSearchThreshold = settings.semanticSearchThreshold;
         maxContextChars = settings.maxContextChars;
-        maxHistoryMessages = settings.maxHistoryMessages;
+        conversationBufferLimit = settings.conversationBufferLimit ?? 30;
+        innerBufferLimit = settings.innerBufferLimit ?? 80;
+        systemBufferLimit = settings.systemBufferLimit ?? 100;
+        robotBufferLimit = settings.robotBufferLimit ?? 100;
         userInputPriority = settings.userInputPriority;
-        innerDialogHistoryLimit = settings.innerDialogHistoryLimit ?? 80;
-        innerDialogHistoryDays = settings.innerDialogHistoryDays ?? 7;
         unifiedConsciousness = settings.unifiedConsciousness ?? false;
       }
     } catch (error) {
@@ -66,10 +68,11 @@
         temperature,
         semanticSearchThreshold,
         maxContextChars,
-        maxHistoryMessages,
+        conversationBufferLimit,
+        innerBufferLimit,
+        systemBufferLimit,
+        robotBufferLimit,
         userInputPriority,
-        innerDialogHistoryLimit,
-        innerDialogHistoryDays,
         unifiedConsciousness,
       };
 
@@ -226,13 +229,42 @@
         <input type="range" min="200" max="4000" step="100" bind:value={maxContextChars} on:change={saveSettings} class="range-slider" />
       </div>
 
-      <!-- Max History Messages -->
+      <h4 class="mt-6 mb-3 text-base text-gray-300">Buffer Retention</h4>
+
+      <!-- Conversation Buffer Limit -->
       <div class="setting-group">
         <label class="block mb-2 text-sm font-medium">
-          Max History: {maxHistoryMessages} messages
-          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum conversation history to retain</span>
+          Conversation Buffer Messages: {conversationBufferLimit}
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum spoken conversation messages to retain</span>
         </label>
-        <input type="range" min="5" max="100" step="5" bind:value={maxHistoryMessages} on:change={saveSettings} class="range-slider" />
+        <input type="range" min="5" max="500" step="5" bind:value={conversationBufferLimit} on:change={saveSettings} class="range-slider" />
+      </div>
+
+      <!-- Inner Buffer Limit -->
+      <div class="setting-group">
+        <label class="block mb-2 text-sm font-medium">
+          Inner Buffer Messages: {innerBufferLimit}
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum unvoiced thoughts and generated inner dialogue to retain</span>
+        </label>
+        <input type="range" min="20" max="500" step="10" bind:value={innerBufferLimit} on:change={saveSettings} class="range-slider" />
+      </div>
+
+      <!-- System Buffer Limit -->
+      <div class="setting-group">
+        <label class="block mb-2 text-sm font-medium">
+          System Buffer Messages: {systemBufferLimit}
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum durable system events to retain</span>
+        </label>
+        <input type="range" min="20" max="500" step="10" bind:value={systemBufferLimit} on:change={saveSettings} class="range-slider" />
+      </div>
+
+      <!-- Robot Buffer Limit -->
+      <div class="setting-group">
+        <label class="block mb-2 text-sm font-medium">
+          Robot Buffer Messages: {robotBufferLimit}
+          <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum outbound robot bridge records to retain</span>
+        </label>
+        <input type="range" min="20" max="500" step="10" bind:value={robotBufferLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- User Input Priority -->
@@ -242,27 +274,6 @@
           Prioritize User Input
           <span class="block text-xs text-gray-500 font-normal">Always focus on current question over context</span>
         </label>
-      </div>
-
-      <!-- Inner Dialog History Settings -->
-      <h4 class="mt-6 mb-3 text-base text-gray-300">Inner Dialog Display</h4>
-
-      <!-- Inner Dialog History Limit -->
-      <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
-          Inner Dialog Messages: {innerDialogHistoryLimit}
-          <span class="block text-xs text-gray-500 font-normal mt-0.5">Max messages (reflections/dreams) to display in Inner Dialog tab</span>
-        </label>
-        <input type="range" min="20" max="500" step="10" bind:value={innerDialogHistoryLimit} on:change={saveSettings} class="range-slider" />
-      </div>
-
-      <!-- Inner Dialog History Days -->
-      <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
-          Inner Dialog History: {innerDialogHistoryDays} days
-          <span class="block text-xs text-gray-500 font-normal mt-0.5">Days of audit logs to scan for reflections/dreams</span>
-        </label>
-        <input type="range" min="1" max="365" step="1" bind:value={innerDialogHistoryDays} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Consciousness Settings -->

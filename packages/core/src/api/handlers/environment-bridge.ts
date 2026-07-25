@@ -15,7 +15,9 @@ import {
   getEnvironmentBridgeDiagnosticsSnapshot,
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
+  recordEnvironmentObservation,
   recordEnvironmentBridgeDiagnosticObservation,
+  recordEnvironmentRobotStatus,
   recordEnvironmentBridgeTelemetry,
   recordEnvironmentActionResult,
   setEnvironmentBridgeEnabled,
@@ -27,6 +29,8 @@ import {
   type EnvironmentFeedback,
   type EnvironmentObservation,
 } from '../../environment-interface/index.js';
+import { submitRobotBridgeRecord } from '../../buffer-admission.js';
+import { getCurrentlyActiveUser } from '../../sessions.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -41,7 +45,7 @@ const FEEDBACK_TYPES = new Set<EnvironmentFeedback['type']>([
 ]);
 const ROBOT_STATUS_KEYS = new Set([
   'robot_id', 'epoch', 'vbat', 'rssi', 'state', 'uptime', 'heap', 'sd',
-  'cam_drops', 'spk_underruns', 'mic_drops', 'wake_enabled',
+  'camera_ready', 'cam_drops', 'spk_underruns', 'mic_drops', 'wake_enabled',
   'wake_model', 'wake_ready',
 ]);
 
@@ -81,6 +85,22 @@ function isObservation(value: Record<string, unknown>): boolean {
   );
 }
 
+export function environmentObservationNeedsCognition(
+  observation: EnvironmentObservation,
+): boolean {
+  const hasText = observation.text?.some(event => event.text.trim().length > 0) === true;
+  const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
+  const hasFeedback = Boolean(observation.feedback?.length);
+  const hasPerceptionMetadata = Boolean(
+    observation.metadata?.robotObserver
+    || observation.metadata?.perceptionEvent,
+  );
+  if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
+    return true;
+  }
+  return false;
+}
+
 function buildFeedback(value: Record<string, unknown>): EnvironmentFeedback | null {
   if (
     typeof value.type !== 'string' ||
@@ -104,7 +124,17 @@ export async function handleEnvironmentBridgeStatus(_req: UnifiedRequest): Promi
   return successResponse(summarizeEnvironmentBridgeState());
 }
 
-export async function handleEnvironmentBridgeObservation(req: UnifiedRequest): Promise<UnifiedResponse> {
+export type EnvironmentObservationUserResolver = () => string | null;
+
+export function resolveEnvironmentObservationUser(): string | null {
+  const activeUser = getCurrentlyActiveUser();
+  return activeUser?.role === 'owner' ? activeUser.username : null;
+}
+
+export async function handleEnvironmentBridgeObservation(
+  req: UnifiedRequest,
+  resolveUsername: EnvironmentObservationUserResolver = resolveEnvironmentObservationUser,
+): Promise<UnifiedResponse> {
   const authorizationFailure = bridgeAuthorizationFailure(req);
   if (authorizationFailure) return authorizationFailure;
 
@@ -116,14 +146,27 @@ export async function handleEnvironmentBridgeObservation(req: UnifiedRequest): P
   try {
     const observation = body as unknown as EnvironmentObservation;
     recordEnvironmentBridgeDiagnosticObservation(observation);
-    const username = requestHeader(req, 'x-metahuman-environment-user')?.trim() ?? '';
+    const username = resolveUsername()?.trim() ?? '';
     const graph = requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
-    const graphQueued = Boolean(username) && /^[a-zA-Z0-9_-]{1,80}$/.test(graph);
-    const published = publishEnvironmentObservation(observation, {
-      username: graphQueued ? username : undefined,
-      graph: graphQueued ? graph : undefined,
-    });
-    return successResponse({ success: true, bridge: published.summary, graphQueued, workId: published.workId });
+    const stateOnly = !environmentObservationNeedsCognition(observation);
+    const graphQueued = Boolean(username)
+      && /^[a-zA-Z0-9_-]{1,80}$/.test(graph)
+      && !stateOnly;
+    if (!graphQueued) {
+      const bridge = recordEnvironmentObservation(observation);
+      return successResponse({
+        success: true,
+        bridge,
+        graphQueued: false,
+        reason: !username
+          ? 'no_active_authorized_user'
+          : stateOnly
+            ? 'state_only_observation'
+            : 'invalid_graph',
+      });
+    }
+    const published = publishEnvironmentObservation(observation, { username, graph });
+    return successResponse({ success: true, bridge: published.summary, graphQueued: true, workId: published.workId });
   } catch (error) {
     return errorResponse((error as Error).message);
   }
@@ -188,6 +231,9 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
         ? body.events as EnvironmentBridgeDiagnosticEvent[]
         : undefined,
     });
+    if (robotStatus) {
+      recordEnvironmentRobotStatus(body.sessionId, robotStatus);
+    }
     return successResponse({ success: true, diagnostics });
   } catch (error) {
     return badRequestResponse((error as Error).message);
@@ -267,7 +313,15 @@ export async function handleEnvironmentBridgeStream(req: UnifiedRequest): Promis
   };
 }
 
-export async function handleEnvironmentBridgeActionResult(req: UnifiedRequest): Promise<UnifiedResponse> {
+export type RobotBridgeRecordAdmitter = (
+  username: string,
+  record: Record<string, unknown>,
+) => Promise<boolean>;
+
+export async function handleEnvironmentBridgeActionResult(
+  req: UnifiedRequest,
+  admitRobotRecord: RobotBridgeRecordAdmitter = submitRobotBridgeRecord,
+): Promise<UnifiedResponse> {
   const authorizationFailure = bridgeAuthorizationFailure(req);
   if (authorizationFailure) return authorizationFailure;
 
@@ -276,8 +330,36 @@ export async function handleEnvironmentBridgeActionResult(req: UnifiedRequest): 
     return badRequestResponse('Invalid action result payload');
   }
 
-  const action = recordEnvironmentActionResult(feedback);
-  return successResponse({ success: true, action });
+  const result = recordEnvironmentActionResult(feedback);
+  if (!result) {
+    return successResponse({ success: true, action: undefined, robotBufferPersisted: false });
+  }
+
+  const bridgeRecord = {
+    direction: 'inbound',
+    status: feedback.type,
+    reason: 'action_result',
+    message: feedback.message,
+    targetSessionId: result.action.sessionId ?? null,
+    actionId: result.action.id,
+    action: result.action,
+    feedback,
+    commandCount: 1,
+    success: feedback.type === 'accepted' || feedback.type === 'completed' || feedback.type === 'status',
+    source: 'environment-bridge',
+    correlationId: result.action.correlationId ?? null,
+  };
+
+  try {
+    const robotBufferPersisted = await admitRobotRecord(result.username, bridgeRecord);
+    if (!robotBufferPersisted) {
+      return errorResponse('Robot action result was received but could not be admitted to Robot Buffer', 500);
+    }
+    return successResponse({ success: true, action: result.action, robotBufferPersisted: true });
+  } catch (error) {
+    console.error('[environment-bridge] Failed to admit robot action result:', error);
+    return errorResponse('Robot action result was received but could not be admitted to Robot Buffer', 500);
+  }
 }
 
 export async function handleEnvironmentBridgeControl(req: UnifiedRequest): Promise<UnifiedResponse> {

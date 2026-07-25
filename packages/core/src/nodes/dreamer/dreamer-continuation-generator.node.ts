@@ -8,7 +8,7 @@ import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { appendDreamToBuffer, appendReasoningToBuffer } from '../../conversation-buffer.js';
+import { submitInnerDream, submitInnerReasoning } from '../../buffer-admission.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -103,12 +103,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       // Reasoning first, then dream (so reasoning displays above dream)
       if (username) {
         if (thinking) {
-          appendReasoningToBuffer(username, thinking, {
+          await submitInnerReasoning(username, thinking, {
             dialogueSource: 'dreamer-continuation',
             displayColor: '#8b5cf6',
           });
         }
-        appendDreamToBuffer(username, continuation);
+        await submitInnerDream(username, continuation);
       }
 
       audit({

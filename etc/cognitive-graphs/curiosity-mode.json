@@ -96,19 +96,10 @@
         "y": 220
       },
       "data": {
-        "label": "Inner Dialogue",
-        "nodeType": "inner_dialogue_capture",
-        "properties": {
-          "tags": [
-            "curiosity",
-            "question",
-            "exploration",
-            "inner"
-          ],
-          "displayColor": "#a855f7",
-          "dialogueSource": "curiosity"
-        },
-        "title": "Inner Dialogue"
+        "label": "Conversation Buffer",
+        "nodeType": "conversation_buffer",
+        "properties": {},
+        "title": "Conversation Buffer"
       },
       "width": 220,
       "height": 80
@@ -245,14 +236,14 @@
       }
     },
     {
-      "id": "e-3-question-8-text",
-      "source": "3",
+      "id": "e-4-entry-8-entry",
+      "source": "4",
       "target": "8",
-      "sourceHandle": "question",
-      "targetHandle": "text",
+      "sourceHandle": "entry",
+      "targetHandle": "entry",
       "data": {
         "type": "string",
-        "comment": "Generated question → Inner Dialogue (purple color)"
+        "comment": "Saved question → Conversation Buffer"
       }
     },
     {

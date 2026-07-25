@@ -39,7 +39,6 @@ export * from './process-stream.js';
 export * from './tts-queue-stream.js';
 export * from './big-brother-terminal.js';
 export * from './node-pipeline.js';
-export * from './claude-session.js';
 export * from './profile-encryption.js';
 export * from './tts-service-routes.js';
 export * from './whisper-server.js';

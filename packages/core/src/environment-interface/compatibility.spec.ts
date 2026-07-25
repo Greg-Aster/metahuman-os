@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
+  attachEnvironmentActionContext,
   dispatchEnvironmentActions,
   enqueueConnectedEnvironmentStops,
   enqueueEnvironmentAction,
@@ -8,19 +9,26 @@ import {
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
   recordEnvironmentActionResult,
+  recordEnvironmentObservation,
+  recordEnvironmentRobotStatus,
+  subscribeEnvironmentActions,
   writeEnvironmentBridgeState,
 } from './index.js';
 import { getQueueManager } from '../queue/index.js';
 import {
+  environmentObservationNeedsCognition,
   handleEnvironmentBridgeActionResult,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStream,
 } from '../api/handlers/environment-bridge.js';
 import type { UnifiedRequest } from '../api/types.js';
-import { parseDirectRobotInstruction, parseEnvironmentModelOutput } from '../nodes/environment/helpers.js';
+import { parseEnvironmentModelOutput } from '../nodes/environment/helpers.js';
+import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
 import { environmentContextBuilderNode } from '../nodes/environment/context-builder.node.js';
 import { environmentImageInputNode } from '../nodes/environment/image-input.node.js';
+import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
 import { environmentSendActionNode } from '../nodes/environment/send-action.node.js';
+import type { EnvironmentObservation } from './types.js';
 
 const statePath = getEnvironmentBridgeStatePath();
 const stateExisted = fs.existsSync(statePath);
@@ -60,6 +68,45 @@ function bridgeRequest(headers: Record<string, string> = {}, body: Record<string
 }
 
 try {
+  resetState();
+  const readinessTimestamp = new Date().toISOString();
+  recordEnvironmentObservation({
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: readinessTimestamp,
+    capabilities: {
+      actions: ['sendText', 'robotCommand'],
+      visual: false,
+    },
+    state: {
+      body: {
+        authenticated: true,
+        robotId: 'robot-1',
+        cameraReady: false,
+      },
+    },
+  });
+  recordEnvironmentRobotStatus('robot-1', {
+    robot_id: 'robot-1',
+    camera_ready: true,
+  });
+  let readinessObservation = readEnvironmentBridgeState().sessions['robot-1']?.latestObservation;
+  assert.equal(readinessObservation?.state?.body && (
+    readinessObservation.state.body as Record<string, unknown>
+  ).cameraReady, true);
+  assert.equal(readinessObservation?.capabilities.visual, true);
+  assert.equal(readinessObservation?.capabilities.actions.includes('captureImage'), true);
+  assert.equal(manager.getAllTasks().length, 0, 'capability refresh must not enqueue cognition');
+
+  recordEnvironmentRobotStatus('robot-1', {
+    robot_id: 'robot-1',
+    camera_ready: false,
+  });
+  readinessObservation = readEnvironmentBridgeState().sessions['robot-1']?.latestObservation;
+  assert.equal(readinessObservation?.capabilities.visual, false);
+  assert.equal(readinessObservation?.capabilities.actions.includes('captureImage'), false);
+
   resetState();
   const stale = enqueueEnvironmentAction({
     type: 'robotCommand',
@@ -163,7 +210,7 @@ try {
     sessionId: 'robot-1',
     timestamp: new Date().toISOString(),
     capabilities: { actions: ['robotCommand'] },
-  });
+  }, { username: 'bridge-spec' });
   assert.equal(manager.getNextExecutable()?.id, prioritizedObservation.workId, 'environment observations must preempt autonomy');
   assert.notEqual(prioritizedObservation.workId, autonomyWork.id);
 
@@ -177,7 +224,8 @@ try {
     message: 'accepted',
     actionId: lifecycle.id,
   });
-  assert.equal(accepted?.status, 'accepted');
+  assert.equal(accepted?.action.status, 'accepted');
+  assert.equal(accepted?.username, 'system');
   assert.equal(manager.getTask(lifecycle.id)?.state, 'completed');
   assert.equal(readEnvironmentBridgeState().feedback.length, 0);
 
@@ -194,7 +242,7 @@ try {
       message: 'accepted',
       actionId: lifecycle.id,
     }],
-  });
+  }, { username: 'bridge-spec' });
   assert.equal(
     readEnvironmentBridgeState().feedback.filter(item => item.id === 'accepted-1').length,
     1,
@@ -209,7 +257,7 @@ try {
     message: 'cancelled',
     actionId: cancellable.id,
   });
-  assert.equal(cancelled?.status, 'cancelled');
+  assert.equal(cancelled?.action.status, 'cancelled');
   assert.equal(manager.getTask(cancellable.id)?.state, 'cancelled');
 
   delete process.env.MH_ENVIRONMENT_BRIDGE_TOKEN;
@@ -225,10 +273,82 @@ try {
   }))).status, 400);
 
   resetState();
-  const observationTimestamp = new Date().toISOString();
-  const observationResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
+  const resultAction = enqueueEnvironmentAction({
+    type: 'robotCommand',
+    command: 'wave',
+    sessionId: 'robot-1',
+  }, {
+    username: 'robot-owner',
+    correlationId: 'conversation-turn-1',
+    originatingInstruction: 'Wave, then use the returned view to tell me what changed.',
+  });
+  assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, resultAction.id);
+  let admittedUsername = '';
+  let admittedRecord: Record<string, unknown> | undefined;
+  const actionResultResponse = await handleEnvironmentBridgeActionResult(bridgeRequest({
     Authorization: 'Bearer bridge-secret',
-    'X-MetaHuman-Environment-User': 'greggles',
+  }, {
+    id: 'completed-feedback-1',
+    timestamp: new Date().toISOString(),
+    type: 'completed',
+    message: 'done',
+    actionId: resultAction.id,
+    data: { sequence: 42 },
+  }), async (username, record) => {
+    admittedUsername = username;
+    admittedRecord = record;
+    return true;
+  });
+  assert.equal(actionResultResponse.status, 200);
+  assert.equal(actionResultResponse.data.robotBufferPersisted, true);
+  assert.equal(actionResultResponse.data.action.id, resultAction.id);
+  assert.equal(admittedUsername, 'robot-owner', 'feedback must return to the profile that queued the command');
+  assert.equal(admittedRecord?.direction, 'inbound');
+  assert.equal(admittedRecord?.status, 'completed');
+  assert.equal(admittedRecord?.actionId, resultAction.id);
+  assert.equal((admittedRecord?.feedback as { id?: string })?.id, 'completed-feedback-1');
+  assert.equal((admittedRecord?.action as { command?: string })?.command, 'wave');
+  const contextualResult = attachEnvironmentActionContext({
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], visual: true },
+    feedback: [{
+      id: 'completed-feedback-1',
+      timestamp: new Date().toISOString(),
+      type: 'completed',
+      message: 'done',
+      actionId: resultAction.id,
+      data: { command: 'robotCommand' },
+    }],
+    metadata: {
+      actionId: resultAction.id,
+      originatingInstruction: 'untrusted adapter instruction',
+    },
+  });
+  assert.equal(
+    contextualResult.metadata?.originatingInstruction,
+    'Wave, then use the returned view to tell me what changed.',
+    'action context must be recovered from MetaHuman work rather than trusted from the adapter',
+  );
+
+  const rejectedPersistence = await handleEnvironmentBridgeActionResult(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+  }, {
+    id: 'completed-feedback-retry',
+    timestamp: new Date().toISOString(),
+    type: 'completed',
+    message: 'done',
+    actionId: resultAction.id,
+  }), async () => false);
+  assert.equal(rejectedPersistence.status, 500, 'a failed Robot Buffer admission must not be reported as success');
+
+  resetState();
+  const observationTimestamp = new Date().toISOString();
+  const unboundObservation = await handleEnvironmentBridgeObservation(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+    'X-MetaHuman-Environment-User': 'forged-profile',
     'X-MetaHuman-Environment-Graph': 'environment',
   }, {
     environmentId: 'ainekio',
@@ -236,7 +356,30 @@ try {
     sessionId: 'robot-1',
     timestamp: observationTimestamp,
     capabilities: { actions: ['robotCommand'] },
-  }));
+  }), () => null);
+  assert.equal(unboundObservation.status, 200);
+  assert.equal(unboundObservation.data.graphQueued, false);
+  assert.equal(unboundObservation.data.reason, 'no_active_authorized_user');
+  assert.equal(manager.getAllTasks().length, 0, 'an observation without an active user must not enter a profile graph');
+  assert.equal(readEnvironmentBridgeState().sessions['robot-1']?.status, 'connected');
+
+  const observationResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+    'X-MetaHuman-Environment-User': 'forged-profile',
+    'X-MetaHuman-Environment-Graph': 'environment',
+  }, {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: observationTimestamp,
+    capabilities: { actions: ['robotCommand'] },
+    text: [{
+      id: 'active-observation-text-1',
+      source: 'environment',
+      text: 'A new user utterance is ready for processing.',
+      timestamp: observationTimestamp,
+    }],
+  }), () => 'active-profile');
   assert.equal(observationResponse.status, 200);
   assert.equal(observationResponse.data.graphQueued, true);
   const observationWorkId = observationResponse.data.workId as string;
@@ -244,9 +387,43 @@ try {
   assert.equal(observationWork?.type, 'environment_observation');
   assert.equal(observationWork?.handler, 'environment.observation');
   assert.equal(observationWork?.resource, 'local-llm');
-  assert.equal(observationWork?.username, 'greggles');
+  assert.equal(observationWork?.username, 'active-profile');
   assert.equal(observationWork?.input.graph, 'environment');
   assert.equal(observationWork?.input.observation.sessionId, 'robot-1');
+
+  const connectionObservation: EnvironmentObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'] },
+    state: {
+      bodyEvent: {
+        t: 'connection',
+        status: 'connected',
+        robot_id: 'robot-1',
+      },
+    },
+  };
+  assert.equal(environmentObservationNeedsCognition(connectionObservation), false);
+  assert.equal(environmentObservationNeedsCognition({
+    ...connectionObservation,
+    timestamp: new Date().toISOString(),
+    state: {
+      bodyEvent: {
+        t: 'event',
+        name: 'boot',
+        robot_id: 'robot-1',
+      },
+    },
+  }), false);
+  const connectionResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+    'X-MetaHuman-Environment-Graph': 'environment',
+  }, connectionObservation as unknown as Record<string, unknown>), () => 'active-profile');
+  assert.equal(connectionResponse.status, 200);
+  assert.equal(connectionResponse.data.graphQueued, false);
+  assert.equal(connectionResponse.data.reason, 'state_only_observation');
 
   const structured = parseEnvironmentModelOutput(JSON.stringify({
     response: 'Walking forward.',
@@ -260,21 +437,6 @@ try {
   assert.equal(structured.actions[0]?.units, 3);
   assert.equal('simulatorCommand' in (structured.actions[0] ?? {}), false);
   assert.deepEqual(parseEnvironmentModelOutput('walk forward', 'robot-1').actions, []);
-  assert.deepEqual(parseDirectRobotInstruction('please walk forward', 'robot-1'), {
-    action: { type: 'robotCommand', command: 'walk', units: undefined, sessionId: 'robot-1' },
-    response: 'Walking forward.',
-  });
-  assert.equal(parseDirectRobotInstruction("don't walk forward", 'robot-1'), null);
-  assert.equal(parseDirectRobotInstruction('can you walk forward?', 'robot-1'), null);
-  assert.equal(parseDirectRobotInstruction('walk forward 25 steps', 'robot-1')?.action.units, 10);
-  assert.deepEqual(
-    parseDirectRobotInstruction('Please wave', 'robot-1', ['stand', 'wave', 'dance']),
-    {
-      action: { type: 'robotCommand', command: 'wave', sessionId: 'robot-1' },
-      response: 'I will wave.',
-    },
-  );
-  assert.equal(parseDirectRobotInstruction('Please swim', 'robot-1', ['wave']), null);
 
   const conversationOnly = await environmentSendActionNode.execute({
     actions: [],
@@ -283,6 +445,10 @@ try {
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
   assert.equal(conversationOnly.status, 'no_actions');
   assert.equal(conversationOnly.response, 'Hello from Environment Mode.');
+  assert.equal(conversationOnly.bridgeRecord.status, 'no_actions');
+  assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
+  assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
+  assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
 
   const unavailableAction = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
@@ -291,6 +457,183 @@ try {
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
   assert.equal(unavailableAction.status, 'waiting_for_adapter');
   assert.match(String(unavailableAction.response), /no robot adapter is connected/i);
+  assert.equal(unavailableAction.bridgeRecord.status, 'waiting_for_adapter');
+  assert.equal(unavailableAction.bridgeRecord.targetSessionId, 'robot-1');
+  assert.equal(unavailableAction.bridgeRecord.requestedActions.length, 1);
+
+  resetState();
+  const bodyOfflineState = readEnvironmentBridgeState();
+  bodyOfflineState.sessions['robot-1']!.latestObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['sendText'], movement: false, visual: false },
+    state: { body: { authenticated: false, cameraReady: false } },
+  };
+  writeEnvironmentBridgeState(bodyOfflineState);
+  const unsubscribeOffline = subscribeEnvironmentActions('robot-1', () => {});
+  const bodyOffline = await environmentSendActionNode.execute({
+    actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
+    response: 'Walking.',
+    sessionId: 'robot-1',
+  }, { username: 'bridge-spec', sessionId: 'chat-offline' } as never, {});
+  unsubscribeOffline();
+  assert.equal(bodyOffline.status, 'rejected');
+  assert.equal(bodyOffline.reason, 'robot_body_offline');
+  assert.equal(bodyOffline.count, 0);
+  assert.equal(bodyOffline.adapterReady, true);
+  assert.equal(bodyOffline.bodyAuthenticated, false);
+  assert.doesNotMatch(String(bodyOffline.response), /^Walking\.?$/i);
+
+  resetState();
+  const bodyOnlineState = readEnvironmentBridgeState();
+  bodyOnlineState.sessions['robot-1']!.latestObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], robotCommands: ['walk'], movement: true },
+    state: { body: { authenticated: true, cameraReady: false } },
+  };
+  writeEnvironmentBridgeState(bodyOnlineState);
+  const unsubscribeOnline = subscribeEnvironmentActions('robot-1', () => {});
+  const bodyQueued = await environmentSendActionNode.execute({
+    actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
+    response: 'Walking.',
+    sessionId: 'robot-1',
+  }, {
+    username: 'bridge-spec',
+    sessionId: 'chat-online',
+    userMessage: 'Walk once, then use the returned observation to tell me what changed.',
+  } as never, {});
+  unsubscribeOnline();
+  assert.equal(bodyQueued.status, 'coordinated_for_adapter');
+  assert.equal(bodyQueued.count, 1);
+  assert.equal(bodyQueued.ready, true);
+  assert.equal(bodyQueued.response, 'Robot command queued; waiting for terminal feedback.');
+  const queuedBodyCommand = bodyQueued.commands[0];
+  assert.ok(queuedBodyCommand);
+  const queuedCycle = queuedBodyCommand.metadata?.robotObserver as
+    | { requestedBy?: string }
+    | undefined;
+  assert.equal(
+    queuedCycle?.requestedBy,
+    'environment-perception',
+    'a user-originated asynchronous action must reuse the bounded perception cycle',
+  );
+  assert.equal(
+    manager.getTask(queuedBodyCommand.id)?.metadata?.originatingInstruction,
+    'Walk once, then use the returned observation to tell me what changed.',
+  );
+
+  const feedbackInstruction = await environmentInstructionInterpreterNode.execute({
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'robot-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['sendText'] },
+      feedback: [{
+        id: 'rejected-result-1',
+        timestamp: new Date().toISOString(),
+        type: 'rejected',
+        message: 'requested robot is not connected',
+        actionId: 'walk-1',
+      }],
+    },
+  }, { userMessage: '' });
+  assert.match(String(feedbackInstruction.instruction), /Robot action rejected/);
+  assert.match(String(feedbackInstruction.instruction), /do not issue a new action/);
+
+  const contextualInstruction = await environmentInstructionInterpreterNode.execute({
+    observation: contextualResult,
+  }, { userMessage: '' });
+  assert.equal(
+    contextualInstruction.instruction,
+    [
+      'Robot action completed: done. Report this result once to the user and do not issue a new action.',
+      'Original user goal (context only; not a new command): Wave, then use the returned view to tell me what changed.',
+    ].join('\n'),
+  );
+  assert.match(
+    String((contextualInstruction.text as Array<{ text?: string }>)[0]?.text),
+    /Robot action completed/,
+  );
+
+  const continuationInstruction = await environmentInstructionInterpreterNode.execute({
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'robot-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['robotCommand'] },
+      feedback: [{
+        id: 'completed-result-1',
+        timestamp: new Date().toISOString(),
+        type: 'completed',
+        message: 'done',
+        actionId: 'walk-1',
+        data: { command: 'walk' },
+      }],
+      metadata: {
+        robotObserver: {
+          cycleId: 'utterance-1',
+          step: 2,
+          maxSteps: 3,
+          triggerSource: 'user',
+          graph: 'environment',
+          requestedBy: 'environment-perception',
+        },
+      },
+    },
+  }, { userMessage: '' });
+  assert.match(String(continuationInstruction.instruction), /completed action is satisfied/);
+  assert.match(String(continuationInstruction.instruction), /unfinished step/);
+  assert.doesNotMatch(String(continuationInstruction.instruction), /do not issue a new action/);
+
+  const continuationState = readEnvironmentBridgeState();
+  continuationState.sessions['robot-1']!.latestObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: {
+      actions: ['robotCommand'],
+      robotCommands: ['walk'],
+      movement: true,
+    },
+    state: {
+      body: {
+        authenticated: true,
+        robotId: 'robot-1',
+        cameraReady: false,
+      },
+    },
+  };
+  writeEnvironmentBridgeState(continuationState);
+  const unsubscribeContinuation = subscribeEnvironmentActions('robot-1', () => {});
+  const silentContinuation = await environmentSendActionNode.execute({
+    actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
+    response: 'Continuing the remaining task.',
+    sessionId: 'robot-1',
+  }, {
+    username: 'bridge-spec',
+    sessionId: 'chat-continuation',
+    userMessage: '',
+    robotObserver: {
+      cycleId: 'continuation-cycle-1',
+      step: 1,
+      maxSteps: 3,
+      triggerSource: 'user',
+      graph: 'environment',
+      requestedBy: 'environment-perception',
+    },
+  } as never, {});
+  unsubscribeContinuation();
+  assert.equal(silentContinuation.status, 'coordinated_for_adapter');
+  assert.equal(silentContinuation.count, 1);
+  assert.equal(silentContinuation.response, '');
 
   const visual = {
     id: 'camera-1',
@@ -306,10 +649,108 @@ try {
   }, {});
   assert.deepEqual(malformedImageOutput.images, []);
   assert.equal(malformedImageOutput.rejectedCount, 1);
+  const maximumJpeg = Buffer.alloc(256 * 1024);
+  maximumJpeg.set([0xff, 0xd8, 0xff, 0xda], 0);
+  maximumJpeg.set([0xff, 0xd9], maximumJpeg.length - 2);
+  const maximumImageOutput = await environmentImageInputNode.execute({
+    visual: {
+      ...visual,
+      id: 'maximum-camera-frame',
+      dataUrl: `data:image/jpeg;base64,${maximumJpeg.toString('base64')}`,
+    },
+  }, {});
+  assert.equal(maximumImageOutput.images.length, 1);
+  const oversizedJpeg = Buffer.concat([maximumJpeg, Buffer.from([0])]);
+  const oversizedImageOutput = await environmentImageInputNode.execute({
+    visual: {
+      ...visual,
+      id: 'oversized-camera-frame',
+      dataUrl: `data:image/jpeg;base64,${oversizedJpeg.toString('base64')}`,
+    },
+  }, {});
+  assert.deepEqual(oversizedImageOutput.images, []);
+  assert.equal(oversizedImageOutput.rejectedCount, 1);
   const imageOutput = await environmentImageInputNode.execute({ visual }, {});
   assert.deepEqual(imageOutput.images, [
     { type: 'image_url', image_url: { url: visual.dataUrl } },
   ]);
+
+  const captureCycle = {
+    cycleId: 'capture-cycle-1',
+    step: 2,
+    maxSteps: 3,
+    triggerSource: 'user' as const,
+    graph: 'environment',
+    requestedBy: 'environment-perception' as const,
+  };
+  const captureGoal = 'Can you take a picture? What can you see?';
+  const satisfiedCaptureObservation: EnvironmentObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: {
+      actions: ['sendText', 'captureImage'],
+      visual: true,
+    },
+    state: {
+      body: {
+        authenticated: true,
+        robotId: 'robot-1',
+        cameraReady: true,
+      },
+    },
+    visual: {
+      ...visual,
+      metadata: { correlationId: captureCycle.cycleId },
+    },
+    visuals: [{
+      ...visual,
+      metadata: { correlationId: captureCycle.cycleId },
+    }],
+    feedback: [{
+      id: 'capture-completed-1',
+      timestamp: new Date().toISOString(),
+      type: 'completed' as const,
+      message: 'done',
+      actionId: 'capture-action-1',
+      data: { command: 'captureImage' },
+    }],
+    metadata: {
+      correlationId: captureCycle.cycleId,
+      actionId: 'capture-action-1',
+      robotObserver: captureCycle,
+      originatingInstruction: captureGoal,
+    },
+  };
+  const satisfiedCaptureInstruction = await environmentInstructionInterpreterNode.execute({
+    observation: satisfiedCaptureObservation,
+  }, { userMessage: '' });
+  assert.match(String(satisfiedCaptureInstruction.instruction), /visual acquisition.*complete/i);
+  assert.match(String(satisfiedCaptureInstruction.instruction), /Original user goal: Can you take a picture/);
+  assert.doesNotMatch(
+    String(satisfiedCaptureInstruction.instruction),
+    /^Can you take a picture\? What can you see\?$/,
+  );
+  const normalizedCaptureObservation = satisfiedCaptureInstruction.observation as {
+    capabilities: { actions: string[] };
+  };
+  assert.equal(normalizedCaptureObservation.capabilities.actions.includes('captureImage'), false);
+
+  const parsedSatisfiedCapture = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I see a blue object and several lights.',
+      actions: [],
+      movementRequest: null,
+    }),
+    instruction: satisfiedCaptureInstruction.instruction,
+    observation: satisfiedCaptureInstruction.observation,
+    sessionId: 'robot-1',
+    routingAnalysis: { needsAction: true, actionType: 'environment_action' },
+  }, {});
+  assert.deepEqual(parsedSatisfiedCapture.actions, []);
+  assert.equal(parsedSatisfiedCapture.response, 'I see a blue object and several lights.');
+
   const contextOutput = await environmentContextBuilderNode.execute({
     observation: {
       environmentId: 'test',
@@ -327,12 +768,31 @@ try {
     images: imageOutput.images,
   }, {}, {});
   const content = contextOutput.messages.at(-1)?.content;
-  assert.equal(Array.isArray(content), true);
-  assert.deepEqual(content.at(-1), {
-    type: 'image_url',
-    image_url: { url: visual.dataUrl },
-  });
-  assert.match(String(content[0]?.text), /Supported robot commands: stand, wave, dance/);
+  assert.equal(typeof content, 'string');
+  assert.deepEqual(contextOutput.images, []);
+  assert.doesNotMatch(String(content), /Visual frame/);
+  assert.match(String(content), /Supported robot commands: stand, wave, dance/);
+
+  const correlatedImageContext = await environmentContextBuilderNode.execute({
+    observation: {
+      environmentId: 'test',
+      adapter: 'test-adapter',
+      sessionId: 'robot-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['captureImage'], visual: true },
+      visual: { ...visual, metadata: { correlationId: 'capture-1' } },
+      metadata: { correlationId: 'capture-1' },
+    },
+    instruction: 'Take another picture and explain the colors across the whole scene.',
+    images: imageOutput.images,
+  }, {}, {});
+  assert.equal(Array.isArray(correlatedImageContext.messages.at(-1)?.content), true);
+  assert.equal(correlatedImageContext.images.length, 1);
+  assert.match(
+    String(correlatedImageContext.message),
+    /Take another picture and explain the colors across the whole scene/,
+  );
+  assert.doesNotMatch(String(correlatedImageContext.message), /Describe what the robot sees/);
 
   const generalQuestionContext = await environmentContextBuilderNode.execute({
     observation: {

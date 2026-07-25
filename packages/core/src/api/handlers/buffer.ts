@@ -7,45 +7,19 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, errorResponse, badRequestResponse } from '../types.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { getProfilePaths } from '../../index.js';
+import { loadBufferForUser } from '../../conversation-buffer.js';
 
 export async function handleGetSimpleBuffer(req: UnifiedRequest): Promise<UnifiedResponse> {
   const mode = req.query?.mode;
 
-  if (mode !== 'conversation' && mode !== 'inner' && mode !== 'system') {
-    return badRequestResponse('mode query param required (conversation|inner|system)');
-  }
-
-  const user = req.user;
-  const isGuestWithProfile = user.role === 'guest';
-
-  // All users are now authenticated (no anonymous access)
-
-  // Determine buffer path based on user type
-  let bufferPath: string;
-  if (isGuestWithProfile) {
-    // Guest users get session-specific temp directory
-    const sessionId = user.userId?.substring(0, 16) || 'default';
-    const guestTempDir = path.join(os.tmpdir(), 'metahuman-guest', sessionId);
-    bufferPath = path.join(guestTempDir, `conversation-buffer-${mode}.json`);
-  } else {
-    // Authenticated users use their profile storage
-    const profilePaths = getProfilePaths(user.username);
-    bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+  if (mode !== 'conversation' && mode !== 'inner' && mode !== 'system' && mode !== 'robot') {
+    return badRequestResponse('mode query param required (conversation|inner|system|robot)');
   }
 
   try {
-    if (!fs.existsSync(bufferPath)) {
-      return successResponse({ messages: [], mode, lastUpdated: null });
-    }
-
-    const raw = fs.readFileSync(bufferPath, 'utf-8');
-    const buffer = JSON.parse(raw);
+    const buffer = loadBufferForUser(req.user.username, mode);
     const messages = (buffer.messages || [])
-      .filter((msg: any) => (mode === 'system' ? !msg.meta?.summaryMarker : msg.role !== 'system' && !msg.meta?.summaryMarker))
+      .filter((msg: any) => !msg.meta?.summaryMarker)
       .map((msg: any) => ({
         role: msg.role,
         content: msg.content,

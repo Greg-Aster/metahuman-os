@@ -46,6 +46,7 @@ import {
 
 import {
   checkLuks,
+  isPolkitConfigured,
   isLuksMounted,
   getLuksMountPoint,
   openAndMountLuks,
@@ -138,15 +139,37 @@ export async function getEncryptionStatus(userId: string): Promise<EncryptionSta
         };
       }
 
+      if (!isPolkitConfigured()) {
+        return {
+          type: 'luks',
+          unlocked: false,
+          available: false,
+          error: 'MetaHuman LUKS helper is not configured. Run: ./bin/mh setup encryption',
+        };
+      }
+
       const mapperName = encConfig.mapperName || `metahuman-${user.username}`;
-      const mounted = isLuksMounted(mapperName);
+      let mounted = isLuksMounted(mapperName);
       const mountPoint = mounted ? getLuksMountPoint(mapperName) || undefined : undefined;
+      let error: string | undefined;
+
+      if (mounted) {
+        try {
+          // getProfilePaths performs the fail-closed mapper, mount-point, and
+          // read/write checks for managed LUKS profiles.
+          getProfilePaths(user.username);
+        } catch (readinessError) {
+          mounted = false;
+          error = (readinessError as Error).message;
+        }
+      }
 
       return {
         type: 'luks',
         unlocked: mounted,
         available: true,
         mountPoint,
+        error,
       };
     }
 
@@ -219,6 +242,13 @@ export async function unlockProfile(
     }
 
     case 'luks': {
+      if (!isPolkitConfigured()) {
+        return {
+          success: false,
+          error: 'MetaHuman LUKS helper is not configured. Run ./bin/mh setup encryption, then log out and back in.',
+        };
+      }
+
       const volumePath = encConfig.volumePath;
       const mapperName = encConfig.mapperName || `metahuman-${user.username}`;
       const mountPoint = encConfig.mountPoint || `/media/metahuman/${user.username}`;

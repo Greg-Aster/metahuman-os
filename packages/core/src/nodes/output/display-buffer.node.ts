@@ -41,23 +41,18 @@ const execute: NodeExecutor = async (inputs, context) => {
   // If still empty, try to load from buffer file
   if (!displayContent && context.username) {
     try {
-      const { getProfilePaths } = await import('../../paths.js');
-      const fs = await import('node:fs');
-      const path = await import('node:path');
-
-      const profilePaths = getProfilePaths(context.username);
+      const { loadBufferForUser } = await import('../../conversation-buffer.js');
       const mode = context.mode || context.dialogueType || 'conversation';
-      const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
+      const bufferMode = mode === 'inner' ? 'inner' : 'conversation';
+      const messages = loadBufferForUser(context.username, bufferMode).messages;
 
-      if (fs.existsSync(bufferPath)) {
-        const bufferData = JSON.parse(fs.readFileSync(bufferPath, 'utf-8'));
-        const messages = bufferData.messages || [];
-
-        // Get the last assistant message
-        const lastAssistant = [...messages].reverse().find((m: any) => m.role === 'assistant');
-        if (lastAssistant) {
-          displayContent = lastAssistant.content;
-        }
+      // Get the last generated entry for the selected dialogue buffer.
+      const generatedRoles = bufferMode === 'inner'
+        ? new Set(['reflection', 'dream', 'daydream', 'reasoning'])
+        : new Set(['assistant']);
+      const lastGenerated = [...messages].reverse().find(message => generatedRoles.has(message.role));
+      if (lastGenerated) {
+        displayContent = lastGenerated.content;
       }
     } catch (error) {
       console.error('[DisplayBuffer] Error reading buffer:', error);

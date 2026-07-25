@@ -9,8 +9,21 @@
  */
 
 import { withUserContext } from '@metahuman/core/context';
+import { getAgentCatalogDefinition } from '@metahuman/core/agent-catalog-definitions';
 import { resolveAgentExecutablePath } from '@metahuman/core/agent-executable-resolver';
+import { getCurrentlyActiveUser } from '@metahuman/core/sessions';
 import { getUsers } from '@metahuman/core/users';
+
+async function executeAgent(agentPath: string, agentArgs: string[]): Promise<void> {
+  process.argv = [process.argv[0], agentPath, ...agentArgs];
+  const agentModule = await import(agentPath);
+
+  if (typeof agentModule.default === 'function') {
+    await agentModule.default();
+  } else if (typeof agentModule.run === 'function') {
+    await agentModule.run();
+  }
+}
 
 async function main() {
   const agentName = process.argv[2];
@@ -22,56 +35,53 @@ async function main() {
     process.exit(1);
   }
 
-  // Prefer the authenticated triggering user, then fall back to the first owner
-  const users = getUsers();
-  const requestedUsername = process.env.MH_TRIGGER_USERNAME?.trim();
-  const owner = (requestedUsername
-    ? users.find((user) => user.username === requestedUsername)
-    : undefined) ?? users.find((user) => user.role === 'owner');
-
-  if (!owner) {
-    console.error('[bootstrap] Error: No owner user found.');
-    console.error('[bootstrap] Run: ./bin/mh user create <username>');
-    process.exit(1);
-  }
-
-  process.env.MH_TRIGGER_USERNAME = owner.username;
-
   const agentPath = resolveAgentExecutablePath(agentName);
   if (!agentPath) {
     console.error(`[bootstrap] Error: Agent file not found: ${agentName}`);
     process.exit(1);
   }
 
-  // Present the selected agent with a normal argv shape while preserving API/CLI arguments.
-  process.argv = [process.argv[0], agentPath, ...agentArgs];
+  const definition = getAgentCatalogDefinition(agentName);
+  if (definition?.executionContext === 'system') {
+    delete process.env.MH_TRIGGER_USERNAME;
+    try {
+      await executeAgent(agentPath, agentArgs);
+    } catch (error) {
+      console.error(`[bootstrap] Failed to run system agent ${agentName}:`, error);
+      process.exit(1);
+    }
+    return;
+  }
 
-  // Establish owner context for the agent BEFORE importing
+  // User-scoped work uses its explicit triggering user or the active session.
+  // Never choose a profile merely because it appears first in users.json.
+  const users = getUsers();
+  const requestedUsername = process.env.MH_TRIGGER_USERNAME?.trim();
+  const activeUser = requestedUsername ? null : getCurrentlyActiveUser();
+  const targetUser = (requestedUsername
+    ? users.find((user) => user.username === requestedUsername)
+    : undefined) ?? (activeUser
+      ? users.find((user) => user.id === activeUser.userId)
+      : undefined);
+
+  if (!targetUser) {
+    console.error('[bootstrap] Error: No explicit or active authenticated user found.');
+    process.exit(1);
+  }
+
+  process.env.MH_TRIGGER_USERNAME = targetUser.username;
+
+  // Establish the authenticated user context for the agent BEFORE importing.
   // This allows agent module-level code to access user paths
   await withUserContext(
     {
-      userId: owner.id,
-      username: owner.username,
-      role: 'owner',
+      userId: targetUser.id,
+      username: targetUser.username,
+      role: targetUser.role,
     },
     async () => {
       try {
-        // Dynamic import of the agent module within user context
-        // This allows module-level code like `const x = paths.personaCore` to work
-        const agentModule = await import(agentPath);
-
-        // If agent exports a default function, call it
-        if (typeof agentModule.default === 'function') {
-          await agentModule.default();
-        }
-        // If agent exports a 'run' function, call it
-        else if (typeof agentModule.run === 'function') {
-          await agentModule.run();
-        }
-        // Otherwise, the agent code runs on import (common pattern)
-        else {
-          // Agent executed during import, nothing more to do
-        }
+        await executeAgent(agentPath, agentArgs);
       } catch (error) {
         console.error(`[bootstrap] Failed to run agent ${agentName}:`, error);
         process.exit(1);

@@ -45,68 +45,38 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     if (username) {
       try {
         const loadStart = Date.now();
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const { getProfilePaths } = await import('../../paths.js');
+        const { loadChatSettingsForUser } = await import('../../chat-settings.js');
+        const { loadBufferForUser } = await import('../../conversation-buffer.js');
 
-        const profilePaths = getProfilePaths(username);
-        const bufferPath = path.join(profilePaths.state, `conversation-buffer-${mode}.json`);
-
-        if (fs.existsSync(bufferPath)) {
-          const raw = fs.readFileSync(bufferPath, 'utf-8');
-          const parsed = JSON.parse(raw);
-
-          if (parsed.messages && Array.isArray(parsed.messages)) {
-            messages = parsed.messages;
-            summaryMarkers = parsed.summaryMarkers || [];
-            loadedFromBuffer = true;
-            const loadTime = Date.now() - loadStart;
-            console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
-          }
-        }
+        const parsed = loadBufferForUser(username, mode === 'inner' ? 'inner' : 'conversation');
+        messages = parsed.messages;
+        summaryMarkers = parsed.summaryMarkers;
+        loadedFromBuffer = true;
+        const loadTime = Date.now() - loadStart;
+        console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
 
         // Unified Consciousness: Load inner dialogue buffer and merge if enabled
         if (mode === 'conversation') {
           try {
-            // Load user's chat settings directly from their profile
-            // (don't use loadChatSettings() which relies on getUserContext())
-            let unifiedConsciousness = false;
-            const userSettingsPath = path.join(profilePaths.root, 'etc', 'chat-settings.json');
-            if (fs.existsSync(userSettingsPath)) {
-              try {
-                const settingsRaw = fs.readFileSync(userSettingsPath, 'utf-8');
-                const settingsConfig = JSON.parse(settingsRaw);
-                unifiedConsciousness = settingsConfig.settings?.unifiedConsciousness?.value ?? false;
-              } catch (e) {
-                console.warn('[ConversationHistory] Could not parse user chat-settings.json:', e);
-              }
-            }
+            const unifiedConsciousness = loadChatSettingsForUser(username).unifiedConsciousness;
 
             console.log(`[ConversationHistory] unifiedConsciousness=${unifiedConsciousness} for user ${username}`);
 
             if (unifiedConsciousness) {
-              const innerBufferPath = path.join(profilePaths.state, 'conversation-buffer-inner.json');
+              const innerParsed = loadBufferForUser(username, 'inner');
+              const innerLimit = 10;
+              const innerMessages = innerParsed.messages
+                .slice(-innerLimit)
+                .map((msg: any) => ({
+                  ...msg,
+                  role: 'system',
+                  content: `[Inner thought - ${msg.role}]: ${msg.content}`,
+                  meta: { ...msg.meta, isInnerDialogue: true, originalRole: msg.role },
+                }));
 
-              if (fs.existsSync(innerBufferPath)) {
-                const innerRaw = fs.readFileSync(innerBufferPath, 'utf-8');
-                const innerParsed = JSON.parse(innerRaw);
-
-                if (innerParsed.messages && Array.isArray(innerParsed.messages)) {
-                  const innerLimit = 10;
-                  const innerMessages = innerParsed.messages
-                    .slice(-innerLimit)
-                    .map((msg: any) => ({
-                      ...msg,
-                      role: 'system',
-                      content: `[Inner thought - ${msg.role}]: ${msg.content}`,
-                      meta: { ...msg.meta, isInnerDialogue: true, originalRole: msg.role },
-                    }));
-
-                  messages = [...innerMessages, ...messages];
-                  innerDialogueCount = innerMessages.length;
-                  console.log(`[ConversationHistory] Unified consciousness: Added ${innerDialogueCount} inner dialogue messages`);
-                }
-              }
+              messages = [...innerMessages, ...messages];
+              innerDialogueCount = innerMessages.length;
+              console.log(`[ConversationHistory] Unified consciousness: Added ${innerDialogueCount} inner dialogue messages`);
             }
           } catch (error) {
             console.warn('[ConversationHistory] Could not load inner dialogue:', error);

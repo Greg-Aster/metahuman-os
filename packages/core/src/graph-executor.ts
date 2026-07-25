@@ -887,7 +887,7 @@ type NodeOutputInfo = { id: string; outputs: Record<string, any> };
  *
  * Priority order:
  * 1. Node explicitly marked as output (isOutputNode: true in definition)
- * 2. Node of type 'stream_writer' or 'dual_writer'
+ * 2. Stream writer node
  * 3. Last completed node with output/response properties
  * 4. Last completed node (fallback)
  */
@@ -908,7 +908,7 @@ export function getGraphOutput(state: GraphExecutionState): Record<string, any> 
 
     // Priority 2: Writer nodes by type
     const nodeType = nodeState.definition?.type;
-    if (nodeType === 'stream_writer' || nodeType === 'dual_writer') {
+    if (nodeType === 'stream_writer') {
       writerNode = { id: nodeId, outputs: nodeState.outputs };
     }
 

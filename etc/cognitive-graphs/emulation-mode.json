@@ -229,7 +229,7 @@
       },
       "data": {
         "label": "Buffer Manager",
-        "nodeType": "buffer_manager",
+        "nodeType": "conversation_buffer",
         "properties": {}
       },
       "width": 180,

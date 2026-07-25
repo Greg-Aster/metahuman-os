@@ -33,6 +33,12 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
   description: 'Saves conversation to episodic memory',
 
   execute: async (inputs, context) => {
+    if (context.composeTarget === 'inner') {
+      return {
+        saved: false,
+        reason: 'Inner compose memory is owned by the Inner Dialogue Buffer node',
+      };
+    }
     // Named inputs from graph edges (with array fallbacks)
     // Expected: userMessage, assistantResponse, cognitiveMode, metadata
     const userMessageInput = inputs.userMessage || inputs[0];

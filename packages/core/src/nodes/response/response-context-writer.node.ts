@@ -1,10 +1,8 @@
 /**
- * Dual Writer Node
+ * Response Context Writer Node
  *
- * Writes output to TWO places:
- * 1. Conversation Buffer - for display in chat interface
- * 2. Response Buffer - for multi-turn context tracking
- * 3. Memory Capture - as 'card_response' type for training
+ * Writes card-response context to the response buffer and long-term memory.
+ * The downstream Conversation Buffer node exclusively owns chat persistence.
  *
  * This separation allows:
  * - Chat display (conversation buffer)
@@ -22,7 +20,6 @@
  *
  * Outputs:
  *   - responseBufferId: ID of the response buffer
- *   - conversationBufferUpdated: Whether conversation buffer was updated
  *   - memorySaved: Whether memory was saved
  */
 
@@ -32,11 +29,10 @@ import {
   touchResponseBufferNotification,
   type ResponseBuffer,
 } from '../../response-buffer.js';
-import { appendToUserBuffer } from '../../conversation-buffer.js';
 import { captureEvent } from '../../memory.js';
 import type { Desire } from '../../agency/types.js';
 
-interface DualWriterInput {
+interface ResponseContextWriterInput {
   response?: string;
   responseBuffer?: ResponseBuffer;
   userId?: string;
@@ -46,9 +42,9 @@ interface DualWriterInput {
   desire?: Desire;
 }
 
-export const DualWriterNode: NodeDefinition = defineNode({
-  id: 'dual_writer',
-  name: 'Dual Writer',
+export const ResponseContextWriterNode: NodeDefinition = defineNode({
+  id: 'response_context_writer',
+  name: 'Response Context Writer',
   category: 'output',
   inputs: [
     { name: 'response', type: 'string', description: 'LLM response text' },
@@ -61,13 +57,11 @@ export const DualWriterNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'responseBufferId', type: 'string', description: 'Response buffer ID' },
-    { name: 'conversationBufferUpdated', type: 'boolean', description: 'Conv buffer updated' },
     { name: 'memorySaved', type: 'boolean', description: 'Memory was saved' },
     { name: 'response', type: 'string', description: 'Pass-through response' },
   ],
   properties: {
     saveMemory: true,
-    memoryMode: 'conversation',
   },
   propertySchemas: {
     saveMemory: {
@@ -76,18 +70,11 @@ export const DualWriterNode: NodeDefinition = defineNode({
       label: 'Save Memory',
       description: 'Whether to save the response as a card_response memory',
     },
-    memoryMode: {
-      type: 'select',
-      default: 'conversation',
-      options: ['conversation', 'inner'],
-      label: 'Memory Mode',
-      description: 'Which conversation buffer mode to use',
-    },
   },
-  description: 'Writes to conversation buffer, response buffer, and memory capture.',
+  description: 'Updates card-response context and training memory before the Conversation Buffer node persists chat entries.',
 
   execute: async (inputs, context, properties) => {
-    const slot0 = inputs[0] as DualWriterInput | undefined;
+    const slot0 = inputs[0] as ResponseContextWriterInput | undefined;
     const structuredInput = slot0 && typeof slot0 === 'object' && (
       'response' in slot0 ||
       'responseBuffer' in slot0 ||
@@ -103,13 +90,10 @@ export const DualWriterNode: NodeDefinition = defineNode({
     const desire = structuredInput?.desire || (inputs[6] as Desire | undefined);
 
     const saveMemory = properties?.saveMemory !== false;
-    const memoryMode = (properties?.memoryMode as 'conversation' | 'inner') || 'conversation';
-
-    let conversationBufferUpdated = false;
     let memorySaved = false;
     let responseBufferId = responseBuffer?.id || '';
 
-    console.log(`[dual-writer] Writing response to buffers for ${cardType}`);
+    console.log(`[response-context-writer] Writing response context for ${cardType}`);
 
     // 1. Update Response Buffer (for multi-turn tracking)
     if (responseBuffer) {
@@ -120,53 +104,10 @@ export const DualWriterNode: NodeDefinition = defineNode({
       appendToResponseBuffer(userId, responseBuffer.id, 'assistant', response, actionTaken);
 
       responseBufferId = responseBuffer.id;
-      console.log(`[dual-writer] Updated response buffer: ${responseBufferId}`);
+      console.log(`[response-context-writer] Updated response buffer: ${responseBufferId}`);
     }
 
-    // 2. Update Conversation Buffer (for chat display)
-    try {
-      // Append user message
-      await appendToUserBuffer(
-        userId,
-        memoryMode,
-        {
-          role: 'user',
-          content: message,
-          meta: {
-            source: 'response_pipeline',
-            cardType,
-            responseBufferId,
-            desireId: desire?.id,
-          },
-        }
-      );
-
-      // Append assistant response
-      await appendToUserBuffer(
-        userId,
-        memoryMode,
-        {
-          role: 'assistant',
-          content: response,
-          meta: {
-            source: 'response_pipeline',
-            cardType,
-            responseBufferId,
-            desireId: desire?.id,
-            actionTaken,
-            dialogueSource: 'response-pipeline',
-            displayColor: '#8b5cf6', // Purple for response pipeline
-          },
-        }
-      );
-
-      conversationBufferUpdated = true;
-      console.log(`[dual-writer] Updated conversation buffer (${memoryMode} mode)`);
-    } catch (err) {
-      console.error('[dual-writer] Failed to update conversation buffer:', err);
-    }
-
-    // 3. Save to Memory (as card_response type for training)
+    // 2. Save to Memory (as card_response type for training)
     // Note: captureEvent uses the current user context, so ensure context is set
     if (saveMemory && userId !== 'anonymous') {
       try {
@@ -194,9 +135,9 @@ export const DualWriterNode: NodeDefinition = defineNode({
         );
 
         memorySaved = true;
-        console.log(`[dual-writer] Saved card_response memory`);
+        console.log(`[response-context-writer] Saved card_response memory`);
       } catch (err) {
-        console.error('[dual-writer] Failed to save memory:', err);
+        console.error('[response-context-writer] Failed to save memory:', err);
       }
     }
 
@@ -207,11 +148,10 @@ export const DualWriterNode: NodeDefinition = defineNode({
 
     return {
       responseBufferId,
-      conversationBufferUpdated,
       memorySaved,
       response,
     };
   },
 });
 
-export default DualWriterNode;
+export default ResponseContextWriterNode;

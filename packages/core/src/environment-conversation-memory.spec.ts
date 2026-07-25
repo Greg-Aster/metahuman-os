@@ -5,6 +5,8 @@ import { ROOT } from './paths.js';
 import { canWriteMemory } from './memory-policy.js';
 import { environmentContextBuilderNode } from './nodes/environment/context-builder.node.js';
 import { MemoryCaptureNode } from './nodes/output/memory-capture.node.js';
+import { ConversationBufferNode } from './nodes/output/conversation-buffer.node.js';
+import { createRobotBufferMessage, RobotBufferNode } from './nodes/output/robot-buffer.node.js';
 
 const graph = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'etc/cognitive-graphs/environment-mode.json'), 'utf8'),
@@ -12,16 +14,26 @@ const graph = JSON.parse(
   nodes: Array<{ id: string; data?: { nodeType?: string; properties?: Record<string, unknown> } }>;
   edges: Array<{ source: string; target: string; sourceHandle?: string; targetHandle?: string }>;
 };
-const bufferManagerSource = fs.readFileSync(
-  path.join(ROOT, 'packages/core/src/nodes/emulation/buffer-manager.node.ts'),
+const conversationBufferSource = fs.readFileSync(
+  path.join(ROOT, 'packages/core/src/nodes/output/conversation-buffer.node.ts'),
+  'utf8',
+);
+const robotBufferSource = fs.readFileSync(
+  path.join(ROOT, 'packages/core/src/nodes/output/robot-buffer.node.ts'),
   'utf8',
 );
 
-assert.match(bufferManagerSource, /appendToUserBuffer/);
+assert.match(conversationBufferSource, /writeBufferEntry/);
 assert.doesNotMatch(
-  bufferManagerSource,
+  conversationBufferSource,
   /writeFileSync/,
-  'Buffer Manager must delegate persistence to the canonical conversation-buffer service',
+  'Conversation Buffer must delegate persistence to the canonical service',
+);
+assert.match(robotBufferSource, /writeBufferEntry/);
+assert.doesNotMatch(
+  robotBufferSource,
+  /writeFileSync/,
+  'Robot Buffer must delegate persistence to the canonical conversation-buffer service',
 );
 
 const nodeId = (nodeType: string): string => {
@@ -45,8 +57,9 @@ const memoryInterpreterId = nodeId('search_interpreter');
 const contextId = nodeId('environment_context_builder');
 const actionParserId = nodeId('environment_action_parser');
 const bridgeId = nodeId('environment_send_action');
+const robotBufferId = nodeId('robot_buffer');
 const personaId = nodeId('persona_formatter');
-const bufferId = nodeId('buffer_manager');
+const bufferId = nodeId('conversation_buffer');
 const captureId = nodeId('memory_capture');
 const streamId = nodeId('stream_writer');
 const ttsId = nodeId('tts');
@@ -65,6 +78,7 @@ assert.ok(hasEdge(bridgeId, 'response', bufferId, 'response'));
 assert.ok(hasEdge(bridgeId, 'response', captureId, 'assistantResponse'));
 assert.ok(hasEdge(bridgeId, 'response', streamId, 'response'));
 assert.ok(hasEdge(bridgeId, 'response', ttsId, 'conversation'));
+assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'response_synthesizer'),
   false,
@@ -75,7 +89,42 @@ assert.equal(
   false,
   'Persona formatting must never enter the movement/action branch',
 );
-assert.equal(graph.nodes.find(node => node.id === bufferId)?.data?.properties?.requireUserMessage, true);
+assert.equal(ConversationBufferNode.id, 'conversation_buffer');
+assert.equal(
+  graph.nodes.some(node => ['buffer_manager', 'inner_dialogue_capture', 'reasoning_capture'].includes(node.data?.nodeType || '')),
+  false,
+  'Environment Mode must not retain legacy buffer writers',
+);
+assert.equal(graph.nodes.find(node => node.id === robotBufferId)?.data?.properties?.recordNoAction, false);
+assert.equal(RobotBufferNode.id, 'robot_buffer');
+
+const robotMessage = createRobotBufferMessage({
+  status: 'coordinated_for_adapter',
+  message: 'Environment command queued for connected adapter session robot-1.',
+  targetSessionId: 'robot-1',
+  commandCount: 1,
+});
+assert.equal(robotMessage.role, 'robot');
+assert.match(robotMessage.content, /coordinated_for_adapter/);
+assert.equal(robotMessage.meta.direction, 'outbound');
+assert.equal(robotMessage.meta.targetSessionId, 'robot-1');
+
+const robotLifecycleMessage = createRobotBufferMessage({
+  direction: 'inbound',
+  status: 'completed',
+  message: 'done',
+  targetSessionId: 'robot-1',
+  actionId: 'action-1',
+  feedback: {
+    id: 'feedback-1',
+    type: 'completed',
+    message: 'done',
+  },
+});
+assert.equal(robotLifecycleMessage.content, 'Robot action completed: done');
+assert.equal(robotLifecycleMessage.meta.direction, 'inbound');
+assert.equal(robotLifecycleMessage.meta.actionId, 'action-1');
+assert.equal(robotLifecycleMessage.meta.idempotencyKey, 'environment-feedback:feedback-1');
 
 assert.equal(canWriteMemory('environment', 'conversation'), true);
 assert.equal(canWriteMemory('environment', 'tool_invocation'), false);

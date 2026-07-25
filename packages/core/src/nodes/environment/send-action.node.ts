@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { defineNode } from '../types.js';
 import {
   enqueueEnvironmentAction,
@@ -7,13 +8,16 @@ import {
 } from '../../environment-interface/index.js';
 import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import {
+  beginEnvironmentPerceptionCycle,
   isRobotObserverEnabled,
+  loadRobotOperatorConfig,
   nextRobotObserverCycle,
   robotObserverSourceAllowed,
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 
-const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'sendText'];
+const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText'];
+const BODY_ACTIONS = new Set<EnvironmentActionType>(ACTION_OPTIONS.filter(action => action !== 'sendText'));
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
 
 function selectedActions(value: unknown): EnvironmentActionType[] {
@@ -53,8 +57,11 @@ export const environmentSendActionNode = defineNode({
     { name: 'response', type: 'string', description: 'Visible chat warning when the bridge cannot receive the command' },
     { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
     { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
+    { name: 'adapterReady', type: 'boolean', description: 'Whether the target adapter subscriber is connected' },
+    { name: 'bodyAuthenticated', type: 'boolean', description: 'Whether the target adapter reports an authenticated physical body' },
     { name: 'streamSubscriberCount', type: 'number', description: 'Number of connected action stream subscribers for the target' },
     { name: 'activeSessionCount', type: 'number', description: 'Number of non-stale environment sessions' },
+    { name: 'bridgeRecord', type: 'object', description: 'Structured outbound bridge result for downstream persistence' },
   ],
   properties: {
     allowedActions: ACTION_OPTIONS,
@@ -93,14 +100,38 @@ export const environmentSendActionNode = defineNode({
       ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
+    const existingCycle = context.robotObserver && typeof context.robotObserver === 'object'
+      ? context.robotObserver as RobotObserverCycleMetadata
+      : null;
     const hasStop = requestedActions.some(action => action && typeof action === 'object' && action.type === 'stop');
     const rawActions = hasStop
       ? requestedActions.filter(action => action && typeof action === 'object' && action.type === 'stop')
       : requestedActions;
-    const robotObserver = context.robotObserver && typeof context.robotObserver === 'object'
-      ? context.robotObserver as RobotObserverCycleMetadata
+    const currentUserInstruction = typeof context.userMessage === 'string'
+      ? context.userMessage.trim()
+      : '';
+    const originatingInstruction = (
+      typeof context.environmentTaskInstruction === 'string'
+        ? context.environmentTaskInstruction.trim()
+        : ''
+    ) || currentUserInstruction;
+    const shouldStartCycle = (
+      !existingCycle
+      && currentUserInstruction
+      && rawActions.length > 0
+      && !hasStop
+    );
+    const cycleConfig = shouldStartCycle ? loadRobotOperatorConfig() : null;
+    const startedCycle = cycleConfig
+      ? beginEnvironmentPerceptionCycle(
+          `environment-task-${randomUUID()}`,
+          cycleConfig.graph,
+          cycleConfig.maxCycleSteps,
+        )
       : null;
-    const nextObserverStep = robotObserver ? nextRobotObserverCycle(robotObserver) : null;
+    const actionCycle = existingCycle ?? startedCycle;
+    const nextObserverStep = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
+    const isInternalContinuation = Boolean(existingCycle && !currentUserInstruction);
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const generatedResponse = typeof inputs.generatedResponse === 'string'
       ? inputs.generatedResponse.trim()
@@ -122,7 +153,25 @@ export const environmentSendActionNode = defineNode({
     const activeSessionCount = bridgeSummary.sessions.filter(session => session.status === 'connected').length;
     const targetSession = bridgeSummary.sessions.find(session => session.sessionId === targetSessionId && session.status === 'connected');
     const streamSubscriberCount = targetSessionId ? getEnvironmentActionSubscriberCount(targetSessionId) : 0;
-    const ready = Boolean(targetSession) && streamSubscriberCount > 0;
+    const adapterReady = Boolean(targetSession) && streamSubscriberCount > 0;
+    const requiresPhysicalBody = targetSession?.adapter === 'ainekio-gateway';
+    const bodyState = targetSession?.latestObservation?.state?.body;
+    const bodyAuthenticated = Boolean(
+      bodyState
+      && typeof bodyState === 'object'
+      && !Array.isArray(bodyState)
+      && (bodyState as Record<string, unknown>).authenticated === true,
+    );
+    const bodyActions = rawActions.filter(action => (
+      action && typeof action === 'object' && BODY_ACTIONS.has(action.type as EnvironmentActionType)
+    ));
+    const advertisedActions = targetSession?.latestObservation?.capabilities.actions ?? [];
+    const unavailableAction = rawActions.find(action => (
+      action && typeof action === 'object' && !advertisedActions.includes(action.type as EnvironmentActionType)
+    ));
+    const ready = adapterReady
+      && (!requiresPhysicalBody || bodyActions.every(() => bodyAuthenticated))
+      && !unavailableAction;
     let status: SendStatus = 'coordinated_for_adapter';
     let reason = '';
     let message = targetSessionId
@@ -133,28 +182,41 @@ export const environmentSendActionNode = defineNode({
       status = 'no_actions';
       reason = 'no_actions';
       message = 'No environment action was produced from this message, so nothing was sent to the robot bridge.';
-    } else if (robotObserver && !isRobotObserverEnabled()) {
+    } else if (
+      actionCycle?.requestedBy === 'robot-observer'
+      && !isRobotObserverEnabled()
+    ) {
       status = 'rejected';
       reason = 'robot_observer_disabled';
       message = 'The robot action was stopped because Robot Observer is disabled.';
-    } else if (robotObserver && !robotObserverSourceAllowed(getOperatorMode(), robotObserver.triggerSource)) {
+    } else if (actionCycle && !robotObserverSourceAllowed(getOperatorMode(), actionCycle.triggerSource)) {
       status = 'rejected';
       reason = 'active_operator_reactive';
       message = 'The autonomous robot action was stopped because Active Operator is now in reactive mode.';
-    } else if (robotObserver && !nextObserverStep) {
+    } else if (actionCycle && !nextObserverStep) {
       status = 'rejected';
       reason = 'robot_observer_step_limit';
-      message = `The Robot Observer cycle reached its ${robotObserver.maxSteps}-step limit, so no further robot action was queued.`;
+      message = `The bounded robot interaction reached its ${actionCycle.maxSteps}-step limit, so no further robot action was queued.`;
     } else if (!bridgeSummary.enabled) {
       status = 'bridge_disabled';
       reason = 'environment_bridge_disabled';
       message = 'I understood the environment command, but Environment Bridge is disabled. No robot adapter can receive it yet.';
-    } else if (!ready) {
+    } else if (!adapterReady) {
       status = 'waiting_for_adapter';
       reason = 'no_connected_environment_adapter';
       message = targetSessionId
         ? `I understood the environment command, but no robot adapter is connected for session ${targetSessionId}. Start the Ainekio adapter and try again.`
         : 'I understood the environment command, but no robot adapter is connected. Start the Ainekio adapter and try again.';
+    } else if (requiresPhysicalBody && bodyActions.length > 0 && !bodyAuthenticated) {
+      status = 'rejected';
+      reason = 'robot_body_offline';
+      message = 'The Ainekio adapter is connected, but the physical robot is offline. No body command was queued.';
+    } else if (unavailableAction) {
+      status = 'rejected';
+      reason = 'capability_unavailable';
+      message = unavailableAction.type === 'captureImage'
+        ? 'The physical robot camera is not currently ready. No image request was queued.'
+        : `The physical robot does not currently advertise ${String(unavailableAction.type)}.`;
     }
 
     if (status === 'coordinated_for_adapter') {
@@ -171,8 +233,9 @@ export const environmentSendActionNode = defineNode({
             {
               ...options,
               username: context.username,
-              correlationId: robotObserver?.cycleId ?? context.sessionId,
-              source: robotObserver?.triggerSource ?? 'user',
+              correlationId: actionCycle?.cycleId ?? context.sessionId,
+              source: actionCycle?.triggerSource ?? 'user',
+              originatingInstruction,
             },
           ));
         } catch (error) {
@@ -216,6 +279,34 @@ export const environmentSendActionNode = defineNode({
       });
     }
 
+    const bridgeRecord = {
+      direction: 'outbound',
+      status,
+      reason,
+      message,
+      targetSessionId: targetSessionId || null,
+      requestedActions,
+      commands,
+      rejectedActions,
+      commandCount: commands.length,
+      rejectedCount: rejectedActions.length,
+      success: status === 'coordinated_for_adapter',
+      ready,
+      bridgeEnabled: bridgeSummary.enabled,
+      adapterReady,
+      bodyAuthenticated,
+      streamSubscriberCount,
+      activeSessionCount,
+      source: actionCycle?.triggerSource ?? 'user',
+      correlationId: actionCycle?.cycleId ?? context.sessionId ?? null,
+    };
+    const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
+      ? 'Camera request queued; waiting for a fresh image.'
+      : bodyActions.length > 0
+        ? 'Robot command queued; waiting for terminal feedback.'
+        : conversationalResponse;
+    const visibleQueuedResponse = isInternalContinuation ? '' : queuedResponse;
+
     return {
       commands,
       rejectedActions,
@@ -228,11 +319,14 @@ export const environmentSendActionNode = defineNode({
       message,
       response: ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
         ? message
-        : conversationalResponse,
+        : status === 'coordinated_for_adapter' ? visibleQueuedResponse : conversationalResponse,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,
+      adapterReady,
+      bodyAuthenticated,
       streamSubscriberCount,
       activeSessionCount,
+      bridgeRecord,
     };
   },
 });

@@ -52,34 +52,42 @@
       "step": 100,
       "notes": "More context = better grounding but longer prompts and potential drowning"
     },
-    "maxHistoryMessages": {
-      "description": "Maximum conversation history messages to retain",
+    "conversationBufferLimit": {
+      "description": "Maximum spoken conversation messages to retain",
       "value": 30,
       "min": 5,
-      "max": 100,
+      "max": 500,
       "step": 5,
-      "notes": "Conversation will summarize and prune history beyond this limit"
+      "notes": "Controls only the Conversation Buffer"
+    },
+    "innerBufferLimit": {
+      "description": "Maximum unvoiced thoughts and generated inner-dialogue messages to retain",
+      "value": 80,
+      "min": 20,
+      "max": 500,
+      "step": 10,
+      "notes": "Controls only the Inner Dialogue Buffer"
+    },
+    "systemBufferLimit": {
+      "description": "Maximum durable system events to retain",
+      "value": 100,
+      "min": 20,
+      "max": 500,
+      "step": 10,
+      "notes": "Controls only the System Buffer"
+    },
+    "robotBufferLimit": {
+      "description": "Maximum outbound robot bridge records to retain",
+      "value": 100,
+      "min": 20,
+      "max": 500,
+      "step": 10,
+      "notes": "Controls the dedicated Robot Buffer without changing conversation or system history"
     },
     "userInputPriority": {
       "description": "Always prioritize current user input over context/history",
       "value": true,
       "notes": "When true, adds explicit instruction to focus on user's current question"
-    },
-    "innerDialogHistoryLimit": {
-      "description": "Maximum messages to display in Inner Dialog tab",
-      "value": 80,
-      "min": 20,
-      "max": 500,
-      "step": 10,
-      "notes": "Shows reflections, dreams, and inner dialogue. Higher values may slow page load"
-    },
-    "innerDialogHistoryDays": {
-      "description": "Days of audit logs to scan for Inner Dialog",
-      "value": 7,
-      "min": 1,
-      "max": 365,
-      "step": 1,
-      "notes": "Recent reflections/dreams only. Increase to see older inner thoughts"
     },
     "unifiedConsciousness": {
       "description": "Include inner dialogue (reflections, dreams) in conversation context",
@@ -96,10 +104,11 @@
       "temperature": 0.6,
       "semanticSearchThreshold": 0.62,
       "maxContextChars": 900,
-      "maxHistoryMessages": 30,
+      "conversationBufferLimit": 30,
+      "innerBufferLimit": 80,
+      "systemBufferLimit": 100,
+      "robotBufferLimit": 100,
       "userInputPriority": true,
-      "innerDialogHistoryLimit": 80,
-      "innerDialogHistoryDays": 7,
       "unifiedConsciousness": false
     },
     "focused": {
@@ -110,10 +119,11 @@
       "temperature": 0.5,
       "semanticSearchThreshold": 0.7,
       "maxContextChars": 500,
-      "maxHistoryMessages": 15,
+      "conversationBufferLimit": 15,
+      "innerBufferLimit": 50,
+      "systemBufferLimit": 50,
+      "robotBufferLimit": 50,
       "userInputPriority": true,
-      "innerDialogHistoryLimit": 50,
-      "innerDialogHistoryDays": 3,
       "unifiedConsciousness": false
     },
     "immersive": {
@@ -124,10 +134,11 @@
       "temperature": 0.7,
       "semanticSearchThreshold": 0.55,
       "maxContextChars": 1500,
-      "maxHistoryMessages": 50,
+      "conversationBufferLimit": 50,
+      "innerBufferLimit": 150,
+      "systemBufferLimit": 200,
+      "robotBufferLimit": 200,
       "userInputPriority": false,
-      "innerDialogHistoryLimit": 150,
-      "innerDialogHistoryDays": 30,
       "unifiedConsciousness": true
     },
     "minimal": {
@@ -138,10 +149,11 @@
       "temperature": 0.4,
       "semanticSearchThreshold": 0.8,
       "maxContextChars": 300,
-      "maxHistoryMessages": 10,
+      "conversationBufferLimit": 10,
+      "innerBufferLimit": 30,
+      "systemBufferLimit": 30,
+      "robotBufferLimit": 30,
       "userInputPriority": true,
-      "innerDialogHistoryLimit": 30,
-      "innerDialogHistoryDays": 1,
       "unifiedConsciousness": false
     }
   },

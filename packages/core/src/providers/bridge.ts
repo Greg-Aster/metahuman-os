@@ -149,11 +149,19 @@ export async function callProvider(
   if (shouldUseBigBrother) {
     assertAdapterPreservesImageInput('Big Brother', contentInspection.imageCount)
     // Use the provider-agnostic escalation system
-    const { escalate, getActiveBackend } = await import('../escalation-backend.js');
+    const {
+      ensureBackendsInitialized,
+      escalate,
+      getActiveBackend,
+      getBackend,
+    } = await import('../escalation-backend.js');
 
     // Get configured backend from operator.json
     const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
-    const backend = getActiveBackend(username);
+    await ensureBackendsInitialized();
+    const backend = preferredBackend
+      ? getBackend(preferredBackend) || getActiveBackend(username)
+      : getActiveBackend(username);
     const backendName = preferredBackend || backend?.name || 'Big Brother';
 
     console.log('[provider-bridge] Big Brother routing enabled', {

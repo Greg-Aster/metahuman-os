@@ -162,7 +162,7 @@
       },
       "data": {
         "label": "Save Thought Chain",
-        "nodeType": "inner_dialogue_capture",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": [
             "train-of-thought",

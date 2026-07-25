@@ -7,7 +7,7 @@ import { writable, get } from 'svelte/store';
 import { apiFetch } from '../api-config';
 
 // Types
-export type MessageRole = 'user' | 'assistant' | 'system' | 'reflection' | 'dream' | 'reasoning';
+export type MessageRole = 'user' | 'assistant' | 'system' | 'robot' | 'thought' | 'reflection' | 'dream' | 'daydream' | 'reasoning';
 
 export interface ChatMessage {
   role: MessageRole;
@@ -34,6 +34,9 @@ interface UseMessagesOptions {
    * Callback when messages change
    */
   onMessagesChange?: (messages: ChatMessage[]) => void;
+
+  /** Browser-only status notices are not durable System Buffer entries. */
+  onTransientSystemMessage?: (message: string) => void;
 }
 
 /**
@@ -41,7 +44,7 @@ interface UseMessagesOptions {
  * Provides reactive state and methods for message management
  */
 export function useMessages(options: UseMessagesOptions) {
-  const { getMode, onMessagesChange } = options;
+  const { getMode, onMessagesChange, onTransientSystemMessage } = options;
 
   // State
   const messages = writable<ChatMessage[]>([]);
@@ -65,6 +68,11 @@ export function useMessages(options: UseMessagesOptions) {
   ): void {
     const trimmed = (content || '').trim();
     if (!trimmed) return;
+
+    if (role === 'system' && onTransientSystemMessage) {
+      onTransientSystemMessage(trimmed);
+      return;
+    }
 
     // NOTE: Duplicate detection removed to expose upstream issues
     // If you see duplicates, debug the source rather than hiding them here

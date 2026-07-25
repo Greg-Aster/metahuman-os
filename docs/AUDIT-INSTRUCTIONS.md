@@ -232,7 +232,7 @@ Use Read to check file structure:
    - Verify uses getAuthenticatedUser() from auth.ts
 
 □ Integrates with Big Brother when needed
-   - If file calls LLM: Should use bigBrotherTerminal
+   - If file calls Big Brother: Should route through the shared escalation backend and `bigBrotherSession`
    - Check if bypassing Big Brother visibility
 ```
 

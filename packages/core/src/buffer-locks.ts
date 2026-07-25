@@ -14,7 +14,7 @@ import { audit } from './audit.js';
 /**
  * Buffer lock information
  */
-export type BufferLockMode = 'conversation' | 'inner' | 'system';
+export type BufferLockMode = 'conversation' | 'inner' | 'system' | 'robot';
 
 export interface BufferLock {
   lockId: string;           // Unique lock identifier

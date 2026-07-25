@@ -7,6 +7,7 @@ const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
   'jump',
   'interact',
   'stop',
+  'captureImage',
   'robotCommand',
   'sendText',
 ]);
@@ -42,15 +43,7 @@ export function parseDirectRobotInstruction(
   const match = instruction.match(
     /^(?:please\s+)?(?:(?:walk|move|go)\s+(forward|forwards|backward|backwards)|turn\s+(left|right))(?:\s+(?:for\s+)?(\d{1,2})\s+(?:steps?|units?))?$/,
   );
-  if (!match) {
-    const command = matchAdvertisedRobotCommand(instruction, supportedRobotCommands);
-    return command
-      ? {
-          action: { type: 'robotCommand', command, sessionId },
-          response: `I will ${command}.`,
-        }
-      : null;
-  }
+  if (!match) return null;
 
   const direction = match[1] ?? match[2];
   const units = match[3] ? Math.max(1, Math.min(10, Number.parseInt(match[3], 10))) : undefined;
@@ -86,22 +79,6 @@ function robotCommandIsSupported(command: string, supportedRobotCommands?: strin
   if (!supportedRobotCommands?.length) return true;
   const normalized = normalizedRobotCommand(command);
   return supportedRobotCommands.some(candidate => normalizedRobotCommand(candidate) === normalized);
-}
-
-function matchAdvertisedRobotCommand(
-  instruction: string,
-  supportedRobotCommands?: string[],
-): string | null {
-  if (!supportedRobotCommands?.length) return null;
-  const phrase = instruction
-    .replace(/^(?:please\s+)?(?:have\s+)?(?:the\s+)?robot\s+/, '')
-    .replace(/^(?:please\s+)?(?:do|perform)\s+(?:a|an|the)?\s*/, '')
-    .replace(/^(?:please\s+)/, '');
-  const normalizedPhrase = normalizedRobotCommand(phrase);
-  const command = supportedRobotCommands.find(candidate => (
-    normalizedRobotCommand(candidate) === normalizedPhrase
-  ));
-  return command?.trim().toLowerCase() || null;
 }
 
 export function stringifyEnvironmentObservation(observation: EnvironmentObservation, systemPrompt: string): string {
@@ -163,6 +140,12 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
     sections.push(`Supported robot commands: ${robotCommands.join(', ')}`);
   }
   sections.push([
+    'Sensor truth contract:',
+    '- Capability and readiness fields describe available hardware, not current sensory content.',
+    '- Claim current sight only from a fresh visual frame and current hearing only from a current audio transcript.',
+    '- Treat false readiness as unavailable and null or missing readiness as unknown.',
+  ].join('\n'));
+  sections.push([
     'Response contract:',
     '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null}.',
     '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
@@ -175,6 +158,14 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
         ? ['- Use only a command named in Supported robot commands.']
         : []),
       '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}]}.',
+    ].join('\n'));
+  }
+  if (observation.capabilities.actions.includes('captureImage')) {
+    sections.push([
+      'Robot vision contract:',
+      '- The camera is the robot\'s visual sense. captureImage obtains one fresh view of the present physical environment.',
+      '- When the current task depends on the present physical scene and no fresh correlated visual frame is available, request captureImage before answering from sight.',
+      '- Do not describe the scene until a fresh correlated visual observation arrives.',
     ].join('\n'));
   }
   if (observation.capabilities.actions.includes('robotMotionPlan')) {

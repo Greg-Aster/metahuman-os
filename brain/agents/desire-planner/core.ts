@@ -40,7 +40,7 @@ import {
   saveDesire,
   saveDesireManifest,
   isAgencyEnabled,
-  appendAgencyMessageToConversation,
+  submitAgencyConversationEntry,
 } from '@metahuman/core';
 import {
   needsClarifyingQuestions,
@@ -387,7 +387,7 @@ async function processDesire(
         );
 
         // Also notify user in main chat so they can see the rejection and respond
-        await appendAgencyMessageToConversation(
+        await submitAgencyConversationEntry(
           username,
           `❌ **Desire Not Feasible:** "${desire.title}"\n\n` +
           `**Reason:** ${feasibility.reasoning}\n\n` +
@@ -451,7 +451,7 @@ async function processDesire(
         .map((q, i) => `${i + 1}. ${q.text}${q.required ? ' *' : ''}`)
         .join('\n');
 
-      await appendAgencyMessageToConversation(
+      await submitAgencyConversationEntry(
         username,
         `I'm working on planning "${desire.title}" and would like to ask a few questions to make sure I understand what you're looking for:\n\n${questionsList}\n\n_Please answer these questions to help me create a better plan._`,
         {
@@ -572,7 +572,7 @@ async function processDesire(
       const reviewReason = verdictNode?.outputs?.reasoning || verdictNode?.outputs?.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
 
       // Notify user in main chat
-      await appendAgencyMessageToConversation(
+      await submitAgencyConversationEntry(
         username,
         `❌ **Plan Rejected:** "${desire.title}"\n\n` +
         `**Reason:** ${reviewReason}\n\n` +

@@ -25,6 +25,7 @@ const STALE_AFTER_MS = 45_000;
 const FUTURE_CLOCK_SKEW_MS = 5_000;
 const MAX_FEEDBACK = 200;
 const MAX_PROCESSED_TEXT_EVENTS = 1_000;
+const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
@@ -42,6 +43,14 @@ let bridgeStateNotificationPending = false;
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function boundedOriginatingInstruction(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const instruction = value.trim();
+  return instruction
+    ? instruction.slice(0, MAX_ORIGINATING_INSTRUCTION_CHARS)
+    : undefined;
 }
 
 function defaultState(): EnvironmentBridgeState {
@@ -158,45 +167,159 @@ export function setEnvironmentBridgeEnabled(enabled: boolean): EnvironmentBridge
   return next;
 }
 
-export function publishEnvironmentObservation(
+export function attachEnvironmentActionContext(
   observation: EnvironmentObservation,
-  options: { username?: string; graph?: string } = {},
-): { summary: EnvironmentBridgeSummary; workId: string } {
+): EnvironmentObservation {
+  const metadata = { ...(observation.metadata ?? {}) };
+  // The adapter may identify the completed action, but it cannot supply a
+  // conversational instruction. Recover that only from MetaHuman's own work.
+  delete metadata.originatingInstruction;
+  const actionId = typeof metadata.actionId === 'string'
+    ? metadata.actionId
+    : observation.feedback?.find(item => item.actionId)?.actionId;
+  if (!actionId) {
+    return observation.metadata?.originatingInstruction === undefined
+      ? observation
+      : { ...observation, metadata };
+  }
+  const task = getQueueManager().getTask(actionId);
+  const originatingInstruction = boundedOriginatingInstruction(
+    task?.metadata?.originatingInstruction,
+  );
+  if (!originatingInstruction) {
+    return observation.metadata?.originatingInstruction === undefined
+      ? observation
+      : { ...observation, metadata };
+  }
+  return {
+    ...observation,
+    metadata: {
+      ...metadata,
+      originatingInstruction,
+    },
+  };
+}
+
+export function recordEnvironmentObservation(
+  observation: EnvironmentObservation,
+): EnvironmentBridgeSummary {
+  const contextualObservation = attachEnvironmentActionContext(observation);
   const state = readEnvironmentBridgeState();
-  const existing = state.sessions[observation.sessionId];
+  const existing = state.sessions[contextualObservation.sessionId];
   const now = nowIso();
-  state.sessions[observation.sessionId] = {
-    sessionId: observation.sessionId,
-    environmentId: observation.environmentId,
-    adapter: observation.adapter,
+  state.sessions[contextualObservation.sessionId] = {
+    sessionId: contextualObservation.sessionId,
+    environmentId: contextualObservation.environmentId,
+    adapter: contextualObservation.adapter,
     status: 'connected',
-    firstSeenAt: existing?.firstSeenAt ?? observation.timestamp ?? now,
-    lastSeenAt: observation.timestamp ?? now,
-    latestObservation: observation,
+    firstSeenAt: existing?.firstSeenAt ?? contextualObservation.timestamp ?? now,
+    lastSeenAt: contextualObservation.timestamp ?? now,
+    latestObservation: contextualObservation,
     processedTextEventIds: existing?.processedTextEventIds ?? [],
   };
-  if (observation.feedback?.length) {
-    state.feedback = boundedFeedback([...state.feedback, ...observation.feedback]);
+  if (contextualObservation.feedback?.length) {
+    state.feedback = boundedFeedback([...state.feedback, ...contextualObservation.feedback]);
   }
-  const summary = summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
+  return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
+}
+
+export function applyRobotStatusToEnvironmentObservation(
+  observation: EnvironmentObservation,
+  robotStatus: Record<string, unknown>,
+): EnvironmentObservation {
+  if (typeof robotStatus.camera_ready !== 'boolean') return observation;
+
+  const body = observation.state?.body;
+  const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : null;
+  const statusRobotId = typeof robotStatus.robot_id === 'string'
+    ? robotStatus.robot_id
+    : undefined;
+  const observedRobotId = typeof bodyRecord?.robotId === 'string'
+    ? bodyRecord.robotId
+    : undefined;
+  if (statusRobotId && observedRobotId && statusRobotId !== observedRobotId) {
+    return observation;
+  }
+
+  const cameraReady = robotStatus.camera_ready;
+  const actions: EnvironmentActionType[] = observation.capabilities.actions.filter(
+    action => action !== 'captureImage',
+  );
+  if (cameraReady) actions.push('captureImage');
+  return {
+    ...observation,
+    capabilities: {
+      ...observation.capabilities,
+      actions,
+      visual: cameraReady,
+    },
+    state: {
+      ...(observation.state ?? {}),
+      body: {
+        ...(bodyRecord ?? {}),
+        cameraReady,
+      },
+    },
+  };
+}
+
+export function recordEnvironmentRobotStatus(
+  sessionId: string,
+  robotStatus: Record<string, unknown>,
+): EnvironmentBridgeSummary {
+  const state = readEnvironmentBridgeState();
+  const session = state.sessions[sessionId];
+  const observation = session?.latestObservation;
+  if (!session || !observation || typeof robotStatus.camera_ready !== 'boolean') {
+    return summarizeEnvironmentBridgeState(state);
+  }
+  const nextObservation = applyRobotStatusToEnvironmentObservation(observation, robotStatus);
+  const currentReady = observation.state?.body
+    && typeof observation.state.body === 'object'
+    && !Array.isArray(observation.state.body)
+    ? (observation.state.body as Record<string, unknown>).cameraReady
+    : undefined;
+  if (
+    nextObservation === observation
+    || (
+      currentReady === robotStatus.camera_ready
+      && observation.capabilities.visual === robotStatus.camera_ready
+      && observation.capabilities.actions.includes('captureImage') === robotStatus.camera_ready
+    )
+  ) {
+    return summarizeEnvironmentBridgeState(state);
+  }
+  session.latestObservation = nextObservation;
+  state.sessions[sessionId] = session;
+  return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
+}
+
+export function publishEnvironmentObservation(
+  observation: EnvironmentObservation,
+  options: { username: string; graph?: string },
+): { summary: EnvironmentBridgeSummary; workId: string } {
+  const contextualObservation = attachEnvironmentActionContext(observation);
+  const summary = recordEnvironmentObservation(contextualObservation);
   const work = getQueueManager().enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
     resource: 'local-llm',
     source: 'environment',
     priority: 'high',
-    input: { observation, graph: options.graph },
-    username: options.username || 'system',
+    input: { observation: contextualObservation, graph: options.graph },
+    username: options.username,
     cognitiveMode: 'environment',
-    correlationId: typeof observation.metadata?.correlationId === 'string'
-      ? observation.metadata.correlationId
-      : observation.feedback?.find(item => item.actionId)?.actionId,
-    idempotencyKey: `environment-observation:${observation.sessionId}:${observation.timestamp}`,
+    correlationId: typeof contextualObservation.metadata?.correlationId === 'string'
+      ? contextualObservation.metadata.correlationId
+      : contextualObservation.feedback?.find(item => item.actionId)?.actionId,
+    idempotencyKey: `environment-observation:${contextualObservation.sessionId}:${contextualObservation.timestamp}`,
     maxAttempts: 1,
     metadata: {
       producer: 'environment-bridge',
-      sessionId: observation.sessionId,
-      robotObserver: observation.metadata?.robotObserver,
+      sessionId: contextualObservation.sessionId,
+      robotObserver: contextualObservation.metadata?.robotObserver,
     },
   });
   return { summary, workId: work.id };
@@ -331,7 +454,11 @@ export function enqueueEnvironmentAction(
     correlationId: options.correlationId,
     idempotencyKey: options.idempotencyKey,
     maxAttempts: 1,
-    metadata: { producer: 'environment-interface', sessionId },
+    metadata: {
+      producer: 'environment-interface',
+      sessionId,
+      originatingInstruction: boundedOriginatingInstruction(options.originatingInstruction),
+    },
   });
   notifyEnvironmentActionSubscribers(sessionId);
   return commandView(task);
@@ -418,7 +545,13 @@ function notifyEnvironmentBridgeStateSubscribers(): void {
   });
 }
 
-export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): EnvironmentCommandWork | undefined {
+export interface RecordedEnvironmentActionResult {
+  action: EnvironmentCommandWork;
+  feedback: EnvironmentFeedback;
+  username: string;
+}
+
+export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): RecordedEnvironmentActionResult | undefined {
   if (!feedback.actionId) return undefined;
 
   const manager = getQueueManager();
@@ -439,7 +572,12 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): En
     if (feedback.type === 'cancelled') manager.cancel(task.id, feedback.message);
     if (feedback.type === 'expired') manager.expire(task.id);
   }
-  return commandView(manager.getTask(task.id) || task);
+  const current = manager.getTask(task.id) || task;
+  return {
+    action: commandView(current),
+    feedback,
+    username: current.username,
+  };
 }
 
 getQueueManager().addEventListener(event => {

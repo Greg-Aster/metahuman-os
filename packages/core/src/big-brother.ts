@@ -26,12 +26,6 @@ import {
   type EscalationResult,
   type ReasoningStep,
 } from './escalation-backend.js';
-import {
-  bigBrotherTerminal,
-  ensureBigBrotherTerminal,
-  sendToBigBrother,
-  isBigBrotherReady,
-} from './big-brother-terminal.js';
 
 /**
  * Optional streaming callbacks for real-time UI display.
@@ -248,40 +242,6 @@ export async function escalateToBigBrother(
     backendId = 'open-interpreter';
   }
 
-  // Auto-start the interactive terminal for Claude Code only
-  if (backendId === 'claude-code' && !isBigBrotherReady()) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_terminal_auto_starting',
-      details: { goal: request.goal },
-      actor: 'big-brother',
-    });
-
-    const terminalStarted = await ensureBigBrotherTerminal();
-    if (terminalStarted) {
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'big_brother_terminal_auto_started',
-        details: { port: 3099 },
-        actor: 'big-brother',
-      });
-
-      // Emit event for UI to open the terminal tab
-      bigBrotherTerminal.emit('open_tab', { port: 3099, url: 'http://localhost:3099' });
-    } else {
-      audit({
-        level: 'warn',
-        category: 'action',
-        event: 'big_brother_terminal_auto_start_failed',
-        details: { goal: request.goal },
-        actor: 'big-brother',
-      });
-      // Continue with background mode if terminal fails
-    }
-  }
-
   audit({
     level: 'info',
     category: 'action',
@@ -381,7 +341,7 @@ export async function escalateToBigBrother(
     // Append reasoning steps to conversation buffer for Inner Dialogue display
     if (reasoningSteps.length > 0) {
       try {
-        const { appendReasoningToBuffer } = await import('./conversation-buffer.js');
+        const { submitInnerReasoning } = await import('./buffer-admission.js');
 
         // Format reasoning steps for display
         const formattedSteps = reasoningSteps
@@ -396,7 +356,7 @@ export async function escalateToBigBrother(
           .join('\n\n');
 
         const userId = request.context?.userId || 'system';
-        await appendReasoningToBuffer(userId, `🤖 **Big Brother Analysis**\n\n${formattedSteps}`, {
+        await submitInnerReasoning(userId, `🤖 **Big Brother Analysis**\n\n${formattedSteps}`, {
           dialogueSource: 'big-brother',
           displayColor: '#8b5cf6', // Purple for Big Brother
           type: 'big_brother_reasoning',

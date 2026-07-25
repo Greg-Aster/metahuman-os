@@ -223,6 +223,13 @@ export async function transcribeAudioUtterance(
     visual: undefined,
     visuals: undefined,
     feedback: undefined,
+    metadata: {
+      correlationId: utterance.metadata.utteranceId,
+      audioUtteranceId: utterance.metadata.utteranceId,
+      robotId: utterance.metadata.robotId,
+      epoch: utterance.metadata.epoch,
+      perceptionEvent: 'audio_utterance',
+    },
     text: [{
       id: `ainekio-audio-${utterance.metadata.utteranceId}`,
       source: 'environment',

@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "System Event",
+  "description": "Admits one durable backend event through the canonical System Buffer node.",
+  "last_modified": "2026-07-19",
+  "nodes": [
+    {
+      "id": "system-buffer",
+      "type": "outputNode",
+      "position": { "x": 120, "y": 120 },
+      "data": {
+        "nodeType": "system_buffer",
+        "label": "System Buffer",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": []
+}

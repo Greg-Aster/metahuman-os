@@ -1,18 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { getUserContext } from './context.js';
 import { systemPaths } from './path-builder.js';
 import { withBufferLock } from './buffer-locks.js';
 import { eventBus } from './infrastructure/event-bus/client.js';
+import { loadChatSettingsForUser } from './chat-settings.js';
 
-export type ConversationBufferMode = 'inner' | 'conversation' | 'system';
+export type CanonicalBufferMode = 'inner' | 'conversation' | 'system' | 'robot';
 
 /**
  * Touch a notification file on LOCAL disk to signal buffer updates.
  * This allows fs.watch() to work reliably even when buffer is on LUKS/NFS/FUSE.
  * The notification file is tiny and just triggers re-reads of the actual buffer.
  */
-export function touchBufferNotification(username: string, mode: ConversationBufferMode): void {
+export function touchBufferNotification(username: string, mode: CanonicalBufferMode): void {
   try {
     const notifyDir = path.join(systemPaths.run, 'buffer-notifications');
     fs.mkdirSync(notifyDir, { recursive: true });
@@ -27,12 +27,12 @@ export function touchBufferNotification(username: string, mode: ConversationBuff
 /**
  * Get the path to the notification file for a user's buffer
  */
-export function getBufferNotificationPath(username: string, mode: ConversationBufferMode): string {
+export function getBufferNotificationPath(username: string, mode: CanonicalBufferMode): string {
   return path.join(systemPaths.run, 'buffer-notifications', `${username}-${mode}.notify`);
 }
 
 export type ConversationMessage = {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'robot' | 'thought' | 'reflection' | 'dream' | 'daydream' | 'reasoning';
   content: string;
   meta?: any;
   timestamp?: number;
@@ -47,65 +47,6 @@ export type ConversationBuffer = {
 };
 
 /**
- * Resolve the on-disk buffer path for a mode within the current user context.
- * Ensures the state directory exists before returning the path.
- */
-export function getConversationBufferPath(mode: ConversationBufferMode): string | null {
-  const ctx = getUserContext();
-  if (!ctx?.profilePaths?.state) return null;
-
-  const bufferDir = ctx.profilePaths.state;
-  try {
-    fs.mkdirSync(bufferDir, { recursive: true });
-  } catch {
-    // Ignore mkdir race conditions - subsequent write will fail if unrecoverable
-  }
-
-  return path.join(bufferDir, `conversation-buffer-${mode}.json`);
-}
-
-/**
- * Calculate metadata richness score for deduplication priority
- */
-function metadataScore(message: ConversationMessage): number {
-  const metaKeys = message.meta && typeof message.meta === 'object'
-    ? Object.keys(message.meta).length
-    : 0;
-  const hasTimestamp = typeof message.timestamp === 'number' ? 1 : 0;
-  return metaKeys * 2 + hasTimestamp;
-}
-
-/**
- * Remove duplicate consecutive messages, preserving the one with richer metadata
- */
-export function dedupeConversationMessages(
-  messages: ConversationMessage[]
-): { deduped: ConversationMessage[]; removed: number } {
-  const deduped: ConversationMessage[] = [];
-  let removed = 0;
-
-  for (const msg of messages) {
-    const last = deduped[deduped.length - 1];
-    if (
-      last &&
-      last.role === msg.role &&
-      last.content === msg.content
-    ) {
-      removed++;
-      // Keep the message with better metadata
-      if (metadataScore(msg) > metadataScore(last)) {
-        deduped[deduped.length - 1] = msg;
-      }
-      continue;
-    }
-
-    deduped.push(msg);
-  }
-
-  return { deduped, removed };
-}
-
-/**
  * Create an empty valid buffer structure
  */
 function createEmptyBuffer(): ConversationBuffer {
@@ -118,207 +59,6 @@ function createEmptyBuffer(): ConversationBuffer {
   };
 }
 
-/**
- * Attempt to recover a corrupted buffer file by backing it up and resetting
- * @returns true if recovery was performed, false if no recovery needed
- */
-function recoverCorruptedBuffer(bufferPath: string, mode: ConversationBufferMode, error: Error): boolean {
-  try {
-    // Create backup of corrupted file with timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${bufferPath}.corrupted-${timestamp}`;
-
-    // Only backup if file exists and has content (or is 0 bytes which is also corruption)
-    if (fs.existsSync(bufferPath)) {
-      const stats = fs.statSync(bufferPath);
-      if (stats.size > 0) {
-        fs.copyFileSync(bufferPath, backupPath);
-        console.warn(`[conversation-buffer] ⚠️ Backed up corrupted ${mode} buffer to: ${backupPath}`);
-      } else {
-        console.warn(`[conversation-buffer] ⚠️ ${mode} buffer was empty (0 bytes) - likely disk write failure`);
-      }
-    }
-
-    // Write valid empty buffer
-    const emptyBuffer = createEmptyBuffer();
-    fs.writeFileSync(bufferPath, JSON.stringify(emptyBuffer, null, 2));
-    console.warn(`[conversation-buffer] ✅ Auto-recovered ${mode} buffer - reset to empty state`);
-    console.warn(`[conversation-buffer] Original error was: ${error.message}`);
-
-    // Touch notification
-    const ctx = getUserContext();
-    if (ctx?.username) {
-      touchBufferNotification(ctx.username, mode);
-    }
-
-    return true;
-  } catch (recoveryError) {
-    console.error(`[conversation-buffer] ❌ Failed to recover corrupted ${mode} buffer:`, recoveryError);
-    return false;
-  }
-}
-
-/**
- * Load persisted conversation buffer from disk
- * Handles deduplication and summary marker preservation
- * Auto-recovers from corrupted files by backing up and resetting
- */
-export function loadPersistedBuffer(mode: ConversationBufferMode): {
-  messages: ConversationMessage[];
-  summaryMarkers: ConversationMessage[];
-  lastSummarizedIndex: number | null;
-} {
-  const bufferPath = getConversationBufferPath(mode);
-  if (!bufferPath || !fs.existsSync(bufferPath)) {
-    return { messages: [], summaryMarkers: [], lastSummarizedIndex: null };
-  }
-
-  try {
-    const raw = fs.readFileSync(bufferPath, 'utf-8');
-
-    // Check for empty file (common disk write failure symptom)
-    if (!raw || raw.trim().length === 0) {
-      console.warn(`[conversation-buffer] ⚠️ ${mode} buffer file is empty - auto-recovering`);
-      recoverCorruptedBuffer(bufferPath, mode, new Error('Empty file'));
-      return { messages: [], summaryMarkers: [], lastSummarizedIndex: null };
-    }
-
-    const parsed: Partial<ConversationBuffer> = JSON.parse(raw);
-
-    const persistedMessages: ConversationMessage[] = Array.isArray(parsed.messages)
-      ? parsed.messages
-      : [];
-    const persistedSummaryMarkers: ConversationMessage[] = Array.isArray(parsed.summaryMarkers)
-      ? parsed.summaryMarkers
-      : persistedMessages.filter(msg => msg.meta?.summaryMarker);
-
-    // Remove any summary markers from the main messages array to avoid duplication
-    const conversationMessages = persistedMessages.filter(msg => !msg.meta?.summaryMarker);
-    const { deduped, removed } = dedupeConversationMessages(conversationMessages);
-
-    if (removed > 0) {
-      console.log(`[conversation-buffer] Removed ${removed} duplicate ${mode} messages from persisted buffer`);
-    }
-
-    // Combine deduped messages with summary markers
-    const combined = [...deduped];
-    if (persistedSummaryMarkers.length > 0) {
-      // Insert summary markers after system prompt if it exists
-      if (
-        combined.length > 0 &&
-        combined[0].role === 'system' &&
-        !combined[0].meta?.summaryMarker
-      ) {
-        combined.splice(1, 0, ...persistedSummaryMarkers);
-      } else {
-        combined.unshift(...persistedSummaryMarkers);
-      }
-    }
-
-    const derivedLastSummarized =
-      typeof parsed.lastSummarizedIndex === 'number'
-        ? parsed.lastSummarizedIndex
-        : (persistedSummaryMarkers.length > 0
-            ? persistedSummaryMarkers.reduce((max, marker) => {
-                const count = marker.meta?.summaryCount;
-                return typeof count === 'number' && count > max ? count : max;
-              }, 0)
-            : null);
-
-    // Re-persist if we removed duplicates
-    if (removed > 0) {
-      try {
-        const payload: ConversationBuffer = {
-          summaryMarkers: persistedSummaryMarkers,
-          messages: deduped,
-          lastSummarizedIndex: derivedLastSummarized ?? null,
-          lastUpdated: new Date().toISOString(),
-          userMessageCount: parsed.userMessageCount ?? deduped.filter(message => message.role === 'user').length,
-        };
-        fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
-
-        // Touch notification file on local disk to trigger SSE updates
-        const ctx = getUserContext();
-        if (ctx?.username) {
-          touchBufferNotification(ctx.username, mode);
-        }
-      } catch (error) {
-        console.warn('[conversation-buffer] Failed to persist deduplicated buffer:', error);
-      }
-    }
-
-    return {
-      messages: combined,
-      summaryMarkers: persistedSummaryMarkers,
-      lastSummarizedIndex: derivedLastSummarized ?? null,
-    };
-  } catch (error) {
-    // JSON parse error or other corruption - attempt auto-recovery
-    console.warn(`[conversation-buffer] ⚠️ Failed to load ${mode} buffer:`, error);
-
-    if (bufferPath && error instanceof SyntaxError) {
-      // JSON parse error - corrupted file, attempt recovery
-      recoverCorruptedBuffer(bufferPath, mode, error);
-    }
-
-    return { messages: [], summaryMarkers: [], lastSummarizedIndex: null };
-  }
-}
-
-/**
- * Persist conversation buffer to disk with locking
- */
-export async function persistBuffer(
-  mode: ConversationBufferMode,
-  messages: ConversationMessage[],
-  windowId?: string
-): Promise<void> {
-  const bufferPath = getConversationBufferPath(mode);
-  if (!bufferPath) return;
-
-  const ctx = getUserContext();
-  if (!ctx?.username) return;
-
-  await withBufferLock(ctx.username, mode, 'persist_buffer', async () => {
-    try {
-      const summaryMarkers = messages.filter(msg => msg.meta?.summaryMarker);
-      const conversationMessages = messages.filter(msg => !msg.meta?.summaryMarker);
-
-      // Derive lastSummarizedIndex from markers
-      const lastSummarizedIndex = summaryMarkers.length > 0
-        ? summaryMarkers.reduce((max, marker) => {
-            const count = marker.meta?.summaryCount;
-            return typeof count === 'number' && count > max ? count : max;
-          }, 0)
-        : null;
-
-      const payload: ConversationBuffer = {
-        summaryMarkers,
-        messages: conversationMessages,
-        lastSummarizedIndex,
-        lastUpdated: new Date().toISOString(),
-        userMessageCount: (() => {
-          try {
-            if (!fs.existsSync(bufferPath)) return conversationMessages.filter(message => message.role === 'user').length;
-            const existing = JSON.parse(fs.readFileSync(bufferPath, 'utf8')) as Partial<ConversationBuffer>;
-            return Math.max(existing.userMessageCount || 0, conversationMessages.filter(message => message.role === 'user').length);
-          } catch {
-            return conversationMessages.filter(message => message.role === 'user').length;
-          }
-        })(),
-      };
-
-      fs.writeFileSync(bufferPath, JSON.stringify(payload, null, 2));
-
-      // Touch notification file on local disk to trigger SSE updates
-      touchBufferNotification(ctx.username, mode);
-    } catch (error) {
-      console.error('[conversation-buffer] Failed to persist buffer:', error);
-      throw error;
-    }
-  }, windowId);
-}
-
 // ============================================================================
 // Agent-friendly functions (don't require AsyncLocalStorage context)
 // ============================================================================
@@ -326,28 +66,25 @@ export async function persistBuffer(
 import { getProfilePaths } from './paths.js';
 import { getUser, getUserByUsername } from './users.js';
 
-function getConversationBufferLimit(username: string): number {
-  const fallback = 50;
-
-  try {
-    const settingsPath = path.join(getProfilePaths(username).root, 'etc', 'chat-settings.json');
-    if (!fs.existsSync(settingsPath)) return fallback;
-
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const configured = Number(settings.settings?.maxHistoryMessages?.value);
-    if (!Number.isFinite(configured)) return fallback;
-
-    return Math.max(5, Math.min(500, Math.floor(configured)));
-  } catch {
-    return fallback;
-  }
+function getConversationBufferLimit(username: string, mode: CanonicalBufferMode): number {
+  const settings = loadChatSettingsForUser(username);
+  const limits: Record<CanonicalBufferMode, { value: number; fallback: number; minimum: number }> = {
+    conversation: { value: settings.conversationBufferLimit, fallback: 30, minimum: 5 },
+    inner: { value: settings.innerBufferLimit, fallback: 80, minimum: 20 },
+    system: { value: settings.systemBufferLimit, fallback: 100, minimum: 20 },
+    robot: { value: settings.robotBufferLimit, fallback: 100, minimum: 20 },
+  };
+  const limit = limits[mode];
+  const configured = Number(limit.value);
+  if (!Number.isFinite(configured)) return limit.fallback;
+  return Math.max(limit.minimum, Math.min(500, Math.floor(configured)));
 }
 
 /**
  * Get buffer path for a specific user (by username)
  * Used by agents that run outside web request context
  */
-export function getBufferPathForUser(username: string, mode: ConversationBufferMode): string {
+export function getBufferPathForUser(username: string, mode: CanonicalBufferMode): string {
   const profilePaths = getProfilePaths(username);
   const bufferDir = profilePaths.state;
   try {
@@ -358,11 +95,90 @@ export function getBufferPathForUser(username: string, mode: ConversationBufferM
   return path.join(bufferDir, `conversation-buffer-${mode}.json`);
 }
 
+/** Read one canonical per-profile buffer without requiring request context. */
+export function loadBufferForUser(username: string, mode: CanonicalBufferMode): ConversationBuffer {
+  const bufferPath = getBufferPathForUser(username, mode);
+  if (!fs.existsSync(bufferPath)) return createEmptyBuffer();
+
+  try {
+    const raw = fs.readFileSync(bufferPath, 'utf8');
+    if (!raw.trim()) {
+      recoverCorruptedBufferForUser(bufferPath, username, mode, new Error('Empty file'));
+      return createEmptyBuffer();
+    }
+    const parsed = JSON.parse(raw) as Partial<ConversationBuffer>;
+    return {
+      summaryMarkers: Array.isArray(parsed.summaryMarkers) ? parsed.summaryMarkers : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      lastSummarizedIndex: typeof parsed.lastSummarizedIndex === 'number' ? parsed.lastSummarizedIndex : null,
+      lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : new Date().toISOString(),
+      userMessageCount: typeof parsed.userMessageCount === 'number' ? parsed.userMessageCount : 0,
+    };
+  } catch (error) {
+    recoverCorruptedBufferForUser(bufferPath, username, mode, error as Error);
+    return createEmptyBuffer();
+  }
+}
+
+/** Clear one canonical buffer through the storage owner and notify subscribers. */
+export async function clearBufferForUser(username: string, mode: CanonicalBufferMode): Promise<boolean> {
+  const result = await withBufferLock(username, mode, 'clear_buffer', async () => {
+    const bufferPath = getBufferPathForUser(username, mode);
+    fs.writeFileSync(bufferPath, JSON.stringify(createEmptyBuffer(), null, 2));
+    touchBufferNotification(username, mode);
+    return true;
+  });
+  return result === true;
+}
+
+export interface ConversationBufferSummary {
+  sessionId: string;
+  content: string;
+  messageCount: number;
+}
+
+/** Storage primitive used only by the Conversation Buffer node. */
+export async function writeConversationBufferSummary(
+  username: string,
+  summary: ConversationBufferSummary,
+): Promise<boolean> {
+  const result = await withBufferLock(username, 'conversation', 'write_summary', async () => {
+    const bufferPath = getBufferPathForUser(username, 'conversation');
+    const buffer = loadBufferForUser(username, 'conversation');
+    const summaryMarkers = buffer.summaryMarkers.filter(
+      marker => !(marker.meta?.summaryMarker && marker.meta.sessionId === summary.sessionId)
+    );
+    const rangeEnd = Math.max(summary.messageCount - 1, 0);
+    summaryMarkers.push({
+      role: 'system',
+      content: `Conversation summary (messages 0-${rangeEnd}): ${summary.content}`,
+      timestamp: Date.now(),
+      meta: {
+        summaryMarker: true,
+        sessionId: summary.sessionId,
+        createdAt: new Date().toISOString(),
+        range: { start: 0, end: rangeEnd },
+        summaryCount: summary.messageCount,
+      },
+    });
+    fs.writeFileSync(bufferPath, JSON.stringify({
+      ...buffer,
+      summaryMarkers,
+      messages: buffer.messages.filter(message => !message.meta?.summaryMarker),
+      lastSummarizedIndex: summary.messageCount,
+      lastUpdated: new Date().toISOString(),
+    }, null, 2));
+    touchBufferNotification(username, 'conversation');
+    return true;
+  });
+  return result === true;
+}
+
 /**
  * Attempt to recover a corrupted buffer file for agent context (no user context required)
  * @returns true if recovery was performed, false if no recovery needed
  */
-function recoverCorruptedBufferForUser(bufferPath: string, username: string, mode: ConversationBufferMode, error: Error): boolean {
+function recoverCorruptedBufferForUser(bufferPath: string, username: string, mode: CanonicalBufferMode, error: Error): boolean {
   try {
     // Create backup of corrupted file with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -400,14 +216,14 @@ function recoverCorruptedBufferForUser(bufferPath: string, username: string, mod
  * Can be called from agents without web request context
  *
  * @param userIdOrUsername - User UUID or username (both supported for agent compatibility)
- * @param mode - 'conversation' or 'inner'
+ * @param mode - Canonical buffer mode
  * @param message - Message to append
  * @param windowId - Optional window ID that is performing the append
  * @returns Promise<true> if successful
  */
-export async function appendToUserBuffer(
+export async function writeBufferEntry(
   userIdOrUsername: string,
-  mode: ConversationBufferMode,
+  mode: CanonicalBufferMode,
   message: { role: string; content: string; meta?: Record<string, unknown> },
   windowId?: string
 ): Promise<boolean> {
@@ -457,9 +273,20 @@ export async function appendToUserBuffer(
         buffer = createEmptyBuffer();
       }
 
+      const idempotencyKey = typeof message.meta?.idempotencyKey === 'string'
+        ? message.meta.idempotencyKey.trim()
+        : '';
+      if (
+        idempotencyKey
+        && buffer.messages.some(existing => existing.meta?.idempotencyKey === idempotencyKey)
+      ) {
+        console.log(`[conversation-buffer] Skipped duplicate ${mode} entry for ${usernameForBuffer}: ${idempotencyKey}`);
+        return true;
+      }
+
       // Add message with timestamp
       const newMessage: ConversationMessage = {
-        role: message.role as 'system' | 'user' | 'assistant',
+        role: message.role as ConversationMessage['role'],
         content: message.content,
         meta: message.meta,
         timestamp: Date.now(),
@@ -478,7 +305,7 @@ export async function appendToUserBuffer(
 
       // Keep pruning policy in the canonical buffer owner so graph nodes and
       // API handlers cannot drift into competing limits or settings paths.
-      const maxMessages = getConversationBufferLimit(usernameForBuffer);
+      const maxMessages = getConversationBufferLimit(usernameForBuffer, mode);
       if (buffer.messages.length > maxMessages) {
         buffer.messages = buffer.messages.slice(-maxMessages);
       }
@@ -506,120 +333,4 @@ export async function appendToUserBuffer(
     }, { userId: usernameForBuffer });
   }
   return result !== null;
-}
-
-/**
- * Append a reflection to a user's inner dialogue buffer
- * Convenience function for agents
- * @param userId - The user ID to append to
- * @param content - The reflection content
- * @param extraMeta - Optional additional metadata (e.g., { dialogueSource: 'operator-policy' })
- */
-export async function appendReflectionToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'inner', {
-    role: 'reflection',
-    content,
-    meta: { type: 'reflection', source: 'agent', ...extraMeta },
-  });
-}
-
-/**
- * Append a dream to a user's inner dialogue buffer
- * Convenience function for agents
- * @param userId - The user ID to append to
- * @param content - The dream content
- * @param extraMeta - Optional additional metadata
- */
-export async function appendDreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'inner', {
-    role: 'dream',
-    content,
-    meta: { type: 'dream', source: 'agent', ...extraMeta },
-  });
-}
-
-/**
- * Append a daydream to a user's inner dialogue buffer
- * Convenience function for daydreamer agent
- * @param userId - The user ID to append to
- * @param content - The daydream content
- * @param extraMeta - Optional additional metadata
- */
-export async function appendDaydreamToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'inner', {
-    role: 'daydream',
-    content,
-    meta: { type: 'daydream', source: 'agent', dialogueSource: 'inner', ...extraMeta },
-  });
-}
-
-/**
- * Append execution progress to a user's system buffer
- * Used by desire executor to show Big Brother execution steps in real-time
- * @param userId - The user ID to append to
- * @param content - The progress message
- * @param extraMeta - Optional additional metadata (e.g., { stepNumber, action, desireId })
- */
-export async function appendExecutionProgressToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'system', {
-    role: 'system',
-    content,
-    meta: { type: 'execution_progress', source: 'big-brother', dialogueSource: 'big-brother', displayColor: '#f59e0b', ...extraMeta },
-  });
-}
-
-/**
- * Append a system message to a user's system buffer
- * Used for system-originated status and lizard brain outputs
- * @param userId - The user ID to append to
- * @param content - The message content
- * @param extraMeta - Optional additional metadata (e.g., { dialogueSource })
- */
-export async function appendSystemMessageToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'system', {
-    role: 'system',
-    content,
-    meta: { type: 'system_message', source: 'system', ...extraMeta },
-  });
-}
-
-/**
- * Append an agency message to a user's CONVERSATION buffer
- * Used for desire lifecycle events that need user visibility and interaction.
- * These messages appear in the main chat (not hidden in Inner Dialogue tab).
- *
- * @param userId - The user ID to append to
- * @param content - The message content
- * @param extraMeta - Required metadata should include { dialogueSource: 'agency-system', type, desireId }
- */
-export async function appendAgencyMessageToConversation(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  return appendToUserBuffer(userId, 'conversation', {
-    role: 'assistant',
-    content,
-    meta: {
-      type: 'agency_message',
-      source: 'agency',
-      dialogueSource: 'agency-system',
-      isAgencyMessage: true,
-      ...extraMeta
-    },
-  });
-}
-
-/**
- * Append reasoning/thinking to a user's inner dialogue buffer
- * Used by thinking stripper to display LLM reasoning in a separate section
- * @param userId - The user ID to append to
- * @param content - The reasoning content (extracted from <think> blocks)
- * @param extraMeta - Optional additional metadata (e.g., { dialogueSource, displayColor })
- */
-export async function appendReasoningToBuffer(userId: string, content: string, extraMeta?: Record<string, any>): Promise<boolean> {
-  if (!content || content.trim().length === 0) {
-    return false;
-  }
-  return appendToUserBuffer(userId, 'inner', {
-    role: 'reasoning',
-    content,
-    meta: { type: 'reasoning', source: 'agent', displayColor: '#8b5cf6', ...extraMeta },
-  });
 }

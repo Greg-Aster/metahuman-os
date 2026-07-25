@@ -96,12 +96,12 @@
   ];
 
   const bigBrotherProviderOptions: { value: BigBrotherProvider; label: string; description: string }[] = [
-    { value: 'claude-code', label: 'Claude Code', description: 'Uses your Claude Pro subscription via CLI' },
+    { value: 'claude-code', label: 'Claude Code', description: 'Runs in the visible Big Brother terminal' },
     { value: 'open-interpreter', label: 'Open Interpreter', description: 'Uses RunPod or other configured LLM' },
     { value: 'aider', label: 'Aider', description: 'AI pair programming with git integration' },
     { value: 'gemini-cli', label: 'Gemini CLI', description: 'Google Gemini CLI' },
     { value: 'qwen-code', label: 'Qwen Code', description: 'Qwen Code CLI' },
-    { value: 'codex', label: 'Codex', description: 'OpenAI Codex CLI' },
+    { value: 'codex', label: 'Codex', description: 'Runs in the visible Big Brother terminal' },
   ];
 
   let loading = true;
@@ -1764,7 +1764,7 @@
     <section class="panel p-4 mb-6 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
       <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">Escalation</h4>
       <p class="text-sm text-blue-700 dark:text-blue-400 mb-3">
-        Big Brother is a task escalation route. It is separate from the default chat backend.
+        Big Brother is a task escalation route. Claude Code and Codex run in one visible terminal session; closing that tab cancels the active process.
       </p>
 
       <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer mb-3">

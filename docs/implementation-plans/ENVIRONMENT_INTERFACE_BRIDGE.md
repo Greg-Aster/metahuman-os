@@ -37,7 +37,7 @@ configuration.
 
 Environment observations may contain a JPEG data URL. The
 environment_image_input node accepts one still, validates JPEG format and the
-120 KiB limit, and emits OpenAI-compatible image_url content. Environment
+256 KiB limit, and emits OpenAI-compatible image_url content. Environment
 Context Builder combines the image with the textual state prompt. Provider and
 vLLM message types preserve the structured content array through the outgoing
 chat-completions request.

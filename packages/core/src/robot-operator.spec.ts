@@ -6,6 +6,7 @@ import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
   chooseBoredomMovementCommand,
+  beginEnvironmentPerceptionCycle,
   eligibleBoredomMovementCommands,
   isBoredomMovementEnabled,
   loadBoredomMovementCommandAllowlist,
@@ -55,6 +56,23 @@ test('robot observer correlation advances only within its bounded cycle', () => 
   }), null)
 })
 
+test('robot audio perception reuses the finite observer counter without depending on the observer agent lifecycle', () => {
+  const cycle = beginEnvironmentPerceptionCycle(
+    'utterance-1',
+    'environment',
+    3,
+  )
+  assert.deepEqual(cycle, {
+    cycleId: 'utterance-1',
+    step: 1,
+    maxSteps: 3,
+    triggerSource: 'user',
+    graph: 'environment',
+    requestedBy: 'environment-perception',
+  })
+  assert.equal(nextRobotObserverCycle(cycle!)?.step, 2)
+})
+
 test('robot observer and operator have separate lifecycle owners', () => {
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-observer'].lifecycle, 'workflow')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-observer'].handler, 'workflow.robot-observer')
@@ -100,11 +118,11 @@ test('boredom movement owns and intersects its stationary command allowlist', ()
   assert.equal(chooseBoredomMovementCommand(commands, () => 0.999), 'dead')
 })
 
-test('agent-selected exact command controls the unchanged Environment Mode parser', async () => {
+test('boredom movement remains capability-gated without natural-language command manufacturing', async () => {
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
-      response: 'I will walk instead.',
-      actions: [{ type: 'robotCommand', command: 'walk' }],
+      response: 'I will wave.',
+      actions: [{ type: 'robotCommand', command: 'wave' }],
       movementRequest: null,
     }),
     instruction: 'perform wave',
@@ -123,13 +141,61 @@ test('agent-selected exact command controls the unchanged Environment Mode parse
   assert.equal(parsed.actions.length, 1)
   assert.equal(parsed.actions[0]?.type, 'robotCommand')
   assert.equal(parsed.actions[0]?.command, 'wave')
+
+  const conflicting = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I will walk instead.',
+      actions: [{ type: 'robotCommand', command: 'walk' }],
+      movementRequest: null,
+    }),
+    instruction: 'perform wave',
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'ainekio-sim-1',
+      timestamp: new Date().toISOString(),
+      capabilities: {
+        actions: ['robotCommand'],
+        robotCommands: ['wave'],
+      },
+    },
+    sessionId: 'ainekio-sim-1',
+  }, {})
+  assert.equal(conflicting.actions.length, 0)
 })
 
-test('captureImage remains internal to Robot Observer rather than a graph action', () => {
+test('structured captureImage remains available and capability gated', async () => {
   const allowed = environmentSendActionNode.properties?.allowedActions as string[]
-  assert.equal(allowed.includes('captureImage'), false)
+  assert.equal(allowed.includes('captureImage'), true)
   const graph = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'cognitive-graphs', 'environment-mode.json'), 'utf8'))
   const bridge = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_send_action')
-  assert.equal(bridge.data.properties.allowedActions.includes('captureImage'), false)
+  assert.equal(bridge.data.properties.allowedActions.includes('captureImage'), true)
   assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'boredom_movement'), false)
+
+  const parsed = await environmentActionParserNode.execute({
+    response: '{"response":"I need a fresh view before answering.","actions":[{"type":"captureImage"}],"movementRequest":null}',
+    instruction: 'describe the current physical surroundings using your available senses',
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'ainekio-01',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['captureImage'], visual: true },
+    },
+    sessionId: 'ainekio-01',
+  }, {})
+  assert.equal(parsed.actions.length, 1)
+  assert.equal(parsed.actions[0]?.type, 'captureImage')
+
+  const unavailable = await environmentActionParserNode.execute({
+    response: '{"response":"I need current visual perception.","actions":[{"type":"captureImage"}],"movementRequest":null}',
+    instruction: 'inspect the current physical environment',
+    observation: {
+      environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'ainekio-01',
+      timestamp: new Date().toISOString(), capabilities: { actions: [], visual: false },
+    },
+    sessionId: 'ainekio-01',
+  }, {})
+  assert.equal(unavailable.actions.length, 0)
+  assert.match(unavailable.response, /camera is not currently available/i)
 })

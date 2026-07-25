@@ -1,8 +1,8 @@
 import { audit } from '../audit.js';
 import {
-  appendAgencyMessageToConversation,
-  appendReflectionToBuffer,
-} from '../conversation-buffer.js';
+  submitAgencyConversationEntry,
+  submitInnerReflection,
+} from '../buffer-admission.js';
 import { searchMemory } from '../memory.js';
 import { callLLMText } from '../model-router.js';
 import {
@@ -158,7 +158,7 @@ export async function runDesireCheckin(
   };
   if (desires.length === 0) return result;
 
-  await appendReflectionToBuffer(
+  await submitInnerReflection(
     options.username,
     `Checking in on ${desires.length} long-running goal${desires.length === 1 ? '' : 's'}.`,
     { dialogueSource: 'agency-system', displayColor: '#8b5cf6', type: 'desire_checkin_start' },
@@ -174,7 +174,7 @@ export async function runDesireCheckin(
       if (evaluation.questionsForUser.length > 0) {
         result.questionsGenerated += evaluation.questionsForUser.length;
         const questions = evaluation.questionsForUser.map((question, index) => `${index + 1}. ${question}`).join('\n');
-        await appendAgencyMessageToConversation(
+        await submitAgencyConversationEntry(
           options.username,
           `**Check-in on "${desire.title}"**\n\n${evaluation.statusAssessment}\n\n**Questions**\n${questions}`,
           {
@@ -195,7 +195,7 @@ export async function runDesireCheckin(
         const advanced = await advanceDesireMilestone(desire.id, options.username);
         if (advanced) {
           result.milestonesAdvanced += 1;
-          await appendAgencyMessageToConversation(
+          await submitAgencyConversationEntry(
             options.username,
             `**Milestone complete: "${desire.title}"**\n\nCompleted: ${advanced.completedMilestone.title}${advanced.nextMilestone ? `\nNext: ${advanced.nextMilestone.title}` : ''}`,
             {
@@ -208,7 +208,7 @@ export async function runDesireCheckin(
           );
         }
       } else if (evaluation.recommendation === 'escalate') {
-        await appendAgencyMessageToConversation(
+        await submitAgencyConversationEntry(
           options.username,
           `**Attention needed: "${desire.title}"**\n\n${evaluation.statusAssessment}${evaluation.recommendationReason ? `\n\nReason: ${evaluation.recommendationReason}` : ''}`,
           {
@@ -220,7 +220,7 @@ export async function runDesireCheckin(
           },
         );
       } else if (evaluation.questionsForUser.length === 0) {
-        await appendReflectionToBuffer(
+        await submitInnerReflection(
           options.username,
           `**Check-in: "${desire.title}"**\n\n${evaluation.statusAssessment}\nProgress: ${desire.goalProgress?.progressPercent || 0}%\nRecommendation: ${evaluation.recommendation}`,
           { dialogueSource: 'agency-system', displayColor: '#6b7280', type: 'desire_checkin_status' },
@@ -236,7 +236,7 @@ export async function runDesireCheckin(
     throw new Error(`Desire check-in failed: ${result.errors.join('; ')}`);
   }
 
-  await appendReflectionToBuffer(
+  await submitInnerReflection(
     options.username,
     `Check-in complete: ${result.processed} evaluated, ${result.questionsGenerated} questions, ${result.milestonesAdvanced} milestones advanced.`,
     { dialogueSource: 'agency-system', displayColor: '#22c55e', type: 'desire_checkin_complete' },

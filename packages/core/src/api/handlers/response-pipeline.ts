@@ -2,8 +2,8 @@
  * Response Pipeline API Handler
  *
  * Handles card-based responses through a dedicated, focused pipeline.
- * Unlike dual-consciousness (34 nodes), this uses a simple 5-node graph:
- *   CardInput → CardContextLoader → ResponseLLM → ResponseActionRouter → DualWriter
+ * Unlike dual-consciousness, this uses a focused six-node graph:
+ *   Card Input → Context → LLM → Action Router → Response Context → Conversation Buffer
  *
  * Key differences from /api/persona_chat:
  * - No memory search (loads only card context)
@@ -91,9 +91,9 @@ async function loadResponsePipelineGraph(): Promise<SvelteFlowGraph | null> {
  * Generate actionable error suggestions based on error type and failed node
  */
 function getErrorSuggestion(error: string, failedNode: string | null): string {
-  // Big Brother / Claude Code errors
+  // Big Brother provider errors
   if (error.includes('Big Brother') || error.includes('Claude') || error.includes('claude_cli')) {
-    return 'Claude Code may have crashed or is unresponsive. Try:\n• Check if Claude Code is running\n• Restart Claude Code\n• Check Big Brother terminal for errors\n• View logs in the terminal output';
+    return 'The selected Big Brother provider may have crashed or become unresponsive. Try:\n• Check the visible Big Brother terminal for errors\n• Close the terminal tab to cancel the process\n• Send the request again';
   }
 
   // Node-specific failures
@@ -113,7 +113,7 @@ function getErrorSuggestion(error: string, failedNode: string | null): string {
     return 'Failed to update desire status. Try:\n• Check profile storage permissions\n• Verify desire file exists and is not corrupted\n• Check disk space\n• Try refreshing the desire in the UI';
   }
 
-  if (failedNode === 'dual_writer') {
+  if (failedNode === 'response_context_writer' || failedNode === 'conversation_buffer') {
     return 'Failed to save response. Try:\n• Check disk space\n• Verify profile storage is writable\n• Check file permissions\n• Look for file system errors in logs';
   }
 

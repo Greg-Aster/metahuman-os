@@ -1,8 +1,8 @@
-import { Buffer } from 'node:buffer';
 import { defineNode } from '../types.js';
-import type { EnvironmentVisualFrame } from '../../environment-interface/index.js';
-const JPEG_PREFIX = 'data:image/jpeg;base64,';
-const MAX_JPEG_BYTES = 120 * 1024;
+import {
+  validEnvironmentJpegDataUrl,
+  type EnvironmentVisualFrame,
+} from '../../environment-interface/index.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -23,17 +23,6 @@ function framesFromInputs(visual: unknown, visuals: unknown): EnvironmentVisualF
   });
 }
 
-function validJpegDataUrl(value: unknown): value is string {
-  if (typeof value !== 'string' || !value.startsWith(JPEG_PREFIX)) return false;
-  const encoded = value.slice(JPEG_PREFIX.length);
-  if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(encoded)) return false;
-  const payload = Buffer.from(encoded, 'base64');
-  if (payload.length < 6 || payload.length > MAX_JPEG_BYTES) return false;
-  if (payload[0] !== 0xff || payload[1] !== 0xd8) return false;
-  if (payload.at(-2) !== 0xff || payload.at(-1) !== 0xd9) return false;
-  return payload.indexOf(Buffer.from([0xff, 0xda]), 2) > 1;
-}
-
 export const environmentImageInputNode = defineNode({
   id: 'environment_image_input',
   name: 'Environment Image Input',
@@ -50,7 +39,7 @@ export const environmentImageInputNode = defineNode({
   description: 'Validates a bounded JPEG still and converts it to OpenAI-compatible image content.',
   async execute(inputs) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
-    const accepted = candidates.filter(frame => validJpegDataUrl(frame.dataUrl)).slice(0, 1);
+    const accepted = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl)).slice(0, 1);
     return {
       images: accepted.map(frame => ({
         type: 'image_url',

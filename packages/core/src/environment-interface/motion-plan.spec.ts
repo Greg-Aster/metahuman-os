@@ -131,6 +131,21 @@ test('routes eligible off-script requests while known semantic commands bypass g
   assert.equal(politeKnown.actions[0]?.command, 'shrug');
   assert.equal(politeKnown.movementRequest, null);
 
+  const conversationalCatalogCommand = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'Walking forward.',
+      actions: [{ type: 'robotCommand', command: 'walk' }],
+      movementRequest: null,
+    }),
+    instruction: 'can you walk forward?',
+    routingAnalysis: movementRouting,
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+  assert.equal(conversationalCatalogCommand.actions[0]?.type, 'robotCommand');
+  assert.equal(conversationalCatalogCommand.actions[0]?.command, 'walk');
+  assert.equal(conversationalCatalogCommand.movementRequest, null);
+
   const offScript = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will generate that movement.',
@@ -264,4 +279,35 @@ test('capability absence rejects the generation branch without calling a model',
   assert.deepEqual(generated.actions, []);
   assert.equal(generated.rejected, true);
   assert.match(generated.error, /not advertised/i);
+});
+
+test('a missing robot session is reported before freestyle capability negotiation', async () => {
+  const parsed = await environmentActionParserNode.execute({
+    response: JSON.stringify({ response: 'Moving.', actions: [], movementRequest: null }),
+    instruction: 'can you do the macarena?',
+    routingAnalysis: movementRouting,
+    observation: {
+      environmentId: 'unavailable',
+      adapter: 'none',
+      sessionId: '',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: [] },
+    },
+    sessionId: '',
+  }, {});
+  assert.equal(parsed.valid, false);
+  assert.match(parsed.error, /no robot session is connected/i);
+
+  const generated = await movementGeneratorNode.execute({
+    movementRequest: { description: 'do the macarena' },
+    observation: {
+      environmentId: 'unavailable',
+      adapter: 'none',
+      sessionId: '',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: [] },
+    },
+    sessionId: '',
+  }, {});
+  assert.match(generated.error, /connected target session/i);
 });

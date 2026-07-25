@@ -22,7 +22,7 @@ import {
   saveDesireManifest,
   addScratchpadEntryToFolder,
 } from '../../agency/storage.js';
-import { appendExecutionProgressToBuffer } from '../../conversation-buffer.js';
+import { submitExecutionProgress } from '../../buffer-admission.js';
 import {
   escalate,
   getActiveBackend,
@@ -178,7 +178,7 @@ async function executeStep(
 
   // Write to inner dialogue buffer
   if (username) {
-    appendExecutionProgressToBuffer(username, workingMsg, {
+    await submitExecutionProgress(username, workingMsg, {
       desireId: desire.id,
       stepNumber: step.order,
       action: step.action,
@@ -326,7 +326,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     // Write to inner dialogue buffer for real-time visibility
     if (username) {
-      appendExecutionProgressToBuffer(username, `🎯 ${stepStartMsg}`, {
+      await submitExecutionProgress(username, `🎯 ${stepStartMsg}`, {
         desireId: desire.id,
         stepNumber: step.order,
         totalSteps: plan.steps.length,
@@ -365,7 +365,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
         // Write completion to inner dialogue buffer
         if (username) {
-          appendExecutionProgressToBuffer(username, stepCompleteMsg, {
+          await submitExecutionProgress(username, stepCompleteMsg, {
             desireId: desire.id,
             stepNumber: step.order,
             totalSteps: plan.steps.length,
@@ -392,7 +392,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
         // Write error to inner dialogue buffer
         if (username) {
-          appendExecutionProgressToBuffer(username, stepErrorMsg, {
+          await submitExecutionProgress(username, stepErrorMsg, {
             desireId: desire.id,
             stepNumber: step.order,
             totalSteps: plan.steps.length,
@@ -422,7 +422,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
       // Write exception to inner dialogue buffer
       if (username) {
-        appendExecutionProgressToBuffer(username, exceptionMsg, {
+        await submitExecutionProgress(username, exceptionMsg, {
           desireId: desire.id,
           stepNumber: step.order,
           totalSteps: plan.steps.length,

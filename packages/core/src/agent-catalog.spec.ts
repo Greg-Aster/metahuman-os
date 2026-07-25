@@ -12,8 +12,8 @@ setAuditEnabled(false);
 
 const live = getAgentCatalogSnapshot();
 assert.equal(live.counts.total, Object.keys(AGENT_CATALOG_DEFINITIONS).length, 'every maintained definition must appear exactly once');
-assert.equal(live.counts.triggerRegistered, 19, 'the maintained system trigger catalog should expose 19 registered finite jobs');
-assert.equal(live.counts.services, 2, 'persistent lifecycle must expose exactly the two configured services');
+assert.equal(live.counts.triggerRegistered, 21, 'the maintained system trigger catalog should expose 21 registered finite jobs');
+assert.equal(live.counts.services, 3, 'persistent lifecycle must expose the three configured system services');
 assert.equal(live.counts.missingSource, 0, 'every maintained catalog item must have a resolvable implementation');
 assert.deepEqual(
   live.agents.filter(agent => agent.canRegister).map(agent => agent.id),
@@ -26,6 +26,13 @@ assert.equal(live.agents.find(agent => agent.id === 'coder')?.canRun, false, 'pr
 assert.equal(live.agents.find(agent => agent.id === 'memory-pruner')?.canRun, false, 'destructive agents must be registered explicitly before use');
 assert.equal(live.agents.find(agent => agent.id === 'mood')?.enabled, false, 'Mood must remain opt-in even while registered');
 assert.equal(AGENT_CATALOG_DEFINITIONS.mood.defaultTrigger?.enabled, false, 're-registering Mood must preserve its disabled default');
+for (const serviceId of ['environment-bridge', 'maintenance-service', 'robot-operator']) {
+  assert.equal(
+    AGENT_CATALOG_DEFINITIONS[serviceId]?.executionContext,
+    'system',
+    `${serviceId} must start without selecting a user profile`,
+  );
+}
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-agent-catalog-'));
 const brainDir = path.join(root, 'brain');

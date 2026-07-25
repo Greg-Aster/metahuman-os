@@ -6,21 +6,24 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, badRequestResponse } from '../types.js';
-import { withUserContext } from '../../context.js';
 import {
-  loadPersistedBuffer,
-  appendToUserBuffer,
-  getBufferPathForUser,
-  type ConversationBufferMode,
+  clearBufferForUser,
+  loadBufferForUser,
+  type CanonicalBufferMode,
   type ConversationMessage,
 } from '../../conversation-buffer.js';
-import fs from 'node:fs';
+import { submitBufferEntry } from '../../buffer-admission.js';
+
+function isBufferMode(value: unknown): value is CanonicalBufferMode {
+  return value === 'conversation' || value === 'inner' || value === 'system' || value === 'robot';
+}
 
 /**
  * GET /api/conversation-buffer - Get conversation buffer
  */
 export async function handleGetBuffer(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const mode = (req.query?.mode || 'conversation') as ConversationBufferMode;
+  const mode = req.query?.mode || 'conversation';
+  if (!isBufferMode(mode)) return badRequestResponse('Invalid buffer mode');
 
   // For unauthenticated users, return empty buffer
   if (!req.user.isAuthenticated) {
@@ -31,21 +34,11 @@ export async function handleGetBuffer(req: UnifiedRequest): Promise<UnifiedRespo
     });
   }
 
-  const result = await withUserContext(
-    { userId: req.user.userId, username: req.user.username, role: req.user.role },
-    () => {
-      try {
-        const buffer = loadPersistedBuffer(mode);
-        return { success: true, buffer };
-      } catch {
-        return { success: false, buffer: null };
-      }
-    }
-  );
+  const buffer = loadBufferForUser(req.user.username, mode);
 
   return successResponse({
     success: true,
-    messages: result.buffer?.messages || [],
+    messages: buffer.messages.filter(message => !message.meta?.summaryMarker),
     mode,
   });
 }
@@ -60,7 +53,11 @@ export async function handleAppendBuffer(req: UnifiedRequest): Promise<UnifiedRe
     return badRequestResponse('Message is required');
   }
 
-  const bufferMode = mode as ConversationBufferMode;
+  if (!isBufferMode(mode)) return badRequestResponse('Invalid buffer mode');
+  if (mode === 'robot') {
+    return badRequestResponse('Robot Buffer accepts records only from the Environment Bridge graph');
+  }
+  const bufferMode = mode;
   const msg: ConversationMessage = {
     role: message.role || 'user',
     content: message.content,
@@ -68,10 +65,7 @@ export async function handleAppendBuffer(req: UnifiedRequest): Promise<UnifiedRe
     timestamp: Date.now(),
   };
 
-  const success = await withUserContext(
-    { userId: req.user.userId, username: req.user.username, role: req.user.role },
-    () => appendToUserBuffer(req.user.username, bufferMode, msg)
-  );
+  const success = await submitBufferEntry(req.user.username, bufferMode, msg);
 
   return successResponse({
     success,
@@ -83,30 +77,9 @@ export async function handleAppendBuffer(req: UnifiedRequest): Promise<UnifiedRe
  * DELETE /api/conversation-buffer - Clear conversation buffer
  */
 export async function handleClearBuffer(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const mode = (req.query?.mode || 'conversation') as ConversationBufferMode;
-
-  // Clear by writing empty buffer to the buffer path
-  const result = await withUserContext(
-    { userId: req.user.userId, username: req.user.username, role: req.user.role },
-    () => {
-      try {
-        const bufferPath = getBufferPathForUser(req.user.username, mode);
-        if (bufferPath && fs.existsSync(bufferPath)) {
-          const emptyBuffer = {
-            summaryMarkers: [],
-            messages: [],
-            lastSummarizedIndex: null,
-            lastUpdated: new Date().toISOString(),
-          };
-          fs.writeFileSync(bufferPath, JSON.stringify(emptyBuffer, null, 2));
-          return true;
-        }
-        return false;
-      } catch {
-        return false;
-      }
-    }
-  );
+  const mode = req.query?.mode || 'conversation';
+  if (!isBufferMode(mode)) return badRequestResponse('Invalid buffer mode');
+  const result = await clearBufferForUser(req.user.username, mode);
 
   return successResponse({
     success: true,

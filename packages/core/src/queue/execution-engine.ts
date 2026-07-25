@@ -13,7 +13,11 @@ import { ROOT } from '../paths.js';
 import { systemPaths } from '../path-builder.js';
 import { readSystemActivityTimestamp } from '../system-activity.js';
 import { loadSleepConfig } from '../sleep-config.js';
-import { readRobotObserverCycle } from '../robot-operator.js';
+import {
+  beginEnvironmentPerceptionCycle,
+  loadRobotOperatorConfig,
+  readRobotObserverCycle,
+} from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
 import {
   buildAgentNodePath,
@@ -158,8 +162,29 @@ export class ExecutionEngine {
       return executeDesireCheckinWork(task, context);
     });
     this.registerHandler('environment.observation', async (task, context) => {
-      const observation = task.input.observation ?? task.input;
-      const robotObserver = readRobotObserverCycle(observation);
+      let observation = task.input.observation ?? task.input;
+      let robotObserver = readRobotObserverCycle(observation);
+      if (
+        !robotObserver
+        && observation?.metadata?.perceptionEvent === 'audio_utterance'
+        && typeof observation.metadata.correlationId === 'string'
+      ) {
+        const config = loadRobotOperatorConfig();
+        robotObserver = beginEnvironmentPerceptionCycle(
+          observation.metadata.correlationId,
+          typeof task.input.graph === 'string' ? task.input.graph : config.graph,
+          config.maxCycleSteps,
+        );
+        if (robotObserver) {
+          observation = {
+            ...observation,
+            metadata: {
+              ...observation.metadata,
+              robotObserver,
+            },
+          };
+        }
+      }
       const graphName = task.input.graph;
       if (!graphName || task.username === 'system') {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
@@ -187,7 +212,10 @@ export class ExecutionEngine {
       const loaded = await loadGraphForMode(graphName, user.username);
       if (!loaded) throw new Error(`Environment graph not found: ${graphName}`);
       const text = (observation.text ?? []).map((event: any) => event.text).filter(Boolean).join('\n');
-      const taskInstruction = text || (robotObserver
+      const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
+        ? observation.metadata.originatingInstruction.trim()
+        : '';
+      const taskInstruction = originatingInstruction || text || (robotObserver
         ? robotObserver.step === 1
           ? 'Inspect the current robot camera image after inactivity. Briefly describe anything worth responding to, and choose at most one useful semantic robot action or another camera observation only if needed.'
           : 'Inspect the returned robot camera image after the previous action. Briefly describe what changed, and choose at most one next semantic action or another camera observation only if it is still useful.'
@@ -202,6 +230,10 @@ export class ExecutionEngine {
           context: {
             sessionId: observation.sessionId,
             userMessage: text,
+            // A returned action result reuses an already-admitted user request.
+            // Mark instruction-only environment passes so the graph can reason
+            // with that request without writing a duplicate visible user turn.
+            userMessageAdmitted: Boolean(originatingInstruction || !text),
             userId: user.id,
             username: user.username,
             cognitiveMode: 'environment',

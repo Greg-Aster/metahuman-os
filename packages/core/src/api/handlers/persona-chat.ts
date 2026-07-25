@@ -27,14 +27,14 @@ import {
 } from '../../graph-runtime.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { appendToUserBuffer } from '../../conversation-buffer.js';
+import { submitConversationEntry, submitInnerDialogue } from '../../buffer-admission.js';
 // Early buffer save added - saves user message BEFORE graph to survive timeouts
 
 // ============================================================================
 // Types
 // ============================================================================
 
-type Role = 'system' | 'user' | 'assistant';
+type Role = 'system' | 'user' | 'assistant' | 'thought' | 'reflection';
 type Mode = 'inner' | 'conversation';
 type ConversationMessage = { role: Role; content: string; meta?: any; timestamp?: number };
 
@@ -55,6 +55,7 @@ interface GraphPipelineParams {
   replyToDesireId?: string;
   replyToDesireTitle?: string;
   desireContext?: any;
+  userMessageAdmitted?: boolean;
 }
 
 // ============================================================================
@@ -189,7 +190,7 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 // ============================================================================
 
 async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerator<string> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext, userMessageAdmitted } = params;
 
   const push = (type: string, data: any) => {
     return sseData(type, data);
@@ -239,6 +240,9 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const contextData = {
       sessionId,
       userMessage: message,
+      mode,
+      composeTarget: mode,
+      userMessageAdmitted: userMessageAdmitted === true,
       cognitiveMode,
       userId: userContext?.userId || 'anonymous',
       username: userContext?.username,
@@ -431,17 +435,50 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       return;
     }
 
+    if (mode === 'inner' && userContext?.username) {
+      const innerSaved = await submitInnerDialogue(
+        userContext.username,
+        {
+          role: 'reflection',
+          content: responseText,
+          meta: {
+            type: 'inner_response',
+            source: 'persona-chat',
+            dialogueSource: 'user-thought',
+            sessionId,
+          },
+        },
+        {
+          allowMemoryWrites,
+          captureMemory: allowMemoryWrites,
+          memoryContent: `Unvoiced user thought: ${message.trim()}\n\nInner response: ${responseText.trim()}`,
+          sessionId,
+        },
+      );
+      if (!innerSaved) {
+        throw new Error('Inner Dialogue Buffer node did not admit the generated response');
+      }
+    }
+
     yield push('progress', {
       step: 'graph_complete',
       message: `Graph completed in ${duration}ms`,
     });
 
     // Update in-memory history
-    pushMessage(mode, { role: 'user', content: message }, sessionId);
-    pushMessage(mode, { role: 'assistant', content: responseText, meta: { graphPipeline: true } }, sessionId);
+    pushMessage(mode, {
+      role: mode === 'inner' ? 'thought' : 'user',
+      content: message,
+      meta: mode === 'inner' ? { type: 'user_thought', unvoiced: true } : undefined,
+    }, sessionId);
+    pushMessage(mode, {
+      role: mode === 'inner' ? 'reflection' : 'assistant',
+      content: responseText,
+      meta: { graphPipeline: true, ...(mode === 'inner' ? { type: 'inner_response' } : {}) },
+    }, sessionId);
 
-    // NOTE: Buffer persistence is handled by buffer_manager node in the graph
-    // Don't double-write here - that causes duplicate messages in the UI
+    // Canonical persistence is owned by the designated buffer nodes. The
+    // in-memory session history below is only a request-runtime cache.
 
     // Send final answer
     const facet = getActiveFacet();
@@ -638,10 +675,10 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     }
   }
 
-  // EARLY BUFFER SAVE: Save user message BEFORE graph execution
-  // This ensures the message with replyToDesireId metadata is preserved
-  // even if Big Brother or other LLM nodes timeout
-  if (isAuthenticated && user.username && mode === 'conversation') {
+  // Admit the user's input before model execution so it survives graph failure.
+  // The admission workflow still routes the write through the designated node.
+  let userMessageAdmitted = false;
+  if (isAuthenticated && user.username) {
     const userMessageMeta: Record<string, unknown> = {};
     if (replyToDesireId) userMessageMeta.replyToDesireId = replyToDesireId;
     if (replyToDesireTitle) userMessageMeta.replyToDesireTitle = replyToDesireTitle;
@@ -649,14 +686,33 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     if (replyToContent) userMessageMeta.replyToContent = replyToContent;
 
     try {
-      await appendToUserBuffer(user.username, 'conversation', {
-        role: 'user',
-        content: trimmedMessage,
-        meta: Object.keys(userMessageMeta).length > 0 ? userMessageMeta : undefined,
-      });
-      console.log(`[persona-chat] ✅ Early buffer save - user message preserved with metadata:`, Object.keys(userMessageMeta));
+      userMessageAdmitted = mode === 'inner'
+        ? await submitInnerDialogue(user.username, {
+            role: 'thought',
+            content: trimmedMessage,
+            meta: {
+              type: 'user_thought',
+              source: 'user',
+              dialogueSource: 'user-thought',
+              sessionId,
+              ...userMessageMeta,
+            },
+          }, { captureMemory: false, sessionId })
+        : await submitConversationEntry(user.username, {
+            role: 'user',
+            content: trimmedMessage,
+            meta: {
+              sessionId,
+              ...userMessageMeta,
+            },
+          }, { sessionId });
+      if (!userMessageAdmitted) {
+        throw new Error(`${mode} input was not admitted by its buffer node`);
+      }
+      console.log(`[persona-chat] ✅ ${mode} input admitted through buffer graph with metadata:`, Object.keys(userMessageMeta));
     } catch (e) {
-      console.warn(`[persona-chat] ⚠️ Early buffer save failed:`, e);
+      console.warn(`[persona-chat] ⚠️ Buffer admission failed:`, e);
+      return { status: 500, error: `Could not persist ${mode} input before generation` };
     }
   }
 
@@ -678,6 +734,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     replyToDesireId,
     replyToDesireTitle,
     desireContext,
+    userMessageAdmitted,
   });
 
   // Non-streaming mode: collect all events and return as JSON

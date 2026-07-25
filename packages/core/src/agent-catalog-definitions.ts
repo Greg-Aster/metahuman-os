@@ -3,6 +3,7 @@ import type { TaskType } from './queue/types.js';
 export type AgentCatalogLifecycle = 'scheduled-work' | 'workflow' | 'service';
 export type AgentCatalogRisk = 'standard' | 'privileged' | 'destructive';
 export type AgentCatalogTriggerType = 'interval' | 'time-of-day' | 'event' | 'activity' | 'manual';
+export type AgentExecutionContext = 'user' | 'system';
 
 export interface AgentCatalogDefaultTrigger {
   type: AgentCatalogTriggerType;
@@ -21,6 +22,11 @@ export interface AgentCatalogDefinition {
   displayName: string;
   description: string;
   lifecycle: AgentCatalogLifecycle;
+  /**
+   * System services must not open an arbitrary profile merely to start.
+   * User-scoped work defaults to an authenticated user context.
+   */
+  executionContext?: AgentExecutionContext;
   sourceId?: string;
   servicePath?: string;
   handler?: string;
@@ -211,6 +217,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     displayName: 'Environment Bridge',
     description: 'Transfers semantic actions and observations through a configured environment adapter.',
     lifecycle: 'service',
+    executionContext: 'system',
     usesLLM: false,
     priority: 'high',
     risk: 'standard',
@@ -249,6 +256,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     displayName: 'Robot Operator',
     description: 'Owns robot inactivity timing and admits Robot Observer or Boredom Movement work only while Active Operator is semi or full.',
     lifecycle: 'service',
+    executionContext: 'system',
     servicePath: 'services/robot-operator.ts',
     usesLLM: false,
     priority: 'normal',
@@ -283,6 +291,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     displayName: 'Maintenance Service',
     description: 'Performs stale-lock health checks, audit-log cleanup, and embedding preload.',
     lifecycle: 'service',
+    executionContext: 'system',
     servicePath: 'services/maintenance-service.ts',
     usesLLM: false,
     priority: 'normal',

@@ -562,17 +562,16 @@ Create a genuine, thoughtful question that:
 - Invites meaningful discussion
 - Shows genuine curiosity
 
-### Step 4: Save to Conversation Buffer
-Append to the conversation buffer at: \`${paths.state}/conversation-buffer-conversation.json\`
-The question will appear in the user's chat.
+### Step 4: Return the Question
+Return the question in your final output. Do not edit conversation-buffer files;
+MetaHuman's Conversation Buffer workflow owns durable admission.
 
 ## Success Criteria
 - Question is specific to memory content
 - Question is thought-provoking
-- Question was saved to buffer`,
+- Question is returned clearly for graph admission`,
     relevantPaths: [
       paths.episodic,
-      `${paths.state}/conversation-buffer-conversation.json`,
     ],
     successCriteria: {
       requiredKeywords: ['question', 'curious', 'memory'],
@@ -580,7 +579,7 @@ The question will appear in the user's chat.
       minimumOutputLength: MIN_OUTPUT_LENGTHS.curiosity,
     },
     expectedDurationMs: 60000,
-    isWriteOperation: true,
+    isWriteOperation: false,
   };
 }
 

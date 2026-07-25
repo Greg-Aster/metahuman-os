@@ -8,7 +8,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { loadFreshOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '../../config.js';
-import { getBigBrotherState, stopBigBrother } from '../../big-brother-terminal.js';
+import { getBigBrotherSessionState, stopBigBrotherSession } from '../../big-brother-session.js';
 import { audit } from '../../audit.js';
 
 const DEFAULT_CONFIG = {
@@ -126,11 +126,11 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     const nextProvider = config.bigBrotherMode.provider;
     const nextEnabled = config.bigBrotherMode.enabled;
 
-    // Stop Claude terminal if switching away from Claude or disabling Big Brother
-    if ((previousEnabled && !nextEnabled) || (previousProvider === 'claude-code' && nextProvider !== 'claude-code')) {
-      const state = getBigBrotherState();
-      if (state.isRunning) {
-        await stopBigBrother();
+    // A provider change or disable always tears down the one shared session.
+    if ((previousEnabled && !nextEnabled) || previousProvider !== nextProvider) {
+      const state = getBigBrotherSessionState();
+      if (state.sessionOpen || state.processRunning) {
+        await stopBigBrotherSession('Big Brother configuration changed');
       }
     }
 

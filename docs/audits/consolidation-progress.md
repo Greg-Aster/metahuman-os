@@ -123,7 +123,7 @@ Final route batches moved into core handlers and thin Astro transport:
 - Lizard-brain/event/system service routes: `/api/lizard-brain/logs`, `/api/lizard-brain/trigger-review`, `/api/event-bus-status`.
 - Sync/status/process routes: `/api/memory/sync/[id]`, `/api/template-watch`, `/api/astro-servers`, `/api/process-stream`, `/api/tts-queue-stream`.
 - Voice training/upload routes: `/api/rvc-training`, `/api/sovits-training`, `/api/voice-training`, `/api/audio/upload`, `/api/voice-profile/upload`.
-- Big Brother and local process routes: `/api/big-brother-status`, `/api/big-brother-input`, `/api/big-brother/terminal-events`, `/api/node-pipeline`, `/api/boot`, `/api/claude-session`.
+- Big Brother and local process routes: `/api/big-brother-status`, `/api/big-brother/terminal-events`, `/api/node-pipeline`, and `/api/boot`. Claude Code and Codex share the one ttyd-backed Big Brother session owner.
 - Encryption/profile routes: `/api/encryption/setup`, `/api/profile-path/encrypt`, `/api/profile-path/decrypt`.
 - Service control routes: `/api/kokoro-addon`, `/api/kokoro-server`, `/api/rvc-addon`, `/api/rvc-server`, `/api/sovits-server`, `/api/whisper-server`.
 - Final SSE routes: `/api/buffer-stream`, `/api/monitor/stream`, `/api/tts-stream`.

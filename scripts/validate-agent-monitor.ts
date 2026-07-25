@@ -347,7 +347,6 @@ async function main() {
   const agentRegistry = path.join(ROOT, 'packages', 'core', 'src', 'agent-monitor-registry.ts');
   const agentResolver = path.join(ROOT, 'packages', 'core', 'src', 'agent-executable-resolver.ts');
   const cli = path.join(ROOT, 'packages', 'cli', 'src', 'mh-new.ts');
-  const systemHandler = path.join(ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'system.ts');
   const bootstrap = path.join(ROOT, 'brain', 'scripts', '_bootstrap.ts');
   const environmentBridgeAgent = path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts');
   const runtimeMode = path.join(ROOT, 'packages', 'core', 'src', 'runtime-mode.ts');
@@ -374,13 +373,20 @@ async function main() {
       && sourceContains(agentRunner, /unregisterAgent\(agentName,\s*pid\)/),
   ));
   checks.push(check(
-    'user-context bootstrap exports the selected owner to connection agents',
-    sourceContains(bootstrap, /process\.env\.MH_TRIGGER_USERNAME\s*=\s*owner\.username/),
+    'bootstrap separates system services from authenticated user work',
+    sourceContains(bootstrap, /definition\?\.executionContext\s*===\s*['"]system['"]/) &&
+      sourceContains(bootstrap, /getCurrentlyActiveUser\(\)/)
+      && sourceContains(bootstrap, /process\.env\.MH_TRIGGER_USERNAME\s*=\s*targetUser\.username/)
+      && sourceDoesNotContain(bootstrap, /users\.find\(\(user\)\s*=>\s*user\.role\s*===\s*['"]owner['"]\)/),
   ));
   checks.push(check(
     'Environment Bridge holds a process-lifetime singleton lock',
     sourceContains(environmentBridgeAgent, /acquireLock\(['"]agent-environment-bridge['"]\)/)
       && sourceContains(environmentBridgeAgent, /lock\.release\(\)/),
+  ));
+  checks.push(check(
+    'Environment Bridge is independent of a launch-time profile',
+    sourceDoesNotContain(environmentBridgeAgent, /MH_TRIGGER_USERNAME|X-MetaHuman-Environment-User/),
   ));
   checks.push(check(
     'shared runner has no obsolete outbound bridge diagnosis',
@@ -407,14 +413,6 @@ async function main() {
     sourceContains(agentHandler, /'clear-failure'/)
       && sourceContains(agentHandler, /stopAgent\(agent\)/)
       && sourceContains(agentHandler, /waitForProcessExit/),
-  ));
-  checks.push(check(
-    'boot API does not relaunch boot-managed agents',
-    sourceDoesNotContain(systemHandler, /startAgentProcess\(|getAgentMonitorSnapshot\(|spawn\s*\(/),
-  ));
-  checks.push(check(
-    'boot API imports filesystem dependency',
-    sourceContains(systemHandler, /import fs from ['"]node:fs['"]/),
   ));
   checks.push(check(
     'CLI agent startup uses shared process runner',

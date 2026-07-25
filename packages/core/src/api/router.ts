@@ -351,13 +351,10 @@ import { handleProcessStream } from './handlers/process-stream.js';
 import { handleTtsQueueStream } from './handlers/tts-queue-stream.js';
 import {
   handleBigBrotherControl,
-  handleBigBrotherInput,
   handleBigBrotherStatus,
   handleBigBrotherTerminalEvents,
-  handleGetBigBrotherInputStatus,
 } from './handlers/big-brother-terminal.js';
 import { handleGetNodePipeline, handleSetNodePipeline } from './handlers/node-pipeline.js';
-import { handleGetClaudeSession, handlePostClaudeSession } from './handlers/claude-session.js';
 import { handleDecryptProfilePath, handleEncryptProfilePath } from './handlers/profile-encryption.js';
 import {
   handleKokoroAddon,
@@ -507,9 +504,7 @@ import {
   handleCleanupTerminals,
   handleKillTerminal,
   handleListTerminals,
-  handleSpawnClaudeTerminal,
   handleSpawnTerminal,
-  handleStopClaudeTerminal,
   handleTerminalStatus,
 } from './handlers/terminal.js';
 import {
@@ -564,15 +559,11 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/event-bus-status', handler: handlePostEventBusStatus, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/big-brother-status', handler: handleBigBrotherStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-status', handler: handleBigBrotherControl, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/big-brother-input', handler: handleGetBigBrotherInputStatus, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/big-brother-input', handler: handleBigBrotherInput, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/big-brother/terminal-events', handler: handleBigBrotherTerminalEvents, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/astro-servers', handler: handleGetAstroServers, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/astro-servers', handler: handlePostAstroServers, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/node-pipeline', handler: handleGetNodePipeline, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/node-pipeline', handler: handleSetNodePipeline, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/claude-session', handler: handleGetClaudeSession, requiresAuth: true },
-  { method: 'POST', pattern: '/api/claude-session', handler: handlePostClaudeSession, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/profile-path/encrypt', handler: handleEncryptProfilePath, requiresAuth: true },
   { method: 'POST', pattern: '/api/profile-path/decrypt', handler: handleDecryptProfilePath, requiresAuth: true },
   { method: ['GET', 'POST'], pattern: '/api/kokoro-addon', handler: handleKokoroAddon, requiresAuth: true, guard: 'owner' },
@@ -719,8 +710,6 @@ const routes: RouteDefinition[] = [
   // Terminal Control
   { method: 'GET', pattern: '/api/terminal/list', handler: handleListTerminals, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/terminal/spawn', handler: handleSpawnTerminal, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/terminal/spawn-claude', handler: handleSpawnClaudeTerminal, requiresAuth: true, guard: 'owner' },
-  { method: 'DELETE', pattern: '/api/terminal/spawn-claude', handler: handleStopClaudeTerminal, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/terminal/cleanup', handler: handleTerminalStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/terminal/cleanup', handler: handleCleanupTerminals, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: /^\/api\/terminal\/kill\/([^\/]+)$/, handler: handleKillTerminal, requiresAuth: true, guard: 'owner' },

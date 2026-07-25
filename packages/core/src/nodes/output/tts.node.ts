@@ -420,6 +420,19 @@ export const TTSNode: NodeDefinition = defineNode({
       defaultMode,
     });
 
+    // A response generated for an explicit Inner compose turn remains inner
+    // dialogue even when an older graph connects it to the conversation handle.
+    if (context.composeTarget === 'inner' && conversationStr?.trim()) {
+      const item = queueTTS(username, conversationStr, 'inner', source);
+      return {
+        queued: Boolean(item),
+        itemId: item?.id || '',
+        text: conversationStr,
+        conversationQueued: false,
+        innerQueued: Boolean(item),
+      };
+    }
+
     // Queue conversation text
     if (conversationStr?.trim()) {
       const item = queueTTS(username, conversationStr, 'conversation', source);

@@ -2,7 +2,6 @@
  * Legacy CLI Adapters
  *
  * Adapters for CLI-based code assistants:
- * - Claude Code (claude CLI)
  * - Qwen Code (qwen-code CLI)
  * - Aider (aider CLI)
  * - Gemini CLI (gemini CLI)
@@ -12,9 +11,6 @@
  */
 
 import { audit } from './audit.js';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import type { CLIBackendConfig } from './tool-executor-config.js';
 
 // ============================================================================
@@ -23,6 +19,7 @@ import type { CLIBackendConfig } from './tool-executor-config.js';
 
 export interface ToolExecutorResult {
   success: boolean;
+  backend?: string;
   output?: string;
   error?: string;
   executionTime?: number;
@@ -34,82 +31,6 @@ interface CLIExecutionOptions {
   workingDirectory?: string;
   environment?: Record<string, string>;
   stdin?: string;
-}
-
-interface ReasoningStep {
-  type: 'thought' | 'action' | 'observation' | 'result' | 'tool_use';
-  content: string;
-  timestamp: string;
-  toolName?: string;
-  success?: boolean;
-}
-
-// ============================================================================
-// Claude Code Adapter
-// ============================================================================
-
-/**
- * Execute a task using Claude Code CLI
- *
- * Claude Code is Anthropic's official CLI for Claude.
- * Uses --print mode for non-interactive execution.
- */
-export async function executeWithClaudeCode(
-  task: string,
-  config: CLIBackendConfig,
-  username?: string
-): Promise<ToolExecutorResult> {
-  const startTime = Date.now();
-
-  try {
-    const { spawn } = await import('child_process');
-
-    // Build command arguments
-    const args = [...(config.args || ['--print'])];
-
-    // Add permission skip if configured (use with caution!)
-    if (config.dangerouslySkipPermissions) {
-      args.push('--dangerously-skip-permissions');
-    }
-
-    // Add the task as the prompt
-    args.push(task);
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'claude_code_started',
-      details: {
-        task: task.slice(0, 200),
-        command: config.command,
-        args: args.filter(a => a !== task), // Don't log full task
-      },
-      actor: username || 'system',
-    });
-
-    const result = await runCLI(config.command, args, {
-      timeout: config.timeout || 60000,
-    });
-
-    return {
-      success: result.exitCode === 0,
-      output: result.stdout,
-      error: result.exitCode !== 0 ? result.stderr || `Exit code: ${result.exitCode}` : undefined,
-      backend: 'claude-code',
-      executionTime: Date.now() - startTime,
-      metadata: {
-        exitCode: result.exitCode,
-        command: config.command,
-      },
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: (error as Error).message,
-      backend: 'claude-code',
-      executionTime: Date.now() - startTime,
-    };
-  }
 }
 
 // ============================================================================
@@ -301,126 +222,6 @@ export async function executeWithGeminiCLI(
       backend: 'gemini-cli',
       executionTime: Date.now() - startTime,
     };
-  }
-}
-
-// ============================================================================
-// Codex CLI Adapter
-// ============================================================================
-
-/**
- * Execute a task using Codex CLI
- *
- * OpenAI Codex CLI execution via stdin prompt.
- */
-export async function executeWithCodexCLI(
-  task: string,
-  config: CLIBackendConfig,
-  options?: { timeout?: number; workingDirectory?: string; onReasoningStep?: (step: ReasoningStep) => void },
-  username?: string
-): Promise<ToolExecutorResult> {
-  const startTime = Date.now();
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-'));
-  const lastMessagePath = path.join(tempDir, 'last-message.txt');
-
-  try {
-    const args = [...(config.args || [])];
-    if (args.length === 0 || (args[0] !== 'exec' && args[0] !== 'e')) {
-      args.unshift('exec');
-    }
-    if (!args.includes('--color')) {
-      args.push('--color', 'always');
-    }
-    if (!args.includes('--json')) {
-      args.push('--json');
-    }
-    if (!args.includes('--output-last-message')) {
-      args.push('--output-last-message', lastMessagePath);
-    }
-    if (config.dangerouslySkipPermissions && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
-      args.push('--dangerously-bypass-approvals-and-sandbox');
-    }
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'codex_cli_started',
-      details: {
-        task: task.slice(0, 200),
-        command: config.command,
-      },
-      actor: username || 'system',
-    });
-
-    const result = await runCLI(config.command, args, {
-      timeout: options?.timeout || config.timeout || 120000,
-      workingDirectory: options?.workingDirectory,
-      stdin: task,
-    });
-
-    if (options?.onReasoningStep && result.stdout) {
-      const lines = result.stdout.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('{')) continue;
-        try {
-          const parsed = JSON.parse(trimmed);
-          const msg = parsed?.msg;
-          if (!msg || typeof msg !== 'object') continue;
-
-          if (msg.type === 'agent_reasoning' && typeof msg.text === 'string' && msg.text.trim()) {
-            options.onReasoningStep({
-              type: 'thought',
-              content: msg.text.trim(),
-              timestamp: new Date().toISOString(),
-            });
-          } else if (msg.type === 'tool_use' && msg.tool) {
-            options.onReasoningStep({
-              type: 'tool_use',
-              toolName: String(msg.tool),
-              content: String(msg.input || '').slice(0, 500),
-              timestamp: new Date().toISOString(),
-            });
-          }
-        } catch {
-          // Ignore non-JSON lines
-        }
-      }
-    }
-
-    let output = result.stdout;
-    if (fs.existsSync(lastMessagePath)) {
-      const lastMessage = fs.readFileSync(lastMessagePath, 'utf8').trim();
-      if (lastMessage) {
-        output = lastMessage;
-      }
-    }
-
-    return {
-      success: result.exitCode === 0,
-      output,
-      error: result.exitCode !== 0 ? result.stderr || `Exit code: ${result.exitCode}` : undefined,
-      backend: 'codex',
-      executionTime: Date.now() - startTime,
-      metadata: {
-        exitCode: result.exitCode,
-        command: config.command,
-        rawStdout: result.stdout,
-      },
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: (error as Error).message,
-      backend: 'codex',
-      executionTime: Date.now() - startTime,
-    };
-  } finally {
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
   }
 }
 

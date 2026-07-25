@@ -30,7 +30,7 @@ import {
   getTargetUser,
   withUserContext,
   captureEvent,
-  appendReflectionToBuffer,
+  submitInnerReflection,
   loadPersonaCore,
   listActiveTasks,
   searchMemory,
@@ -1409,7 +1409,7 @@ export async function generateDesiresForUser(username: string): Promise<number> 
     });
 
     // Also append to live chat buffer for immediate display in Inner Dialogue tab
-    appendReflectionToBuffer(username, innerDialogue, {
+    await submitInnerReflection(username, innerDialogue, {
       dialogueSource: 'agency-system',
       displayColor: '#10b981', // Emerald for agency
       type: 'desire_generation',

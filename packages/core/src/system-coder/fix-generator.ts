@@ -1,7 +1,7 @@
 /**
  * System Coder - Fix Generator
  *
- * Generates code fixes for captured errors using Big Brother (Claude CLI).
+ * Generates code fixes through the configured Big Brother terminal provider.
  */
 
 import * as fs from 'node:fs';
@@ -31,11 +31,11 @@ interface ParsedFix {
 }
 
 // ============================================================================
-// Fix Generation via Claude CLI
+// Fix generation through Big Brother
 // ============================================================================
 
 /**
- * Generate a fix for an error using Claude CLI
+ * Generate a fix for an error using the configured Big Brother provider
  */
 export async function generateFixForError(
   username: string,
@@ -60,18 +60,18 @@ export async function generateFixForError(
   });
 
   try {
-    // Build the prompt for Claude
+    // Build the provider-neutral fix prompt
     const prompt = buildFixPrompt(error);
 
-    // Call Claude CLI
-    const response = await callClaudeForFix(prompt);
+    // Route through the shared Big Brother session
+    const response = await callBigBrotherForFix(prompt);
 
     // Parse the response to extract fix details
     const parsedFix = parseFixResponse(response, error);
 
     if (!parsedFix) {
       updateErrorStatus(username, errorId, 'new'); // Reset status
-      return { success: false, error: 'Failed to parse fix from Claude response' };
+      return { success: false, error: 'Failed to parse fix from Big Brother response' };
     }
 
     // Create the fix
@@ -123,7 +123,7 @@ export async function generateFixForError(
 }
 
 /**
- * Build the prompt for Claude to generate a fix
+ * Build the prompt for Big Brother to generate a fix
  */
 function buildFixPrompt(error: CapturedError): string {
   let fileContext = '';
@@ -209,7 +209,7 @@ Important guidelines:
 /**
  * Call escalation backend to generate a fix
  */
-async function callClaudeForFix(prompt: string): Promise<string> {
+async function callBigBrotherForFix(prompt: string): Promise<string> {
   const { escalate, getActiveBackend } = await import('../escalation-backend.js');
 
   // Get active backend
@@ -235,7 +235,7 @@ async function callClaudeForFix(prompt: string): Promise<string> {
 }
 
 /**
- * Parse Claude's response to extract fix details
+ * Parse the Big Brother response to extract fix details
  */
 function parseFixResponse(response: string, error: CapturedError): ParsedFix | null {
   try {
@@ -316,7 +316,7 @@ export async function generateFixesForErrors(
 
   for (const errorId of errorIds) {
     results[errorId] = await generateFixForError(username, errorId);
-    // Add a small delay between requests to avoid overwhelming Claude
+    // Add a small delay between requests to avoid overlapping terminal sessions
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 

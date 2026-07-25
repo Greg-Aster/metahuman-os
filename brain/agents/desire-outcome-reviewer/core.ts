@@ -952,8 +952,7 @@ export async function processDesires(username?: string): Promise<{
       },
     });
 
-    // Note: Inner dialogue and TTS are now handled by the graph pipeline
-    // The inner_dialogue_capture and tts nodes in the graph handle this automatically
+    // Inner Dialogue Buffer admission and TTS are owned by the graph pipeline.
 
     // Special user notifications are still captured separately if needed
     if (review.notifyUser && review.userMessage) {

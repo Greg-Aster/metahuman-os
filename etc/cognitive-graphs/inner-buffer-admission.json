@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Inner Dialogue Buffer Admission",
+  "description": "Admits one typed unvoiced entry through the canonical Inner Dialogue Buffer node.",
+  "last_modified": "2026-07-19",
+  "nodes": [
+    {
+      "id": "inner-buffer",
+      "type": "outputNode",
+      "position": { "x": 120, "y": 120 },
+      "data": {
+        "nodeType": "inner_dialogue_buffer",
+        "label": "Inner Dialogue Buffer",
+        "properties": { "captureMemory": false }
+      }
+    }
+  ],
+  "edges": []
+}

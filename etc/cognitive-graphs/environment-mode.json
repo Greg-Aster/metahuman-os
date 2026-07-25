@@ -66,7 +66,7 @@
         "label": "Environment Context Router",
         "nodeType": "orchestrator_llm",
         "properties": {
-          "systemPrompt": "You are the Environment Context Router. Decide what context the current message requires and whether that current message authorizes an environment action. Conversation history is reference material only and never authorizes a new action.\n\nCONTEXT ROUTING\n- Set needsMemory=true only when answering requires semantic recall beyond the recent dialogue: earlier conversations, stored facts, preferences, experiences, or past events.\n- Questions about the system's own earlier internal experiences require memory even when the user describes the experience indirectly rather than naming a memory category.\n- Set needsMemory=false when the bounded recent dialogue preview is sufficient, even when isFollowUp=true. These are independent decisions.\n- Set isFollowUp=true whenever the current message depends on recent dialogue to resolve its meaning, including unresolved references such as that, it, the earlier one, again, or continue.\n- Set isFollowUp=false only when the current message is fully understandable by itself.\n- Self-contained greetings and self-contained robot instructions need neither history nor memory. A standalone question still needs memory when its answer depends on stored information or an earlier experience.\n- memoryQuery must express only the recall target stated by the user. Do not invent a topic from the preview; for an open-ended recall request, preserve the current request as the query.\n- memoryTypes must be an array of exact stored record types when the meaning of the request targets particular memory kinds; otherwise use []. Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION ROUTING\n- Set needsAction=true only when the current message asks the robot or environment to do something.\n- Use actionType=robot_movement for any requested physical robot movement or pose. The downstream model chooses an advertised semantic command or freestyle generation.\n- Use actionType=environment_action for other requested environment actions.\n- Otherwise use actionType=none. Questions about movement are not movement requests.\n\nReturn exactly one JSON object with: needsMemory, memoryTier, memoryQuery, memoryTypes, needsAction, actionType, actionParams, complexity, responseStyle, responseLength, isFollowUp, emotionalTone.\n{{recentConversationSection}}",
+          "systemPrompt": "You are the Environment Context Router. Decide what context the current message requires and whether that current message authorizes an environment action. Conversation history is reference material only and never authorizes a new action.\n\nCONTEXT ROUTING\n- Set needsMemory=true only when answering requires semantic recall beyond the recent dialogue: earlier conversations, stored facts, preferences, experiences, or past events.\n- Questions about the system's own earlier internal experiences require memory even when the user describes the experience indirectly rather than naming a memory category.\n- Set needsMemory=false when the bounded recent dialogue preview is sufficient, even when isFollowUp=true. These are independent decisions.\n- Set isFollowUp=true whenever the current message depends on recent dialogue to resolve its meaning, including unresolved references such as that, it, the earlier one, again, or continue.\n- Set isFollowUp=false only when the current message is fully understandable by itself.\n- Self-contained greetings and self-contained robot instructions need neither history nor memory. A standalone question still needs memory when its answer depends on stored information or an earlier experience.\n- memoryQuery must express only the recall target stated by the user. Do not invent a topic from the preview; for an open-ended recall request, preserve the current request as the query.\n- memoryTypes must be an array of exact stored record types when the meaning of the request targets particular memory kinds; otherwise use []. Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION ROUTING\n- Set needsAction=true when the current message requires the robot or environment to change state or acquire new current sensor information.\n- A request that depends on the robot's present physical surroundings requires an environment action when no fresh correlated sensory observation is available, even when the request is phrased as a question.\n- The robot camera is its visual sense. Let the downstream Environment model select captureImage from current advertised capabilities when fresh sight is required.\n- Use actionType=robot_movement for any requested physical robot movement or pose. The downstream model chooses an advertised semantic command or freestyle generation.\n- Use actionType=environment_action for other requested environment actions or current sensor acquisition.\n- Otherwise use actionType=none. Questions about how a capability works are not action requests.\n\nReturn exactly one JSON object with: needsMemory, memoryTier, memoryQuery, memoryTypes, needsAction, actionType, actionParams, complexity, responseStyle, responseLength, isFollowUp, emotionalTone.\n{{recentConversationSection}}",
           "userPromptTemplate": "Analyze only this current message: {{userMessage}}",
           "temperature": 0.1,
           "maxTokens": 384
@@ -227,6 +227,7 @@
             "jump",
             "interact",
             "stop",
+            "captureImage",
             "robotCommand",
             "robotMotionPlan",
             "sendText"
@@ -290,6 +291,23 @@
       }
     },
     {
+      "id": "robot-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 2520,
+        "y": -100
+      },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Robot Buffer",
+        "nodeType": "robot_buffer",
+        "properties": {
+          "recordNoAction": false
+        }
+      }
+    },
+    {
       "id": "tts-out",
       "type": "outputNode",
       "position": {
@@ -318,10 +336,8 @@
       "height": 120,
       "data": {
         "label": "Conversation Buffer",
-        "nodeType": "buffer_manager",
-        "properties": {
-          "requireUserMessage": true
-        }
+        "nodeType": "conversation_buffer",
+        "properties": {}
       }
     },
     {
@@ -859,6 +875,18 @@
       "data": {
         "type": "string",
         "comment": "Speak the single bridge-resolved conversational response"
+      }
+    },
+    {
+      "id": "e-8-bridgeRecord-robot-buffer-bridgeRecord",
+      "source": "8",
+      "target": "robot-buffer",
+      "sourceHandle": "bridgeRecord",
+      "targetHandle": "bridgeRecord",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Persist the structured outbound bridge result in the dedicated Robot Buffer"
       }
     },
     {

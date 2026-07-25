@@ -16,6 +16,10 @@ It is the input for architecture checks, audits, and refactor planning.
 
 ## Runtime Ownership Boundaries
 
+- `packages/core/src/big-brother-session.ts` is the single process, stream,
+  cancellation, and in-app terminal owner for Claude Code and Codex escalation.
+  Provider backends may describe invocation differences, but they must not
+  spawn a second CLI process or own a second session protocol.
 - `packages/core/src/agent-catalog.ts` owns the merged installed/runtime Agent
   Catalog, while `agent-catalog-definitions.ts` owns built-in identity, aliases,
   risk, workflow relations, and safe registration defaults.

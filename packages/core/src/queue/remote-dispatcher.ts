@@ -3,7 +3,7 @@
  *
  * Handles non-blocking remote LLM calls:
  * - RunPod serverless
- * - Big Brother (Claude CLI)
+ * - Big Brother shared terminal session
  * - Other remote APIs
  *
  * Tasks are dispatched and callbacks are invoked when responses arrive.
@@ -55,7 +55,7 @@ export class RemoteDispatcher {
    * Register default provider handlers
    */
   private registerDefaultProviders(): void {
-    // Big Brother (Claude CLI) provider
+    // Big Brother shared terminal-session provider
     this.providers.set('big-brother', {
       dispatch: async (task) => {
         const { escalateToBigBrother } = await import('../big-brother.js');

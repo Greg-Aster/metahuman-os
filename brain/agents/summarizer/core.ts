@@ -24,10 +24,9 @@ import {
   markSummaryCompleted,
   clearSummaryMarker,
   isSummarizing,
-  getConversationBufferPath,
+  submitConversationSummary,
 } from '@metahuman/core';
 import { canWriteMemory } from '@metahuman/core/cognitive-mode';
-import fs from 'node:fs/promises';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -320,53 +319,18 @@ async function saveSummary(summary: ConversationSummary): Promise<string> {
 
 async function updateConversationBufferSummary(
   summary: ConversationSummary,
-  mode: 'conversation' | 'inner' = 'conversation'
+  mode: 'conversation' | 'inner' = 'conversation',
+  username?: string,
 ): Promise<void> {
-  const bufferPath = getConversationBufferPath(mode);
-  if (!bufferPath) return;
-
-  try {
-    let data: any = {};
-    try {
-      const raw = await fs.readFile(bufferPath, 'utf-8');
-      data = JSON.parse(raw);
-    } catch {
-      data = {};
-    }
-
-    const existingMessages: any[] = Array.isArray(data.messages) ? data.messages : [];
-    const existingMarkers: any[] = Array.isArray(data.summaryMarkers) ? data.summaryMarkers : [];
-
-    const sanitizedMessages = existingMessages.filter(msg => !msg?.meta?.summaryMarker);
-    const sanitizedMarkers = existingMarkers.filter(
-      marker => !(marker?.meta?.summaryMarker && marker.meta.sessionId === summary.sessionId)
-    );
-
-    const rangeEnd = Math.max(summary.messageCount - 1, 0);
-    sanitizedMarkers.push({
-      role: 'system',
-      content: `Conversation summary (messages 0-${rangeEnd}): ${summary.summary}`,
-      meta: {
-        summaryMarker: true,
-        sessionId: summary.sessionId,
-        createdAt: new Date().toISOString(),
-        range: { start: 0, end: rangeEnd },
-        summaryCount: summary.messageCount
-      }
-    });
-
-    const payload = {
-      ...data,
-      summaryMarkers: sanitizedMarkers,
-      messages: sanitizedMessages,
-      lastSummarizedIndex: summary.messageCount,
-      lastUpdated: new Date().toISOString()
-    };
-
-    await fs.writeFile(bufferPath, JSON.stringify(payload, null, 2));
-  } catch (error) {
-    console.warn('[summarizer] Failed to update conversation buffer with summary:', error);
-  }
+  if (mode !== 'conversation') return;
+  const ctx = getUserContext();
+  const targetUsername = username || ctx?.username;
+  if (!targetUsername) return;
+  await submitConversationSummary(targetUsername, {
+    sessionId: summary.sessionId,
+    content: summary.summary,
+    messageCount: summary.messageCount,
+  });
 }
 
 /**
@@ -408,7 +372,7 @@ export async function summarizeSession(
     const filepath = await saveSummary(summary);
 
     await markSummaryCompleted(username, sessionId);
-    await updateConversationBufferSummary(summary, options.bufferMode || 'conversation');
+    await updateConversationBufferSummary(summary, options.bufferMode || 'conversation', username);
 
     if (filepath) {
       console.log(`[summarizer] Summary saved: ${filepath}`);

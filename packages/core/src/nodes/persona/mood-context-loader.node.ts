@@ -8,7 +8,7 @@ import {
   personaFacetResolvedPath,
   type PersonaFacetDefinition,
 } from '../../persona-facets.js';
-import { loadPersistedBuffer, type ConversationMessage } from '../../conversation-buffer.js';
+import { loadBufferForUser, type ConversationMessage } from '../../conversation-buffer.js';
 import { defineNode, type NodeDefinition } from '../types.js';
 
 interface MoodPersonaCandidate {
@@ -87,10 +87,10 @@ export const MoodContextLoaderNode: NodeDefinition = defineNode({
     const maxPerSource = Math.max(1_000, Math.floor(settings.maxContextChars / (settings.bufferSource === 'both' ? 2 : 1)));
     const conversation = settings.bufferSource === 'inner'
       ? []
-      : clipMessages(loadPersistedBuffer('conversation').messages, settings.maxMessagesPerBuffer, maxPerSource);
+      : clipMessages(loadBufferForUser(username, 'conversation').messages, settings.maxMessagesPerBuffer, maxPerSource);
     const inner = settings.bufferSource === 'conversation'
       ? []
-      : clipMessages(loadPersistedBuffer('inner').messages, settings.maxMessagesPerBuffer, maxPerSource);
+      : clipMessages(loadBufferForUser(username, 'inner').messages, settings.maxMessagesPerBuffer, maxPerSource);
     const eligible = candidates.length > 0
       && baselineAvailable
       && (!personaDisabled || settings.overridePersonaDisabled);

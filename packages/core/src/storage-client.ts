@@ -121,10 +121,6 @@ function isProfileReady(username: string): { ready: boolean; error?: string } {
   const storageConfig = getProfileStorageConfig(username)
   const encType = storageConfig?.encryption?.type
 
-  if (!encType || encType === 'none' || encType === 'luks' || encType === 'veracrypt') {
-    return { ready: true }
-  }
-
   if (encType === 'aes256') {
     if (isProfileUnlocked(username)) {
       return { ready: true }
@@ -132,6 +128,8 @@ function isProfileReady(username: string): { ready: boolean; error?: string } {
     return { ready: false, error: 'Profile is locked. Please unlock with your encryption password.' }
   }
 
+  // Volume-encryption readiness is enforced by pathBuilderResolveProfileRoot,
+  // which verifies the live mount rather than trusting persisted metadata.
   return { ready: true }
 }
 
@@ -539,14 +537,13 @@ export function getStorageStatus(username?: string): {
     }
   }
 
-  const available = fs.existsSync(storageConfig.path)
-
+  const profileResponse = resolveProfileRoot(resolvedUsername)
   return {
     configured: true,
-    available,
+    available: profileResponse.success,
     path: storageConfig.path,
     type: storageConfig.type,
-    error: available ? undefined : 'Storage path not available (drive may be unmounted)',
+    error: profileResponse.success ? undefined : profileResponse.error,
   }
 }
 

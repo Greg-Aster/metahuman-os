@@ -16,4 +16,4 @@ export { CardInputNode } from './card-input.node.js';
 export { CardContextLoaderNode } from './card-context-loader.node.js';
 export { ResponseLLMNode } from './response-llm.node.js';
 export { ResponseActionRouterNode } from './response-action-router.node.js';
-export { DualWriterNode } from './dual-writer.node.js';
+export { ResponseContextWriterNode } from './response-context-writer.node.js';

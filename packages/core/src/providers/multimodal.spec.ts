@@ -138,6 +138,7 @@ const visual = {
   dataUrl: environmentDataUrl,
   width: 1,
   height: 1,
+  metadata: { correlationId: 'generic-camera-cycle-1' },
 };
 const observation = {
   environmentId: 'generic-camera-environment',
@@ -146,6 +147,7 @@ const observation = {
   timestamp: new Date().toISOString(),
   capabilities: { actions: [] },
   visual,
+  metadata: { correlationId: 'generic-camera-cycle-1' },
 };
 
 const prompt = stringifyEnvironmentObservation(observation, 'Inspect the environment.');

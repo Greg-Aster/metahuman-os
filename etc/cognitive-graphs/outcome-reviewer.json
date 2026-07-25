@@ -152,7 +152,7 @@
       },
       "data": {
         "label": "Save to Inner Dialogue",
-        "nodeType": "inner_dialogue_capture",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": ["agency", "outcome-review", "inner"],
           "dialogueSource": "outcome-reviewer"

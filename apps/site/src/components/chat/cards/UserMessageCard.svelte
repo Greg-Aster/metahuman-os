@@ -11,8 +11,8 @@
   {message}
   {index}
   {isSelected}
-  roleLabel="You"
-  roleIcon=""
+  roleLabel={message.role === 'thought' ? 'You · unvoiced thought' : 'You'}
+  roleIcon={message.role === 'thought' ? '💭' : ''}
   showActions={false}
   showSpeakButton={false}
   on:messageClick
