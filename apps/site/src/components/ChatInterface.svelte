@@ -245,12 +245,28 @@
   let isComponentMounted = true;
 
 
+  async function syncSpeechDisabledPreference(disabled: boolean): Promise<void> {
+    try {
+      const response = await apiFetch('/api/voice-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ speechDisabled: disabled }),
+      });
+      if (!response.ok) {
+        console.warn(`[chat-prefs] Failed to sync speech preference (${response.status})`);
+      }
+    } catch (error) {
+      console.warn('[chat-prefs] Failed to sync speech preference:', error);
+    }
+  }
+
   function loadChatPrefs() {
     try {
       const raw = localStorage.getItem('chatPrefs');
       if (!raw) {
         console.log('[chat-prefs] No chatPrefs in localStorage, using defaults');
         ttsEnabled = true;
+        void syncSpeechDisabledPreference(false);
         return;
       }
       const p = JSON.parse(raw);
@@ -266,8 +282,11 @@
       if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
       if (typeof p.bigBrotherDelegateAll === 'boolean') bigBrotherDelegateAll = p.bigBrotherDelegateAll;
       console.log('[chat-prefs] Loaded:', { ttsEnabled, reasoningDepth });
+      void syncSpeechDisabledPreference(!ttsEnabled);
     } catch (e) {
       console.error('[chat-prefs] Error loading:', e);
+      ttsEnabled = true;
+      void syncSpeechDisabledPreference(false);
     }
   }
   function saveChatPrefs() {
@@ -299,6 +318,7 @@
       ttsApi.cancelInFlightTts();
     }
     saveChatPrefs();
+    void syncSpeechDisabledPreference(!ttsEnabled);
   }
 
   function updateReasoningDepth(value: number, persist = false) {
@@ -561,6 +581,7 @@
   function handleVoiceSettingsUpdate() {
     console.log('[chat-mic] Voice settings updated, reloading...');
     mic.loadVADSettings();
+    ttsApi.refreshVoiceSettings();
   }
 
   /**
@@ -745,7 +766,11 @@
     }
   }
 
-  async function playAdmittedTTSItem(text: string | undefined | null, source: string) {
+  async function playAdmittedTTSItem(
+    text: string | undefined | null,
+    source: string,
+    requestId?: string,
+  ) {
     const speechText = text?.trim();
     const speechEnabled = assistantSpeechEnabled();
     if (!speechEnabled || !speechText) {
@@ -760,7 +785,7 @@
         console.log(`[chat-tts] Speech disabled while preparing ${source}; skipping playback`);
         return;
       }
-      await ttsApi.speak(speechText);
+      await ttsApi.speak(speechText, { source, requestId });
     } catch (err) {
       console.warn(`[chat-tts] Admitted TTS playback failed from ${source}:`, err);
     }
@@ -789,11 +814,15 @@
     connectionPool.resume();
   }
 
-  function handleTTSItems(items: Array<{ text?: string; mode?: string; source?: string }>) {
+  function handleTTSItems(items: Array<{ id?: string; text?: string; mode?: string; source?: string }>) {
     for (const item of items) {
       console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
 
-      void playAdmittedTTSItem(item.text, `queue:${item.source || item.mode || 'unknown'}`);
+      void playAdmittedTTSItem(
+        item.text,
+        item.source || item.mode || 'unknown',
+        item.id,
+      );
     }
   }
 

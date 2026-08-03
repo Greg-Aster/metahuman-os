@@ -31,7 +31,7 @@
       "jitterMs": 60000,
       "boredomMovementInactivityThreshold": 600,
       "boredomMovementJitterMs": 120000,
-      "maxCycleSteps": 3,
+      "maxCycleSteps": 8,
       "graph": "environment",
       "comment": "Robot autonomy controller. Dormant in reactive mode; owns the Robot Observer and Boredom Movement inactivity timers in semi and full modes."
     },

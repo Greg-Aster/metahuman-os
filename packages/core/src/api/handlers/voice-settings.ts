@@ -162,6 +162,8 @@ function loadRvcSpeakers(profileRoot: string): RvcSpeaker[] {
 type VoiceConfig = {
   tts: {
     provider: string;
+    outputTarget: 'local' | 'robot';
+    speechDisabled?: boolean;
     piper: {
       binary: string;
       model: string;
@@ -224,6 +226,8 @@ function buildDefaultVoiceConfig(
   return {
     tts: {
       provider: 'piper',
+      outputTarget: 'local',
+      speechDisabled: false,
       piper: {
         binary: defaultBinary,
         model: defaultModel,
@@ -322,6 +326,14 @@ function ensureVoiceConfig(
   // Ensure structure exists
   config.tts = config.tts ?? { provider: 'piper', piper: {} as any };
   config.tts.provider = config.tts.provider || 'piper';
+  if (config.tts.outputTarget !== 'robot' && config.tts.outputTarget !== 'local') {
+    config.tts.outputTarget = 'local';
+    needsWrite = true;
+  }
+  if (typeof config.tts.speechDisabled !== 'boolean') {
+    config.tts.speechDisabled = false;
+    needsWrite = true;
+  }
   config.tts.piper = config.tts.piper ?? {} as any;
 
   const defaultBinary = path.join(rootDir, 'bin', 'piper', 'piper');
@@ -750,6 +762,8 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
 
     return successResponse({
         provider: providerForUI,
+        outputTarget: config.tts.outputTarget,
+        speechDisabled: config.tts.speechDisabled === true,
         piper: {
           voices,
           currentVoice: currentVoiceFile,
@@ -825,7 +839,7 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
   try {
 
     const body = req.body as any;
-    const { provider, piper, sovits, rvc, kokoro, stt } = body;
+    const { provider, outputTarget, speechDisabled, piper, sovits, rvc, kokoro, stt } = body;
 
     console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc, hasKokoro: !!kokoro, hasStt: !!stt });
 
@@ -848,6 +862,12 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     // Update provider (normalize sovits → sovits for internal storage)
     if (provider) {
       config.tts.provider = provider === 'sovits' ? 'gpt-sovits' : provider;
+    }
+    if (outputTarget === 'local' || outputTarget === 'robot') {
+      config.tts.outputTarget = outputTarget;
+    }
+    if (typeof speechDisabled === 'boolean') {
+      config.tts.speechDisabled = speechDisabled;
     }
 
     // Update Piper settings

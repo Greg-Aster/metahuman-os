@@ -15,6 +15,7 @@ interface VoiceModelsCache {
 
 interface VoiceProviderCache {
   provider?: string;
+  outputTarget: 'local' | 'robot';
 }
 
 interface AudioChunk {
@@ -277,7 +278,10 @@ export function useTTS() {
       const settingsRes = await apiFetch('/api/voice-settings');
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
-        voiceProviderCache = { provider: settings.provider };
+        voiceProviderCache = {
+          provider: settings.provider,
+          outputTarget: settings.outputTarget === 'robot' ? 'robot' : 'local',
+        };
         voiceProviderCacheTime = now;
         return settings.provider;
       }
@@ -286,6 +290,17 @@ export function useTTS() {
     }
 
     return undefined;
+  }
+
+  async function fetchSpeechOutputTarget(): Promise<'local' | 'robot'> {
+    await fetchVoiceProvider();
+    return voiceProviderCache?.outputTarget ?? 'local';
+  }
+
+  function refreshVoiceSettings(): void {
+    voiceProviderCache = null;
+    voiceProviderCacheTime = 0;
+    void fetchVoiceProvider();
   }
 
   /**
@@ -427,6 +442,8 @@ export function useTTS() {
   async function speakTextStreaming(text: string, options?: {
     pitchShift?: number;  // RVC pitch shift (-12 to +12)
     speed?: number;       // Speaking rate (0.5-2.0)
+    source?: string;
+    requestId?: string;
   }): Promise<void> {
     console.log('[useTTS] speakTextStreaming called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
@@ -459,6 +476,8 @@ export function useTTS() {
       const requestBody: Record<string, unknown> = {
         text: speechText,
         provider: provider,
+        source: options?.source,
+        requestId: options?.requestId,
       };
 
       // Add optional parameters
@@ -584,6 +603,10 @@ export function useTTS() {
       }
       console.warn('[useTTS] Streaming failed:', e);
 
+      if (await fetchSpeechOutputTarget() === 'robot') {
+        return;
+      }
+
       // Fallback to non-streaming mode
       console.log('[useTTS] Falling back to non-streaming TTS');
       stopStreaming();
@@ -656,7 +679,7 @@ export function useTTS() {
   function waitForPlaybackComplete(): Promise<void> {
     return new Promise((resolve) => {
       const checkComplete = () => {
-        const allPlayed = audioQueue.length > 0 && audioQueue.every(c => c.played);
+        const allPlayed = audioQueue.length === 0 || audioQueue.every(c => c.played);
         if (allPlayed && !isPlayingChunk && streamComplete) {
           isPlaying.set(false);
           resolve();
@@ -771,15 +794,29 @@ export function useTTS() {
    * Smart speak - uses native TTS if enabled, otherwise server TTS
    * Auto-selects streaming mode for slow providers (RVC) to reduce latency
    */
-  async function speak(text: string, options?: { streaming?: boolean; pitchShift?: number; speed?: number }): Promise<void> {
+  async function speak(text: string, options?: {
+    streaming?: boolean;
+    pitchShift?: number;
+    speed?: number;
+    source?: string;
+    requestId?: string;
+  }): Promise<void> {
+    const outputTarget = await fetchSpeechOutputTarget();
     // Check if native voice mode is enabled
-    if (isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
+    if (
+      outputTarget === 'local'
+      && isNativeVoiceModeEnabled()
+      && isNativeTTSAvailable()
+    ) {
       console.log('[useTTS] Native voice mode enabled - using device TTS');
       return speakTextNative(text);
     }
 
     // Use server TTS - auto-select streaming for slow providers
     let useStreaming = options?.streaming;
+    if (outputTarget === 'robot') {
+      useStreaming = true;
+    }
 
     // If streaming not explicitly set, auto-detect based on provider
     if (useStreaming === undefined) {
@@ -793,7 +830,12 @@ export function useTTS() {
     }
 
     if (useStreaming) {
-      return speakTextStreaming(text, { pitchShift: options?.pitchShift, speed: options?.speed });
+      return speakTextStreaming(text, {
+        pitchShift: options?.pitchShift,
+        speed: options?.speed,
+        source: options?.source,
+        requestId: options?.requestId,
+      });
     }
     return speakText(text);
   }
@@ -816,6 +858,7 @@ export function useTTS() {
     cancelInFlightTts,
     ensureAudioUnlocked,
     prefetchVoiceResources,
+    refreshVoiceSettings,
     cleanup,
   };
 }

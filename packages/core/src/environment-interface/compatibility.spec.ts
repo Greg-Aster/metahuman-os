@@ -176,6 +176,19 @@ try {
     actionId: claimedCommand!.id,
   });
   const remainingCommandId = claimedCommand!.id === firstCommand.id ? secondCommand.id : firstCommand.id;
+  assert.equal(manager.getTask(claimedCommand!.id)?.state, 'leased');
+  assert.deepEqual(
+    dispatchEnvironmentActions('robot-1'),
+    [],
+    'adapter acceptance must not release the robot resource before terminal feedback',
+  );
+  recordEnvironmentActionResult({
+    id: 'first-command-completed',
+    timestamp: new Date().toISOString(),
+    type: 'completed',
+    message: 'done',
+    actionId: claimedCommand!.id,
+  });
   assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, remainingCommandId);
 
   resetState();
@@ -224,9 +237,9 @@ try {
     message: 'accepted',
     actionId: lifecycle.id,
   });
-  assert.equal(accepted?.action.status, 'accepted');
+  assert.equal(accepted?.action.status, 'dispatched');
   assert.equal(accepted?.username, 'system');
-  assert.equal(manager.getTask(lifecycle.id)?.state, 'completed');
+  assert.equal(manager.getTask(lifecycle.id)?.state, 'leased');
   assert.equal(readEnvironmentBridgeState().feedback.length, 0);
 
   publishEnvironmentObservation({
@@ -511,7 +524,7 @@ try {
   assert.equal(bodyQueued.status, 'coordinated_for_adapter');
   assert.equal(bodyQueued.count, 1);
   assert.equal(bodyQueued.ready, true);
-  assert.equal(bodyQueued.response, 'Robot command queued; waiting for terminal feedback.');
+  assert.equal(bodyQueued.response, '');
   const queuedBodyCommand = bodyQueued.commands[0];
   assert.ok(queuedBodyCommand);
   const queuedCycle = queuedBodyCommand.metadata?.robotObserver as
@@ -552,7 +565,7 @@ try {
   assert.equal(
     contextualInstruction.instruction,
     [
-      'Robot action completed: done. Report this result once to the user and do not issue a new action.',
+      'Robot action completed: done. Inspect the fresh correlated observation and report what happened once to the user. The action is finished; do not issue a new action from this completion event.',
       'Original user goal (context only; not a new command): Wave, then use the returned view to tell me what changed.',
     ].join('\n'),
   );
@@ -588,9 +601,27 @@ try {
       },
     },
   }, { userMessage: '' });
-  assert.match(String(continuationInstruction.instruction), /completed action is satisfied/);
-  assert.match(String(continuationInstruction.instruction), /unfinished step/);
-  assert.doesNotMatch(String(continuationInstruction.instruction), /do not issue a new action/);
+  assert.match(String(continuationInstruction.instruction), /Inspect the fresh correlated observation/);
+  assert.match(String(continuationInstruction.instruction), /do not issue a new action/);
+
+  const parsedTerminalFeedback = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'The wave completed, and the post-action image has returned.',
+      actions: [{ type: 'robotCommand', command: 'wave' }],
+      movementRequest: { description: 'wave again' },
+    }),
+    instruction: continuationInstruction.instruction,
+    observation: continuationInstruction.observation,
+    sessionId: 'robot-1',
+    routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
+  }, {});
+  assert.deepEqual(parsedTerminalFeedback.actions, []);
+  assert.equal(parsedTerminalFeedback.movementRequest, null);
+  assert.equal(parsedTerminalFeedback.movementRequested, false);
+  assert.equal(
+    parsedTerminalFeedback.response,
+    'The wave completed, and the post-action image has returned.',
+  );
 
   const continuationState = readEnvironmentBridgeState();
   continuationState.sessions['robot-1']!.latestObservation = {
@@ -613,7 +644,7 @@ try {
   };
   writeEnvironmentBridgeState(continuationState);
   const unsubscribeContinuation = subscribeEnvironmentActions('robot-1', () => {});
-  const silentContinuation = await environmentSendActionNode.execute({
+  const queuedContinuation = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     response: 'Continuing the remaining task.',
     sessionId: 'robot-1',
@@ -631,9 +662,9 @@ try {
     },
   } as never, {});
   unsubscribeContinuation();
-  assert.equal(silentContinuation.status, 'coordinated_for_adapter');
-  assert.equal(silentContinuation.count, 1);
-  assert.equal(silentContinuation.response, '');
+  assert.equal(queuedContinuation.status, 'coordinated_for_adapter');
+  assert.equal(queuedContinuation.count, 1);
+  assert.equal(queuedContinuation.response, '');
 
   const visual = {
     id: 'camera-1',
@@ -726,8 +757,12 @@ try {
   const satisfiedCaptureInstruction = await environmentInstructionInterpreterNode.execute({
     observation: satisfiedCaptureObservation,
   }, { userMessage: '' });
-  assert.match(String(satisfiedCaptureInstruction.instruction), /visual acquisition.*complete/i);
-  assert.match(String(satisfiedCaptureInstruction.instruction), /Original user goal: Can you take a picture/);
+  assert.match(String(satisfiedCaptureInstruction.instruction), /Robot action completed/i);
+  assert.match(String(satisfiedCaptureInstruction.instruction), /do not issue a new action/i);
+  assert.match(
+    String(satisfiedCaptureInstruction.instruction),
+    /Original user goal \(context only; not a new command\): Can you take a picture/,
+  );
   assert.doesNotMatch(
     String(satisfiedCaptureInstruction.instruction),
     /^Can you take a picture\? What can you see\?$/,

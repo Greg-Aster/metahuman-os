@@ -44,7 +44,6 @@ function textEventFromMessage(message: string): EnvironmentTextEvent | null {
 
 function terminalFeedbackEvent(
   feedback: EnvironmentFeedback[] | undefined,
-  allowContinuation: boolean,
 ): EnvironmentTextEvent | null {
   let terminal: EnvironmentFeedback | undefined;
   for (let index = (feedback?.length ?? 0) - 1; index >= 0; index -= 1) {
@@ -64,23 +63,22 @@ function terminalFeedbackEvent(
     }
   }
   if (!terminal) return null;
-  const command = terminal.data?.command;
-  const mayContinue = (
-    allowContinuation
-    && terminal.type === 'completed'
-    && command !== 'stop'
-  );
   return {
     id: `environment-feedback-${terminal.id}`,
     source: 'system',
-    text: mayContinue
+    text: terminal.type === 'completed'
       ? [
           `Robot action completed: ${terminal.message}.`,
-          'Inspect the fresh correlated observation and report what happened.',
-          'The completed action is satisfied; do not repeat it merely because it appears in the original user goal.',
-          'Choose at most one next semantic action only when the original goal explicitly requires an unfinished step.',
+          'Inspect the fresh correlated observation and report what happened once to the user.',
+          'This completed action is only one step; it does not by itself mean the original objective or its stop condition is complete.',
+          'Do not issue a new action from this completion event.',
+          'If the original objective remains incomplete, set taskDecision.objectiveComplete=false and provide one bounded nextInstruction so the validator can queue a later workflow step.',
         ].join(' ')
-      : `Robot action ${terminal.type}: ${terminal.message}. Report this result once to the user and do not issue a new action.`,
+      : [
+          `Robot action ${terminal.type}: ${terminal.message}.`,
+          'Report this result once and do not issue a new action from this completion event.',
+          'Do not mark the original objective complete unless its actual completion condition is independently satisfied.',
+        ].join(' '),
     timestamp: terminal.timestamp,
     metadata: { actionId: terminal.actionId, feedbackId: terminal.id },
   };
@@ -108,8 +106,14 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const contextMessage = typeof context.userMessage === 'string' ? context.userMessage : '';
+    const validatorCommand = isRecord(rawObservation?.metadata?.taskValidatorCommand)
+      ? rawObservation.metadata.taskValidatorCommand
+      : null;
+    const queuedObjective = typeof validatorCommand?.objective === 'string'
+      ? validatorCommand.objective.trim()
+      : '';
     const observationText = filterTextEvents(rawObservation?.text ?? []);
-    const currentTaskEvent = textEventFromMessage(contextMessage);
+    const currentTaskEvent = textEventFromMessage(contextMessage || queuedObjective);
     const originatingInstruction = typeof rawObservation?.metadata?.originatingInstruction === 'string'
       ? rawObservation.metadata.originatingInstruction.trim()
       : '';
@@ -124,7 +128,6 @@ export const environmentInstructionInterpreterNode = defineNode({
     // exists, preventing an older transcript from replacing a UI command.
     const feedbackEvent = terminalFeedbackEvent(
       rawObservation?.feedback,
-      Boolean(robotObserver),
     );
     const text = currentTaskEvent ? [currentTaskEvent] : feedbackEvent ? [feedbackEvent] : observationText;
     const satisfiedCaptureInstruction = captureSatisfied
@@ -138,13 +141,13 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? [
           feedbackEvent.text,
           originatingInstruction
-            ? `Original user goal (context only; not a new command): ${originatingInstruction}`
+            ? `Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): ${originatingInstruction}`
             : '',
         ].filter(Boolean).join('\n')
       : '';
     const instruction = currentTaskEvent?.text
-      || satisfiedCaptureInstruction
       || feedbackInstruction
+      || satisfiedCaptureInstruction
       || originatingInstruction
       || text.map(event => event.text).join('\n').trim();
     const sessionId = rawObservation?.sessionId ?? '';

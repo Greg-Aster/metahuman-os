@@ -32,6 +32,16 @@ function actionIsAdvertised(
   return observation.capabilities.actions.includes(action.type as any);
 }
 
+function hasTerminalFeedback(observation: EnvironmentObservation | undefined): boolean {
+  return observation?.feedback?.some(feedback => (
+    feedback.type === 'completed'
+    || feedback.type === 'rejected'
+    || feedback.type === 'cancelled'
+    || feedback.type === 'expired'
+    || feedback.type === 'failed'
+  )) === true;
+}
+
 export const environmentActionParserNode = defineNode({
   id: 'environment_action_parser',
   name: 'Environment Action Parser',
@@ -48,6 +58,8 @@ export const environmentActionParserNode = defineNode({
     { name: 'firstAction', type: 'object', description: 'First parsed action' },
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
+    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task validator' },
+    { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
@@ -61,11 +73,14 @@ export const environmentActionParserNode = defineNode({
         : undefined;
       const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
-      const hasRoutingDecision = typeof routingAnalysis?.needsAction === 'boolean';
-      const currentActionAuthorized = !hasRoutingDecision || routingAnalysis?.needsAction === true;
-      const routerRequestedMovement = routingAnalysis?.needsAction === true
-        && routingAnalysis?.actionType === 'robot_movement';
+      const terminalFeedback = hasTerminalFeedback(observation);
       const parsed = parseEnvironmentModelOutput(inputs.response, sessionId);
+      const hasRoutingDecision = typeof routingAnalysis?.needsAction === 'boolean';
+      const currentActionAuthorized = !terminalFeedback
+        && (!hasRoutingDecision || routingAnalysis?.needsAction === true);
+      const routerRequestedMovement = currentActionAuthorized
+        && routingAnalysis?.needsAction === true
+        && routingAnalysis?.actionType === 'robot_movement';
       const connectedSession = Boolean(sessionId || observation?.sessionId);
       const unsupportedCommand = unsupportedRobotCommand(
         parsed.actions,
@@ -73,18 +88,20 @@ export const environmentActionParserNode = defineNode({
       );
       const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
       const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
-      const direct = parseDirectRobotInstruction(
-        instruction,
-        sessionId,
-        observation?.capabilities?.robotCommands,
-      );
+      const direct = terminalFeedback
+        ? null
+        : parseDirectRobotInstruction(
+            instruction,
+            sessionId,
+            observation?.capabilities?.robotCommands,
+          );
       const modelRobotCommand = !direct
         ? parsed.actions.find(
             action => action.type === 'robotCommand' && typeof action.command === 'string',
           )?.command
         : undefined;
       const hasSupportedModelRobotCommand = Boolean(modelRobotCommand && !unsupportedCommand);
-      const requiresGeneratedMovement = !direct && Boolean(
+      const requiresGeneratedMovement = currentActionAuthorized && !direct && Boolean(
         hasRoutingDecision
           ? routerRequestedMovement && (
               parsed.movementRequest
@@ -93,7 +110,7 @@ export const environmentActionParserNode = defineNode({
             )
           : parsed.movementRequest || unsupportedCommand,
       );
-      const movementRequestError = hasRoutingDecision && !routerRequestedMovement
+      const movementRequestError = terminalFeedback || (hasRoutingDecision && !routerRequestedMovement)
         ? ''
         : parsed.movementRequestError;
       const movementRequested = Boolean(movementRequestError || requiresGeneratedMovement);
@@ -117,6 +134,8 @@ export const environmentActionParserNode = defineNode({
                 && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
               ))
             : [];
+      const stopActions = parsed.actions.filter(action => action.type === 'stop');
+      if (!currentActionAuthorized && stopActions.length > 0) actions.push(...stopActions);
       const movementError = direct ? '' : movementRequestError
         || (requiresGeneratedMovement && !connectedSession
           ? 'The requested robot movement cannot run because no robot session is connected.'
@@ -136,6 +155,8 @@ export const environmentActionParserNode = defineNode({
         firstAction: actions[0] ?? null,
         movementRequest,
         movementRequested,
+        taskDecision: parsed.taskDecision,
+        taskDecisionError: parsed.taskDecisionError,
         valid,
         error: valid ? '' : movementError || 'No valid environment actions found',
         response,
@@ -146,6 +167,8 @@ export const environmentActionParserNode = defineNode({
         firstAction: null,
         movementRequest: null,
         movementRequested: false,
+        taskDecision: null,
+        taskDecisionError: '',
         valid: false,
         error: (error as Error).message,
         response: '',

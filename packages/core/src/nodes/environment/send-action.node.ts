@@ -131,7 +131,6 @@ export const environmentSendActionNode = defineNode({
       : null;
     const actionCycle = existingCycle ?? startedCycle;
     const nextObserverStep = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
-    const isInternalContinuation = Boolean(existingCycle && !currentUserInstruction);
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const generatedResponse = typeof inputs.generatedResponse === 'string'
       ? inputs.generatedResponse.trim()
@@ -303,10 +302,10 @@ export const environmentSendActionNode = defineNode({
     const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
       ? 'Camera request queued; waiting for a fresh image.'
       : bodyActions.length > 0
-        ? 'Robot command queued; waiting for terminal feedback.'
+        // Terminal feedback owns the visible completion response. Keep this
+        // transient queue state in the structured Robot Buffer record only.
+        ? ''
         : conversationalResponse;
-    const visibleQueuedResponse = isInternalContinuation ? '' : queuedResponse;
-
     return {
       commands,
       rejectedActions,
@@ -319,7 +318,7 @@ export const environmentSendActionNode = defineNode({
       message,
       response: ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
         ? message
-        : status === 'coordinated_for_adapter' ? visibleQueuedResponse : conversationalResponse,
+        : status === 'coordinated_for_adapter' ? queuedResponse : conversationalResponse,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,
       adapterReady,

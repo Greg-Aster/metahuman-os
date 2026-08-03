@@ -62,6 +62,59 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+append_csv_setting() {
+  local current="$1"
+  local value="$2"
+
+  case ",$current," in
+    *,"$value",*) printf '%s' "$current" ;;
+    *,) printf '%s' "$value" ;;
+    *) printf '%s,%s' "$current" "$value" ;;
+  esac
+}
+
+configure_exposure_mode() {
+  local tunnel_config="$REPO_ROOT/etc/cloudflare.json"
+  local tunnel_hostname=""
+
+  if [ -z "${MH_EXPOSURE_MODE+x}" ] && [ -r "$tunnel_config" ]; then
+    tunnel_hostname="$(
+      node -e '
+        const fs = require("node:fs")
+        try {
+          const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+          const hostname = String(config.hostname || "").trim().toLowerCase()
+          if (
+            config.enabled === true
+            && config.autoStart === true
+            && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?$/.test(hostname)
+          ) process.stdout.write(hostname)
+        } catch {}
+      ' "$tunnel_config"
+    )"
+  fi
+
+  if [ -n "$tunnel_hostname" ]; then
+    export MH_EXPOSURE_MODE="shared"
+    export MH_EXPOSURE_SOURCE="cloudflare-tunnel"
+    export HOST="${HOST:-127.0.0.1}"
+    export MH_ALLOWED_HOSTS
+    MH_ALLOWED_HOSTS="$(append_csv_setting "${MH_ALLOWED_HOSTS:-}" "$tunnel_hostname")"
+    export MH_ALLOWED_ORIGINS
+    MH_ALLOWED_ORIGINS="$(append_csv_setting "${MH_ALLOWED_ORIGINS:-}" "https://$tunnel_hostname")"
+    print_warning "Cloudflare tunnel enabled; shared request mode is active on the loopback listener"
+    return
+  fi
+
+  export MH_EXPOSURE_MODE="${MH_EXPOSURE_MODE:-local}"
+  if [ "$MH_EXPOSURE_MODE" = "shared" ]; then
+    export HOST="${HOST:-0.0.0.0}"
+    print_warning "Shared exposure mode enabled; configure MH_ALLOWED_HOSTS and MH_ALLOWED_ORIGINS for browser access"
+  else
+    export HOST="${HOST:-127.0.0.1}"
+  fi
+}
+
 activate_repo_node_runtime() {
   local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
   local requested_version=""
@@ -440,6 +493,10 @@ if command_exists lsof && lsof -n -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   exit 1
 fi
 
+configure_exposure_mode
+# Resolve the request boundary before background services and the web server
+# inherit their environment. Tunnel-derived sharing remains loopback-bound.
+
 print_status "Starting background services"
 # Announce the non-blocking service trigger.
 if ! (exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1; then
@@ -452,14 +509,6 @@ STARTED=true
 
 print_status "Starting web server"
 # Announce the foreground web server.
-export MH_EXPOSURE_MODE="${MH_EXPOSURE_MODE:-local}"
-if [ "$MH_EXPOSURE_MODE" = "shared" ]; then
-  export HOST="${HOST:-0.0.0.0}"
-  print_warning "Shared exposure mode enabled; configure MH_ALLOWED_HOSTS and MH_ALLOWED_ORIGINS for browser access"
-else
-  export HOST="${HOST:-127.0.0.1}"
-fi
-
 print_status "Exposure mode: $MH_EXPOSURE_MODE"
 print_status "Web interface: http://localhost:$PORT"
 # Show the URL without opening a browser automatically.

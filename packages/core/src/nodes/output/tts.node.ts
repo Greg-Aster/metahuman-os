@@ -1,9 +1,10 @@
 /**
  * TTS Node
  *
- * Queues text for Text-to-Speech playback on the client.
+ * Delivers text through the configured Text-to-Speech output.
  * Has two input handles: conversation and innerDialogue
- * The client watches the TTS queue and plays audio when items appear.
+ * Local playback uses the client queue; Environment Mode robot playback is
+ * rendered server-side and sent through the existing Environment Bridge.
  *
  * The toggles in ChatInterface control whether TTS is enabled for each mode.
  */
@@ -13,6 +14,12 @@ import path from 'node:path';
 import { defineNode, type NodeDefinition } from '../types.js';
 import { getProfilePaths, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
+import {
+  getSpeechOutputSettings,
+  renderRobotSpeech,
+  type RobotSpeechDelivery,
+  type SpeechOutputSettings,
+} from '../../tts/robot-speech.js';
 
 // ============================================================================
 // TTS Queue Types and Functions
@@ -320,6 +327,104 @@ export function peekTTSQueue(username: string): TTSQueueItem[] {
   }
 }
 
+export interface TTSOutputDelivery {
+  accepted: boolean;
+  deliveryId: string;
+  route: 'local' | 'robot';
+  reason?: string;
+}
+
+interface TTSOutputDependencies {
+  getSettings: (username: string) => SpeechOutputSettings;
+  queue: typeof queueTTS;
+  renderRobot: (options: {
+    username: string;
+    text: string;
+    requestId: string;
+  }) => Promise<RobotSpeechDelivery>;
+  createRequestId: () => string;
+}
+
+const defaultTTSOutputDependencies: TTSOutputDependencies = {
+  getSettings: getSpeechOutputSettings,
+  queue: queueTTS,
+  renderRobot: renderRobotSpeech,
+  createRequestId: () => `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+};
+
+export async function deliverTTSOutput(
+  request: {
+    username: string;
+    text: string;
+    mode: 'conversation' | 'inner';
+    source: string;
+  },
+  dependencyOverrides: Partial<TTSOutputDependencies> = {},
+): Promise<TTSOutputDelivery> {
+  const dependencies = { ...defaultTTSOutputDependencies, ...dependencyOverrides };
+  const settings = dependencies.getSettings(request.username);
+
+  if (settings.outputTarget === 'robot') {
+    if (request.source !== 'environment-mode') {
+      return {
+        accepted: false,
+        deliveryId: '',
+        route: 'robot',
+        reason: 'Robot speech is limited to Environment Mode tts-out',
+      };
+    }
+    if (settings.speechDisabled) {
+      return {
+        accepted: false,
+        deliveryId: '',
+        route: 'robot',
+        reason: 'Speech is disabled by the main chat speaker control',
+      };
+    }
+    if (settings.provider !== 'kokoro') {
+      return {
+        accepted: false,
+        deliveryId: '',
+        route: 'robot',
+        reason: 'Robot speech currently requires Kokoro',
+      };
+    }
+
+    try {
+      const delivery = await dependencies.renderRobot({
+        username: request.username,
+        text: request.text,
+        requestId: dependencies.createRequestId(),
+      });
+      return {
+        accepted: true,
+        deliveryId: delivery.actionId,
+        route: 'robot',
+      };
+    } catch (error) {
+      return {
+        accepted: false,
+        deliveryId: '',
+        route: 'robot',
+        reason: (error as Error).message,
+      };
+    }
+  }
+
+  const item = dependencies.queue(
+    request.username,
+    request.text,
+    request.mode,
+    request.source,
+  );
+  return {
+    accepted: Boolean(item),
+    deliveryId: item?.id || '',
+    route: 'local',
+    reason: item ? undefined : 'TTS queue rejected the item',
+  };
+}
+
 // ============================================================================
 // TTS Node Definition
 // ============================================================================
@@ -334,9 +439,9 @@ export const TTSNode: NodeDefinition = defineNode({
     { name: 'text', type: 'string', optional: true, description: 'Text to speak (defaults to conversation mode)' },
   ],
   outputs: [
-    { name: 'queued', type: 'boolean', description: 'Whether text was queued for TTS' },
-    { name: 'itemId', type: 'string', description: 'ID of queued TTS item' },
-    { name: 'text', type: 'string', description: 'Text that was queued' },
+    { name: 'queued', type: 'boolean', description: 'Whether text was accepted for TTS delivery' },
+    { name: 'itemId', type: 'string', description: 'ID of the TTS queue item or robot speech action' },
+    { name: 'text', type: 'string', description: 'Text accepted for TTS delivery' },
   ],
   properties: {
     source: '',
@@ -360,7 +465,7 @@ export const TTSNode: NodeDefinition = defineNode({
       ],
     },
   },
-  description: 'Queues text for Text-to-Speech playback. Client toggles control playback.',
+  description: 'Delivers text through local playback or the Environment Mode robot speaker.',
 
   execute: async (inputs, context, properties) => {
     // Use username (human-readable) for profile path resolution, not userId (UUID)
@@ -420,85 +525,73 @@ export const TTSNode: NodeDefinition = defineNode({
       defaultMode,
     });
 
+    const deliver = async (
+      text: string,
+      mode: 'conversation' | 'inner',
+    ): Promise<TTSOutputDelivery> => {
+      const delivery = await deliverTTSOutput({ username, text, mode, source });
+      if (!delivery.accepted) {
+        console.warn(`[TTS Node] ${delivery.route} delivery skipped: ${delivery.reason}`);
+        return delivery;
+      }
+      audit({
+        category: 'action',
+        level: 'info',
+        event: delivery.route === 'robot' ? 'tts_robot_dispatched' : 'tts_queued',
+        actor: 'tts-node',
+        details: {
+          mode,
+          textLength: text.length,
+          source,
+          itemId: delivery.deliveryId,
+          route: delivery.route,
+        },
+        metadata: { username },
+      });
+      return delivery;
+    };
+
     // A response generated for an explicit Inner compose turn remains inner
     // dialogue even when an older graph connects it to the conversation handle.
     if (context.composeTarget === 'inner' && conversationStr?.trim()) {
-      const item = queueTTS(username, conversationStr, 'inner', source);
+      const delivery = await deliver(conversationStr, 'inner');
       return {
-        queued: Boolean(item),
-        itemId: item?.id || '',
+        queued: delivery.accepted,
+        itemId: delivery.deliveryId,
         text: conversationStr,
         conversationQueued: false,
-        innerQueued: Boolean(item),
+        innerQueued: delivery.accepted,
       };
     }
 
-    // Queue conversation text
+    // Deliver conversation text
     if (conversationStr?.trim()) {
-      const item = queueTTS(username, conversationStr, 'conversation', source);
-      if (item) {
+      const delivery = await deliver(conversationStr, 'conversation');
+      if (delivery.accepted) {
         queued = true;
-        itemId = item.id;
+        itemId = delivery.deliveryId;
         spokenText = conversationStr;
-        audit({
-          category: 'action',
-          level: 'info',
-          event: 'tts_queued',
-          actor: 'tts-node',
-          details: {
-            mode: 'conversation',
-            textLength: conversationStr.length,
-            source,
-            itemId: item.id,
-          },
-          metadata: { username },
-        });
       }
     }
 
-    // Queue inner dialogue text
+    // Deliver inner dialogue text
     if (innerStr?.trim()) {
-      const item = queueTTS(username, innerStr, 'inner', source);
-      if (item) {
+      const delivery = await deliver(innerStr, 'inner');
+      if (delivery.accepted) {
         queued = true;
-        itemId = item.id;
+        itemId = delivery.deliveryId;
         spokenText = innerStr;
-        audit({
-          category: 'action',
-          level: 'info',
-          event: 'tts_queued',
-          actor: 'tts-node',
-          details: {
-            mode: 'inner',
-            textLength: innerStr.length,
-            source,
-            itemId: item.id,
-          },
-          metadata: { username },
-        });
       }
     }
 
-    // Queue generic text if no specific inputs were used
+    // Deliver generic text if no specific inputs were accepted
     if (!queued && genericStr?.trim()) {
-      const item = queueTTS(username, genericStr, defaultMode as 'conversation' | 'inner', source);
-      if (item) {
+      const mode = defaultMode as 'conversation' | 'inner';
+      const delivery = await deliver(genericStr, mode);
+      if (delivery.accepted) {
         queued = true;
-        itemId = item.id;
+        itemId = delivery.deliveryId;
         spokenText = genericStr;
-        audit({
-          category: 'action',
-          level: 'info',
-          event: 'tts_queued',
-          actor: 'tts-node',
-          details: {
-            mode: defaultMode,
-            textLength: genericStr.length,
-            source,
-            itemId: item.id,
-          },
-          metadata: { username },
-        });
       }
     }
 

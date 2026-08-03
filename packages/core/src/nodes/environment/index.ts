@@ -7,6 +7,8 @@ export { environmentInstructionInterpreterNode } from './instruction-interpreter
 export { environmentContextBuilderNode } from './context-builder.node.js';
 export { environmentPromptNode } from './prompt.node.js';
 export { environmentActionParserNode } from './action-parser.node.js';
+export { environmentTaskValidatorNode } from './task-validator.node.js';
+export { environmentWorkflowCommandNode } from './workflow-command.node.js';
 export { movementGeneratorNode } from './movement-generator.node.js';
 export { environmentSendActionNode } from './send-action.node.js';
 export { environmentSendTextNode } from './send-text.node.js';

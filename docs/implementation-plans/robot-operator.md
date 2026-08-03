@@ -1,5 +1,9 @@
 # Robot Operator
 
+Current follow-up authority: `robot-active-operator-roadmap.md`. This file is
+the historical implementation record; the follow-up roadmap governs new mode
+philosophy, status, scope, and implementation sequencing.
+
 ## Intent
 
 Create a separately controllable Robot Operator service and Robot Observer agent for Ainekio integration.

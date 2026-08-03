@@ -98,7 +98,11 @@ test('routes eligible off-script requests while known semantic commands bypass g
     timestamp: new Date().toISOString(),
     capabilities: {
       actions: ['robotCommand', 'robotMotionPlan'],
-      robotCommands: ['walk', 'wave', 'bow', 'shrug'],
+      robotCommands: [
+        'walk', 'wave', 'bow', 'shrug', 'nod', 'celebrate', 'stretch',
+        'macarena', 'salsa', 'surprised', 'sad', 'curious',
+        'turn_left_90', 'turn_right_90', 'walk_slow', 'run',
+      ],
     },
   };
   const known = await environmentActionParserNode.execute({
@@ -130,6 +134,26 @@ test('routes eligible off-script requests while known semantic commands bypass g
   assert.equal(politeKnown.actions[0]?.type, 'robotCommand');
   assert.equal(politeKnown.actions[0]?.command, 'shrug');
   assert.equal(politeKnown.movementRequest, null);
+
+  for (const command of [
+    'nod', 'celebrate', 'stretch', 'macarena', 'salsa', 'surprised', 'sad',
+    'curious', 'turn_left_90', 'turn_right_90', 'walk_slow', 'run',
+  ]) {
+    const permanentCommand = await environmentActionParserNode.execute({
+      response: JSON.stringify({
+        response: `I will ${command}.`,
+        actions: [{ type: 'robotCommand', command }],
+        movementRequest: null,
+      }),
+      instruction: `please ${command}`,
+      routingAnalysis: movementRouting,
+      observation,
+      sessionId: observation.sessionId,
+    }, {});
+    assert.equal(permanentCommand.actions[0]?.type, 'robotCommand');
+    assert.equal(permanentCommand.actions[0]?.command, command);
+    assert.equal(permanentCommand.movementRequest, null);
+  }
 
   const conversationalCatalogCommand = await environmentActionParserNode.execute({
     response: JSON.stringify({

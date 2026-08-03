@@ -22,6 +22,45 @@ export interface EnvironmentMovementRequest {
   sessionId?: string;
 }
 
+export const ENVIRONMENT_TASK_OUTCOMES = [
+  'complete',
+  'continue',
+  'observe',
+  'act',
+  'report',
+  'curiosity',
+  'background',
+  'request_user',
+  'wait',
+] as const;
+
+export type EnvironmentTaskOutcome = typeof ENVIRONMENT_TASK_OUTCOMES[number];
+
+export const ENVIRONMENT_COMPLETION_BASES = [
+  'none',
+  'response',
+  'action_result',
+  'visual_observation',
+  'environment_state',
+  'user_input',
+] as const;
+
+export type EnvironmentCompletionBasis = typeof ENVIRONMENT_COMPLETION_BASES[number];
+
+export const ENVIRONMENT_CONTINUATION_TYPES = ['advance', 'repeat'] as const;
+
+export type EnvironmentContinuationType = typeof ENVIRONMENT_CONTINUATION_TYPES[number];
+
+export interface EnvironmentTaskDecision {
+  outcome: EnvironmentTaskOutcome;
+  reason: string;
+  objectiveComplete: boolean;
+  nextInstruction?: string;
+  continuationType?: EnvironmentContinuationType;
+  completionBasis?: EnvironmentCompletionBasis;
+  completionEvidence?: string;
+}
+
 export function parseDirectRobotInstruction(
   value: unknown,
   sessionId?: string,
@@ -147,8 +186,17 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   ].join('\n'));
   sections.push([
     'Response contract:',
-    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null}.',
+    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
     '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
+    '- taskDecision.outcome must be one of: complete, continue, observe, act, report, curiosity, background, request_user, wait.',
+    '- Set objectiveComplete=true only when the current objective is actually satisfied.',
+    '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
+    '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
+    '- When the objective remains incomplete, you may include one narrower objective-bound nextInstruction and continuationType="advance" or "repeat". Use "repeat" only when the original user objective authorizes the same completed action again.',
+    '- If an incomplete decision omits either continuation field, the validator re-admits the original objective for a fresh bounded evaluation instead of ending the task.',
+    '- Never issue the completed action directly during its feedback pass; a permitted repetition must run later through the bounded validator workflow.',
+    '- objectiveComplete=true requires completionBasis and completionEvidence proving the whole objective and every constraint. completionBasis is response, action_result, visual_observation, environment_state, or user_input.',
+    '- Visual completion evidence must be fresh and correlated; ambiguous, stale, or missing sensory input cannot prove completion.',
   ].join('\n'));
   if (observation.capabilities.actions.includes('robotCommand')) {
     sections.push([
@@ -157,7 +205,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       ...(robotCommands?.length
         ? ['- Use only a command named in Supported robot commands.']
         : []),
-      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}]}.',
+      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}],"movementRequest":null,"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false}}.',
     ].join('\n'));
   }
   if (observation.capabilities.actions.includes('captureImage')) {
@@ -176,7 +224,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       '- Prefer an advertised Supported robot command whenever it represents the requested behavior.',
       '- When a requested movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
       '- Never put robotMotionPlan, joint targets, servo values, PWM values, calibration, or simulator commands in actions.',
-      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"}}.',
+      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"},"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false}}.',
     ].join('\n'));
   }
 
@@ -278,6 +326,64 @@ function parseMovementRequest(
   return { request: { description, sessionId }, error: '' };
 }
 
+function parseTaskDecision(
+  value: unknown,
+): { decision: EnvironmentTaskDecision | null; error: string } {
+  if (value === undefined || value === null) return { decision: null, error: '' };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { decision: null, error: 'taskDecision must be an object' };
+  }
+
+  const record = value as Record<string, unknown>;
+  const outcome = typeof record.outcome === 'string'
+    ? record.outcome.trim() as EnvironmentTaskOutcome
+    : '' as EnvironmentTaskOutcome;
+  if (!ENVIRONMENT_TASK_OUTCOMES.includes(outcome)) {
+    return { decision: null, error: 'taskDecision outcome is not supported' };
+  }
+
+  const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 500) : '';
+  const nextInstruction = typeof record.nextInstruction === 'string'
+    ? record.nextInstruction.trim()
+    : '';
+  if (nextInstruction.length > 500) {
+    return { decision: null, error: 'taskDecision nextInstruction exceeds 500 characters' };
+  }
+  const completionBasis = typeof record.completionBasis === 'string'
+    ? record.completionBasis.trim() as EnvironmentCompletionBasis
+    : undefined;
+  if (completionBasis !== undefined && !ENVIRONMENT_COMPLETION_BASES.includes(completionBasis)) {
+    return { decision: null, error: 'taskDecision completionBasis is not supported' };
+  }
+  const continuationType = typeof record.continuationType === 'string'
+    ? record.continuationType.trim() as EnvironmentContinuationType
+    : undefined;
+  if (continuationType !== undefined && !ENVIRONMENT_CONTINUATION_TYPES.includes(continuationType)) {
+    return { decision: null, error: 'taskDecision continuationType is not supported' };
+  }
+  const completionEvidence = typeof record.completionEvidence === 'string'
+    ? record.completionEvidence.trim()
+    : '';
+  if (completionEvidence.length > 500) {
+    return { decision: null, error: 'taskDecision completionEvidence exceeds 500 characters' };
+  }
+
+  return {
+    decision: {
+      outcome,
+      reason,
+      objectiveComplete: typeof record.objectiveComplete === 'boolean'
+        ? record.objectiveComplete
+        : outcome === 'complete',
+      ...(nextInstruction ? { nextInstruction } : {}),
+      ...(continuationType ? { continuationType } : {}),
+      ...(completionBasis ? { completionBasis } : {}),
+      ...(completionEvidence ? { completionEvidence } : {}),
+    },
+    error: '',
+  };
+}
+
 export function parseEnvironmentActions(
   value: unknown,
   sessionId?: string,
@@ -315,6 +421,8 @@ export function parseEnvironmentModelOutput(
   actions: Partial<EnvironmentAction>[];
   movementRequest: EnvironmentMovementRequest | null;
   movementRequestError: string;
+  taskDecision: EnvironmentTaskDecision | null;
+  taskDecisionError: string;
 } {
   const parsed = typeof value === 'string' ? extractJsonObject(value) : value;
   const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -326,11 +434,14 @@ export function parseEnvironmentModelOutput(
       ? value.trim()
       : '';
   const movement = parseMovementRequest(record?.movementRequest, sessionId);
+  const task = parseTaskDecision(record?.taskDecision);
 
   return {
     response,
     actions: parseEnvironmentActions(parsed, sessionId),
     movementRequest: movement.request,
     movementRequestError: movement.error,
+    taskDecision: task.decision,
+    taskDecisionError: task.error,
   };
 }

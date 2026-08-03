@@ -1,14 +1,14 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
   "version": "1.1.0",
-  "revision": 3,
+  "revision": 4,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
   "description": "Canonical Trigger Manager configuration for finite work",
   "globalSettings": {
-    "pauseAll": false,
+    "pauseAll": true,
     "timezone": "America/Los_Angeles",
     "quietHours": {
       "enabled": false,
@@ -34,7 +34,11 @@
       "priority": "normal",
       "agentPath": "audio-organizer/cli.ts",
       "usesLLM": true,
-      "allowedModes": ["reactive", "semi", "full"],
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
       "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Finite one-shot work. Never starts on boot and always receives a durable coordinator task id."
@@ -49,7 +53,14 @@
       "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 3,
-      "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM"
+      "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.organizer",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "curator": {
       "id": "curator",
@@ -61,7 +72,14 @@
       "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 2,
-      "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)"
+      "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.curator",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "sleep-workflow": {
       "id": "sleep-workflow",
@@ -72,7 +90,14 @@
       "usesLLM": true,
       "schedule": "02:00",
       "maxRetries": 1,
-      "comment": "Queues bounded dream and persona-review children through the work coordinator."
+      "comment": "Queues bounded dream and persona-review children through the work coordinator.",
+      "lifecycle": "workflow",
+      "handler": "workflow.sleep",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "robot-observer": {
       "id": "robot-observer",
@@ -85,7 +110,11 @@
       "priority": "low",
       "agentPath": "coordinator:workflow.robot-observer",
       "usesLLM": true,
-      "allowedModes": ["reactive", "semi", "full"],
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
       "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Manual finite agent. Robot Operator may also submit it with autonomy source after its own inactivity conditions pass."
@@ -101,7 +130,11 @@
       "priority": "low",
       "agentPath": "coordinator:workflow.boredom-movement",
       "usesLLM": true,
-      "allowedModes": ["reactive", "semi", "full"],
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
       "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Manual finite agent with no timer. Its dedicated configuration allowlist is intersected with the robot's advertised command catalog before Robot Operator may submit it autonomously in semi or full mode."
@@ -124,7 +157,14 @@
         "all": "All content - includes both user messages and AI responses",
         "user": "User only - reflects on user inputs, excluding verbose AI responses (recommended)",
         "agent": "Agent only - reflects on AI responses, dreams, and system outputs"
-      }
+      },
+      "lifecycle": "scheduled-work",
+      "handler": "agent.reflector",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "curiosity": {
       "id": "curiosity",
@@ -136,7 +176,14 @@
       "inactivityThreshold": 900,
       "pauseCategory": "interactive",
       "maxRetries": 2,
-      "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json."
+      "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.curiosity-service",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "curiosity-researcher": {
       "id": "curiosity-researcher",
@@ -147,7 +194,14 @@
       "usesLLM": true,
       "interval": 3600,
       "maxRetries": 2,
-      "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle."
+      "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.curiosity-researcher",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "inner-curiosity": {
       "id": "inner-curiosity",
@@ -159,7 +213,14 @@
       "interval": 3600,
       "pauseCategory": "background",
       "maxRetries": 2,
-      "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat)."
+      "comment": "Generates self-directed questions and answers them using local memory. Saves as inner_dialogue (never shows in chat).",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.inner-curiosity",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "psychoanalyzer": {
       "id": "psychoanalyzer",
@@ -169,7 +230,15 @@
       "agentPath": "psychoanalyzer.ts",
       "usesLLM": true,
       "maxRetries": 1,
-      "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer"
+      "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.psychoanalyzer",
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "desire-generator": {
       "id": "desire-generator",
@@ -181,7 +250,14 @@
       "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 2,
-      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and conversation patterns. Reinforces existing desires when user expresses similar wants. Runs after 10 min of inactivity to process recent conversations."
+      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and conversation patterns. Reinforces existing desires when user expresses similar wants. Runs after 10 min of inactivity to process recent conversations.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.desire-generator",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "desire-explorer": {
       "id": "desire-explorer",
@@ -192,7 +268,14 @@
       "usesLLM": true,
       "interval": 120,
       "maxRetries": 2,
-      "comment": "Agency: Explores desires before planning - researches feasibility, generates smart context-aware questions. Runs every 2 minutes to process desires that crossed threshold."
+      "comment": "Agency: Explores desires before planning - researches feasibility, generates smart context-aware questions. Runs every 2 minutes to process desires that crossed threshold.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.desire-explorer",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "desire-executor": {
       "id": "desire-executor",
@@ -203,7 +286,14 @@
       "usesLLM": true,
       "interval": 300,
       "maxRetries": 2,
-      "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes."
+      "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.desire-executor",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "desire-planner": {
       "id": "desire-planner",
@@ -214,7 +304,14 @@
       "usesLLM": true,
       "interval": 300,
       "maxRetries": 2,
-      "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes."
+      "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.desire-planner",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "desire-outcome-reviewer": {
       "id": "desire-outcome-reviewer",
@@ -225,7 +322,14 @@
       "usesLLM": true,
       "interval": 600,
       "maxRetries": 2,
-      "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes."
+      "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.desire-outcome-reviewer",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "profile-sync": {
       "id": "profile-sync",
@@ -235,7 +339,15 @@
       "agentPath": "profile-sync.ts",
       "usesLLM": false,
       "maxRetries": 2,
-      "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags."
+      "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.profile-sync",
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "memory-sync": {
       "id": "memory-sync",
@@ -245,7 +357,15 @@
       "agentPath": "memory-sync.ts",
       "usesLLM": false,
       "maxRetries": 2,
-      "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags."
+      "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.memory-sync",
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "mood": {
       "id": "mood",
@@ -262,7 +382,11 @@
       "eventCountThreshold": 10,
       "eventCountField": "userMessageCount",
       "idleResetSeconds": 1800,
-      "allowedModes": ["reactive", "semi", "full"],
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
       "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Disabled by default. When enabled, queues one Mood graph review after every 10 user messages. After 30 minutes without a conversation event, queues the same graph in baseline-reset mode."
@@ -276,7 +400,14 @@
       "usesLLM": false,
       "schedule": "03:00",
       "maxRetries": 1,
-      "comment": "Nightly vector index rebuild using Qwen3 embeddings. Runs on CPU via local-model-service (parallel to GPU backends). Skips rebuild if index is < 24 hours old."
+      "comment": "Nightly vector index rebuild using Qwen3 embeddings. Runs on CPU via local-model-service (parallel to GPU backends). Skips rebuild if index is < 24 hours old.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.auto-indexer",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     },
     "daydreamer": {
       "id": "daydreamer",
@@ -290,7 +421,14 @@
       "jitterMs": 30000,
       "pauseCategory": "background",
       "maxRetries": 1,
-      "comment": "15% chance to generate a brief daydream after 5 min idle. Inner dialogue only - never surfaces to main chat. Lighter than full dreams."
+      "comment": "15% chance to generate a brief daydream after 5 min idle. Inner dialogue only - never surfaces to main chat. Lighter than full dreams.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.daydreamer",
+      "allowedModes": [
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip"
     }
   }
 }

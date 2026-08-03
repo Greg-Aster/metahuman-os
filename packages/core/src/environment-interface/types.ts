@@ -7,6 +7,7 @@ export type EnvironmentActionType =
   | 'captureImage'
   | 'robotCommand'
   | 'robotMotionPlan'
+  | 'speak'
   | 'sendText';
 
 export type EnvironmentMotionPlanJoint =
@@ -168,6 +169,8 @@ export interface EnvironmentAction {
   target?: string;
   frames?: EnvironmentMotionPlanFrame[];
   endPose?: 'hold' | 'stand' | 'neutral';
+  speechArtifactId?: string;
+  speechDurationMs?: number;
   metadata?: Record<string, unknown>;
 }
 

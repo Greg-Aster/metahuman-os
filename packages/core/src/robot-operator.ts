@@ -44,7 +44,7 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   jitterMs: 60_000,
   boredomMovementInactivityThresholdSeconds: 600,
   boredomMovementJitterMs: 120_000,
-  maxCycleSteps: 3,
+  maxCycleSteps: 8,
   graph: 'environment',
 }
 

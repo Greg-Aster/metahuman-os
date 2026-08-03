@@ -15,6 +15,7 @@ let tunnelFunctions: {
   stopTunnel?: () => boolean;
   isCloudflaredInstalled?: () => boolean;
   saveCloudflareConfig?: (config: { enabled: boolean; autoStart: boolean }) => void;
+  syncTunnelExposure?: (enabled: boolean) => any;
 } = {};
 
 async function ensureCloudflareModule(): Promise<boolean> {
@@ -27,6 +28,7 @@ async function ensureCloudflareModule(): Promise<boolean> {
       stopTunnel: cloudflareModule.stopTunnel,
       isCloudflaredInstalled: cloudflareModule.isCloudflaredInstalled,
       saveCloudflareConfig: cloudflareModule.saveCloudflareConfig,
+      syncTunnelExposure: cloudflareModule.syncTunnelExposure,
     };
     return true;
   } catch {
@@ -125,8 +127,9 @@ export async function handleCloudflareToggle(req: UnifiedRequest): Promise<Unifi
     }
 
     tunnelFunctions.saveCloudflareConfig({ enabled, autoStart: enabled });
+    const exposure = tunnelFunctions.syncTunnelExposure?.(enabled);
 
-    return successResponse({ success: true, enabled });
+    return successResponse({ success: true, enabled, exposure });
   } catch (error) {
     console.error('[cloudflare] POST toggle failed:', error);
     return { status: 500, error: 'Failed to toggle tunnel configuration' };

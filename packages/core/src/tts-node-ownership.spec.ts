@@ -46,6 +46,11 @@ assert.match(
 );
 assert.match(
   chat,
+  /syncSpeechDisabledPreference\(!ttsEnabled\)/,
+  'the main chat speech button must synchronize its disable state for server-owned robot speech',
+);
+assert.match(
+  chat,
   /on:click=\{toggleAssistantSpeech\}/,
   'the main chat speech button must use the canonical speech toggle',
 );
@@ -58,6 +63,13 @@ assert.doesNotMatch(
   chat,
   /enableAssistantSpeech/,
   'microphone modes must not override the explicit disable-speech preference',
+);
+
+const ttsNode = read('packages/core/src/nodes/output/tts.node.ts');
+assert.match(
+  ttsNode,
+  /settings\.outputTarget === 'robot'[\s\S]*?renderRobot\([\s\S]*?dependencies\.queue/,
+  'the standard TTS node must route robot output before the existing local browser queue',
 );
 
 const environmentGraph = JSON.parse(

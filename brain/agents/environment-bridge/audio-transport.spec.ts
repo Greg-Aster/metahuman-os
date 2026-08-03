@@ -5,6 +5,7 @@ import {
   parseAudioUtteranceMessage,
   transcribeAudioUtterance,
 } from './audio-transport.js';
+import { websocketMessageIsBinary } from './core.js';
 
 function wavWithFrames(frameCount: number): Buffer {
   const dataBytes = frameCount * 640;
@@ -68,6 +69,15 @@ const observation: EnvironmentObservation = {
     dataUrl: 'data:image/jpeg;base64,/9j/2Q==',
   },
 };
+
+test('recognizes binary messages from both ws 7 and ws 8 callback signatures', () => {
+  const binary = Buffer.from('AIKAUD01', 'ascii');
+  assert.equal(websocketMessageIsBinary(binary, undefined), true);
+  assert.equal(websocketMessageIsBinary(binary, true), true);
+  assert.equal(websocketMessageIsBinary(binary, false), true);
+  assert.equal(websocketMessageIsBinary(Buffer.from('{"type":"bridge.ready"}'), false), false);
+  assert.equal(websocketMessageIsBinary('{"type":"bridge.ready"}', undefined), false);
+});
 
 test('parses one bounded PCM WAV utterance and preserves bridge metadata', async () => {
   const parsed = parseAudioUtteranceMessage(audioMessage());

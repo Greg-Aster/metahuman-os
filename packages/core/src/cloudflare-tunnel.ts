@@ -8,6 +8,12 @@ import fs from 'fs';
 import path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { systemPaths } from './path-builder.js';
+import {
+  activateTunnelExposure,
+  deactivateTunnelExposure,
+  getTunnelExposureState,
+  type TunnelExposureState,
+} from './cloudflare-exposure.js';
 
 const CLOUDFLARE_CONFIG_PATH = path.join(systemPaths.etc, 'cloudflare.json');
 const TUNNEL_PID_FILE = path.join(systemPaths.logs, 'run', 'cloudflare-tunnel.pid');
@@ -124,12 +130,14 @@ export function startTunnel(): boolean {
     return false;
   }
 
+  const config = loadCloudflareConfig();
+
   if (isTunnelRunning()) {
+    activateTunnelExposure(config.hostname);
     console.log('[cloudflare] Tunnel is already running');
     return true;
   }
 
-  const config = loadCloudflareConfig();
   if (!config.enabled) {
     console.log('[cloudflare] Tunnel is disabled in config');
     return false;
@@ -146,6 +154,7 @@ export function startTunnel(): boolean {
     if (tunnelProcess.pid) {
       fs.writeFileSync(TUNNEL_PID_FILE, tunnelProcess.pid.toString());
       tunnelProcess.unref(); // Allow parent to exit independently
+      activateTunnelExposure(config.hostname);
 
       console.log(`[cloudflare] Tunnel started with PID ${tunnelProcess.pid}`);
       console.log(`[cloudflare] Public URL: https://${config.hostname}`);
@@ -180,6 +189,7 @@ export function stopTunnel(): boolean {
       fs.unlinkSync(TUNNEL_PID_FILE);
     }
 
+    deactivateTunnelExposure();
     return true;
   } catch (error) {
     console.error('[cloudflare] Error stopping tunnel:', error);
@@ -204,6 +214,7 @@ export function getTunnelStatus(): {
   enabled: boolean;
   hostname: string;
   pid?: number;
+  exposure: TunnelExposureState;
 } {
   const config = loadCloudflareConfig();
   const running = isTunnelRunning();
@@ -234,7 +245,21 @@ export function getTunnelStatus(): {
     enabled: config.enabled,
     hostname: config.hostname,
     pid,
+    exposure: getTunnelExposureState(
+      config.hostname ? {
+        hostname: config.hostname,
+        origin: `https://${config.hostname}`,
+      } : undefined,
+    ),
   };
+}
+
+export function syncTunnelExposure(enabled: boolean): TunnelExposureState {
+  const config = loadCloudflareConfig();
+  if (enabled || isTunnelRunning()) {
+    return activateTunnelExposure(config.hostname);
+  }
+  return deactivateTunnelExposure();
 }
 
 /**

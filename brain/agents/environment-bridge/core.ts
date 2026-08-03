@@ -3,6 +3,7 @@ import path from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import {
   acquireLock,
+  claimRobotSpeech,
   transcribeAudio,
 } from '@metahuman/core';
 import {
@@ -20,6 +21,7 @@ import {
 } from './audio-transport.js';
 import { AudioVisualObservationJoin } from './audio-visual-join.js';
 import { attachCorrelatedFeedback } from './feedback-correlation.js';
+import { encodeRobotSpeechMessage } from './speech-transport.js';
 
 const LOG_PREFIX = '[environment-bridge]';
 const PROTOCOL_VERSION = 1;
@@ -28,6 +30,7 @@ const MAX_MESSAGE_BYTES = audioTransportLimits.maxMessageBytes;
 const MAX_PENDING_AUDIO_UTTERANCES = 2;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
+const AUDIO_UTTERANCE_MAGIC = Buffer.from('AIKAUD01', 'ascii');
 
 interface DiagnosticEvent {
   timestamp: string;
@@ -138,7 +141,17 @@ function waitForAbort(signal: AbortSignal, milliseconds: number): Promise<void> 
   });
 }
 
-function rawDataBuffer(raw: RawData): Buffer {
+export function websocketMessageIsBinary(
+  raw: RawData | string,
+  isBinary?: boolean,
+): boolean {
+  if (isBinary === true) return true;
+  if (typeof raw === 'string') return false;
+  const encoded = rawDataBuffer(raw);
+  return encoded.subarray(0, AUDIO_UTTERANCE_MAGIC.length).equals(AUDIO_UTTERANCE_MAGIC);
+}
+
+function rawDataBuffer(raw: RawData | string): Buffer {
   if (Array.isArray(raw)) return Buffer.concat(raw);
   if (raw instanceof ArrayBuffer) return Buffer.from(raw);
   return Buffer.from(raw);
@@ -164,7 +177,7 @@ async function postJson(
   config: BridgeConfig,
   route: string,
   payload: Record<string, unknown>,
-): Promise<void> {
+): Promise<Record<string, unknown> | undefined> {
   const response = await fetch(`${config.coreUrl}${route}`, {
     method: 'POST',
     headers: {
@@ -178,6 +191,10 @@ async function postJson(
   if (!response.ok) {
     throw new Error(`MetaHuman environment API failed (${response.status}): ${await response.text()}`);
   }
+  const result = await response.json().catch(() => undefined);
+  return result && typeof result === 'object' && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : undefined;
 }
 
 async function postDiagnosticAudio(
@@ -207,7 +224,7 @@ async function postDiagnosticAudio(
 async function consumeActionStream(
   config: BridgeConfig,
   sessionId: string,
-  sendMessage: (message: Record<string, unknown>) => void,
+  sendAction: (action: Record<string, unknown>) => Promise<void>,
   signal: AbortSignal,
 ): Promise<void> {
   const url = new URL('/api/environment-bridge/stream', config.coreUrl);
@@ -242,11 +259,7 @@ async function consumeActionStream(
       const data = JSON.parse(rawData) as { actions?: unknown[] };
       for (const action of data.actions ?? []) {
         if (!action || typeof action !== 'object') continue;
-        sendMessage({
-          type: 'environment.action',
-          version: PROTOCOL_VERSION,
-          action,
-        });
+        await sendAction(action as Record<string, unknown>);
       }
     }
   }
@@ -277,6 +290,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     let audioQueue = Promise.resolve();
     let diagnosticSessionId = '';
     let telemetryQueue = Promise.resolve();
+    const awaitingAdapterAcceptance = new Set<string>();
     const mediaUploads = new Set<Promise<void>>();
     const diagnostics: DiagnosticWindow = {
       startedAt: Date.now(),
@@ -354,6 +368,75 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         }
       }
       websocket.send(encoded);
+    };
+
+    const failUnacceptedAction = async (actionId: string, message: string) => {
+      await postJson(config, '/api/environment-bridge/action-result', {
+        id: `delivery-feedback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        type: 'failed',
+        message,
+        actionId,
+      });
+    };
+
+    const sendAction = async (action: Record<string, unknown>) => {
+      const actionId = typeof action.id === 'string' ? action.id : '';
+      if (actionId) awaitingAdapterAcceptance.add(actionId);
+      if (action.type !== 'speak') {
+        try {
+          sendMessage({
+            type: 'environment.action',
+            version: PROTOCOL_VERSION,
+            action,
+          });
+        } catch (error) {
+          if (actionId) {
+            awaitingAdapterAcceptance.delete(actionId);
+            await failUnacceptedAction(actionId, (error as Error).message);
+          }
+        }
+        return;
+      }
+
+      const artifactId = typeof action.speechArtifactId === 'string'
+        ? action.speechArtifactId
+        : '';
+      const durationMs = typeof action.speechDurationMs === 'number'
+        ? action.speechDurationMs
+        : 0;
+      const artifact = artifactId ? claimRobotSpeech(artifactId) : null;
+      if (!actionId || !artifact) {
+        if (actionId) {
+          awaitingAdapterAcceptance.delete(actionId);
+          await failUnacceptedAction(actionId, 'robot speech artifact is unavailable');
+        }
+        return;
+      }
+
+      try {
+        const packet = encodeRobotSpeechMessage({
+          sessionId: diagnosticSessionId || String(action.sessionId || ''),
+          actionId,
+          durationMs,
+          artifact,
+        });
+        await new Promise<void>((resolve, reject) => {
+          websocket.send(packet, error => error ? reject(error) : resolve());
+        });
+        diagnostics.outboundBytes += packet.length;
+        diagnostics.outboundMessages += 1;
+        diagnosticEvent({
+          timestamp: new Date().toISOString(),
+          kind: 'speech.render',
+          bytes: artifact.pcm.length,
+          status: 'dispatched',
+          message: actionId,
+        });
+      } catch (error) {
+        awaitingAdapterAcceptance.delete(actionId);
+        await failUnacceptedAction(actionId, (error as Error).message);
+      }
     };
 
     const flushTelemetry = (_force = false): Promise<void> => {
@@ -569,11 +652,11 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     };
 
     await new Promise<void>((resolve, reject) => {
-      websocket.on('message', (raw, isBinary) => {
+      websocket.on('message', (raw: RawData | string, isBinary?: boolean) => {
         const incoming = rawDataBuffer(raw);
         diagnostics.inboundBytes += incoming.length;
         diagnostics.inboundMessages += 1;
-        if (isBinary) {
+        if (websocketMessageIsBinary(raw, isBinary)) {
           enqueueAudioUtterance(incoming);
           return;
         }
@@ -600,7 +683,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               );
             }
             if (!actionStream) {
-              actionStream = consumeActionStream(config, sessionId, sendMessage, localAbort.signal)
+              actionStream = consumeActionStream(config, sessionId, sendAction, localAbort.signal)
                 .catch((error) => {
                   if (!localAbort.signal.aborted) reject(error);
                 });
@@ -697,13 +780,27 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             const feedback = message.feedback;
             if (feedback && typeof feedback === 'object') {
               pendingFeedback = feedback as unknown as EnvironmentFeedback;
+              if (pendingFeedback.actionId) {
+                awaitingAdapterAcceptance.delete(pendingFeedback.actionId);
+              }
               diagnosticEvent({
                 timestamp: pendingFeedback.timestamp,
                 kind: 'action.feedback',
                 status: pendingFeedback.type,
                 message: pendingFeedback.message,
               });
-              await postJson(config, '/api/environment-bridge/action-result', feedback as Record<string, unknown>);
+              const result = await postJson(
+                config,
+                '/api/environment-bridge/action-result',
+                feedback as Record<string, unknown>,
+              );
+              sendMessage({
+                type: 'environment.feedback.ack',
+                version: PROTOCOL_VERSION,
+                feedbackId: pendingFeedback.id,
+                actionId: pendingFeedback.actionId,
+                admitted: Boolean(result?.action),
+              });
             }
           }
         })().catch(reject);
@@ -713,6 +810,10 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       localAbort.signal.addEventListener('abort', () => resolve(), { once: true });
     });
     localAbort.abort();
+    await Promise.allSettled([...awaitingAdapterAcceptance].map(actionId => (
+      failUnacceptedAction(actionId, 'environment adapter disconnected before accepting command')
+    )));
+    awaitingAdapterAcceptance.clear();
     audioVisualJoin.close();
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     await audioQueue;

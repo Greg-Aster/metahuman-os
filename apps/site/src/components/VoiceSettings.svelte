@@ -25,6 +25,7 @@
 
   interface VoiceConfig {
     provider: 'piper' | 'sovits' | 'rvc' | 'kokoro';
+    outputTarget: 'local' | 'robot';
     piper?: {
       voices: PiperVoice[];
       currentVoice: string;
@@ -146,6 +147,9 @@
       if (!response.ok) throw new Error('Failed to load voice settings');
       config = await response.json();
       isGuest = false;
+      if (config) {
+        config.outputTarget = config.outputTarget === 'robot' ? 'robot' : 'local';
+      }
 
       if (config && config.rvc) {
         config.rvc.indexRate = config.rvc.indexRate ?? 1.0;
@@ -262,7 +266,7 @@
     const response = await apiFetch('/api/tts-stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({ ...requestBody, preview: true }),
     });
 
     if (!response.ok) throw new Error('Failed to start streaming audio');
@@ -605,6 +609,17 @@
     {#if successMessage}
       <div class="p-3 bg-green-100 dark:bg-green-500/10 border border-emerald-500 rounded-lg text-emerald-600 dark:text-emerald-400 mb-4">{successMessage}</div>
     {/if}
+
+    <div class="mb-6">
+      <label for="speech-output-target" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speech output</label>
+      <select id="speech-output-target" bind:value={config.outputTarget} disabled={saving} class="select-field">
+        <option value="local">This computer</option>
+        <option value="robot">Robot speaker (Environment Mode)</option>
+      </select>
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        The chat header speaker button still enables or disables speech.
+      </p>
+    </div>
 
     <!-- Provider Selection -->
     <div class="mb-6">

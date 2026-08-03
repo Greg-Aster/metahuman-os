@@ -29,7 +29,7 @@ const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'speak', 'sendText',
 ]);
 const NON_REPLAYABLE_ACTION_TYPES = new Set<EnvironmentActionType>([
   'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan',
@@ -391,6 +391,19 @@ function normalizeAction(
   }
   if (action.type === 'sendText' && !action.text?.trim()) throw new Error('Environment sendText action requires text');
   if (action.type === 'robotCommand' && !action.command?.trim()) throw new Error('Environment robotCommand action requires a semantic command');
+  if (action.type === 'speak') {
+    if (
+      options.source !== 'system'
+      || action.metadata?.owner !== 'tts-out'
+      || typeof action.speechArtifactId !== 'string'
+      || !/^speech-[a-zA-Z0-9-]{1,96}$/.test(action.speechArtifactId)
+      || !Number.isFinite(action.speechDurationMs)
+      || action.speechDurationMs! <= 0
+      || action.speechDurationMs! > 15_000
+    ) {
+      throw new Error('Environment speech must be a bounded tts-out renderer action');
+    }
+  }
   const motionPlan = action.type === 'robotMotionPlan'
     ? normalizeEnvironmentMotionPlanFields(action)
     : undefined;
@@ -415,6 +428,8 @@ function normalizeAction(
     target: action.target,
     frames: motionPlan?.frames,
     endPose: motionPlan?.endPose,
+    speechArtifactId: action.speechArtifactId,
+    speechDurationMs: action.speechDurationMs,
     metadata: action.metadata,
   };
 }
@@ -557,8 +572,9 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
   const manager = getQueueManager();
   const task = manager.getTask(feedback.actionId);
   if (!task || task.type !== 'environment_command') return undefined;
+  if (feedback.type === 'accepted' && task.state !== 'leased') return undefined;
   if (task.state === 'leased') {
-    if (feedback.type === 'accepted' || feedback.type === 'completed') {
+    if (feedback.type === 'completed') {
       manager.complete(task.id, true, { deliveryStatus: feedback.type, feedback });
     } else if (feedback.type === 'cancelled') {
       manager.cancel(task.id, feedback.message);

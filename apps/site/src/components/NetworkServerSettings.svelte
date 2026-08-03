@@ -97,6 +97,10 @@
     enabled: boolean;
     hostname: string;
     pid?: number;
+    exposure?: {
+      mode: 'local' | 'shared';
+      source: string | null;
+    };
   }
 
   let tunnelStatus: TunnelStatus | null = null;
@@ -321,7 +325,9 @@
       });
 
       if (res.ok) {
-        successMessage = enable ? 'Tunnel enabled!' : 'Tunnel disabled!';
+        successMessage = enable
+          ? 'Tunnel auto-start enabled; remote request sharing is ready.'
+          : 'Tunnel auto-start disabled.';
         await loadTunnelStatus();
       } else {
         const data = await res.json();
@@ -342,7 +348,7 @@
     try {
       const res = await apiFetch('/api/cloudflare/start', { method: 'POST' });
       if (res.ok) {
-        successMessage = 'Tunnel started!';
+        successMessage = 'Tunnel started; remote request sharing is enabled.';
         await loadTunnelStatus();
       } else {
         const data = await res.json();
@@ -363,7 +369,7 @@
     try {
       const res = await apiFetch('/api/cloudflare/stop', { method: 'POST' });
       if (res.ok) {
-        successMessage = 'Tunnel stopped!';
+        successMessage = 'Tunnel stopped; tunnel-managed sharing is disabled.';
         await loadTunnelStatus();
       } else {
         const data = await res.json();
@@ -811,6 +817,9 @@
             <div class="flex items-center gap-2 mb-3">
               <span class="w-3 h-3 rounded-full {tunnelStatus.running ? 'bg-emerald-500 shadow-[0_0_8px_theme(colors.emerald.500)]' : 'bg-red-500'}"></span>
               <strong>{tunnelStatus.running ? '✅ Running' : '⭕ Stopped'}</strong>
+              <span class="text-gray-500 text-sm">
+                Request mode: {tunnelStatus.exposure?.mode || 'local'}
+              </span>
               {#if tunnelStatus.pid}
                 <span class="text-gray-500 text-sm">(PID: {tunnelStatus.pid})</span>
               {/if}
@@ -859,6 +868,7 @@
             <h3 class="mb-2 text-gray-900 dark:text-gray-100">ℹ️ How It Works</h3>
             <ul class="mt-2 ml-6 list-disc">
               <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>Auto-start:</strong> When enabled, the tunnel starts automatically when MetaHuman starts</li>
+              <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>Automatic sharing:</strong> Starting the tunnel admits its configured HTTPS hostname while the server remains bound to localhost</li>
               <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>No port forwarding:</strong> Cloudflare tunnel creates a secure connection without opening router ports</li>
               <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>HTTPS included:</strong> Automatic SSL certificates from Cloudflare</li>
               <li class="mb-2 text-blue-800 dark:text-blue-200 text-sm"><strong>Access control:</strong> Configure email whitelisting in Cloudflare Zero Trust dashboard</li>

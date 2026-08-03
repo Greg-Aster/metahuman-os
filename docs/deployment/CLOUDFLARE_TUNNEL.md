@@ -168,6 +168,16 @@ Unapproved emails will see "Access Denied"
 
 Make the tunnel start automatically on boot.
 
+### MetaHuman-managed startup
+
+When `etc/cloudflare.json` has both `enabled` and `autoStart` set to `true`,
+`./start.sh` automatically switches the request boundary to shared mode, adds
+the configured tunnel hostname and HTTPS origin to the allowlists, and keeps
+the web listener bound to `127.0.0.1`. Starting or stopping the tunnel from the
+Network settings applies the same transition to the running server.
+
+An explicitly supplied `MH_EXPOSURE_MODE` remains an operator override.
+
 ### Create systemd Service
 
 ```bash

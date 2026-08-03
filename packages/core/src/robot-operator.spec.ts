@@ -96,7 +96,7 @@ test('robot observer and operator have separate lifecycle owners', () => {
   assert.equal(variables.find(variable => variable.key === 'jitterMs')?.value, 60_000)
   assert.equal(variables.find(variable => variable.key === 'boredomMovementInactivityThreshold')?.value, 600)
   assert.equal(variables.find(variable => variable.key === 'boredomMovementJitterMs')?.value, 120_000)
-  assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 3)
+  assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 8)
   assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'environment')
 })
 

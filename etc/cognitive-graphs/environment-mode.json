@@ -210,10 +210,42 @@
       }
     },
     {
-      "id": "8",
+      "id": "task-validator",
+      "type": "environmentNode",
+      "position": {
+        "x": 1920,
+        "y": 180
+      },
+      "width": 260,
+      "height": 170,
+      "data": {
+        "label": "Environment Task Validator",
+        "nodeType": "environment_task_validator",
+        "properties": {}
+      }
+    },
+    {
+      "id": "workflow-command",
       "type": "environmentNode",
       "position": {
         "x": 2210,
+        "y": -220
+      },
+      "width": 260,
+      "height": 140,
+      "data": {
+        "label": "Environment Workflow Command",
+        "nodeType": "environment_workflow_command",
+        "properties": {
+          "graph": "environment"
+        }
+      }
+    },
+    {
+      "id": "8",
+      "type": "environmentNode",
+      "position": {
+        "x": 2500,
         "y": 150
       },
       "width": 240,
@@ -275,7 +307,7 @@
       "id": "movement-generator",
       "type": "environmentNode",
       "position": {
-        "x": 1920,
+        "x": 2210,
         "y": 0
       },
       "width": 250,
@@ -734,27 +766,147 @@
       }
     },
     {
-      "id": "e-6-actions-8-actions",
+      "id": "e-6-actions-task-validator-actions",
       "source": "6",
+      "target": "task-validator",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Validate current-pass semantic actions before bridge admission"
+      }
+    },
+    {
+      "id": "e-6-movementRequest-task-validator-movementRequest",
+      "source": "6",
+      "target": "task-validator",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "movementRequest",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Validate current-pass off-script movement before generation"
+      }
+    },
+    {
+      "id": "e-6-response-task-validator-response",
+      "source": "6",
+      "target": "task-validator",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Preserve the conversational result through task validation"
+      }
+    },
+    {
+      "id": "e-6-taskDecision-task-validator-taskDecision",
+      "source": "6",
+      "target": "task-validator",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Validate the Environment LLM completion decision"
+      }
+    },
+    {
+      "id": "e-6-taskDecisionError-task-validator-taskDecisionError",
+      "source": "6",
+      "target": "task-validator",
+      "sourceHandle": "taskDecisionError",
+      "targetHandle": "taskDecisionError",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Surface malformed completion decisions to the validator"
+      }
+    },
+    {
+      "id": "e-10-instruction-task-validator-instruction",
+      "source": "10",
+      "target": "task-validator",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Keep validation bounded to the current objective"
+      }
+    },
+    {
+      "id": "e-10-observation-task-validator-observation",
+      "source": "10",
+      "target": "task-validator",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Use current source metadata and terminal feedback for validation"
+      }
+    },
+    {
+      "id": "e-task-validator-actions-8-actions",
+      "source": "task-validator",
       "target": "8",
       "sourceHandle": "actions",
       "targetHandle": "actions",
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Queue parsed actions for adapter"
+        "comment": "Queue only validator-admitted current actions; continuation instructions use the separate workflow branch"
       }
     },
     {
-      "id": "e-6-movementRequest-movement-generator-movementRequest",
-      "source": "6",
+      "id": "e-task-validator-movementRequest-movement-generator-movementRequest",
+      "source": "task-validator",
       "target": "movement-generator",
       "sourceHandle": "movementRequest",
       "targetHandle": "movementRequest",
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Route only eligible structured off-script requests"
+        "comment": "Route only validator-admitted structured off-script requests"
+      }
+    },
+    {
+      "id": "e-task-validator-response-8-response",
+      "source": "task-validator",
+      "target": "8",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Pass the validator-normalized conversational response through bridge delivery checks"
+      }
+    },
+    {
+      "id": "e-task-validator-workflowCommand-workflow-command-command",
+      "source": "task-validator",
+      "target": "workflow-command",
+      "sourceHandle": "workflowCommand",
+      "targetHandle": "command",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Admit one bounded next instruction only when the objective remains incomplete"
+      }
+    },
+    {
+      "id": "e-10-observation-workflow-command-observation",
+      "source": "10",
+      "target": "workflow-command",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Carry the current robot session and observation into the queued workflow"
       }
     },
     {
@@ -827,18 +979,6 @@
       "data": {
         "type": "string",
         "comment": "Target active environment session"
-      }
-    },
-    {
-      "id": "e-6-response-8-response",
-      "source": "6",
-      "target": "8",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Pass conversational response through bridge delivery checks"
       }
     },
     {
@@ -974,10 +1114,10 @@
       }
     },
     {
-      "id": "xy-edge__6actions-node-1783475676613data",
-      "source": "6",
+      "id": "e-task-validator-decision-node-1783475676613-data",
+      "source": "task-validator",
       "target": "node-1783475676613",
-      "sourceHandle": "actions",
+      "sourceHandle": "decision",
       "targetHandle": "data",
       "data": {}
     }

@@ -154,6 +154,7 @@ export {
   getAllowedSkills,
 } from './policy.js';
 export * from './tts';
+export * from './tts/robot-audio.js';
 export {
   queueTTS,
   popTTSQueue,

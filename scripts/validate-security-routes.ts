@@ -19,12 +19,16 @@ const ASTRO_ADAPTER_PATH = path.join(ROOT, 'packages/core/src/api/adapters/astro
 const SITE_MIDDLEWARE_PATH = path.join(ROOT, 'apps/site/src/middleware.ts');
 const WEB_API_CONFIG_PATH = path.join(ROOT, 'apps/site/src/lib/client/api-config.ts');
 const START_SCRIPT_PATH = path.join(ROOT, 'start.sh');
+const CLOUDFLARE_TUNNEL_PATH = path.join(ROOT, 'packages/core/src/cloudflare-tunnel.ts');
+const CLOUDFLARE_EXPOSURE_PATH = path.join(ROOT, 'packages/core/src/cloudflare-exposure.ts');
 const SOURCE = fs.readFileSync(ROUTER_PATH, 'utf8');
 const ASTRO_CONFIG_SOURCE = fs.readFileSync(ASTRO_CONFIG_PATH, 'utf8');
 const ASTRO_ADAPTER_SOURCE = fs.readFileSync(ASTRO_ADAPTER_PATH, 'utf8');
 const SITE_MIDDLEWARE_SOURCE = fs.readFileSync(SITE_MIDDLEWARE_PATH, 'utf8');
 const WEB_API_CONFIG_SOURCE = fs.readFileSync(WEB_API_CONFIG_PATH, 'utf8');
 const START_SCRIPT_SOURCE = fs.readFileSync(START_SCRIPT_PATH, 'utf8');
+const CLOUDFLARE_TUNNEL_SOURCE = fs.readFileSync(CLOUDFLARE_TUNNEL_PATH, 'utf8');
+const CLOUDFLARE_EXPOSURE_SOURCE = fs.readFileSync(CLOUDFLARE_EXPOSURE_PATH, 'utf8');
 const ROUTE_LINES: RouteLine[] = SOURCE
   .split('\n')
   .map((text, index) => ({ line: index + 1, text: text.trim() }))
@@ -191,6 +195,19 @@ const checks: Check[] = [
   check(
     'startup defaults to local exposure',
     /MH_EXPOSURE_MODE/.test(START_SCRIPT_SOURCE) && /HOST=\"\$\{HOST:-127\.0\.0\.1\}\"/.test(START_SCRIPT_SOURCE),
+  ),
+  check(
+    'tunnel auto-start enables shared requests on a loopback listener',
+    /config\.enabled === true/.test(START_SCRIPT_SOURCE)
+      && /config\.autoStart === true/.test(START_SCRIPT_SOURCE)
+      && /MH_EXPOSURE_SOURCE="cloudflare-tunnel"/.test(START_SCRIPT_SOURCE)
+      && /HOST=\"\$\{HOST:-127\.0\.0\.1\}\"/.test(START_SCRIPT_SOURCE),
+  ),
+  check(
+    'tunnel lifecycle owns only tunnel-derived exposure',
+    /activateTunnelExposure\(config\.hostname\)/.test(CLOUDFLARE_TUNNEL_SOURCE)
+      && /deactivateTunnelExposure\(\)/.test(CLOUDFLARE_TUNNEL_SOURCE)
+      && /process\.env\.MH_EXPOSURE_SOURCE === TUNNEL_EXPOSURE_SOURCE/.test(CLOUDFLARE_EXPOSURE_SOURCE),
   ),
 ];
 
