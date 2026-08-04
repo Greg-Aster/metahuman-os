@@ -20,6 +20,7 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { validateEnvironmentRouterDecision } from '../../environment-classifier.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 // Action types that can trigger Big Brother
@@ -263,7 +264,16 @@ Adjust your routing based on this feedback. If memory search already failed, con
       });
 
       try {
-        const parsed = JSON.parse(response.content);
+        const rawParsed = JSON.parse(response.content);
+        const environmentContract = context.cognitiveMode === 'environment'
+          ? validateEnvironmentRouterDecision(rawParsed)
+          : null;
+        // Environment runtime and classifier evaluation share one Core-owned
+        // output contract. Preserve the existing conservative parser behavior
+        // for malformed or legacy output so this extraction is behavior-neutral.
+        const parsed = environmentContract?.valid && environmentContract.value
+          ? environmentContract.value
+          : rawParsed;
         const needsEnvironment = typeof parsed.needsEnvironment === 'boolean'
           ? parsed.needsEnvironment
           : undefined;

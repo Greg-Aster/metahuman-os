@@ -15,6 +15,7 @@
     "./paths": "./src/paths.ts",
     "./context": "./src/context.ts",
     "./ollama": "./src/ollama.ts",
+    "./environment-classifier": "./src/environment-classifier.ts",
     "./llm": "./src/llm.ts",
     "./agent-monitor": "./src/agent-monitor.ts",
     "./agent-catalog-definitions": "./src/agent-catalog-definitions.ts",

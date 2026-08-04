@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "algorithm": "sha256",
+  "canonicalization": "recursive-key-sort-json",
+  "caseIds": [
+    "ambiguity-002",
+    "authority-002",
+    "authority-005",
+    "bounded-002",
+    "bounded-005",
+    "conversation-006",
+    "delegated-002",
+    "fresh-vision-003",
+    "memory-003",
+    "memory-005",
+    "movement-002",
+    "movement-005",
+    "persisted-002",
+    "persisted-004",
+    "state-003",
+    "vision-acquisition-002"
+  ],
+  "digest": "f439401d8aa6716981c2c1d49063f28bc7a106e840540f74e0291d9c905d176c"
+}
