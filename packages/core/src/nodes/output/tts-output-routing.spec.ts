@@ -149,6 +149,43 @@ test('robot output does not create a second route for non-Environment TTS nodes'
   assert.equal(rendered, 0);
 });
 
+test('Inner Dialogue speech remains local when outward speech targets the robot', async () => {
+  let queued = 0;
+  let rendered = 0;
+  const result = await deliverTTSOutput(
+    {
+      username: 'test-user',
+      text: 'I notice the room is dark.',
+      mode: 'inner',
+      source: 'robot-operator-mode',
+    },
+    {
+      getSettings: () => ({
+        provider: 'kokoro',
+        outputTarget: 'robot',
+        speechDisabled: false,
+      }),
+      queue: (_username, text, mode, source): TTSQueueItem => {
+        queued += 1;
+        return { id: 'tts-inner', text, mode, source, timestamp: 1 };
+      },
+      renderRobot: async () => {
+        rendered += 1;
+        return { actionId: 'unexpected', requestId: 'unexpected', totalChunks: 1 };
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    accepted: true,
+    deliveryId: 'tts-inner',
+    route: 'local',
+    reason: undefined,
+  });
+  assert.equal(queued, 1);
+  assert.equal(rendered, 0);
+});
+
 test('server-owned robot speech strips non-speakable model formatting', () => {
   assert.equal(
     normalizeRobotSpeechText('<think>hidden</think> **Hello** [friend](https://example.com).'),

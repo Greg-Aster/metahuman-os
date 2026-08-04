@@ -372,7 +372,7 @@ export async function handleEnvironmentBridgeActionResult(
     action: result.action,
     feedback,
     commandCount: 1,
-    success: feedback.type === 'accepted' || feedback.type === 'completed' || feedback.type === 'status',
+    success: feedback.type === 'completed' || feedback.type === 'status',
     source: 'environment-bridge',
     correlationId: result.action.correlationId ?? null,
   };
@@ -382,7 +382,12 @@ export async function handleEnvironmentBridgeActionResult(
     if (!robotBufferPersisted) {
       return errorResponse('Robot action result was received but could not be admitted to Robot Buffer', 500);
     }
-    return successResponse({ success: true, action: result.action, robotBufferPersisted: true });
+    return successResponse({
+      success: true,
+      action: result.action,
+      postActionObservation: result.postActionObservation,
+      robotBufferPersisted: true,
+    });
   } catch (error) {
     console.error('[environment-bridge] Failed to admit robot action result:', error);
     return errorResponse('Robot action result was received but could not be admitted to Robot Buffer', 500);

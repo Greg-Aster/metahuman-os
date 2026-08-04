@@ -528,15 +528,32 @@ export const nodeSchemas: NodeSchema[] = [
   }),
   defineSchema({
     id: 'conversation_history',
-    name: 'Conversation History',
+    name: 'Buffer History',
     category: 'context',
     inputs: [
-      { name: 'sessionId', type: 'string' },
       { name: 'mode', type: 'string', optional: true },
     ],
-    outputs: [{ name: 'history', type: 'array', description: 'Conversation messages' }],
-    properties: { mode: 'conversation', maxMessages: 20 },
-    description: 'Loads conversation history',
+    outputs: [{ name: 'history', type: 'array', description: 'Selected canonical buffer entries' }],
+    properties: { mode: 'conversation', limit: 20 },
+    propertySchemas: {
+      mode: {
+        type: 'select',
+        default: 'conversation',
+        label: 'Buffer Mode',
+        description: 'Canonical per-user buffer to read',
+        options: ['conversation', 'inner'],
+      },
+      limit: {
+        type: 'slider',
+        default: 20,
+        label: 'Entry Limit',
+        description: 'Maximum entries to retrieve; 0 uses the canonical buffer retention without an additional graph-local cutoff',
+        min: 0,
+        max: 50,
+        step: 1,
+      },
+    },
+    description: 'Loads recent entries from the selected canonical conversation or inner buffer.',
   }),
 
   // ROUTING NODES
@@ -1017,13 +1034,14 @@ export const nodeSchemas: NodeSchema[] = [
     outputs: [
       { name: 'saved', type: 'boolean' },
       { name: 'persisted', type: 'boolean' },
+      { name: 'text', type: 'string', description: 'Exact admitted text for standard downstream output nodes' },
       { name: 'role', type: 'string' },
       { name: 'result', type: 'object', description: 'Save result with path' },
       { name: 'passthrough', type: 'any' },
       { name: 'bufferPath', type: 'string' },
     ],
     properties: { tags: ['idle-thought', 'self-reflection', 'inner'], role: 'reflection', captureMemory: true },
-    description: 'Persists typed inner dialogue and optionally captures matching long-term memory.',
+    description: 'Persists typed inner dialogue, exposes admitted text to standard output nodes, and optionally captures matching long-term memory.',
   }),
   defineSchema({
     id: 'system_buffer',

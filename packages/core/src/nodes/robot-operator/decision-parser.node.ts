@@ -1,10 +1,9 @@
 import { defineNode } from '../types.js';
 
-export type RobotOperatorRoute = 'environment' | 'wait';
-
 export interface RobotOperatorDecision {
-  route: RobotOperatorRoute;
+  observed: string;
   instruction: string;
+  requiresAction: boolean;
   reason: string;
 }
 
@@ -60,16 +59,17 @@ export const robotOperatorDecisionParserNode = defineNode({
     { name: 'response', type: 'any', description: 'Thinking-stripped Robot Operator LLM response' },
   ],
   outputs: [
-    { name: 'decision', type: 'object', description: 'Validated high-level route and intention' },
-    { name: 'route', type: 'string', description: 'environment or wait' },
+    { name: 'decision', type: 'object', description: 'Validated grounded observation and free-form high-level intention' },
+    { name: 'observed', type: 'string', description: 'Concise summary grounded in the current robot stimulus' },
     { name: 'instruction', type: 'string', description: 'High-level intention delegated to Environment Mode' },
+    { name: 'requiresAction', type: 'boolean', description: 'LLM-authored decision that satisfying the intention requires environment work rather than conversation alone' },
     { name: 'reason', type: 'string', description: 'Concise inspectable decision reason' },
     { name: 'valid', type: 'boolean', description: 'Whether the model response satisfied the graph contract' },
     { name: 'error', type: 'string', description: 'Parsing or contract error' },
   ],
   properties: {},
   propertySchemas: {},
-  description: 'Validates a Robot Operator route without inventing fallback behavior or execution details.',
+  description: 'Validates one grounded observation and free-form intention without classifying or inventing robot behavior.',
   async execute(inputs) {
     const raw = typeof inputs.response === 'string'
       ? inputs.response
@@ -78,33 +78,35 @@ export const robotOperatorDecisionParserNode = defineNode({
         : '';
     const parsed = extractJsonObject(raw);
     const invalid = (error: string) => ({
-      decision: { route: 'wait', instruction: '', reason: error } satisfies RobotOperatorDecision,
-      route: 'wait',
+      decision: null,
+      observed: '',
       instruction: '',
-      reason: error,
+      requiresAction: false,
+      reason: '',
       valid: false,
       error,
     });
     if (!isRecord(parsed)) return invalid('Robot Operator response was not a JSON object.');
-    const route = cleanText(parsed.route, 40).toLowerCase();
-    if (route !== 'environment' && route !== 'wait') {
-      return invalid('Robot Operator route must be environment or wait.');
-    }
+    const observed = cleanText(parsed.observed, 500);
     const reason = cleanText(parsed.reason, 500);
     const instruction = cleanText(parsed.instruction, 1_000);
+    if (!observed) return invalid('Robot Operator decision requires a current observation summary.');
     if (!reason) return invalid('Robot Operator decision requires a concise reason.');
-    if (route === 'environment' && !instruction) {
-      return invalid('Environment delegation requires a high-level instruction.');
+    if (!instruction) return invalid('Environment delegation requires a high-level intention.');
+    if (typeof parsed.requiresAction !== 'boolean') {
+      return invalid('Robot Operator decision requires an explicit requiresAction boolean.');
     }
     const decision: RobotOperatorDecision = {
-      route,
-      instruction: route === 'environment' ? instruction : '',
+      observed,
+      instruction,
+      requiresAction: parsed.requiresAction,
       reason,
     };
     return {
       decision,
-      route: decision.route,
+      observed: decision.observed,
       instruction: decision.instruction,
+      requiresAction: decision.requiresAction,
       reason: decision.reason,
       valid: true,
       error: '',

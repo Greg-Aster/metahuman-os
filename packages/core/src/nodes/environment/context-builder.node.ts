@@ -5,9 +5,10 @@ import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
+import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
-  environmentTaskContractFromRouting,
-  parseEnvironmentTaskInstruction,
+  environmentTaskContractFromObservation,
+  robotOperatorActionRequirement,
   stringifyEnvironmentObservation,
 } from './helpers.js';
 
@@ -174,25 +175,21 @@ export const environmentContextBuilderNode = defineNode({
       ? observation.metadata.taskValidatorCommand
       : null;
     const queuedContinuation = Boolean(validatorCommand);
-    const commandContract = environmentTaskContractFromRouting({
-      actionParams: {
-        continuationPolicy: validatorCommand?.continuationPolicy,
-        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
-      },
-    }, typeof validatorCommand?.objective === 'string' ? validatorCommand.objective : '');
     // The context router sees the utterance and recent conversation, but not the
     // current environment state. It may authorize current work, but it cannot own
     // the task's completion contract. Only a contract persisted by the validator
     // from an admitted action/continuation is authoritative on a later pass.
-    const taskContract = commandContract
-      || parseEnvironmentTaskInstruction(observation.metadata?.originatingInstruction);
+    const taskContract = environmentTaskContractFromObservation(effectiveObservation);
+    const delegatedActionRequirement = robotOperatorActionRequirement(effectiveObservation);
     const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
       && typeof routingAnalysis.needsEnvironment === 'boolean'
       && typeof routingAnalysis.needsVision === 'boolean';
-    const includeActionContracts = !hasTypedContextAdmission
-      || routingAnalysis.needsAction === true
-      || queuedContinuation
-      || Boolean(taskContract);
+    const includeActionContracts = delegatedActionRequirement !== null
+      ? delegatedActionRequirement
+      : !hasTypedContextAdmission
+        || routingAnalysis.needsAction === true
+        || queuedContinuation
+        || Boolean(taskContract);
     const includeEnvironmentContext = !hasTypedContextAdmission
       || routingAnalysis.needsEnvironment === true
       || routingAnalysis.needsVision === true
@@ -205,7 +202,12 @@ export const environmentContextBuilderNode = defineNode({
     const correlatedVisual = visualFrames.some(frame => (
       typeof frame.metadata?.correlationId === 'string'
     )) || typeof effectiveObservation.metadata?.correlationId === 'string';
-    const observerVisualEvidence = isRecord(effectiveObservation.metadata?.robotObserver);
+    const robotObserver = readRobotObserverCycle(effectiveObservation);
+    // environment-perception metadata is attached to ordinary correlated audio
+    // so later work can retain lifecycle identity. It is not, by itself, a request
+    // to inspect the camera. Only an explicit Robot Observer run bypasses typed
+    // vision admission; ordinary audio remains owned by needsVision.
+    const observerVisualEvidence = robotObserver?.requestedBy === 'robot-observer';
     const visualRequiredByTask = taskContract?.requiredCompletionBasis === 'visual_observation';
     const useImages = correlatedVisual && (
       !hasTypedContextAdmission

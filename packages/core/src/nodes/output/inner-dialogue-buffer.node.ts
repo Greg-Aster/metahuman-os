@@ -1,7 +1,7 @@
 /**
  * Inner Dialogue Buffer Node
  *
- * The only graph node allowed to persist unvoiced thoughts and generated
+ * The only graph node allowed to persist typed thoughts and generated
  * inner dialogue. Optional long-term-memory capture happens from the same
  * admitted entry so storage and memory cannot drift into separate meanings.
  */
@@ -54,12 +54,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const passthrough = inputs.passthrough;
 
   if (!username || username === 'anonymous') {
-    return { saved: false, persisted: false, reason: 'No authenticated username', passthrough };
+    return { saved: false, persisted: false, text: '', reason: 'No authenticated username', passthrough };
   }
   if (!text) {
     return {
       saved: false,
       persisted: false,
+      text: '',
       reason: 'No inner-dialogue text to admit',
       passthrough,
       bufferPath: getBufferPathForUser(username, 'inner'),
@@ -68,12 +69,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const displayColor = inputs.displayColor || properties?.displayColor || metadataInput.displayColor || '';
   const dialogueSource = properties?.dialogueSource || metadataInput.dialogueSource || explicitRecord?.meta?.dialogueSource || '';
-  const tags = metadataInput.tags || properties?.tags || ['idle-thought', 'self-reflection', 'inner'];
+  const configuredTags = metadataInput.tags ?? properties?.tags ?? ['idle-thought', 'self-reflection', 'inner'];
+  const tags = Array.from(new Set(
+    (Array.isArray(configuredTags) ? configuredTags : [configuredTags])
+      .filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()))
+      .map(tag => tag.trim()),
+  ));
   const meta = {
     type: role,
     source: role === 'thought' ? 'user' : 'agent',
     ...(explicitRecord?.meta && typeof explicitRecord.meta === 'object' ? explicitRecord.meta : {}),
     ...metadataInput,
+    tags,
     ...(dialogueSource ? { dialogueSource } : {}),
     ...(displayColor ? { displayColor } : {}),
   };
@@ -116,6 +123,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     return {
       saved: persisted,
       persisted,
+      text: persisted ? text : '',
       role,
       eventId: result?.eventId,
       eventPath: result ? path.relative(ROOT, result.filePath) : undefined,
@@ -132,6 +140,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     return {
       saved: false,
       persisted: false,
+      text: '',
       error: (error as Error).message,
       passthrough,
       bufferPath: getBufferPathForUser(username, 'inner'),
@@ -154,6 +163,7 @@ export const InnerDialogueBufferNode = defineNode({
   outputs: [
     { name: 'saved', type: 'boolean' },
     { name: 'persisted', type: 'boolean' },
+    { name: 'text', type: 'string', description: 'Exact admitted text for standard downstream output nodes' },
     { name: 'role', type: 'string' },
     { name: 'result', type: 'object' },
     { name: 'passthrough', type: 'any' },
@@ -183,6 +193,6 @@ export const InnerDialogueBufferNode = defineNode({
       description: 'Create a long-term memory from the same admitted entry.',
     },
   },
-  description: 'Persists typed unvoiced thought/inner-dialogue entries and optionally captures matching long-term memory.',
+  description: 'Persists typed inner-dialogue entries, exposes admitted text to standard output nodes, and optionally captures matching long-term memory.',
   execute,
 });

@@ -30,7 +30,7 @@ function hasObserverMetadata(value: unknown): boolean {
     record.metadata?.robotObserver
     || record.metadata?.boredomMovement
     || record.observation?.metadata?.robotObserver
-    || record.observation?.metadata?.boredomMovement,
+    || record.observation?.metadata?.boredomMovement
   )
 }
 

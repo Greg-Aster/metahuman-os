@@ -5,14 +5,12 @@ import test from 'node:test'
 import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
-  chooseBoredomMovementCommand,
   beginEnvironmentPerceptionCycle,
-  eligibleBoredomMovementCommands,
   isBoredomMovementEnabled,
-  loadBoredomMovementCommandAllowlist,
   nextRobotObserverCycle,
   isRobotObserverEnabled,
   randomizedRobotOperatorIdleMs,
+  readBoredomMovementCycle,
   readRobotObserverCycle,
   robotObserverSourceAllowed,
   loadRobotOperatorConfig,
@@ -74,7 +72,31 @@ test('robot audio perception reuses the finite observer counter without dependin
   assert.equal(nextRobotObserverCycle(cycle!)?.step, 2)
 })
 
-test('robot observer and operator have separate lifecycle owners', () => {
+test('Boredom Movement carries action-first sequencing without a motion catalog', () => {
+  const cycle = readBoredomMovementCycle({
+    metadata: {
+      boredomMovement: {
+        cycleId: 'boredom-1',
+        triggerSource: 'autonomy',
+        requestedBy: 'boredom-movement',
+        graph: 'environment',
+        maxSteps: 8,
+        observationTiming: 'after_intention',
+      },
+    },
+  })
+  assert.deepEqual(cycle, {
+    cycleId: 'boredom-1',
+    triggerSource: 'autonomy',
+    requestedBy: 'boredom-movement',
+    graph: 'environment',
+    maxSteps: 8,
+    observationTiming: 'after_intention',
+  })
+  assert.equal('stationaryCommands' in cycle!, false)
+})
+
+test('Robot Operator owns inactivity timing while Robot Observer owns finite observation work', () => {
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-observer'].lifecycle, 'workflow')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-observer'].handler, 'workflow.robot-observer')
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-movement'].lifecycle, 'workflow')
@@ -103,70 +125,6 @@ test('robot observer and operator have separate lifecycle owners', () => {
   const config = loadRobotOperatorConfig()
   assert.equal(config.graph, 'robot-operator')
   assert.equal(config.environmentGraph, 'environment')
-})
-
-test('boredom movement owns and intersects its stationary command allowlist', () => {
-  const configured = loadBoredomMovementCommandAllowlist()
-  assert.equal(configured.includes('walk'), false)
-  assert.equal(configured.includes('backward'), false)
-  assert.equal(configured.includes('left'), false)
-  assert.equal(configured.includes('right'), false)
-  assert.equal(configured.includes('wave'), true)
-  assert.equal(configured.includes('dead'), true)
-
-  const commands = eligibleBoredomMovementCommands(
-    ['walk', 'backward', 'left', 'right', 'wave', 'dead', 'sit', 'dance'],
-    [...configured, 'walk', 'not-advertised'],
-  )
-  assert.deepEqual(commands, ['sit', 'wave', 'dance', 'dead'])
-  assert.equal(chooseBoredomMovementCommand(commands, () => 0), 'sit')
-  assert.equal(chooseBoredomMovementCommand(commands, () => 0.999), 'dead')
-})
-
-test('boredom movement remains capability-gated without natural-language command manufacturing', async () => {
-  const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
-      response: 'I will wave.',
-      actions: [{ type: 'robotCommand', command: 'wave' }],
-      movementRequest: null,
-    }),
-    instruction: 'perform wave',
-    observation: {
-      environmentId: 'ainekio',
-      adapter: 'ainekio-gateway',
-      sessionId: 'ainekio-sim-1',
-      timestamp: new Date().toISOString(),
-      capabilities: {
-        actions: ['robotCommand'],
-        robotCommands: ['wave'],
-      },
-    },
-    sessionId: 'ainekio-sim-1',
-  }, {})
-  assert.equal(parsed.actions.length, 1)
-  assert.equal(parsed.actions[0]?.type, 'robotCommand')
-  assert.equal(parsed.actions[0]?.command, 'wave')
-
-  const conflicting = await environmentActionParserNode.execute({
-    response: JSON.stringify({
-      response: 'I will walk instead.',
-      actions: [{ type: 'robotCommand', command: 'walk' }],
-      movementRequest: null,
-    }),
-    instruction: 'perform wave',
-    observation: {
-      environmentId: 'ainekio',
-      adapter: 'ainekio-gateway',
-      sessionId: 'ainekio-sim-1',
-      timestamp: new Date().toISOString(),
-      capabilities: {
-        actions: ['robotCommand'],
-        robotCommands: ['wave'],
-      },
-    },
-    sessionId: 'ainekio-sim-1',
-  }, {})
-  assert.equal(conflicting.actions.length, 0)
 })
 
 test('structured captureImage remains available and capability gated', async () => {

@@ -19,6 +19,10 @@ import {
   assertBoundedMotionPlanEncoding,
   normalizeEnvironmentMotionPlanFields,
 } from './motion-plan.js';
+import {
+  nextRobotObserverCycle,
+  readRobotObserverCycle,
+} from '../robot-operator.js';
 
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
 const STALE_AFTER_MS = 45_000;
@@ -28,12 +32,19 @@ const MAX_PROCESSED_TEXT_EVENTS = 1_000;
 const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
+const MAX_IMAGE_ACQUISITION_AGE_MS = 10_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
   'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'speak', 'sendText',
 ]);
 const NON_REPLAYABLE_ACTION_TYPES = new Set<EnvironmentActionType>([
   'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan',
 ]);
+
+function maxQueueAgeMs(type: EnvironmentActionType): number {
+  return type === 'captureImage'
+    ? MAX_IMAGE_ACQUISITION_AGE_MS
+    : MAX_CONTROL_ACTION_AGE_MS;
+}
 
 type ActionSubscriber = () => void;
 type BridgeStateSubscriber = () => void;
@@ -458,7 +469,7 @@ export function enqueueEnvironmentAction(
 
   const sourceCreatedAt = action.createdAt ? Date.parse(action.createdAt) : Date.now();
   const deadline = NON_REPLAYABLE_ACTION_TYPES.has(normalized.type)
-    ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + MAX_CONTROL_ACTION_AGE_MS).toISOString()
+    ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + maxQueueAgeMs(normalized.type)).toISOString()
     : undefined;
   const task = manager.enqueue({
     type: 'environment_command',
@@ -568,6 +579,36 @@ export interface RecordedEnvironmentActionResult {
   action: EnvironmentCommandWork;
   feedback: EnvironmentFeedback;
   username: string;
+  postActionObservation?: EnvironmentCommandWork;
+}
+
+function enqueueActionFirstObservation(task: QueuedTask): EnvironmentCommandWork | undefined {
+  if (task.input.type === 'captureImage') return undefined;
+  const cycle = readRobotObserverCycle({ metadata: task.input.metadata });
+  if (cycle?.observationTiming !== 'after_intention') return undefined;
+  const captureCycle = nextRobotObserverCycle(cycle);
+  if (!captureCycle) return undefined;
+
+  const alreadyQueued = environmentTasks().some(candidate => {
+    if (candidate.input.type !== 'captureImage') return false;
+    return readRobotObserverCycle({ metadata: candidate.input.metadata })?.cycleId === cycle.cycleId;
+  });
+  if (alreadyQueued) return undefined;
+
+  return enqueueEnvironmentAction(
+    {
+      type: 'captureImage',
+      sessionId: String(task.input.sessionId || ''),
+      metadata: { robotObserver: captureCycle },
+    },
+    {
+      username: task.username,
+      source: cycle.triggerSource,
+      correlationId: cycle.cycleId,
+      idempotencyKey: `boredom-movement:${cycle.cycleId}:post-action-image:${captureCycle.step}`,
+      originatingInstruction: boundedOriginatingInstruction(task.metadata?.originatingInstruction),
+    },
+  );
 }
 
 export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): RecordedEnvironmentActionResult | undefined {
@@ -593,10 +634,14 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     if (feedback.type === 'expired') manager.expire(task.id);
   }
   const current = manager.getTask(task.id) || task;
+  const postActionObservation = feedback.type === 'completed'
+    ? enqueueActionFirstObservation(current)
+    : undefined;
   return {
     action: commandView(current),
     feedback,
     username: current.username,
+    ...(postActionObservation ? { postActionObservation } : {}),
   };
 }
 

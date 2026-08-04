@@ -6,7 +6,8 @@
  * Local playback uses the client queue; Environment Mode robot playback is
  * rendered server-side and sent through the existing Environment Bridge.
  *
- * The toggles in ChatInterface control whether TTS is enabled for each mode.
+ * The main ChatInterface speaker control owns global enablement. The shared
+ * playback consumer additionally gates Inner Dialogue by visible UI state.
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
@@ -56,17 +57,21 @@ export async function deliverTTSOutput(
 ): Promise<TTSOutputDelivery> {
   const dependencies = { ...defaultTTSOutputDependencies, ...dependencyOverrides };
   const settings = dependencies.getSettings(request.username);
+  const route = request.mode === 'inner' ? 'local' : settings.outputTarget;
 
   if (settings.speechDisabled) {
     return {
       accepted: false,
       deliveryId: '',
-      route: settings.outputTarget,
+      route,
       reason: 'Speech is disabled by the main chat speaker control',
     };
   }
 
-  if (settings.outputTarget === 'robot') {
+  // Inner Dialogue is a local interface surface whose audible state is gated
+  // by the visible Inner view. Outward robot speech remains exclusively owned
+  // by Environment Mode.
+  if (route === 'robot') {
     if (request.source !== 'environment-mode') {
       return {
         accepted: false,

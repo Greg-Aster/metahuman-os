@@ -37,7 +37,6 @@ import {
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
-import { queueTTS } from '../../tts/delivery-queue.js';
 import { submitAgencyConversationEntry } from '../../buffer-admission.js';
 import { submitCoordinatorWork } from '../../queue/index.js';
 
@@ -1405,8 +1404,6 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
       },
     });
 
-    queueTTS(user.username, `My desire "${desire.title}" is complete!`, 'inner', 'outcome-review');
-
     return successResponse({
       success: true,
       desire: updatedDesire,
@@ -1643,13 +1640,6 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
         action,
       },
     });
-
-    queueTTS(
-      user.username,
-      `Got your feedback on "${desire.title}". ${responseMessage}`,
-      'inner',
-      'agency-feedback'
-    );
 
     await submitAgencyConversationEntry(
       user.username,
@@ -1897,13 +1887,6 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
         feedback: trimmedFeedback,
       },
     });
-
-    queueTTS(
-      user.username,
-      `I'll revise my approach to "${desire.title}". Let me create a new plan based on your feedback.`,
-      'inner',
-      'outcome-review'
-    );
 
     return successResponse({
       success: true,

@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { ROOT } from '../../path-builder.js';
+import { ConversationHistoryNode } from '../context/conversation-history.node.js';
 import { robotOperatorContextBuilderNode } from './context-builder.node.js';
 import { robotOperatorDecisionParserNode } from './decision-parser.node.js';
 import { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.node.js';
@@ -50,26 +51,65 @@ function robotObservation() {
   };
 }
 
-test('Robot Operator context combines configured prompt, persona, history, and only the correlated image', async () => {
+test('configured Inner Buffer history never falls back to conversation context', async () => {
+  const result = await ConversationHistoryNode.execute({}, {
+    conversationHistory: [
+      { role: 'user', content: 'Continue the previous push-up task.' },
+    ],
+  }, { mode: 'inner', limit: 3 });
+
+  assert.equal(result.mode, 'inner');
+  assert.deepEqual(result.history, []);
+  assert.equal(result.loadedFromBuffer, false);
+});
+
+test('Buffer History limit zero defers retention to the canonical buffer owner', async () => {
+  const retained = Array.from({ length: 80 }, (_, index) => ({
+    role: 'reflection',
+    content: `Retained inner entry ${index + 1}`,
+  }));
+  const result = await ConversationHistoryNode.execute({}, {
+    conversationHistory: retained,
+  }, { mode: 'conversation', limit: 0 });
+
+  assert.equal(result.count, 80);
+  assert.equal(result.pruned, false);
+});
+
+test('Robot Operator context combines persona, tagged Idle Thoughts, and only the correlated image', async () => {
   const observation = robotObservation();
   const result = await robotOperatorContextBuilderNode.execute({
     observation,
     conversationHistory: [
-      { role: 'user', content: 'Please keep an eye on the room.' },
       {
         role: 'assistant',
-        content: 'The requested observation is complete.',
+        content: 'Continue the push-up until the user signals stop.',
         meta: {
           cognitiveMode: 'environment',
           taskLifecycle: {
             kind: 'environment_task_lifecycle',
-            owner: 'environment-task-validator',
-            cycleId: 'completed-cycle',
-            objective: 'Inspect the room once.',
-            outcome: 'complete',
-            complete: true,
-            completionVerified: true,
+            cycleId: 'exercise-cycle',
+            objective: 'Continue the push-up.',
+            outcome: 'request_user',
           },
+        },
+      },
+    ],
+    innerDialogueHistory: [
+      {
+        role: 'reflection',
+        content: 'I am curious about how the light in the room has changed.',
+        meta: {
+          dialogueSource: 'reflector',
+          tags: ['idle-thought', 'self-reflection', 'inner'],
+        },
+      },
+      {
+        role: 'reflection',
+        content: 'I intend to continue the push-up.',
+        meta: {
+          dialogueSource: 'robot-operator-mode',
+          tags: ['robot-operator', 'observation', 'intention', 'inner'],
         },
       },
     ],
@@ -78,53 +118,124 @@ test('Robot Operator context combines configured prompt, persona, history, and o
     frames: [observation.visual],
   }, {}, {
     systemPrompt: 'Decide one high-level intention and return configured JSON.',
-    historyLimit: 12,
   });
 
   assert.equal(result.valid, true);
   assert.equal(result.context.imageCount, 1);
-  assert.equal(result.context.historyCount, 2);
-  assert.equal(result.context.taskLifecycleCount, 1);
+  assert.equal(result.context.idleThoughtCount, 1);
+  assert.equal(result.context.stimulus.freshVisualTiming, 'before_intention');
   assert.match(String(result.messages[0]?.content), /high-level intention/);
   assert.match(String(result.messages[0]?.content), /curious: high/);
   const userContent = result.messages[1]?.content as Array<{ type: string; text?: string }>;
   assert.equal(Array.isArray(userContent), true);
   assert.equal(userContent.length, 2);
-  assert.match(String(userContent[0]?.text), /Please keep an eye on the room/);
-  assert.match(String(userContent[0]?.text), /environment_task_lifecycle/);
-  assert.match(String(userContent[0]?.text), /completionVerified/);
+  assert.match(String(userContent[0]?.text), /curious about how the light/);
+  assert.doesNotMatch(String(userContent[0]?.text), /push-up/i);
+  assert.doesNotMatch(String(userContent[0]?.text), /environment_task_lifecycle/);
   assert.doesNotMatch(String(userContent[0]?.text), /data:image\/jpeg;base64/);
 
   const stale = await robotOperatorContextBuilderNode.execute({
     observation,
     images: [{ type: 'image_url', image_url: { url: observation.visual.dataUrl } }],
     frames: [{ ...observation.visual, metadata: { correlationId: 'old-cycle' } }],
-  }, {}, { systemPrompt: 'Return configured JSON.', historyLimit: 12 });
+  }, {}, { systemPrompt: 'Return configured JSON.' });
   assert.equal(stale.context.imageCount, 0);
   assert.equal(typeof stale.messages[1]?.content, 'string');
+
+  const actionFirst = await robotOperatorContextBuilderNode.execute({
+    observation: {
+      ...observation,
+      visual: undefined,
+      metadata: {
+        correlationId: 'boredom-cycle',
+        boredomMovement: {
+          cycleId: 'boredom-cycle',
+          triggerSource: 'autonomy',
+          requestedBy: 'boredom-movement',
+          graph: 'environment',
+          maxSteps: 8,
+          observationTiming: 'after_intention',
+        },
+      },
+    },
+  }, {}, { systemPrompt: 'Return configured JSON.' });
+  assert.equal(actionFirst.context.stimulus.freshVisualTiming, 'after_intention');
+  assert.equal(actionFirst.context.imageCount, 0);
 });
 
-test('Robot Operator parser accepts only explicit environment or wait decisions', async () => {
+test('Robot Operator context excludes untagged records without adding a second retention limit', async () => {
+  const observation = robotObservation();
+  const result = await robotOperatorContextBuilderNode.execute({
+    observation,
+    innerDialogueHistory: [
+      {
+        role: 'reflection',
+        content: 'Legacy thought about continuing push-ups.',
+        meta: {
+          dialogueSource: 'robot-operator-mode',
+        },
+      },
+      {
+        role: 'reflection',
+        content: 'Oldest admitted observation.',
+        meta: {
+          tags: ['idle-thought', 'inner'],
+        },
+      },
+      { role: 'reflection', content: 'A blue shape caught my interest.', meta: { tags: ['idle-thought'] } },
+      { role: 'reflection', content: 'The room seems quieter now.', meta: { tags: ['idle-thought'] } },
+      { role: 'reasoning', content: 'Private reasoning must not enter.', meta: { tags: ['idle-thought'] } },
+    ],
+  }, {}, {
+    systemPrompt: 'Return the configured observation decision JSON.',
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.context.canonicalInnerEntryCount, 5);
+  assert.equal(result.context.idleThoughtCount, 3);
+  const stimulus = result.context.stimulus;
+  assert.deepEqual(
+    stimulus.recentIdleThoughts.map((entry: any) => entry.content),
+    ['Oldest admitted observation.', 'A blue shape caught my interest.', 'The room seems quieter now.'],
+  );
+  assert.equal('capabilities' in stimulus, false);
+  assert.equal('feedback' in stimulus, false);
+  assert.equal('source' in stimulus, false);
+  assert.equal('currentObservationContract' in stimulus, false);
+  const serialized = JSON.stringify(result.messages[1]?.content);
+  assert.doesNotMatch(serialized, /push-up/i);
+  assert.doesNotMatch(serialized, /Private reasoning/);
+  assert.match(serialized, /Oldest admitted observation/);
+  assert.doesNotMatch(serialized, /captureImage|robotCommand|image captured|robotObserver/);
+});
+
+test('Robot Operator parser accepts only complete grounded observation decisions', async () => {
   const delegated = await robotOperatorDecisionParserNode.execute({
-    response: '<think>private reasoning</think>{"route":"environment","instruction":"I see a red ball and want to investigate it.","reason":"The object is new and fits my curious personality."}',
+    response: '<think>private reasoning</think>{"observed":"A red ball is visible on the floor.","instruction":"I want to get a clearer view of the red ball.","requiresAction":true,"reason":"The current image contains an unfamiliar object worth inspecting."}',
   }, {});
   assert.equal(delegated.valid, true);
-  assert.equal(delegated.route, 'environment');
-  assert.equal(delegated.instruction, 'I see a red ball and want to investigate it.');
+  assert.equal(delegated.observed, 'A red ball is visible on the floor.');
+  assert.equal(delegated.instruction, 'I want to get a clearer view of the red ball.');
+  assert.equal(delegated.requiresAction, true);
   assert.doesNotMatch(JSON.stringify(delegated.decision), /private reasoning/);
 
-  const waiting = await robotOperatorDecisionParserNode.execute({
+  const freeForm = await robotOperatorDecisionParserNode.execute({
+    response: '{"category":"model-authored","observed":"The room is dark and still.","instruction":"I want to respond in the way that best fits this moment.","requiresAction":false,"reason":"The present view and my persona shape this intention."}',
+  }, {});
+  assert.equal(freeForm.valid, true);
+  assert.deepEqual(Object.keys(freeForm.decision), ['observed', 'instruction', 'requiresAction', 'reason']);
+
+  const legacyWait = await robotOperatorDecisionParserNode.execute({
     response: '{"route":"wait","instruction":"","reason":"Nothing warrants a response."}',
   }, {});
-  assert.equal(waiting.valid, true);
-  assert.equal(waiting.route, 'wait');
-  assert.equal(waiting.instruction, '');
+  assert.equal(legacyWait.valid, false);
+  assert.equal(legacyWait.decision, null);
 
-  const command = await robotOperatorDecisionParserNode.execute({
-    response: '{"route":"robotCommand","instruction":"walk","reason":"move"}',
+  const incomplete = await robotOperatorDecisionParserNode.execute({
+    response: '{"observed":"A doorway is visible.","instruction":"I have chosen a next intention."}',
   }, {});
-  assert.equal(command.valid, false);
-  assert.equal(command.route, 'wait');
+  assert.equal(incomplete.valid, false);
+  assert.equal(incomplete.decision, null);
 });
 
 test('Robot Operator dispatch carries one intention and the same image into Environment Mode', async () => {
@@ -132,8 +243,9 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
   const observation = robotObservation();
   const result = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
-      route: 'environment',
-      instruction: 'I see a red ball and want to investigate it.',
+      observed: 'A red ball is visible on the floor.',
+      instruction: 'I want to get a clearer view of the red ball.',
+      requiresAction: true,
       reason: 'The object is interesting and relevant to my current persona.',
     },
     observation,
@@ -153,16 +265,73 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
   assert.equal(queued[0].input.graph, 'environment');
   assert.equal(
     queued[0].input.observation.metadata.originatingInstruction,
-    'I see a red ball and want to investigate it.',
+    'I want to get a clearer view of the red ball.',
   );
   assert.equal(queued[0].input.observation.visual.id, observation.visual.id);
   assert.equal(queued[0].input.observation.metadata.robotObserver.graph, 'environment');
   assert.equal(queued[0].input.observation.metadata.robotObserver.requestedBy, 'environment-perception');
+  assert.equal(queued[0].input.observation.metadata.robotOperatorDecision.requiresAction, true);
   assert.deepEqual(queued[0].input.observation.text, []);
   assert.deepEqual(queued[0].input.observation.feedback, []);
 
-  const wait = await robotOperatorEnvironmentDispatchNode.execute({
-    decision: { route: 'wait', instruction: '', reason: 'No response is useful.' },
+  const actionFirstObservation = {
+    ...observation,
+    visual: undefined,
+    metadata: {
+      correlationId: 'boredom-cycle',
+      boredomMovement: {
+        cycleId: 'boredom-cycle',
+        triggerSource: 'autonomy',
+        requestedBy: 'boredom-movement',
+        graph: 'environment',
+        maxSteps: 6,
+        observationTiming: 'after_intention',
+      },
+    },
+  };
+  const second = await robotOperatorEnvironmentDispatchNode.execute({
+    decision: {
+      observed: 'The room is dark and still.',
+      instruction: 'I want to respond in the way that best fits this moment.',
+      requiresAction: false,
+      reason: 'The present view and my persona shape this intention.',
+    },
+    observation: actionFirstObservation,
+  }, {
+    username: 'owner',
+    operatorMode: 'semi',
+    enqueueRobotOperatorEnvironment: async (input: unknown) => {
+      queued.push(input);
+      return { id: 'environment-task-2' };
+    },
+  }, { graph: 'environment', maxSteps: 8 });
+  assert.equal(second.queued, true);
+  assert.equal(second.status, 'queued');
+  assert.equal(second.taskId, 'environment-task-2');
+  assert.equal(queued.length, 2);
+  assert.equal('disposition' in queued[1].input.observation.metadata.robotOperatorDecision, false);
+  assert.equal(
+    queued[1].input.observation.metadata.robotOperatorDecision.instruction,
+    'I want to respond in the way that best fits this moment.',
+  );
+  assert.equal(
+    queued[1].input.observation.metadata.originatingInstruction,
+    'I want to respond in the way that best fits this moment.',
+  );
+  assert.equal(queued[1].input.observation.metadata.robotObserver.cycleId, 'boredom-cycle');
+  assert.equal(queued[1].input.observation.metadata.robotObserver.maxSteps, 6);
+  assert.equal(
+    queued[1].input.observation.metadata.robotObserver.observationTiming,
+    'after_intention',
+  );
+
+  const malformed = await robotOperatorEnvironmentDispatchNode.execute({
+    decision: {
+      observed: '',
+      instruction: 'I have chosen a next intention.',
+      requiresAction: false,
+      reason: 'The current observation informed it.',
+    },
     observation,
   }, {
     username: 'owner',
@@ -172,17 +341,18 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
       return { id: 'unexpected' };
     },
   }, { graph: 'environment', maxSteps: 8 });
-  assert.equal(wait.queued, false);
-  assert.equal(wait.status, 'wait');
-  assert.equal(queued.length, 1);
+  assert.equal(malformed.queued, false);
+  assert.equal(malformed.status, 'invalid_decision');
+  assert.equal(queued.length, 2);
 });
 
 test('Robot Operator dispatch does not reapply trigger mode after the graph decides to delegate', async () => {
   let queued = false;
   const result = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
-      route: 'environment',
+      observed: 'The room contains an object that may need attention.',
       instruction: 'I want to investigate the room.',
+      requiresAction: true,
       reason: 'A current observation looks interesting.',
     },
     observation: robotObservation(),
@@ -200,7 +370,7 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   assert.equal(queued, true);
 });
 
-test('Robot Operator graph publishes grounded rationale and one bounded inner intention before Environment dispatch', () => {
+test('Robot Operator graph publishes one grounded Idle Thought before Environment dispatch', () => {
   const graph = JSON.parse(fs.readFileSync(
     path.join(ROOT, 'etc/cognitive-graphs/robot-operator-mode.json'),
     'utf8',
@@ -211,7 +381,6 @@ test('Robot Operator graph publishes grounded rationale and one bounded inner in
     'environment_task_validator',
     'movement_generator',
     'environment_send_action',
-    'tts',
     'conversation_buffer',
     'robot_buffer',
     'memory_capture',
@@ -221,16 +390,30 @@ test('Robot Operator graph publishes grounded rationale and one bounded inner in
   assert.equal(nodeTypes.has('robot_operator_context_builder'), true);
   assert.equal(nodeTypes.has('robot_operator_decision_parser'), true);
   assert.equal(nodeTypes.has('robot_operator_environment_dispatch'), true);
+  const historyNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'conversation_history');
+  assert.equal(historyNodes.length, 1, 'Robot Operator Mode must have one canonical buffer history reader');
+  assert.equal(historyNodes[0]?.id, 'idle-thought-history');
+  assert.equal(historyNodes[0]?.data?.properties?.mode, 'inner');
+  assert.equal(historyNodes[0]?.data?.properties?.limit, 0);
+  assert.ok(graph.edges.some((edge: any) => (
+    edge.source === 'idle-thought-history'
+    && edge.sourceHandle === 'history'
+    && edge.target === 'operator-context'
+    && edge.targetHandle === 'innerDialogueHistory'
+  )), 'canonical Inner Buffer history must enter the dedicated Robot Operator Idle Thought input');
+  assert.equal(graph.edges.some((edge: any) => edge.targetHandle === 'conversationHistory'), false);
+  const ttsNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'tts');
+  assert.equal(ttsNodes.length, 1, 'Robot Operator Mode must contain one standard TTS Output node');
+  assert.equal(ttsNodes[0]?.id, 'idle-thought-tts');
+  assert.equal(ttsNodes[0]?.data?.properties?.source, 'robot-operator-mode');
+  assert.equal(ttsNodes[0]?.data?.properties?.defaultMode, 'inner');
   const innerNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'inner_dialogue_buffer');
-  assert.equal(innerNodes.length, 2);
+  assert.equal(innerNodes.length, 1);
   const reasonNode = innerNodes.find((node: any) => node.id === 'reason-inner-dialogue');
-  const intentionNode = innerNodes.find((node: any) => node.id === 'intention-inner-dialogue');
   assert.equal(reasonNode?.data?.properties?.captureMemory, false);
   assert.equal(reasonNode?.data?.properties?.role, 'reflection');
   assert.equal(reasonNode?.data?.properties?.dialogueSource, 'robot-operator-mode');
-  assert.equal(intentionNode?.data?.properties?.captureMemory, false);
-  assert.equal(intentionNode?.data?.properties?.role, 'reflection');
-  assert.equal(intentionNode?.data?.properties?.dialogueSource, 'robot-operator-mode');
+  assert.equal(reasonNode?.data?.properties?.tags?.includes('idle-thought'), true);
   const reasonEdge = graph.edges.find((edge: any) => (
     edge.source === 'decision-parser'
     && edge.sourceHandle === 'reason'
@@ -238,58 +421,56 @@ test('Robot Operator graph publishes grounded rationale and one bounded inner in
     && edge.targetHandle === 'text'
   ));
   assert.ok(reasonEdge, 'grounded decision rationale must enter the canonical Inner Dialogue Buffer as an idle thought');
-  const intentionEdge = graph.edges.find((edge: any) => (
-    edge.source === 'decision-parser'
-    && edge.sourceHandle === 'instruction'
-    && edge.target === 'intention-inner-dialogue'
-    && edge.targetHandle === 'text'
-  ));
-  assert.ok(intentionEdge, 'clean authored intention must enter the canonical Inner Dialogue Buffer');
-  const reasonCheckpointEdge = graph.edges.find((edge: any) => (
+  const ttsEdge = graph.edges.find((edge: any) => (
     edge.source === 'reason-inner-dialogue'
-    && edge.sourceHandle === 'passthrough'
-    && edge.target === 'intention-inner-dialogue'
-    && edge.targetHandle === 'passthrough'
+    && edge.sourceHandle === 'text'
+    && edge.target === 'idle-thought-tts'
+    && edge.targetHandle === 'innerDialogue'
   ));
-  assert.ok(reasonCheckpointEdge, 'intention publication must follow grounded rationale publication');
+  assert.ok(ttsEdge, 'standard TTS must consume only text admitted by the canonical Inner Dialogue Buffer');
+  assert.equal(graph.edges.some((edge: any) => (
+    edge.source === 'decision-parser'
+    && edge.target === 'idle-thought-tts'
+  )), false, 'decision parsing must not bypass Inner Dialogue admission to trigger speech');
+  assert.equal(graph.nodes.some((node: any) => node.id === 'intention-inner-dialogue'), false);
+  assert.equal(graph.edges.some((edge: any) => edge.target === 'intention-inner-dialogue'), false);
   const dispatchEdge = graph.edges.find((edge: any) => (
-    edge.source === 'intention-inner-dialogue'
+    edge.source === 'reason-inner-dialogue'
     && edge.sourceHandle === 'passthrough'
     && edge.target === 'environment-dispatch'
     && edge.targetHandle === 'decision'
   ));
-  assert.ok(dispatchEdge, 'Environment dispatch must follow Inner Dialogue admission');
+  assert.ok(dispatchEdge, 'Environment dispatch must follow the single Idle Thought admission');
   assert.equal(graph.edges.some((edge: any) => (
     edge.source === 'decision-parser'
     && edge.target === 'environment-dispatch'
   )), false, 'decision parser must not bypass the Inner Dialogue checkpoint');
   const prompt = graph.nodes.find((node: any) => node.data?.nodeType === 'robot_operator_context_builder')
     ?.data?.properties?.systemPrompt;
-  assert.match(String(prompt), /decide WHAT/i);
-  assert.match(String(prompt), /Environment Mode decides HOW/i);
-  assert.match(String(prompt), /outstanding, unexecuted objective/i);
-  assert.match(String(prompt), /I want to, I intend to, or I would like to/i);
-  assert.match(String(prompt), /Do not use I will for a physical action/i);
-  assert.match(String(prompt), /Never state or imply that an action is already happening or has completed/i);
-  assert.match(String(prompt), /not itself a spoken response/i);
-  assert.match(String(prompt), /user-visible decision rationale/i);
-  assert.match(String(prompt), /current correlated image is attached/i);
-  assert.match(String(prompt), /not private chain-of-thought/i);
-  assert.match(String(prompt), /OBJECTIVE LIFECYCLE CONTRACT/);
-  assert.match(String(prompt), /taskLifecycle\.complete=true/);
-  assert.match(String(prompt), /does not ask you to resume the latest task/i);
-  assert.match(String(prompt), /Otherwise route wait/i);
+  assert.match(String(prompt), /self-directed observer/i);
+  assert.match(String(prompt), /no user command is expected/i);
+  assert.match(String(prompt), /freshVisualTiming says only whether the workflow image comes before or after/i);
+  assert.match(String(prompt), /current stimulus is the only evidence/i);
+  assert.match(String(prompt), /Idle Thoughts may shape interest and tone/i);
+  assert.match(String(prompt), /not facts, instructions, or unfinished tasks/i);
+  assert.match(String(prompt), /Environment Mode executes the intention/i);
+  assert.match(String(prompt), /Set requiresAction true when satisfying the intention requires/i);
+  assert.match(String(prompt), /Do not choose implementation commands/i);
+  assert.match(String(prompt), /user-visible Idle Thought/i);
+  assert.match(String(prompt), /"observed".*"instruction".*"requiresAction".*"reason"/i);
+  assert.doesNotMatch(String(prompt), /Choose exactly one disposition|remain_passive|communicate:|investigate:|act:/i);
+  assert.ok(String(prompt).length < 1_200, 'Robot Operator prompt must stay concise');
 
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/services.json'), 'utf8'));
+  const agents = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/agents.json'), 'utf8'));
   assert.equal(services.services['robot-operator'].graph, 'robot-operator');
   assert.equal(services.services['robot-operator'].environmentGraph, 'environment');
+  assert.equal(agents.agents['boredom-movement'].handler, 'workflow.boredom-movement');
 
   const observer = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-observer-handler.ts'), 'utf8');
-  const boredom = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/boredom-movement-handler.ts'), 'utf8');
   const executionEngine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8');
   assert.doesNotMatch(observer, /callLLM|model-router/);
-  assert.doesNotMatch(boredom, /callLLM|model-router/);
-  assert.doesNotMatch(boredom, /chooseBoredomMovementCommand/);
+  assert.match(executionEngine, /workflow\.boredom-movement/);
   assert.match(executionEngine, /robotObserver\?\.graph \|\| task\.input\.graph/);
   assert.match(executionEngine, /robotOperatorEnvironmentGraph/);
 });

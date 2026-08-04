@@ -4,12 +4,15 @@ import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
 import {
+  readBoredomMovementCycle,
   readRobotObserverCycle,
   type RobotObserverCycleMetadata,
   type RobotObserverTriggerSource,
 } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
-import type { RobotOperatorDecision } from './decision-parser.node.js';
+import {
+  type RobotOperatorDecision,
+} from './decision-parser.node.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -36,10 +39,7 @@ function currentMode(context: Record<string, unknown>): AutonomyMode {
 function triggerSource(observation: EnvironmentObservation): RobotObserverTriggerSource {
   const cycle = readRobotObserverCycle(observation);
   if (cycle) return cycle.triggerSource;
-  const boredom = isRecord(observation.metadata?.boredomMovement)
-    ? observation.metadata.boredomMovement
-    : null;
-  return boredom?.triggerSource === 'user' ? 'user' : 'autonomy';
+  return readBoredomMovementCycle(observation)?.triggerSource ?? 'autonomy';
 }
 
 function delegatedCycle(
@@ -56,18 +56,17 @@ function delegatedCycle(
       requestedBy: 'environment-perception',
     };
   }
-  const boredom = isRecord(observation.metadata?.boredomMovement)
-    ? observation.metadata.boredomMovement
-    : null;
+  const boredomMovement = readBoredomMovementCycle(observation);
   return {
-    cycleId: cleanText(boredom?.cycleId, 200)
+    cycleId: boredomMovement?.cycleId
       || cleanText(observation.metadata?.correlationId, 200)
       || `robot-operator-${randomUUID()}`,
     step: 1,
-    maxSteps,
+    maxSteps: boredomMovement?.maxSteps ?? maxSteps,
     triggerSource: source,
-    graph,
+    graph: boredomMovement?.graph ?? graph,
     requestedBy: 'environment-perception',
+    ...(boredomMovement ? { observationTiming: boredomMovement.observationTiming } : {}),
   };
 }
 
@@ -106,7 +105,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       step: 1,
     },
   },
-  description: 'Admits at most one high-level intention to Environment Mode with the original correlated observation.',
+  description: 'Admits every valid Robot Operator observation decision to one Environment Mode execution with the original correlated observation.',
   async execute(inputs, context, properties) {
     const decision = isRecord(inputs.decision)
       ? inputs.decision as unknown as RobotOperatorDecision
@@ -122,11 +121,13 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       result: { queued: false, status },
     });
     if (!decision) return reject('no_decision');
-    if (decision.route === 'wait') return reject('wait');
-    if (decision.route !== 'environment') return reject('invalid_route');
+    const observed = cleanText(decision.observed, 500);
     const instruction = cleanText(decision.instruction, 1_000);
+    const requiresAction = decision.requiresAction;
     const reason = cleanText(decision.reason, 500);
-    if (!instruction || !reason) return reject('invalid_decision');
+    if (!observed || !instruction || typeof requiresAction !== 'boolean' || !reason) {
+      return reject('invalid_decision');
+    }
     if (!observation?.sessionId) return reject('missing_observation_session', instruction);
 
     const source = triggerSource(observation);
@@ -139,7 +140,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     );
     if (graph === 'robot-operator') return reject('recursive_graph', instruction);
     const maxSteps = Number.isInteger(properties?.maxSteps)
-      ? Math.max(1, Math.min(10, Number(properties.maxSteps)))
+      ? Math.max(1, Math.min(10, Number(properties?.maxSteps)))
       : 8;
     const cycle = delegatedCycle(observation, source, graph, maxSteps);
     const timestamp = new Date().toISOString();
@@ -154,8 +155,9 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
         correlationId: cycle.cycleId,
         robotObserver: cycle,
         robotOperatorDecision: {
-          route: 'environment',
+          observed,
           instruction,
+          requiresAction,
           reason,
           decidedAt: timestamp,
         },
@@ -181,7 +183,9 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       metadata: {
         producer: 'robot-operator-mode',
         sessionId: observation.sessionId,
+        observed,
         decisionReason: reason,
+        observationTiming: readBoredomMovementCycle(observation)?.observationTiming ?? 'before_intention',
       },
     };
     const injectedEnqueue = context.enqueueRobotOperatorEnvironment;
@@ -204,6 +208,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
         graph,
         source,
         mode,
+        observed,
         cycleId: cycle.cycleId,
         step: cycle.step,
       },

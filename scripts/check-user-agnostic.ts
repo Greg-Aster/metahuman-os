@@ -16,14 +16,17 @@ for (const forbidden of ['etc/default-user.txt', 'etc/model-registry.json']) {
 }
 
 const maintainedRuntime = tracked.filter(file =>
-  file.startsWith('packages/cli/src/')
-  || (file.startsWith('packages/core/src/') && !file.endsWith('.spec.ts'))
-  || file.startsWith('brain/services/')
-  || file.startsWith('brain/training/')
-  || (file.startsWith('scripts/') && !/^scripts\/test[-/]/.test(file))
-  || file.startsWith('apps/react-native/scripts/')
-  || /^bin\/(start|stop)/.test(file)
-  || /^etc\/[^/]+\.json$/.test(file),
+  file !== 'scripts/check-user-agnostic.ts'
+  && (
+    file.startsWith('packages/cli/src/')
+    || (file.startsWith('packages/core/src/') && !file.endsWith('.spec.ts'))
+    || file.startsWith('brain/services/')
+    || file.startsWith('brain/training/')
+    || (file.startsWith('scripts/') && !/^scripts\/test[-/]/.test(file))
+    || file.startsWith('apps/react-native/scripts/')
+    || /^bin\/(start|stop)/.test(file)
+    || /^etc\/[^/]+\.json$/.test(file)
+  ),
 )
 
 const forbiddenPatterns: Array<[RegExp, string]> = [

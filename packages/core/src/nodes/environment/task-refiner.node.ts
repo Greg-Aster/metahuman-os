@@ -219,6 +219,12 @@ export const environmentTaskRefinerNode = defineNode({
     if (!inputs.request) return empty({ skipped: true });
     if (!validRequest(inputs.request)) return empty({ error: 'invalid_refinement_request' });
     const request = inputs.request;
+    if (request.result?.visualEvidence?.verdict === 'supported') {
+      return empty({
+        skipped: true,
+        error: 'supported_visual_completion_cannot_refine',
+      });
+    }
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
@@ -226,11 +232,23 @@ export const environmentTaskRefinerNode = defineNode({
     const systemPrompt = cleanText(properties?.systemPrompt, 12_000);
     if (!systemPrompt) return empty({ error: 'refinement_prompt_not_configured' });
 
-    const historyLimit = Number.isInteger(properties?.historyLimit)
-      ? Math.max(0, Math.min(20, Number(properties.historyLimit)))
+    const configuredHistoryLimit = properties?.historyLimit;
+    const historyLimit = Number.isInteger(configuredHistoryLimit)
+      ? Math.max(0, Math.min(20, Number(configuredHistoryLimit)))
       : 8;
     const history = boundedHistory(inputs.conversationHistory, historyLimit);
     const personaText = cleanText(inputs.personaText, 12_000);
+    const immutableTaskBoundary = [
+      'Immutable task contract for this refinement:',
+      `- Original objective: ${request.objective}`,
+      `- Required whole-objective evidence basis: ${request.requiredCompletionBasis}.`,
+      '- Preserve who performs each action, who senses each condition, and who owns every referenced object or body part.',
+      '- Preserve the original stopping condition exactly; do not substitute a new signal, actor, sensor, or completion criterion.',
+      ...(request.requiredCompletionBasis === 'visual_observation'
+        ? ['- The stopping condition remains something the robot must detect in a fresh correlated frame. Never rewrite it as an explicit user instruction or user_input requirement.']
+        : []),
+      '- Refine only the next approach. The original objective and evidence basis remain authoritative even if recent conversation or the prior instruction paraphrases them differently.',
+    ].join('\n');
     const image = correlatedImage(request, inputs.frames, inputs.images);
     const refinementContext = {
       request,
@@ -254,7 +272,10 @@ export const environmentTaskRefinerNode = defineNode({
         ]
       : JSON.stringify(refinementContext);
     const messages: RouterMessage[] = [
-      { role: 'system', content: [systemPrompt, personaText].filter(Boolean).join('\n\n') },
+      {
+        role: 'system',
+        content: [systemPrompt, personaText, immutableTaskBoundary].filter(Boolean).join('\n\n'),
+      },
       { role: 'user', content: userContent },
     ];
 

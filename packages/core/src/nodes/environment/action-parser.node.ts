@@ -1,6 +1,10 @@
 import { defineNode } from '../types.js';
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
-import { parseDirectRobotInstruction, parseEnvironmentModelOutput } from './helpers.js';
+import {
+  parseDirectRobotInstruction,
+  parseEnvironmentModelOutput,
+  robotOperatorActionRequirement,
+} from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -76,10 +80,13 @@ export const environmentActionParserNode = defineNode({
       const terminalFeedback = hasTerminalFeedback(observation);
       const parsed = parseEnvironmentModelOutput(inputs.response, sessionId);
       const hasRoutingDecision = typeof routingAnalysis?.needsAction === 'boolean';
+      const delegatedActionRequirement = robotOperatorActionRequirement(observation);
       const currentActionAuthorized = !terminalFeedback
-        && (!hasRoutingDecision || routingAnalysis?.needsAction === true);
+        && (delegatedActionRequirement !== null
+          ? delegatedActionRequirement
+          : !hasRoutingDecision || routingAnalysis?.needsAction === true);
       const routerRequestedMovement = currentActionAuthorized
-        && routingAnalysis?.needsAction === true
+        && (delegatedActionRequirement === true || routingAnalysis?.needsAction === true)
         && routingAnalysis?.actionType === 'robot_movement';
       const connectedSession = Boolean(sessionId || observation?.sessionId);
       const unsupportedCommand = unsupportedRobotCommand(
@@ -102,7 +109,7 @@ export const environmentActionParserNode = defineNode({
         : undefined;
       const hasSupportedModelRobotCommand = Boolean(modelRobotCommand && !unsupportedCommand);
       const requiresGeneratedMovement = currentActionAuthorized && !direct && Boolean(
-        hasRoutingDecision
+        hasRoutingDecision && delegatedActionRequirement === null
           ? routerRequestedMovement && (
               parsed.movementRequest
                 || unsupportedCommand
@@ -110,7 +117,8 @@ export const environmentActionParserNode = defineNode({
             )
           : parsed.movementRequest || unsupportedCommand,
       );
-      const movementRequestError = terminalFeedback || (hasRoutingDecision && !routerRequestedMovement)
+      const movementRequestError = terminalFeedback
+        || (hasRoutingDecision && delegatedActionRequirement === null && !routerRequestedMovement)
         ? ''
         : parsed.movementRequestError;
       const movementRequested = Boolean(movementRequestError || requiresGeneratedMovement);

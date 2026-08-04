@@ -10,7 +10,9 @@ const centerContent = read('apps/site/src/components/CenterContent.svelte');
 const queueConsumer = read('apps/site/src/components/TTSQueueConsumer.svelte');
 const ttsComposable = read('apps/site/src/lib/client/composables/useTTS.ts');
 const speechPreference = read('apps/site/src/lib/client/assistant-speech-preference.ts');
+const innerSpeechVisibility = read('apps/site/src/lib/client/inner-dialogue-speech-visibility.ts');
 const queueHandler = read('packages/core/src/api/handlers/tts-queue-stream.ts');
+const synthesisStreamHandler = read('packages/core/src/api/handlers/tts-stream.ts');
 const deliveryQueue = read('packages/core/src/tts/delivery-queue.ts');
 const deliveryTransport = read('apps/site/src/pages/api/tts-queue-delivery.ts');
 const interruptionTransport = read('apps/site/src/pages/api/tts-queue-interrupt.ts');
@@ -94,6 +96,21 @@ assert.match(
   /readAssistantSpeechEnabled\(\)[\s\S]*?ttsApi\.speak\(/,
   'the app-level consumer must honor the explicit speech disable preference before playback',
 );
+assert.match(
+  queueConsumer,
+  /shouldPlayAdmittedSpeech\(item\.mode\)[\s\S]*?updateDelivery\(item, 'suppress'\)[\s\S]*?ttsApi\.speak\(/,
+  'the shared playback consumer must suppress closed Inner-view speech before synthesis',
+);
+assert.match(
+  innerSpeechVisibility,
+  /mode !== 'inner' \|\| innerDialogueVisible/,
+  'only Inner Dialogue deliveries may depend on the Inner view being visible',
+);
+assert.match(
+  chat,
+  /setInnerDialogueSpeechVisible\(isTabVisible && selectedViews\.has\('inner'\)\)/,
+  'the conversation interface must publish the real Inner-view visibility to the shared playback gate',
+);
 assert.doesNotMatch(
   queueConsumer,
   /viewDependency|document\.hidden|connectionPool/,
@@ -108,6 +125,16 @@ assert.match(
   ttsComposable,
   /const sharedTTSApi = createTTS\(\);[\s\S]*?export function useTTS\(\) \{[\s\S]*?return sharedTTSApi;/,
   'manual and automatic speech must share one audio channel and browser unlock state',
+);
+assert.doesNotMatch(
+  ttsComposable,
+  /fetchSpeechOutputTarget|outputTarget === 'robot'/,
+  'the browser playback actuator must not choose or invoke outward robot delivery',
+);
+assert.doesNotMatch(
+  synthesisStreamHandler,
+  /renderRobotSpeech|getSpeechOutputSettings|outputTarget/,
+  'the local synthesis stream must not provide an alternate robot delivery route',
 );
 assert.doesNotMatch(
   queueHandler,
@@ -168,9 +195,20 @@ assert.match(
 );
 assert.match(
   ttsNode,
-  /settings\.outputTarget === 'robot'[\s\S]*?renderRobot\([\s\S]*?dependencies\.queue/,
-  'the standard TTS node must route robot output before the existing local browser queue',
+  /request\.mode === 'inner' \? 'local' : settings\.outputTarget[\s\S]*?if \(route === 'robot'\)[\s\S]*?renderRobot\([\s\S]*?dependencies\.queue/,
+  'the standard TTS node must keep Inner Dialogue local and route outward robot output before the browser queue',
 );
+
+const apiHandlerRoot = path.join(ROOT, 'packages/core/src/api/handlers');
+for (const entry of fs.readdirSync(apiHandlerRoot, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts')) continue;
+  const source = fs.readFileSync(path.join(apiHandlerRoot, entry.name), 'utf8');
+  assert.doesNotMatch(
+    source,
+    /\b(?:queueTTS|renderRobotSpeech)\s*\(/,
+    `API handler ${entry.name} must use graph-owned TTS Output rather than invoke a delivery actuator directly`,
+  );
+}
 
 const environmentGraph = JSON.parse(
   read('etc/cognitive-graphs/environment-mode.json'),

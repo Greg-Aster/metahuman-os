@@ -2,14 +2,15 @@ import { callLLM, type ModelRole, type RouterMessage } from '../../model-router.
 import type { ProviderImageContentPart } from '../../providers/types.js';
 import {
   hasFreshCorrelatedVisual,
+  type EnvironmentFeedback,
   type EnvironmentObservation,
   type EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
 import {
+  environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
-  parseEnvironmentTaskInstruction,
   type EnvironmentTaskDecision,
 } from './helpers.js';
 
@@ -75,18 +76,7 @@ function taskContext(
   routingAnalysis: unknown,
   instruction: unknown,
 ): { objective: string; currentInstruction: string } {
-  const command = isRecord(observation.metadata?.taskValidatorCommand)
-    ? observation.metadata.taskValidatorCommand
-    : null;
-  const commandObjective = cleanText(command?.objective, 1_000);
-  const commandInstruction = cleanText(command?.instruction, 500);
-  if (commandObjective) {
-    return {
-      objective: commandObjective,
-      currentInstruction: commandInstruction || commandObjective,
-    };
-  }
-  const persisted = parseEnvironmentTaskInstruction(observation.metadata?.originatingInstruction);
+  const persisted = environmentTaskContractFromObservation(observation);
   if (persisted?.objective) {
     return {
       objective: persisted.objective,
@@ -102,15 +92,27 @@ function taskContext(
 function correlatedFrame(
   observation: EnvironmentObservation,
   frames: unknown,
-): { frame: EnvironmentVisualFrame; image: Record<string, unknown> | null } | null {
+): { frame: EnvironmentVisualFrame; index: number } | null {
   const cycle = readRobotObserverCycle(observation);
   if (!cycle || !hasFreshCorrelatedVisual(observation, cycle.cycleId)) return null;
-  const candidates = Array.isArray(frames)
-    ? frames.filter(isRecord) as unknown as EnvironmentVisualFrame[]
-    : [];
-  const index = candidates.findIndex(frame => frame.metadata?.correlationId === cycle.cycleId);
-  if (index < 0) return null;
-  return { frame: candidates[index]!, image: null };
+  const candidates: Array<{ frame: EnvironmentVisualFrame; index: number }> = [];
+  if (Array.isArray(frames)) {
+    frames.forEach((frame, index) => {
+      if (isRecord(frame)) candidates.push({ frame: frame as unknown as EnvironmentVisualFrame, index });
+    });
+  }
+  const terminalActionId = latestTerminalFeedback(observation)?.actionId;
+  const matching = candidates
+    .filter(({ frame }) => (
+      frame.metadata?.correlationId === cycle.cycleId
+      && (!terminalActionId || frame.metadata?.actionId === terminalActionId)
+    ));
+  if (matching.length === 0) return null;
+  return matching.reduce((latest, candidate) => (
+    Date.parse(candidate.frame.timestamp) >= Date.parse(latest.frame.timestamp)
+      ? candidate
+      : latest
+  ));
 }
 
 function assessment(
@@ -127,6 +129,21 @@ function assessment(
     error: '',
     ...overrides,
   };
+}
+
+function latestTerminalFeedback(observation: EnvironmentObservation): EnvironmentFeedback | null {
+  for (let index = (observation.feedback?.length ?? 0) - 1; index >= 0; index -= 1) {
+    const feedback = observation.feedback?.[index];
+    if (
+      feedback
+      && ['completed', 'rejected', 'cancelled', 'expired', 'failed'].includes(feedback.type)
+    ) return feedback;
+  }
+  return null;
+}
+
+function completedStep(observation: EnvironmentObservation): boolean {
+  return latestTerminalFeedback(observation)?.type === 'completed';
 }
 
 function parseAssessment(
@@ -171,6 +188,7 @@ function parseAssessment(
       error: 'missing_visual_evidence_reason',
     });
   }
+  const response = cleanText(parsed.response, 1_000);
   return assessment({
     assessed: true,
     valid: true,
@@ -178,7 +196,7 @@ function parseAssessment(
     frameId: frame.id,
     frameTimestamp: frame.timestamp,
     reason,
-    response: verdict === 'supported' ? '' : reason,
+    response: response || reason,
   });
 }
 
@@ -187,7 +205,7 @@ export const environmentVisualEvidenceAssessorNode = defineNode({
   name: 'Environment Visual Evidence Assessor',
   category: 'environment',
   inputs: [
-    { name: 'taskDecision', type: 'object', optional: true, description: 'Environment LLM completion claim to audit' },
+    { name: 'taskDecision', type: 'object', optional: true, description: 'Environment task state and required whole-objective evidence basis' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current objective or objective-bound instruction' },
     { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation' },
     { name: 'images', type: 'array', optional: true, description: 'Validated current image content parts' },
@@ -196,7 +214,7 @@ export const environmentVisualEvidenceAssessorNode = defineNode({
   ],
   outputs: [
     { name: 'assessment', type: 'object', description: 'Frame-bound independent visual completion assessment' },
-    { name: 'assessed', type: 'boolean', description: 'Whether a visual completion claim required assessment' },
+    { name: 'assessed', type: 'boolean', description: 'Whether a visual-bounded completed step or completion claim required assessment' },
     { name: 'verdict', type: 'string', description: 'supported, unsupported, uncertain, or not_required' },
     { name: 'valid', type: 'boolean', description: 'Whether the assessment satisfied its structured contract' },
     { name: 'error', type: 'string', description: 'Assessment failure reason' },
@@ -238,7 +256,7 @@ export const environmentVisualEvidenceAssessorNode = defineNode({
       step: 0.1,
     },
   },
-  description: 'Independently audits a claimed visual completion condition against the exact correlated frame before deterministic task validation.',
+  description: 'Independently evaluates a required visual completion condition against the exact correlated frame after each completed step or completion claim.',
   async execute(inputs, context, properties) {
     const taskDecision = isRecord(inputs.taskDecision)
       ? inputs.taskDecision as unknown as EnvironmentTaskDecision
@@ -247,20 +265,19 @@ export const environmentVisualEvidenceAssessorNode = defineNode({
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const claimedComplete = taskDecision?.objectiveComplete === true || taskDecision?.outcome === 'complete';
+    const completedActionStep = observation ? completedStep(observation) : false;
     if (
       !taskDecision
       || !observation
-      || !claimedComplete
-      || taskDecision.completionBasis !== 'visual_observation'
+      || (!claimedComplete && !completedActionStep)
+      || taskDecision.requiredCompletionBasis !== 'visual_observation'
     ) {
       const result = assessment({});
       return { assessment: result, assessed: false, verdict: result.verdict, valid: true, error: '' };
     }
     const selected = correlatedFrame(observation, inputs.frames);
     const images = Array.isArray(inputs.images) ? inputs.images.filter(isRecord) : [];
-    const frameIndex = selected
-      ? (inputs.frames as unknown[]).findIndex(candidate => isRecord(candidate) && candidate.id === selected.frame.id)
-      : -1;
+    const frameIndex = selected?.index ?? -1;
     const image = frameIndex >= 0 && isRecord(images[frameIndex]) ? images[frameIndex] : null;
     const imagePart = image
       && image.type === 'image_url'
@@ -308,6 +325,7 @@ export const environmentVisualEvidenceAssessorNode = defineNode({
             text: JSON.stringify({
               objective,
               currentInstruction,
+              assessmentTrigger: claimedComplete ? 'completion_claim' : 'completed_action_step',
               claimedCompletion: {
                 reason: cleanText(taskDecision.reason, 500),
                 evidence: cleanText(taskDecision.completionEvidence, 500),

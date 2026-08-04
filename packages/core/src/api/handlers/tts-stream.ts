@@ -3,12 +3,6 @@ import type { UnifiedHandler } from '../types.js';
 import { badRequestResponse, errorResponse, streamResponse } from '../types.js';
 import { getProfilePaths } from '../../path-builder.js';
 import { generateSpeech } from '../../tts.js';
-import {
-  getSpeechOutputSettings,
-  renderRobotSpeech,
-} from '../../tts/robot-speech.js';
-
-type SpeechOutputTarget = 'local' | 'robot';
 
 function splitIntoParagraphs(text: string): string[] {
   const minParagraphLength = 400;
@@ -88,9 +82,6 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
       speed,
       pitchShift,
       langCode,
-      source,
-      requestId,
-      preview,
     } = req.body ?? {};
 
     console.log('[TTS Stream] Request params:', { provider, voice, voiceId, speed, langCode });
@@ -100,51 +91,6 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
     }
 
     const selectedProvider = provider || 'kokoro';
-    const speechSettings = getSpeechOutputSettings(req.user.username);
-    const outputTarget: SpeechOutputTarget = preview === true
-      ? 'local'
-      : speechSettings.outputTarget;
-    if (outputTarget === 'robot' && selectedProvider !== 'kokoro') {
-      return badRequestResponse('Robot speech currently requires the configured Kokoro provider');
-    }
-    if (
-      outputTarget === 'robot'
-      && (
-        source !== 'environment-mode'
-        || typeof requestId !== 'string'
-        || !/^tts-[a-zA-Z0-9-]{1,128}$/.test(requestId)
-      )
-    ) {
-      return errorResponse(
-        'Robot speech must be admitted by the Environment Mode tts-out node',
-        403,
-      );
-    }
-
-    if (outputTarget === 'robot' && speechSettings.speechDisabled) {
-      return errorResponse('Speech is disabled by the main chat speaker control', 409);
-    }
-
-    if (outputTarget === 'robot') {
-      const response = streamResponse(streamRobotSpeech({
-        username: req.user.username,
-        text,
-        requestId,
-        signal: req.signal,
-        voice,
-        voiceId,
-        speed,
-        langCode,
-      }));
-      return {
-        ...response,
-        headers: {
-          ...response.headers,
-          'X-Accel-Buffering': 'no',
-        },
-      };
-    }
-
     if (selectedProvider === 'kokoro') {
       return handleKokoroTtsStream(req.user.username, req.signal, {
         text,
@@ -283,31 +229,6 @@ async function handleKokoroTtsStream(
     }
 
     throw error;
-  }
-}
-
-async function* streamRobotSpeech(params: {
-  username: string;
-  text: string;
-  requestId: string;
-  signal: AbortSignal | undefined;
-  voice?: string;
-  voiceId?: string;
-  speed?: number;
-  langCode?: string;
-}): AsyncGenerator<string> {
-  try {
-    const delivery = await renderRobotSpeech(params);
-    yield sse({
-      event: 'complete',
-      output_target: 'robot',
-      request_id: params.requestId,
-      action_id: delivery.actionId,
-      total_chunks: delivery.totalChunks,
-    });
-  } catch (error) {
-    if ((error as Error).name === 'AbortError' || params.signal?.aborted) return;
-    yield sse({ event: 'error', error: (error as Error).message });
   }
 }
 

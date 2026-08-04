@@ -2,6 +2,7 @@ import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
+import { readBoredomMovementCycle } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,7 +35,17 @@ function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
   };
 }
 
-function boundedHistory(value: unknown, limit: number): Array<Record<string, unknown>> {
+const IDLE_THOUGHT_ROLES = new Set(['thought', 'reflection', 'dream', 'daydream']);
+
+function normalizedTags(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()))
+        .map(tag => tag.trim().toLowerCase())
+    : [];
+}
+
+function admittedIdleThoughts(value: unknown): Array<Record<string, unknown>> {
   const messages = Array.isArray(value)
     ? value
     : isRecord(value) && Array.isArray(value.messages)
@@ -42,6 +53,11 @@ function boundedHistory(value: unknown, limit: number): Array<Record<string, unk
       : [];
   return messages
     .filter(isRecord)
+    .filter(message => {
+      const meta = isRecord(message.meta) ? message.meta : null;
+      const role = cleanText(message.role, 40).toLowerCase();
+      return IDLE_THOUGHT_ROLES.has(role) && normalizedTags(meta?.tags).includes('idle-thought');
+    })
     .map(message => {
       const meta = isRecord(message.meta) ? message.meta : null;
       return {
@@ -53,18 +69,14 @@ function boundedHistory(value: unknown, limit: number): Array<Record<string, unk
         ...(meta
           ? {
               context: {
-                cognitiveMode: cleanText(meta.cognitiveMode, 80) || null,
                 dialogueSource: cleanText(meta.dialogueSource, 100) || null,
-                isInnerDialogue: meta.isInnerDialogue === true,
-                refinement: meta.refinement === true,
-                taskLifecycle: boundedObject(meta.taskLifecycle, 4_000),
+                tags: normalizedTags(meta.tags),
               },
             }
           : {}),
       };
     })
-    .filter(message => message.role && message.content)
-    .slice(-limit);
+    .filter(message => message.role && message.content);
 }
 
 function boundedObject(value: unknown, maxLength = 8_000): unknown {
@@ -102,7 +114,7 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'observation', type: 'object', description: 'Current correlated robot observation or agent-produced stimulus' },
     { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
     { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
-    { name: 'conversationHistory', type: 'array', optional: true, description: 'Bounded canonical conversation context' },
+    { name: 'innerDialogueHistory', type: 'array', optional: true, description: 'Bounded canonical Inner Buffer context' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
   ],
   outputs: [
@@ -113,7 +125,6 @@ export const robotOperatorContextBuilderNode = defineNode({
   ],
   properties: {
     systemPrompt: '',
-    historyLimit: 12,
   },
   propertySchemas: {
     systemPrompt: {
@@ -123,14 +134,6 @@ export const robotOperatorContextBuilderNode = defineNode({
       description: 'Graph-owned high-level deliberation and structured-output instructions.',
       rows: 18,
       required: true,
-    },
-    historyLimit: {
-      type: 'slider',
-      default: 12,
-      label: 'Conversation History Limit',
-      min: 0,
-      max: 30,
-      step: 1,
     },
   },
   description: 'Builds persona-aware multimodal context for high-level robot intention selection without deciding execution details.',
@@ -150,15 +153,15 @@ export const robotOperatorContextBuilderNode = defineNode({
     if (!observation?.sessionId) return invalid('Robot Operator context requires a robot observation with a session ID.');
     if (!systemPrompt) return invalid('Robot Operator graph requires a configured system prompt.');
 
-    const configuredHistoryLimit = properties?.historyLimit;
-    const historyLimit = Number.isInteger(configuredHistoryLimit)
-      ? Math.max(0, Math.min(30, Number(configuredHistoryLimit)))
-      : 12;
-    const history = boundedHistory(inputs.conversationHistory, historyLimit);
-    const recentTaskLifecycle = history
-      .map(message => isRecord(message.context) ? message.context.taskLifecycle : null)
-      .filter(isRecord)
-      .slice(-6);
+    const recentIdleThoughts = admittedIdleThoughts(inputs.innerDialogueHistory);
+    const canonicalInnerEntryCount = Array.isArray(inputs.innerDialogueHistory)
+      ? inputs.innerDialogueHistory.length
+      : isRecord(inputs.innerDialogueHistory) && Array.isArray(inputs.innerDialogueHistory.messages)
+        ? inputs.innerDialogueHistory.messages.length
+        : 0;
+    console.log(
+      `[RobotOperatorContext] Canonical inner entries: ${canonicalInnerEntryCount}; tagged Idle Thoughts admitted: ${recentIdleThoughts.length}`,
+    );
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
@@ -166,18 +169,10 @@ export const robotOperatorContextBuilderNode = defineNode({
     const frames = [observation.visual, ...(observation.visuals ?? [])]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .map(frameSummary);
+    const boredomMovement = readBoredomMovementCycle(observation);
     const stimulus = {
-      environmentId: observation.environmentId,
-      adapter: observation.adapter,
-      sessionId: observation.sessionId,
-      timestamp: observation.timestamp,
-      correlationId: correlationId(observation) || null,
-      source: {
-        perceptionEvent: cleanText(observation.metadata?.perceptionEvent, 100) || null,
-        robotObserver: boundedObject(observation.metadata?.robotObserver, 2_000),
-        boredomMovement: boundedObject(observation.metadata?.boredomMovement, 2_000),
-      },
-      capabilities: boundedObject(observation.capabilities, 5_000),
+      observedAt: observation.timestamp,
+      freshVisualTiming: boredomMovement ? 'after_intention' : 'before_intention',
       state: boundedObject(observation.state, 8_000),
       location: boundedObject(observation.location, 4_000),
       map: boundedObject(observation.map, 4_000),
@@ -187,15 +182,8 @@ export const robotOperatorContextBuilderNode = defineNode({
         text: cleanText(event.text, 2_000),
         timestamp: event.timestamp,
       })),
-      feedback: (observation.feedback ?? []).slice(-8).map(event => ({
-        type: event.type,
-        message: cleanText(event.message, 1_000),
-        actionId: event.actionId ?? null,
-        timestamp: event.timestamp,
-      })),
       visualFrames: frames,
-      conversationHistory: history,
-      recentTaskLifecycle,
+      recentIdleThoughts,
     };
     const systemContent = [systemPrompt, personaText].filter(Boolean).join('\n\n');
     const stimulusText = JSON.stringify({ robotStimulus: stimulus });
@@ -211,8 +199,8 @@ export const robotOperatorContextBuilderNode = defineNode({
       context: {
         stimulus,
         personaIncluded: Boolean(personaText),
-        historyCount: history.length,
-        taskLifecycleCount: recentTaskLifecycle.length,
+        canonicalInnerEntryCount,
+        idleThoughtCount: recentIdleThoughts.length,
         imageCount: images.length,
       },
       valid: true,

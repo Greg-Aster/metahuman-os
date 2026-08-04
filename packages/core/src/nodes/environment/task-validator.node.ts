@@ -14,8 +14,9 @@ import type { AutonomyMode } from '../../queue/types.js';
 import { defineNode } from '../types.js';
 import {
   encodeEnvironmentTaskInstruction,
-  environmentTaskContractFromRouting,
+  environmentTaskContractFromObservation,
   parseEnvironmentTaskInstruction,
+  robotOperatorActionRequirement,
   type EnvironmentCompletionBasis,
   type EnvironmentContinuationPolicy,
   type EnvironmentMovementRequest,
@@ -138,9 +139,17 @@ function completionBasisAvailable(
 function correlatedVisualFrameId(observation: EnvironmentObservation | undefined): string {
   const cycle = readRobotObserverCycle(observation);
   if (!cycle || !hasFreshCorrelatedVisual(observation, cycle.cycleId)) return '';
+  const terminalActionId = latestTerminalFeedback(observation)?.actionId;
   const frames = [observation?.visual, ...(observation?.visuals ?? [])]
     .filter((frame): frame is NonNullable<EnvironmentObservation['visual']> => Boolean(frame));
-  return frames.find(frame => frame.metadata?.correlationId === cycle.cycleId)?.id ?? '';
+  const matching = frames.filter(frame => (
+    frame.metadata?.correlationId === cycle.cycleId
+    && (!terminalActionId || frame.metadata?.actionId === terminalActionId)
+  ));
+  if (matching.length === 0) return '';
+  return matching.reduce((latest, candidate) => (
+    Date.parse(candidate.timestamp) >= Date.parse(latest.timestamp) ? candidate : latest
+  )).id;
 }
 
 function unwrapObjective(value: string): string {
@@ -148,20 +157,6 @@ function unwrapObjective(value: string): string {
   if (contract) return contract.objective;
   const match = value.match(/^Objective:\s*(.+?)\s+Next Environment instruction \(step \d+ of \d+\):/i);
   return cleanText(match?.[1] || value, 1_000);
-}
-
-function persistedTaskContract(
-  observation: EnvironmentObservation | undefined,
-): EnvironmentTaskContract | null {
-  const command = taskCommandMetadata(observation);
-  const commandContract = environmentTaskContractFromRouting({
-    actionParams: {
-      continuationPolicy: command?.continuationPolicy,
-      requiredCompletionBasis: command?.requiredCompletionBasis,
-    },
-  }, cleanText(command?.objective, 1_000));
-  if (commandContract) return commandContract;
-  return parseEnvironmentTaskInstruction(observation?.metadata?.originatingInstruction);
 }
 
 function taskObjective(
@@ -265,7 +260,7 @@ export const environmentTaskValidatorNode = defineNode({
     const maxSteps = cycle?.maxSteps ?? config.maxCycleSteps;
     const step = cycle?.step ?? 1;
     const commandMetadata = taskCommandMetadata(observation);
-    const persistedContract = persistedTaskContract(observation);
+    const persistedContract = environmentTaskContractFromObservation(observation);
     const fallbackCompletionBasis: EnvironmentCompletionBasis = (
       taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
     )
@@ -289,8 +284,8 @@ export const environmentTaskValidatorNode = defineNode({
     const explicitDecision = Boolean(taskDecision);
     const claimedComplete = taskDecision?.objectiveComplete ?? proposedOutcome === 'complete';
     const visualAssessmentRequired = Boolean(
-      claimedComplete
-      && taskDecision?.completionBasis === 'visual_observation',
+      requiredCompletionBasis === 'visual_observation'
+      && (claimedComplete || terminal?.type === 'completed'),
     );
     const currentVisualFrameId = correlatedVisualFrameId(observation);
     const visualAssessmentSupported = !visualAssessmentRequired || Boolean(
@@ -301,6 +296,14 @@ export const environmentTaskValidatorNode = defineNode({
       && evidenceAssessment.frameId === currentVisualFrameId,
     );
     const visualAssessmentRejected = visualAssessmentRequired && !visualAssessmentSupported;
+    const assessedVisualCompletion = visualAssessmentRequired && visualAssessmentSupported;
+    const effectiveClaimedComplete = claimedComplete || assessedVisualCompletion;
+    const assessedCompletionBasis = assessedVisualCompletion
+      ? 'visual_observation'
+      : taskDecision?.completionBasis;
+    const assessedCompletionEvidence = visualAssessmentRequired
+      ? cleanText(evidenceAssessment?.reason, 500)
+      : completionEvidence;
     const externalCompletionEvidenceRequired = Boolean(
       commandMetadata?.requireExternalCompletionEvidence === true
       || terminal?.type === 'completed',
@@ -309,18 +312,18 @@ export const environmentTaskValidatorNode = defineNode({
       !terminal
       && hasCandidateWork
       && (
-        taskDecision?.completionBasis === 'response'
-        || taskDecision?.completionBasis === 'action_result'
+        assessedCompletionBasis === 'response'
+        || assessedCompletionBasis === 'action_result'
       )
     );
-    const completionSupported = !claimedComplete || Boolean(
+    const completionSupported = !effectiveClaimedComplete || Boolean(
       !pendingWorkBlocksCompletion
-      && completionEvidence
-      && taskDecision?.completionBasis === requiredCompletionBasis
+      && assessedCompletionEvidence
+      && assessedCompletionBasis === requiredCompletionBasis
       && visualAssessmentSupported
-      && !(externalCompletionEvidenceRequired && taskDecision?.completionBasis === 'response')
+      && !(externalCompletionEvidenceRequired && assessedCompletionBasis === 'response')
       && completionBasisAvailable(
-        taskDecision?.completionBasis,
+        assessedCompletionBasis,
         observation,
         terminal,
         response,
@@ -335,12 +338,12 @@ export const environmentTaskValidatorNode = defineNode({
     );
     const effectiveCompletionEvidence = oneShotTerminalComplete
       ? cleanText(terminal?.message, 500) || 'Correlated terminal feedback completed the action.'
-      : completionEvidence;
-    const complete = oneShotTerminalComplete || (claimedComplete && completionSupported);
+      : assessedCompletionEvidence;
+    const complete = oneShotTerminalComplete || (effectiveClaimedComplete && completionSupported);
     const prematureCompletionWithWork = Boolean(
       !terminal
       && hasCandidateWork
-      && claimedComplete
+      && effectiveClaimedComplete
       && !completionSupported,
     );
     const decisionAllowsCurrentAction = !taskDecision
@@ -354,13 +357,14 @@ export const environmentTaskValidatorNode = defineNode({
       ? observation.metadata.robotOperatorDecision
       : null;
     const delegatedOperatorInstruction = cleanText(robotOperatorDecision?.instruction, 4_000);
+    const delegatedActionRequirement = robotOperatorActionRequirement(observation);
     const currentActionRequired = Boolean(
       !terminal
       && (
         proposedOutcome === 'act'
         || (
           delegatedOperatorInstruction
-          && routingAnalysis?.needsAction === true
+          && (delegatedActionRequirement ?? routingAnalysis?.needsAction === true)
         )
       )
     );
@@ -379,7 +383,7 @@ export const environmentTaskValidatorNode = defineNode({
       && response
       && delegatedOperatorInstruction.toLowerCase() === response.toLowerCase()
     );
-    const outcome = oneShotTerminalComplete
+    const outcome = complete
       ? 'complete'
       : prematureCompletionWithWork
       ? 'act'
@@ -391,7 +395,7 @@ export const environmentTaskValidatorNode = defineNode({
       && response
       && actions.length === 0
       && !movementRequest
-      && !claimedComplete
+      && !effectiveClaimedComplete
       && !currentActionRequired
       && !operatorIntentionEcho
     );
@@ -413,9 +417,11 @@ export const environmentTaskValidatorNode = defineNode({
       && !complete,
     );
     const refinementReason = cleanText(
-      visualAssessmentRejected ? evidenceAssessment?.reason : taskDecision?.reason,
+      visualAssessmentRejected ? evidenceAssessment?.reason : '',
       500,
-    ) || cleanText(terminal?.message, 500) || 'The current evidence does not complete the objective.';
+    ) || cleanText(taskDecision?.reason, 500)
+      || cleanText(terminal?.message, 500)
+      || 'The current evidence does not complete the objective.';
     const currentInstruction = taskContract.currentInstruction
       || cleanText(inputs.instruction, 500)
       || objective;
@@ -458,7 +464,7 @@ export const environmentTaskValidatorNode = defineNode({
     let blockedReason = '';
     if (visualAssessmentRejected) blockedReason = 'visual_completion_unverified';
     else if (requiredActionMissing) blockedReason = 'required_action_missing';
-    else if (claimedComplete && !completionSupported && !oneShotTerminalComplete) blockedReason = 'objective_completion_unverified';
+    else if (effectiveClaimedComplete && !completionSupported && !oneShotTerminalComplete) blockedReason = 'objective_completion_unverified';
     else if (stepResultReady && incomplete && !objective) blockedReason = 'missing_objective';
     else if (stepResultReady && incomplete && !queueSource) blockedReason = `invalid_source_${source}`;
     else if (stepResultReady && incomplete && step >= maxSteps) blockedReason = 'step_limit';
@@ -467,11 +473,11 @@ export const environmentTaskValidatorNode = defineNode({
     else if (taskDecisionError) blockedReason = 'invalid_task_decision';
     else if (operatorIntentionEcho) blockedReason = 'operator_intention_echo';
 
-    const assessmentResponse = visualAssessmentRejected
+    const assessmentResponse = visualAssessmentRequired
       ? cleanText(evidenceAssessment?.response, 1_000)
       : '';
     const unverifiedCompletionClaim = Boolean(
-      claimedComplete
+      effectiveClaimedComplete
       && !completionSupported
       && !oneShotTerminalComplete
     );
@@ -483,7 +489,9 @@ export const environmentTaskValidatorNode = defineNode({
     );
     const visibleResponse = shouldRefine
       ? ''
-      : visualAssessmentRejected
+      : assessedVisualCompletion && !claimedComplete
+        ? assessmentResponse || cleanText(evidenceAssessment?.reason, 1_000)
+        : visualAssessmentRejected
         ? assessmentResponse
         : responseSuppressed
           ? ''
@@ -502,18 +510,20 @@ export const environmentTaskValidatorNode = defineNode({
         outcome,
         complete,
         explicit: explicitDecision,
-        reason: cleanText(taskDecision?.reason, 500),
+        reason: assessedVisualCompletion
+          ? cleanText(evidenceAssessment?.reason, 500)
+          : cleanText(taskDecision?.reason, 500),
         mode,
         source,
         objective,
         stepComplete: stepResultReady,
         continuationPolicy,
         requiredCompletionBasis,
+        taskContractSource: taskDecision?.taskContractSource ?? null,
+        taskContractConflict: taskDecision?.taskContractConflict ?? null,
         externalCompletionEvidenceRequired,
-        completionBasis: oneShotTerminalComplete ? 'action_result' : taskDecision?.completionBasis ?? 'none',
-        completionEvidence: visualAssessmentRequired
-          ? cleanText(evidenceAssessment?.reason, 500)
-          : effectiveCompletionEvidence,
+        completionBasis: oneShotTerminalComplete ? 'action_result' : assessedCompletionBasis ?? 'none',
+        completionEvidence: effectiveCompletionEvidence,
         completionVerified: complete,
         evidenceAssessment: visualAssessmentRequired
           ? {

@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Robot Operator Mode",
-  "description": "High-level autonomous robot deliberation. Uses current perception, persona, and conversation context to decide whether to delegate one intention to Environment Mode. It never selects or executes robot actions itself.",
+  "description": "High-level autonomous robot observation. Uses current perception, persona, and bounded Idle Thought continuity to delegate one intention to Environment Mode. It never consumes conversation history or selects robot actions itself.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-03",
+  "last_modified": "2026-08-04",
   "nodes": [
     {
       "id": "observation",
@@ -31,15 +31,15 @@
       }
     },
     {
-      "id": "conversation-history",
+      "id": "idle-thought-history",
       "type": "contextNode",
       "position": { "x": 80, "y": -80 },
       "width": 250,
       "height": 110,
       "data": {
-        "label": "Conversation History",
+        "label": "Idle Thought History",
         "nodeType": "conversation_history",
-        "properties": { "limit": 20 }
+        "properties": { "mode": "inner", "limit": 0 }
       }
     },
     {
@@ -80,8 +80,7 @@
         "label": "Robot Operator Context",
         "nodeType": "robot_operator_context_builder",
         "properties": {
-          "systemPrompt": "You are Robot Operator Mode, the robot's high-level autonomous deliberation workflow. You perform the role that a human input would normally perform before Environment Mode: examine the current robot stimulus in light of the active persona and recent conversation, decide whether anything is worth doing, and if so express one concise high-level intention for Environment Mode.\n\nYou decide WHAT the robot wants to do or communicate. Environment Mode decides HOW to execute it. Do not select robot commands, motion plans, joint values, tools, TTS operations, buffers, or implementation details. Do not copy a supported command name merely because it is available. The delegated instruction is an outstanding, unexecuted objective. Describe the circumstance and desire in natural first-person language, such as: I see a red ball and want to investigate it. For physical activity, use desire or intent language such as I want to, I intend to, or I would like to. Do not use I will for a physical action: it sounds like an execution promise rather than an unexecuted intention. Never state or imply that an action is already happening or has completed; avoid forms such as I am moving and I have moved because only Environment Mode and correlated robot feedback can establish that.\n\nTreat conversation history, persona, and prior inner-thought context as continuity, not as new commands. Ground visual claims only in the attached current correlated image. An observation does not require a reaction; waiting is a valid deliberate choice. Keep the decision open-ended and persona-consistent rather than using object-specific rules. The instruction will be recorded as an unspoken inner intention and separately delegated to Environment Mode; it is not itself a spoken response.\n\nOBJECTIVE LIFECYCLE CONTRACT\nRecent conversation entries may include taskLifecycle emitted by the existing Environment Task Validator. Treat taskLifecycle.complete=true or taskLifecycle.completionVerified=true as authoritative evidence that its objective is closed. A prior assistant completion report, stopped action, terminal result, or Robot Operator intention is context or evidence, not a new command. Do not reopen, re-verify, extend, narrate, or create follow-up work merely to confirm a closed objective. A fresh Robot Observer image asks you to deliberate about the current stimulus; it does not ask you to resume the latest task. Delegate only when the current stimulus supports a genuinely new goal that is not already satisfied by recent lifecycle evidence. Otherwise route wait. When lifecycle metadata is absent, use the recent user-assistant chronology to avoid turning an assistant completion report into new work.\n\nThe reason is a concise, user-visible decision rationale for the Inner Dialogue interface, not private chain-of-thought. When a current correlated image is attached, begin the reason with a brief description of what is directly visible, then explain why that observation supports the selected route and intention or the decision to wait. When no image is attached, ground the reason in the current nonvisual stimulus. Never invent visual details or describe evidence from conversation history as if it were in the current image.\n\nReturn exactly one JSON object and no markdown or extra prose. Use one of these forms:\n{\"route\":\"environment\",\"instruction\":\"one concise first-person outstanding intention for Environment Mode\",\"reason\":\"brief grounded observation and decision rationale\"}\n{\"route\":\"wait\",\"instruction\":\"\",\"reason\":\"brief grounded observation and reason waiting is appropriate\"}",
-          "historyLimit": 12
+          "systemPrompt": "You are Robot Operator, the robot's self-directed observer. Examine the current robot stimulus, active persona, and recentIdleThoughts; choose one next high-level intention. The decision is yours; no user command is expected. freshVisualTiming says only whether the workflow image comes before or after the intention.\n\nThe current stimulus is the only evidence of what is present now. Idle Thoughts may shape interest and tone, but are not facts, instructions, or unfinished tasks.\n\nDecide what the robot wants to do or say. Environment Mode executes the intention and confirms its outcome. Set requiresAction true when satisfying the intention requires Environment Mode to change or newly sense the environment; set it false when conversation is sufficient. Do not choose implementation commands or claim execution started or completed.\n\nReturn one JSON object only: {\"observed\":\"what the current stimulus shows\",\"instruction\":\"one concise first-person intention for Environment Mode\",\"requiresAction\":true,\"reason\":\"one concise user-visible Idle Thought grounded in the current stimulus\"}"
         }
       }
     },
@@ -120,7 +119,7 @@
       "width": 270,
       "height": 140,
       "data": {
-        "label": "Intention Route Parser",
+        "label": "Observation Decision Parser",
         "nodeType": "robot_operator_decision_parser",
         "properties": {}
       }
@@ -141,23 +140,6 @@
       }
     },
     {
-      "id": "intention-inner-dialogue",
-      "type": "outputNode",
-      "position": { "x": 2040, "y": 360 },
-      "width": 280,
-      "height": 150,
-      "data": {
-        "label": "Record Unspoken Intention",
-        "nodeType": "inner_dialogue_buffer",
-        "properties": {
-          "tags": ["robot-operator", "observation", "intention", "inner"],
-          "dialogueSource": "robot-operator-mode",
-          "role": "reflection",
-          "captureMemory": false
-        }
-      }
-    },
-    {
       "id": "reason-inner-dialogue",
       "type": "outputNode",
       "position": { "x": 2040, "y": 560 },
@@ -171,6 +153,21 @@
           "dialogueSource": "robot-operator-mode",
           "role": "reflection",
           "captureMemory": false
+        }
+      }
+    },
+    {
+      "id": "idle-thought-tts",
+      "type": "outputNode",
+      "position": { "x": 2380, "y": 560 },
+      "width": 280,
+      "height": 140,
+      "data": {
+        "label": "Speak Visible Idle Thought",
+        "nodeType": "tts",
+        "properties": {
+          "source": "robot-operator-mode",
+          "defaultMode": "inner"
         }
       }
     }
@@ -222,13 +219,13 @@
       "data": { "type": "array", "comment": "Frame correlation metadata" }
     },
     {
-      "id": "e-conversation-history-history-operator-context-conversationHistory",
-      "source": "conversation-history",
+      "id": "e-idle-thought-history-history-operator-context-innerDialogueHistory",
+      "source": "idle-thought-history",
       "target": "operator-context",
       "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
+      "targetHandle": "innerDialogueHistory",
       "type": "default",
-      "data": { "type": "array", "comment": "Canonical recent conversation and configured unified inner context" }
+      "data": { "type": "array", "comment": "Canonical Inner Buffer entries; Robot Operator Context admits only explicitly tagged Idle Thoughts" }
     },
     {
       "id": "e-persona-loader-persona-persona-formatter-persona",
@@ -294,31 +291,22 @@
       "data": { "type": "string", "comment": "Publish the concise visual observation and decision rationale as an idle thought" }
     },
     {
-      "id": "e-reason-inner-dialogue-passthrough-intention-inner-dialogue-passthrough",
+      "id": "e-reason-inner-dialogue-text-idle-thought-tts-innerDialogue",
       "source": "reason-inner-dialogue",
-      "target": "intention-inner-dialogue",
-      "sourceHandle": "passthrough",
-      "targetHandle": "passthrough",
+      "target": "idle-thought-tts",
+      "sourceHandle": "text",
+      "targetHandle": "innerDialogue",
       "type": "default",
-      "data": { "type": "object", "comment": "Publish the grounded rationale before recording the authored intention" }
+      "data": { "type": "string", "comment": "Send only canonical Inner Dialogue Buffer-admitted text to the standard TTS Output node" }
     },
     {
-      "id": "e-decision-parser-instruction-intention-inner-dialogue-text",
-      "source": "decision-parser",
-      "target": "intention-inner-dialogue",
-      "sourceHandle": "instruction",
-      "targetHandle": "text",
-      "type": "default",
-      "data": { "type": "string", "comment": "Record only the clean authored intention; wait decisions provide empty text" }
-    },
-    {
-      "id": "e-intention-inner-dialogue-passthrough-environment-dispatch-decision",
-      "source": "intention-inner-dialogue",
+      "id": "e-reason-inner-dialogue-passthrough-environment-dispatch-decision",
+      "source": "reason-inner-dialogue",
       "target": "environment-dispatch",
       "sourceHandle": "passthrough",
       "targetHandle": "decision",
       "type": "default",
-      "data": { "type": "object", "comment": "Delegate only after the intention has passed through canonical Inner Dialogue admission" }
+      "data": { "type": "object", "comment": "Delegate the validated decision only after its single visible Idle Thought has passed canonical admission" }
     },
     {
       "id": "e-observation-observation-environment-dispatch-observation",

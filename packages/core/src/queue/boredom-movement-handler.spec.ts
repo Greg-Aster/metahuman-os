@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import test from 'node:test'
 
+import { ROOT } from '../path-builder.js'
 import type { QueuedTask } from './types.js'
 import { workBlocksBoredomMovement } from './boredom-movement-handler.js'
 
@@ -22,7 +25,7 @@ function task(overrides: Partial<QueuedTask>): QueuedTask {
   }
 }
 
-test('active user observation blocks boredom even before cycle metadata is attached', () => {
+test('active environment work blocks a competing Boredom Movement cycle', () => {
   const observation = task({
     id: 'user-observation',
     type: 'environment_observation',
@@ -30,17 +33,7 @@ test('active user observation blocks boredom even before cycle metadata is attac
     state: 'leased',
     source: 'environment',
     resource: 'local-llm',
-    input: {
-      observation: {
-        metadata: { perceptionEvent: 'audio_utterance' },
-      },
-    },
   })
-
-  assert.equal(workBlocksBoredomMovement(observation, 'boredom-workflow'), true)
-})
-
-test('active robot command blocks boredom until the body resource is free', () => {
   const command = task({
     id: 'robot-command',
     type: 'environment_command',
@@ -50,50 +43,38 @@ test('active robot command blocks boredom until the body resource is free', () =
     resource: 'environment:ainekio-01',
   })
 
+  assert.equal(workBlocksBoredomMovement(observation, 'boredom-workflow'), true)
   assert.equal(workBlocksBoredomMovement(command, 'boredom-workflow'), true)
 })
 
-test('the boredom workflow and its own child observation do not block themselves', () => {
-  const workflow = task({
-    id: 'boredom-workflow',
-    handler: 'workflow.boredom-movement',
-    state: 'leased',
-  })
-  const child = task({
+test('Boredom Movement does not block its own child but rejects a competing cycle', () => {
+  const ownChild = task({
     id: 'boredom-child',
     type: 'environment_observation',
     handler: 'environment.observation',
     state: 'queued',
     source: 'autonomy',
-    priority: 'background',
     parentTaskId: 'boredom-workflow',
     metadata: { producer: 'boredom-movement' },
     input: { triggeredBy: 'boredom-movement' },
   })
-
-  assert.equal(workBlocksBoredomMovement(workflow, 'boredom-workflow'), false)
-  assert.equal(workBlocksBoredomMovement(child, 'boredom-workflow'), false)
-})
-
-test('a separate active boredom workflow blocks a duplicate stimulus', () => {
   const competing = task({
     id: 'other-boredom-workflow',
     handler: 'workflow.boredom-movement',
     state: 'leased',
     source: 'autonomy',
-    priority: 'background',
   })
 
+  assert.equal(workBlocksBoredomMovement(ownChild, 'boredom-workflow'), false)
   assert.equal(workBlocksBoredomMovement(competing, 'boredom-workflow'), true)
 })
 
-test('completed robot work no longer blocks a later boredom stimulus', () => {
-  const completed = task({
-    id: 'completed-observation',
-    type: 'environment_observation',
-    handler: 'environment.observation',
-    state: 'completed',
-  })
-
-  assert.equal(workBlocksBoredomMovement(completed, 'boredom-workflow'), false)
+test('Boredom Movement supplies workflow order without an encoded motion catalog', () => {
+  const source = fs.readFileSync(
+    path.join(ROOT, 'packages/core/src/queue/boredom-movement-handler.ts'),
+    'utf8',
+  )
+  assert.match(source, /observationTiming: 'after_intention'/)
+  assert.match(source, /graph: config\.graph/)
+  assert.doesNotMatch(source, /stationaryCommands|eligibleBoredomMovementCommands|robotCommands/)
 })

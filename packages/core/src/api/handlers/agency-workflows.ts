@@ -26,7 +26,6 @@ import {
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
-import { queueTTS } from '../../tts/delivery-queue.js';
 import type { TrustLevel } from '../../skills.js';
 import {
   ensureBackendsInitialized,
@@ -1505,23 +1504,6 @@ async function applyOutcomeReview(
       },
     });
 
-    const ttsText = (() => {
-      switch (reviewResult.verdict) {
-        case 'completed':
-          return `I've completed my desire: ${desire.title}. ${reviewResult.reasoning}`;
-        case 'continue':
-          return `My desire "${desire.title}" is ongoing. I'll continue pursuing it.`;
-        case 'retry':
-          return `I need to retry "${desire.title}". ${reviewResult.reasoning}`;
-        case 'escalate':
-          return `I need help with "${desire.title}". ${reviewResult.userMessage || reviewResult.reasoning}`;
-        case 'abandon':
-          return `I'm letting go of "${desire.title}". ${reviewResult.reasoning}`;
-        default:
-          return `Desire "${desire.title}" review complete.`;
-      }
-    })();
-    queueTTS(username, ttsText, 'inner', 'outcome-reviewer');
   } else {
     captureEvent(`Reviewed "${desire.title}": ${reviewResult.verdict}`, {
       type: 'inner_dialogue',

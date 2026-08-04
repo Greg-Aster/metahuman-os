@@ -6,7 +6,6 @@ import type { AutonomyMode } from './queue/types.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
-const BOREDOM_MOVEMENT_CONFIG_PATH = path.join(systemPaths.etc, 'boredom-movement.json')
 
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
 
@@ -17,13 +16,16 @@ export interface RobotObserverCycleMetadata {
   triggerSource: RobotObserverTriggerSource
   graph: string
   requestedBy: 'robot-observer' | 'environment-perception'
+  observationTiming?: 'after_intention'
 }
 
 export interface BoredomMovementMetadata {
   cycleId: string
   triggerSource: RobotObserverTriggerSource
   requestedBy: 'boredom-movement'
-  stationaryCommands: string[]
+  graph: string
+  maxSteps: number
+  observationTiming: 'after_intention'
 }
 
 export interface RobotOperatorConfig {
@@ -48,8 +50,6 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   graph: 'robot-operator',
   environmentGraph: 'environment',
 }
-
-const FORBIDDEN_BOREDOM_COMMANDS = new Set(['stop', 'walk', 'backward', 'left', 'right'])
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   const numeric = typeof value === 'number' ? value : Number(value)
@@ -126,24 +126,6 @@ export function isBoredomMovementEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-movement')
 }
 
-export function loadBoredomMovementCommandAllowlist(): string[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(BOREDOM_MOVEMENT_CONFIG_PATH, 'utf8')) as {
-      stationaryCommands?: unknown
-    }
-    const configured = parsed.stationaryCommands
-    if (!Array.isArray(configured)) return []
-    return [...new Set(
-      configured
-        .filter((command): command is string => typeof command === 'string')
-        .map(command => command.trim().toLowerCase())
-        .filter(command => command && !FORBIDDEN_BOREDOM_COMMANDS.has(command)),
-    )]
-  } catch {
-    return []
-  }
-}
-
 export function randomizedRobotOperatorIdleMs(
   config: Pick<RobotOperatorConfig, 'inactivityThresholdSeconds' | 'jitterMs'>,
   random: () => number = Math.random,
@@ -161,31 +143,6 @@ export function robotObserverSourceAllowed(
   return source === 'user' || mode === 'semi' || mode === 'full'
 }
 
-export function eligibleBoredomMovementCommands(
-  advertisedCommands: string[] | null | undefined,
-  configuredCommands: string[] = loadBoredomMovementCommandAllowlist(),
-): string[] {
-  const advertised = new Set(
-    (advertisedCommands ?? [])
-      .map(command => command.trim().toLowerCase())
-      .filter(Boolean),
-  )
-  return [...new Set(
-    configuredCommands
-      .map(command => command.trim().toLowerCase())
-      .filter(command => command && advertised.has(command) && !FORBIDDEN_BOREDOM_COMMANDS.has(command)),
-  )]
-}
-
-export function chooseBoredomMovementCommand(
-  commands: string[],
-  random: () => number = Math.random,
-): string | null {
-  if (commands.length === 0) return null
-  const sample = Math.max(0, Math.min(0.999999999, random()))
-  return commands[Math.floor(sample * commands.length)] ?? null
-}
-
 export function readRobotObserverCycle(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): RobotObserverCycleMetadata | null {
@@ -197,6 +154,7 @@ export function readRobotObserverCycle(
   const maxSteps = typeof record.maxSteps === 'number' ? Math.floor(record.maxSteps) : 0
   const triggerSource = record.triggerSource
   const requestedBy = record.requestedBy
+  const observationTiming = record.observationTiming
   const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
     ? record.graph
     : 'environment'
@@ -211,6 +169,7 @@ export function readRobotObserverCycle(
       requestedBy !== 'robot-observer'
       && requestedBy !== 'environment-perception'
     )
+    || (observationTiming !== undefined && observationTiming !== 'after_intention')
   ) return null
   return {
     cycleId,
@@ -219,6 +178,37 @@ export function readRobotObserverCycle(
     triggerSource,
     graph,
     requestedBy,
+    ...(observationTiming === 'after_intention' ? { observationTiming } : {}),
+  }
+}
+
+export function readBoredomMovementCycle(
+  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
+): BoredomMovementMetadata | null {
+  const value = observation?.metadata?.boredomMovement
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const cycleId = typeof record.cycleId === 'string' ? record.cycleId.trim() : ''
+  const triggerSource = record.triggerSource
+  const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
+    ? record.graph
+    : 'environment'
+  const maxSteps = typeof record.maxSteps === 'number' ? Math.floor(record.maxSteps) : 0
+  if (
+    !cycleId
+    || (triggerSource !== 'user' && triggerSource !== 'autonomy')
+    || record.requestedBy !== 'boredom-movement'
+    || record.observationTiming !== 'after_intention'
+    || maxSteps < 1
+    || maxSteps > 10
+  ) return null
+  return {
+    cycleId,
+    triggerSource,
+    requestedBy: 'boredom-movement',
+    graph,
+    maxSteps,
+    observationTiming: 'after_intention',
   }
 }
 

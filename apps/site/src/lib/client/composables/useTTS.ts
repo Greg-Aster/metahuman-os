@@ -15,7 +15,6 @@ interface VoiceModelsCache {
 
 interface VoiceProviderCache {
   provider?: string;
-  outputTarget: 'local' | 'robot';
 }
 
 interface AudioChunk {
@@ -309,7 +308,6 @@ function createTTS() {
         const settings = await settingsRes.json();
         voiceProviderCache = {
           provider: settings.provider,
-          outputTarget: settings.outputTarget === 'robot' ? 'robot' : 'local',
         };
         voiceProviderCacheTime = now;
         return settings.provider;
@@ -319,11 +317,6 @@ function createTTS() {
     }
 
     return undefined;
-  }
-
-  async function fetchSpeechOutputTarget(): Promise<'local' | 'robot'> {
-    await fetchVoiceProvider();
-    return voiceProviderCache?.outputTarget ?? 'local';
   }
 
   function refreshVoiceSettings(): void {
@@ -651,10 +644,6 @@ function createTTS() {
       }
       console.warn('[useTTS] Streaming failed:', e);
 
-      if (await fetchSpeechOutputTarget() === 'robot') {
-        return finishPlayback(token, false);
-      }
-
       // Fallback to non-streaming mode
       console.log('[useTTS] Falling back to non-streaming TTS');
       stopStreaming();
@@ -870,11 +859,9 @@ function createTTS() {
     source?: string;
     requestId?: string;
   }): Promise<TTSPlaybackOutcome> {
-    const outputTarget = await fetchSpeechOutputTarget();
     // Check if native voice mode is enabled
     if (
-      outputTarget === 'local'
-      && isNativeVoiceModeEnabled()
+      isNativeVoiceModeEnabled()
       && isNativeTTSAvailable()
     ) {
       console.log('[useTTS] Native voice mode enabled - using device TTS');
@@ -883,10 +870,6 @@ function createTTS() {
 
     // Use server TTS - auto-select streaming for slow providers
     let useStreaming = options?.streaming;
-    if (outputTarget === 'robot') {
-      useStreaming = true;
-    }
-
     // If streaming not explicitly set, auto-detect based on provider
     if (useStreaming === undefined) {
       const provider = await fetchVoiceProvider();

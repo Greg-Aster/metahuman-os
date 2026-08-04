@@ -1,7 +1,7 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
   "version": "1.1.0",
-  "revision": 5,
+  "revision": 6,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
@@ -122,7 +122,7 @@
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Sends an idle stimulus and the robot-advertised stationary movement catalog to Robot Operator Mode.",
+      "description": "Starts an action-first Robot Operator cycle, then requires a fresh image and Environment Mode assessment.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -137,7 +137,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Manual finite agent with no timer. Its dedicated configuration allowlist is intersected with the robot's advertised command catalog before Robot Operator may submit it autonomously in semi or full mode."
+      "comment": "Manual finite agent with no encoded motion catalog. Robot Operator authors a free-form intention; Environment Mode executes it, acquires the post-action image, and validates the result."
     },
     "reflector": {
       "id": "reflector",

@@ -8,8 +8,8 @@ import type {
 import { hasFreshCorrelatedVisual } from '../../environment-interface/index.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
-  environmentTaskContractFromRouting,
-  parseEnvironmentTaskInstruction,
+  environmentTaskContractFromObservation,
+  robotOperatorActionRequirement,
 } from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,12 +113,7 @@ export const environmentInstructionInterpreterNode = defineNode({
     const originatingInstruction = typeof rawObservation?.metadata?.originatingInstruction === 'string'
       ? rawObservation.metadata.originatingInstruction.trim()
       : '';
-    const taskContract = environmentTaskContractFromRouting({
-      actionParams: {
-        continuationPolicy: validatorCommand?.continuationPolicy,
-        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
-      },
-    }, queuedObjective) || parseEnvironmentTaskInstruction(originatingInstruction);
+    const taskContract = environmentTaskContractFromObservation(rawObservation);
     const originalObjective = taskContract?.objective || originatingInstruction;
     const taskContractInstruction = taskContract
       ? [
@@ -128,6 +123,7 @@ export const environmentInstructionInterpreterNode = defineNode({
         ].join(' ')
       : '';
     const robotObserver = readRobotObserverCycle(rawObservation);
+    const delegatedActionRequirement = robotOperatorActionRequirement(rawObservation);
     const captureSatisfied = Boolean(
       !currentTaskEvent
       && robotObserver
@@ -207,6 +203,7 @@ export const environmentInstructionInterpreterNode = defineNode({
           robotObserver && hasFreshCorrelatedVisual(observation, robotObserver.cycleId),
         ),
         persistedTaskContract: taskContract ?? null,
+        delegatedActionRequirement,
       },
     });
 

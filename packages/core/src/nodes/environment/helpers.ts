@@ -58,10 +58,37 @@ export interface EnvironmentTaskContract {
   requiredCompletionBasis: EnvironmentCompletionBasis;
 }
 
+export type EnvironmentTaskContractSource =
+  | 'persisted'
+  | 'environment_decision'
+  | 'bounded_router_evidence'
+  | 'router_fallback';
+
+export interface EnvironmentTaskContractConflict {
+  model: Pick<EnvironmentTaskContract, 'continuationPolicy' | 'requiredCompletionBasis'>;
+  routed: Pick<EnvironmentTaskContract, 'continuationPolicy' | 'requiredCompletionBasis'>;
+}
+
 const ENVIRONMENT_TASK_CONTRACT_PREFIX = 'EnvironmentTaskContract:';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Robot Operator is the authorization owner for its delegated intention. A
+ * boolean is present only for the typed Robot Operator path; null leaves
+ * ordinary user/environment routing under the Environment Context Router.
+ */
+export function robotOperatorActionRequirement(
+  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
+): boolean | null {
+  const decision = isRecord(observation?.metadata?.robotOperatorDecision)
+    ? observation.metadata.robotOperatorDecision
+    : null;
+  return typeof decision?.requiresAction === 'boolean'
+    ? decision.requiresAction
+    : null;
 }
 
 function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis | null {
@@ -90,6 +117,33 @@ export function environmentTaskContractFromRouting(
     continuationPolicy,
     requiredCompletionBasis,
   };
+}
+
+export function environmentTaskContractFromObservation(
+  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
+): EnvironmentTaskContract | null {
+  const command = isRecord(observation?.metadata?.taskValidatorCommand)
+    ? observation.metadata.taskValidatorCommand
+    : null;
+  const objective = typeof command?.objective === 'string'
+    ? command.objective.trim().slice(0, 1_000)
+    : '';
+  const currentInstruction = typeof command?.instruction === 'string'
+    ? command.instruction.trim().slice(0, 500)
+    : '';
+  const commandContract = environmentTaskContractFromRouting({
+    actionParams: {
+      continuationPolicy: command?.continuationPolicy,
+      requiredCompletionBasis: command?.requiredCompletionBasis,
+    },
+  }, objective);
+  if (commandContract) {
+    return {
+      ...commandContract,
+      ...(currentInstruction ? { currentInstruction } : {}),
+    };
+  }
+  return parseEnvironmentTaskInstruction(observation?.metadata?.originatingInstruction);
 }
 
 export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContract): string {
@@ -142,6 +196,10 @@ export interface EnvironmentTaskDecision {
   requiredCompletionBasis?: EnvironmentCompletionBasis;
   completionBasis?: EnvironmentCompletionBasis;
   completionEvidence?: string;
+  /** Internal provenance added after model output parsing by Environment Task Contract. */
+  taskContractSource?: EnvironmentTaskContractSource;
+  /** Typed disagreement retained for lifecycle telemetry; never model-authored. */
+  taskContractConflict?: EnvironmentTaskContractConflict;
 }
 
 export interface EnvironmentPromptAdmission {

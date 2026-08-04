@@ -30,6 +30,7 @@
   import { autonomyModeDefinition, nextAutonomyMode, type AutonomyMode } from '../lib/client/active-operator-modes';
   import { setActiveOperatorMode, triggerManagerSnapshot, useTriggerManager } from '../lib/stores/trigger-manager';
   import { projectBufferFeed, replaceBufferSlice, stampBufferSource } from '../lib/client/buffer-feed';
+  import { setInnerDialogueSpeechVisible } from '../lib/client/inner-dialogue-speech-visibility';
 
   // Component state
   let input = '';
@@ -516,9 +517,11 @@
     }
 
     isTabVisible = !document.hidden;
+    setInnerDialogueSpeechVisible(isTabVisible && selectedViews.has('inner'));
     // Reconnect buffer streams when tab becomes visible (in case connection dropped)
     const handleVisibilityChange = () => {
       isTabVisible = !document.hidden;
+      setInnerDialogueSpeechVisible(isTabVisible && selectedViews.has('inner'));
       if (!isTabVisible) {
         disconnectAllBufferStreams();
         return;
@@ -720,6 +723,7 @@
   onDestroy(() => {
     // Mark component as unmounted to stop animation loops
     isComponentMounted = false;
+    setInnerDialogueSpeechVisible(false);
 
     // Clean up event listeners and streams
     visibilityCleanup?.();
@@ -2052,6 +2056,7 @@
     }
 
     selectedViews = newSet;
+    setInnerDialogueSpeechVisible(isTabVisible && selectedViews.has('inner'));
 
     // Fetch and merge all selected buffers
     fetchAllSelectedBuffers();

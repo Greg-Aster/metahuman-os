@@ -1,7 +1,7 @@
 /**
- * Conversation History Node
+ * Canonical Buffer History Node
  *
- * Retrieves recent conversation messages from persisted buffer
+ * Retrieves recent entries from the selected persisted conversation or inner buffer.
  * Supports unified consciousness mode - merges inner dialogue into context
  */
 
@@ -9,35 +9,53 @@ import { defineNode, type NodeDefinition } from '../types.js';
 
 export const ConversationHistoryNode: NodeDefinition = defineNode({
   id: 'conversation_history',
-  name: 'Conversation History',
+  name: 'Buffer History',
   category: 'context',
-  inputs: [],
+  inputs: [
+    { name: 'mode', type: 'string', optional: true, description: 'Canonical buffer mode: conversation or inner' },
+  ],
   outputs: [
-    { name: 'history', type: 'array', description: 'Conversation messages' },
+    { name: 'history', type: 'array', description: 'Selected canonical buffer entries' },
   ],
   properties: {
+    mode: 'conversation',
     limit: 20,
   },
   propertySchemas: {
+    mode: {
+      type: 'select',
+      default: 'conversation',
+      label: 'Buffer Mode',
+      description: 'Canonical per-user buffer to read',
+      options: ['conversation', 'inner'],
+    },
     limit: {
       type: 'slider',
       default: 20,
-      label: 'Message Limit',
-      description: 'Maximum messages to retrieve',
-      min: 5,
+      label: 'Entry Limit',
+      description: 'Maximum entries to retrieve; 0 uses the canonical buffer retention without an additional graph-local cutoff',
+      min: 0,
       max: 50,
-      step: 5,
+      step: 1,
     },
   },
-  description: 'Retrieves recent conversation messages from persisted buffer',
+  description: 'Retrieves recent entries from one canonical per-user conversation or inner buffer.',
 
   execute: async (inputs, context, properties) => {
     const startTime = Date.now();
-    const limit = properties?.limit || 20;
-    const mode = context.mode || context.dialogueType || 'conversation';
+    const configuredLimit = properties?.limit ?? properties?.maxMessages;
+    const limit = Number.isInteger(configuredLimit)
+      ? Math.max(0, Math.min(50, Number(configuredLimit)))
+      : 20;
+    const requestedMode = inputs.mode
+      ?? properties?.mode
+      ?? context.dialogueType
+      ?? context.mode
+      ?? 'conversation';
+    const mode = requestedMode === 'inner' ? 'inner' : 'conversation';
     const username = context.username;
 
-    let messages = context.conversationHistory || [];
+    let messages = mode === 'conversation' ? context.conversationHistory || [] : [];
     let summaryMarkers: any[] = [];
     let loadedFromBuffer = false;
     let innerDialogueCount = 0;
@@ -48,7 +66,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
         const { loadChatSettingsForUser } = await import('../../chat-settings.js');
         const { loadBufferForUser } = await import('../../conversation-buffer.js');
 
-        const parsed = loadBufferForUser(username, mode === 'inner' ? 'inner' : 'conversation');
+        const parsed = loadBufferForUser(username, mode);
         messages = parsed.messages;
         summaryMarkers = parsed.summaryMarkers;
         loadedFromBuffer = true;
@@ -93,7 +111,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     const maxMessages = limit;
     let pruned = false;
 
-    if (messages.length > maxMessages) {
+    if (maxMessages > 0 && messages.length > maxMessages) {
       const systemAndMarkers = messages.filter(
         (msg: any) => msg.role === 'system' || msg.meta?.summaryMarker
       );

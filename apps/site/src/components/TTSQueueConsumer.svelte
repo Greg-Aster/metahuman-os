@@ -3,6 +3,7 @@
   import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import { readAssistantSpeechEnabled } from '../lib/client/assistant-speech-preference';
   import { useTTS } from '../lib/client/composables/useTTS';
+  import { shouldPlayAdmittedSpeech } from '../lib/client/inner-dialogue-speech-visibility';
 
   type TTSQueueItem = {
     id?: string;
@@ -60,6 +61,12 @@
 
     if (!mounted || !text || !item.id || !item.leaseToken) {
       console.warn(`[tts-queue] Cannot play an invalid or unmounted delivery from ${source}`);
+      return;
+    }
+
+    if (!shouldPlayAdmittedSpeech(item.mode)) {
+      console.log(`[tts-queue] Suppressing admitted Inner Dialogue item from ${source} (Inner view closed)`);
+      await updateDelivery(item, 'suppress');
       return;
     }
 

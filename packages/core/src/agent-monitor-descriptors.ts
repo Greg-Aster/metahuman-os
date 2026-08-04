@@ -269,7 +269,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
           : 600,
         applyMode: 'restart',
         writable: true,
-        description: 'How long the robot must remain idle before Boredom Movement becomes due.',
+        description: 'How long the robot must remain idle before the action-first workflow becomes due.',
       },
       {
         key: 'boredomMovementJitterMs',
@@ -280,7 +280,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
           : 120000,
         applyMode: 'restart',
         writable: true,
-        description: 'Random variation applied around the Boredom Movement idle threshold.',
+        description: 'Random variation around the action-first workflow idle threshold.',
       },
       {
         key: 'graph',
