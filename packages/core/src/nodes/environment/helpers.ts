@@ -144,6 +144,15 @@ export interface EnvironmentTaskDecision {
   completionEvidence?: string;
 }
 
+export interface EnvironmentPromptAdmission {
+  /** Include current state, capabilities, feedback, location, and map context. */
+  includeEnvironmentContext?: boolean;
+  /** Include fresh visual-frame descriptions and vision-specific instructions. */
+  includeVisionContext?: boolean;
+  /** Include action, movement, and whole-objective lifecycle contracts. */
+  includeActionContracts?: boolean;
+}
+
 export function parseDirectRobotInstruction(
   value: unknown,
   sessionId?: string,
@@ -159,6 +168,18 @@ export function parseDirectRobotInstruction(
     return {
       action: { type: 'stop', sessionId },
       response: 'Stopping.',
+    };
+  }
+
+  if (/^(?:please\s+)?(?:sit|sit down|take a seat|have a seat)$/.test(instruction)) {
+    if (!robotCommandIsSupported('sit', supportedRobotCommands)) return null;
+    return {
+      action: {
+        type: 'robotCommand',
+        command: 'sit',
+        sessionId,
+      },
+      response: 'Sitting down.',
     };
   }
 
@@ -203,18 +224,27 @@ function robotCommandIsSupported(command: string, supportedRobotCommands?: strin
   return supportedRobotCommands.some(candidate => normalizedRobotCommand(candidate) === normalized);
 }
 
-export function stringifyEnvironmentObservation(observation: EnvironmentObservation, systemPrompt: string): string {
+export function stringifyEnvironmentObservation(
+  observation: EnvironmentObservation,
+  systemPrompt: string,
+  admission: EnvironmentPromptAdmission = {},
+): string {
+  const includeEnvironmentContext = admission.includeEnvironmentContext ?? true;
+  const includeVisionContext = admission.includeVisionContext ?? true;
+  const includeActionContracts = admission.includeActionContracts ?? true;
   const sections: string[] = [];
-  if (systemPrompt.trim()) {
+  if (includeActionContracts && systemPrompt.trim()) {
     sections.push(systemPrompt.trim());
   }
 
-  sections.push(`Environment: ${observation.environmentId}`);
-  sections.push(`Adapter: ${observation.adapter}`);
-  sections.push(`Session: ${observation.sessionId}`);
-  sections.push(`Time: ${observation.timestamp}`);
+  if (includeEnvironmentContext) {
+    sections.push(`Environment: ${observation.environmentId}`);
+    sections.push(`Adapter: ${observation.adapter}`);
+    sections.push(`Session: ${observation.sessionId}`);
+    sections.push(`Time: ${observation.timestamp}`);
+  }
 
-  if (observation.text?.length) {
+  if (includeEnvironmentContext && observation.text?.length) {
     sections.push([
       'Recent text:',
       ...observation.text.map(event => {
@@ -224,66 +254,78 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
     ].join('\n'));
   }
 
-  if (observation.state && Object.keys(observation.state).length > 0) {
+  if (includeEnvironmentContext && observation.state && Object.keys(observation.state).length > 0) {
     sections.push(`State:\n${JSON.stringify(observation.state, null, 2)}`);
   }
 
-  if (observation.location && Object.keys(observation.location).length > 0) {
+  if (includeEnvironmentContext && observation.location && Object.keys(observation.location).length > 0) {
     sections.push(`Location:\n${JSON.stringify(observation.location, null, 2)}`);
   }
 
-  if (observation.map && Object.keys(observation.map).length > 0) {
+  if (includeEnvironmentContext && observation.map && Object.keys(observation.map).length > 0) {
     sections.push(`Map:\n${JSON.stringify(observation.map, null, 2)}`);
   }
 
-  if (observation.visual) {
+  if (includeVisionContext && observation.visual) {
     sections.push(`Visual frame: ${describeVisualFrame(observation.visual)}`);
   }
 
-  if (observation.visuals?.length) {
+  if (includeVisionContext && observation.visuals?.length) {
     sections.push([
       'Visual frames:',
       ...observation.visuals.map(frame => `- ${describeVisualFrame(frame)}`),
     ].join('\n'));
   }
 
-  if (observation.feedback?.length) {
+  if (includeEnvironmentContext && observation.feedback?.length) {
     sections.push([
       'Recent feedback:',
       ...observation.feedback.map(event => `- [${event.type}] ${event.message}`),
     ].join('\n'));
   }
 
-  sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
+  if (includeEnvironmentContext) {
+    sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
+  }
   const robotCommands = observation.capabilities.robotCommands
     ?.map(command => command.trim())
     .filter(Boolean);
-  if (robotCommands?.length) {
+  if (includeEnvironmentContext && robotCommands?.length) {
     sections.push(`Supported robot commands: ${robotCommands.join(', ')}`);
   }
-  sections.push([
-    'Sensor truth contract:',
-    '- Capability and readiness fields describe available hardware, not current sensory content.',
-    '- Claim current sight only from a fresh visual frame and current hearing only from a current audio transcript.',
-    '- Treat false readiness as unavailable and null or missing readiness as unknown.',
-  ].join('\n'));
-  sections.push([
-    'Response contract:',
-    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
-    '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
-    '- taskDecision.outcome must be one of: complete, continue, observe, act, report, curiosity, background, request_user, wait.',
-    '- Set objectiveComplete=true only when the current objective is actually satisfied.',
-    '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
-    '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
-    '- Every taskDecision must set continuationPolicy="none" or "bounded" and requiredCompletionBasis. Default to "none" only when one response or action result proves the entire objective. Use "bounded" when the objective requires later work or evidence beyond the completed step.',
-    '- requiredCompletionBasis declares the evidence needed to prove the whole objective: response, action_result, visual_observation, environment_state, or user_input. A different basis may prove a step but cannot prove the whole objective.',
-    '- A completed action with continuationPolicy="none" closes that one-shot objective using action_result evidence. Do not keep a simple completed action alive merely because the instruction was recorded as the objective.',
-    '- When the objective remains incomplete after a completed step, use continuationPolicy="bounded". The existing validator and graph-owned refinement stage own any later attempt.',
-    '- Never write a successor instruction in this response or issue the completed action directly during its feedback pass.',
-    '- objectiveComplete=true requires completionBasis and completionEvidence proving the whole objective and every constraint. completionBasis is response, action_result, visual_observation, environment_state, or user_input.',
-    '- Visual completion evidence must be fresh and correlated; ambiguous, stale, or missing sensory input cannot prove completion.',
-  ].join('\n'));
-  if (observation.capabilities.actions.includes('robotCommand')) {
+  if (includeEnvironmentContext) {
+    sections.push([
+      'Sensor truth contract:',
+      '- Capability and readiness fields describe available hardware, not current sensory content.',
+      '- Claim current sight only from a fresh visual frame and current hearing only from a current audio transcript.',
+      '- Treat false readiness as unavailable and null or missing readiness as unknown.',
+    ].join('\n'));
+  }
+  if (includeActionContracts) {
+    sections.push([
+      'Response contract:',
+      '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
+      '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
+      '- taskDecision.outcome must be one of: complete, continue, observe, act, report, curiosity, background, request_user, wait.',
+      '- Set objectiveComplete=true only when the current objective is actually satisfied.',
+      '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
+      '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
+      '- Every taskDecision must set continuationPolicy="none" or "bounded" and requiredCompletionBasis. Default to "none" only when one response or action result proves the entire objective. Use "bounded" when the objective requires later work or evidence beyond the completed step.',
+      '- requiredCompletionBasis declares the evidence needed to prove the whole objective: response, action_result, visual_observation, environment_state, or user_input. A different basis may prove a step but cannot prove the whole objective.',
+      '- A completed action with continuationPolicy="none" closes that one-shot objective using action_result evidence. Do not keep a simple completed action alive merely because the instruction was recorded as the objective.',
+      '- When the objective remains incomplete after a completed step, use continuationPolicy="bounded". The existing validator and graph-owned refinement stage own any later attempt.',
+      '- Never write a successor instruction in this response or issue the completed action directly during its feedback pass.',
+      '- objectiveComplete=true requires completionBasis and completionEvidence proving the whole objective and every constraint. completionBasis is response, action_result, visual_observation, environment_state, or user_input.',
+      '- Visual completion evidence must be fresh and correlated; ambiguous, stale, or missing sensory input cannot prove completion.',
+    ].join('\n'));
+  } else {
+    sections.push([
+      'Conversation response contract:',
+      '- Return exactly one JSON object: {"response":"conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"response supplied","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested response is present"}}.',
+      '- This route does not authorize environment actions or movement. Keep actions empty and movementRequest null.',
+    ].join('\n'));
+  }
+  if (includeActionContracts && observation.capabilities.actions.includes('robotCommand')) {
     sections.push([
       'Robot command contract:',
       '- A robotCommand contains a semantic command and optional units, never simulator commands or raw servo values.',
@@ -293,7 +335,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}],"movementRequest":null,"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false,"continuationPolicy":"none","requiredCompletionBasis":"action_result"}}.',
     ].join('\n'));
   }
-  if (observation.capabilities.actions.includes('captureImage')) {
+  if (includeActionContracts && observation.capabilities.actions.includes('captureImage')) {
     sections.push([
       'Robot vision contract:',
       '- The camera is the robot\'s visual sense. captureImage obtains one fresh view of the present physical environment.',
@@ -301,7 +343,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       '- Do not describe the scene until a fresh correlated visual observation arrives.',
     ].join('\n'));
   }
-  if (observation.capabilities.actions.includes('robotMotionPlan')) {
+  if (includeActionContracts && observation.capabilities.actions.includes('robotMotionPlan')) {
     sections.push([
       'Off-script movement routing:',
       '- Decide movement only from the current Task instruction. Conversation history, memories, prior actions, and feedback never authorize a new movement.',

@@ -261,8 +261,12 @@ test('Environment Mode routes current work through the validator before bridge a
 
   const contextRouter = environmentGraph.nodes.find(node => node.id === 'context-router');
   const contextBuilder = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_context_builder');
-  assert.match(String(contextRouter?.data.properties?.userPromptTemplate), /future-tense commitment as outstanding work/i);
-  assert.match(String(contextRouter?.data.properties?.userPromptTemplate), /I will/i);
+  const contextRouterPrompt = [
+    contextRouter?.data.properties?.systemPrompt,
+    contextRouter?.data.properties?.userPromptTemplate,
+  ].join('\n');
+  assert.match(contextRouterPrompt, /future-tense commitment as outstanding work/i);
+  assert.match(contextRouterPrompt, /I will/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /outstanding, unexecuted objective/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /Do not copy the Task instruction verbatim/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /Before correlated terminal feedback/i);

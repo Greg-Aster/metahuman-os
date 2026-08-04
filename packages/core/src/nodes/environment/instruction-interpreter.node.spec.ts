@@ -97,8 +97,14 @@ test('Environment graph routes the state-aware envelope into the existing contex
     && candidate.targetHandle === 'message'
   ));
   const router = graph.nodes.find((candidate: Record<string, any>) => candidate.id === 'context-router');
+  const routerPrompt = [
+    router?.data?.properties?.systemPrompt,
+    router?.data?.properties?.userPromptTemplate,
+  ].join('\n');
 
   assert(edge);
-  assert.match(String(router?.data?.properties?.systemPrompt), /JSON routing envelope/i);
-  assert.match(String(router?.data?.properties?.userPromptTemplate), /action_result.*separate stopping condition/is);
+  assert.match(routerPrompt, /JSON envelope/i);
+  assert.match(routerPrompt, /needsEnvironment/);
+  assert.match(routerPrompt, /needsVision/);
+  assert.match(routerPrompt, /action_result.*separate stopping condition/is);
 });

@@ -18,6 +18,13 @@ echo "• Stopping voice servers..."
 
 STOPPED=false
 
+# Whisper and Kokoro are owned by the shared voice server manager.
+if "$REPO_ROOT/bin/mh" voice-server stop --all; then
+  STOPPED=true
+else
+  echo -e "  ${YELLOW}⚠ One or more shared voice servers could not be stopped cleanly${NC}"
+fi
+
 # Stop RVC server
 RVC_PID_FILE="$REPO_ROOT/logs/run/rvc.pid"
 if [ -f "$RVC_PID_FILE" ]; then
@@ -46,48 +53,6 @@ if [ -f "$SOVITS_PID_FILE" ]; then
     kill "$PID" 2>/dev/null || true
     rm -f "$SOVITS_PID_FILE"
     STOPPED=true
-  fi
-fi
-
-# Stop Whisper server
-WHISPER_PID_FILE="$REPO_ROOT/logs/run/whisper-server.pid"
-if [ -f "$WHISPER_PID_FILE" ]; then
-  PID=$(cat "$WHISPER_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    echo "  Stopping Whisper server (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true
-    rm -f "$WHISPER_PID_FILE"
-    STOPPED=true
-  else
-    rm -f "$WHISPER_PID_FILE"
-  fi
-fi
-
-# Check for Whisper process by port
-if lsof -ti:9883 > /dev/null 2>&1; then
-  echo "  Stopping Whisper server on port 9883..."
-  pkill -f "whisper_server.py" 2>/dev/null || true
-  STOPPED=true
-fi
-
-# Stop Kokoro server directly (avoid slow CLI call during shutdown)
-KOKORO_PID_FILE="$REPO_ROOT/logs/run/kokoro-server.pid"
-if [ -f "$KOKORO_PID_FILE" ]; then
-  PID=$(cat "$KOKORO_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    echo "  Stopping Kokoro server (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true
-    # Brief wait for graceful shutdown
-    for i in 1 2 3; do
-      kill -0 "$PID" 2>/dev/null || break
-      sleep 0.5
-    done
-    # Force kill if still running
-    kill -9 "$PID" 2>/dev/null || true
-    rm -f "$KOKORO_PID_FILE"
-    STOPPED=true
-  else
-    rm -f "$KOKORO_PID_FILE"
   fi
 fi
 

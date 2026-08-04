@@ -6,22 +6,25 @@
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { systemPaths } from '@metahuman/core';
+import { getUserContext, systemPaths } from '@metahuman/core';
 import { DEFAULT_VLLM_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 
 export async function fineTuneCommand(args: string[]): Promise<void> {
-  // Parse arguments
-  const username = getArg(args, '--username') || process.env.USER || 'greggles';
-  const baseModel = getArg(args, '--base-model') || DEFAULT_VLLM_TRAINING_MODEL;
-  const maxSamples = getArg(args, '--max');
-  const modeFilter = getArg(args, '--mode');
-  const skipValidation = args.includes('--skip-validation');
-
   // Show help if requested
   if (args.includes('--help') || args.includes('-h')) {
     showHelp();
     return;
   }
+
+  // Training is profile-owned. A host account name is not a MetaHuman user.
+  const username = getArg(args, '--username') || getUserContext()?.username;
+  if (!username) {
+    throw new Error('Fine-tuning requires --username when there is no active user context.');
+  }
+  const baseModel = getArg(args, '--base-model') || DEFAULT_VLLM_TRAINING_MODEL;
+  const maxSamples = getArg(args, '--max');
+  const modeFilter = getArg(args, '--mode');
+  const skipValidation = args.includes('--skip-validation');
 
   console.log('Starting cognitive mode fine-tuning pipeline...');
   console.log(`  User: ${username}`);
@@ -54,7 +57,7 @@ export async function fineTuneCommand(args: string[]): Promise<void> {
   }
 
   // Run fine-tune-cycle.ts
-  const scriptPath = path.join(systemPaths.brain, 'agents', 'fine-tune-cycle.ts');
+  const scriptPath = path.join(systemPaths.brain, 'training', 'fine-tune-cycle.ts');
 
   return new Promise<void>((resolve, reject) => {
     const child = spawn('tsx', [scriptPath, ...cycleArgs], {
@@ -107,13 +110,13 @@ COGNITIVE MODES:
 
 EXAMPLES:
   # Full fine-tune with all modes
-  mh fine-tune --username greggles
+  mh fine-tune --username <username>
 
   # Fine-tune only dual mode (personality deepening)
-  mh fine-tune --username greggles --mode dual --max 3000
+  mh fine-tune --username <username> --mode dual --max 3000
 
   # Fine-tune with specific base model
-  mh fine-tune --username greggles --base-model llama3-70b
+  mh fine-tune --username <username> --base-model llama3-70b
 
 PIPELINE STAGES:
   1. Curate memories (clean, assign modes, trim responses)

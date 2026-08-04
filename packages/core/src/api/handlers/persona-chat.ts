@@ -28,6 +28,7 @@ import {
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { recordSystemActivity } from '../../system-activity.js';
 import { submitConversationEntry, submitInnerDialogue } from '../../buffer-admission.js';
+import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 // Early buffer save added - saves user message BEFORE graph to survive timeouts
 
 // ============================================================================
@@ -56,6 +57,7 @@ interface GraphPipelineParams {
   replyToDesireTitle?: string;
   desireContext?: any;
   userMessageAdmitted?: boolean;
+  ttsGeneration?: number;
 }
 
 // ============================================================================
@@ -190,7 +192,7 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 // ============================================================================
 
 async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerator<string> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext, userMessageAdmitted } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext, userMessageAdmitted, ttsGeneration } = params;
 
   const push = (type: string, data: any) => {
     return sseData(type, data);
@@ -257,6 +259,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       useOperator,
       yoloMode,
       timeoutMs,
+      ttsGeneration,
       // Reply-to context for responding to selected messages (curiosity questions, etc.)
       replyToQuestionId,
       replyToContent,
@@ -573,6 +576,12 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   const trimmedMessage = message.trim();
+  const inheritedTTSGeneration = typeof req.metadata?.ttsGeneration === 'number'
+    ? req.metadata.ttsGeneration
+    : undefined;
+  const ttsGeneration = isAuthenticated && user.username
+    ? inheritedTTSGeneration ?? beginTTSUserTurn(user.username, 'user-input')?.generation
+    : undefined;
 
   const conversationHistorySnapshot = getConversationHistorySnapshot(mode, sessionId);
 
@@ -735,6 +744,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     replyToDesireTitle,
     desireContext,
     userMessageAdmitted,
+    ttsGeneration,
   });
 
   // Non-streaming mode: collect all events and return as JSON

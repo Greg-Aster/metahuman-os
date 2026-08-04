@@ -50,7 +50,7 @@ See `docs/technical/REFACTOR_BLUEPRINT.md` for the active cleanup contract, and 
 
 ## Work Coordination, Triggering, and Services
 
-`AgentCatalogService` owns the complete runtime inventory. It merges canonical
+`AgentCatalogService` owns the complete agent runtime inventory. It merges canonical
 built-in metadata from `agent-catalog-definitions.ts`, maintained executables in
 `brain/agents`, finite registration in `etc/agents.json`, and persistent service
 registration in `etc/services.json`. Agent Monitor, API authorization, Dashboard,
@@ -85,6 +85,12 @@ in `etc/services.json`. `startOnSystemBoot` and `autoRestart` are service fields
 finite triggers use `startupPolicy` in `etc/agents.json`. Maintenance Service
 performs bounded lock/log cleanup and does not own clocks, schedules, or agent
 admission. Audio Organizer is finite work and has no implicit boot behavior.
+
+Whisper and Kokoro are inference servers, not agents or Agent Monitor services.
+Their configuration lives in `etc/voice-servers.json`; the standalone voice
+server manager owns their process lifecycle and the Server surface owns their
+status and controls. Neither side may import, register, expose, or control the
+other.
 
 The web UI consumes one Agent Catalog inventory plus one TriggerManager snapshot
 and shared SSE store across Dashboard, Queue, Settings, and conversation mode

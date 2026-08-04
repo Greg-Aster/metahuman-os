@@ -6,7 +6,9 @@
 import { submitCoordinatorWork } from '@metahuman/core/queue';
 
 async function main() {
-  const username = 'greggles';
+  const usernameFlag = process.argv.find(arg => arg.startsWith('--username='));
+  const username = usernameFlag?.split('=')[1];
+  if (!username) throw new Error('Usage: pnpm tsx scripts/process-desire-review.ts --username=<username>');
   
   console.log('[desire-review] Submitting review work...');
   try {

@@ -99,7 +99,7 @@ test('routes eligible off-script requests while known semantic commands bypass g
     capabilities: {
       actions: ['robotCommand', 'robotMotionPlan'],
       robotCommands: [
-        'walk', 'wave', 'bow', 'shrug', 'nod', 'celebrate', 'stretch',
+        'sit', 'walk', 'wave', 'bow', 'shrug', 'nod', 'celebrate', 'stretch',
         'macarena', 'salsa', 'surprised', 'sad', 'curious',
         'turn_left_45', 'turn_right_45', 'turn_left_90', 'turn_right_90',
         'turn_left_180', 'turn_right_180', 'walk_slow', 'run',
@@ -121,6 +121,23 @@ test('routes eligible off-script requests while known semantic commands bypass g
   assert.equal(known.actions[0]?.command, 'walk');
   assert.equal(known.movementRequest, null);
 
+  const directSit = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I need another movement plan.',
+      actions: [],
+      movementRequest: { description: 'sit down' },
+    }),
+    instruction: 'please sit down',
+    routingAnalysis: movementRouting,
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+  assert.equal(directSit.actions[0]?.type, 'robotCommand');
+  assert.equal(directSit.actions[0]?.command, 'sit');
+  assert.equal(directSit.actions[0]?.sessionId, observation.sessionId);
+  assert.equal(directSit.movementRequest, null);
+  assert.equal(directSit.response, 'Sitting down.');
+
   const politeKnown = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will shrug.',
@@ -137,7 +154,7 @@ test('routes eligible off-script requests while known semantic commands bypass g
   assert.equal(politeKnown.movementRequest, null);
 
   for (const command of [
-    'nod', 'celebrate', 'stretch', 'macarena', 'salsa', 'surprised', 'sad',
+    'sit', 'nod', 'celebrate', 'stretch', 'macarena', 'salsa', 'surprised', 'sad',
     'curious', 'turn_left_45', 'turn_right_45', 'turn_left_90', 'turn_right_90',
     'turn_left_180', 'turn_right_180', 'walk_slow', 'run',
   ]) {

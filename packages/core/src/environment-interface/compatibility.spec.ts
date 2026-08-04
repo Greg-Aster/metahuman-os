@@ -17,6 +17,7 @@ import {
 import { getQueueManager } from '../queue/index.js';
 import {
   environmentObservationNeedsCognition,
+  environmentObservationStartsUserTurn,
   handleEnvironmentBridgeActionResult,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStream,
@@ -430,6 +431,19 @@ try {
     },
   };
   assert.equal(environmentObservationNeedsCognition(connectionObservation), false);
+  assert.equal(environmentObservationStartsUserTurn(connectionObservation), false);
+  assert.equal(environmentObservationStartsUserTurn({
+    ...connectionObservation,
+    timestamp: new Date().toISOString(),
+    metadata: { perceptionEvent: 'audio_utterance' },
+    text: [{
+      id: 'robot-microphone-user-turn',
+      source: 'environment',
+      text: 'Please stop and listen to this instead.',
+      timestamp: new Date().toISOString(),
+      channel: 'microphone',
+    }],
+  }), true, 'robot microphone transcripts must start a new interrupting user turn');
   assert.equal(environmentObservationNeedsCognition({
     ...connectionObservation,
     timestamp: new Date().toISOString(),
@@ -836,6 +850,12 @@ try {
     },
     instruction: 'Take another picture and explain the colors across the whole scene.',
     images: imageOutput.images,
+    routingAnalysis: {
+      needsMemory: false,
+      needsEnvironment: true,
+      needsVision: true,
+      needsAction: false,
+    },
   }, {}, {});
   assert.equal(Array.isArray(correlatedImageContext.messages.at(-1)?.content), true);
   assert.equal(correlatedImageContext.images.length, 1);
@@ -852,10 +872,17 @@ try {
       sessionId: 'robot-1',
       timestamp: new Date().toISOString(),
       capabilities: { actions: ['robotCommand'], visual: true },
-      visual,
+      visual: { ...visual, metadata: { correlationId: 'unrelated-visual-1' } },
+      metadata: { correlationId: 'unrelated-visual-1' },
     },
     instruction: 'What is happening in France?',
     images: imageOutput.images,
+    routingAnalysis: {
+      needsMemory: false,
+      needsEnvironment: false,
+      needsVision: false,
+      needsAction: false,
+    },
   }, {}, {});
   assert.equal(typeof generalQuestionContext.messages.at(-1)?.content, 'string');
   assert.deepEqual(generalQuestionContext.images, []);

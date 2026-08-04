@@ -621,8 +621,8 @@ export async function* migrateProfile(
         : 102400; // 100GB default
 
       // Create LUKS container:
-      // - Container file stored in parent of destination (e.g., /media/greggles/STACK/metahuman-user.luks)
-      // - Mount point is the destination path itself (e.g., /media/greggles/STACK/metahuman-profiles/user)
+      // - Container file stored in the parent of the configured destination.
+      // - Mount point is the configured profile destination itself.
       const containerDir = path.dirname(destination);
       const result = await createMetaHumanLuksContainer(
         containerDir,

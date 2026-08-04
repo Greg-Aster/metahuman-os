@@ -21,7 +21,7 @@ import type { SafeUser } from './users.js';
  *
  * @example
  * ```typescript
- * const userInfo = await resolveUserInfo('greggles');
+ * const userInfo = await resolveUserInfo('profile-user');
  * if (!userInfo) {
  *   console.error('User not found');
  *   process.exit(1);
@@ -69,7 +69,7 @@ export function resolveUserInfo(username: string): UserContext | null {
  *
  * @example
  * ```typescript
- * const userInfo = requireUserInfo('greggles');
+ * const userInfo = requireUserInfo('profile-user');
  * await withUserContext(userInfo, async () => {
  *   // Training operations
  * });

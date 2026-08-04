@@ -35,6 +35,14 @@ It is the input for architecture checks, audits, and refactor planning.
   `etc/services.json`. Agent Monitor and agent-control authorization consume the
   Agent Catalog rather than a second hard-coded allowlist. Maintenance Service
   is maintenance-only and does not own scheduling.
+- Whisper and Kokoro are shared system inference servers owned exclusively by
+  `packages/core/src/voice-service-manager.ts`, `etc/voice-servers.json`, and
+  the Server status/control surface. User `voice.json` files own request
+  preferences such as provider, voice, language, speed, and output.
+- Voice server lifecycle, configuration, and status must never be registered in,
+  imported by, or exposed through Agent Monitor. Conversely, voice server owners
+  must never import or control Agent Monitor. The build-time
+  `validate:voice-service-ownership` check enforces this boundary.
 - `apps/site/src/pages/api/trigger-manager` is thin transport. Shared handler
   logic belongs under `packages/core/src/api/handlers` and browser surfaces use
   the shared TriggerManager store.

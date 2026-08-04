@@ -6,9 +6,15 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, systemPaths } from '../../path-builder.js';
+import { ROOT } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { eventBus, EventTypes, generateRequestId } from '../../infrastructure/event-bus/index.js';
+import {
+  ensureVoiceServiceRunning,
+  getVoiceServiceStatus,
+  getVoiceServiceUrl,
+  stopVoiceService,
+} from '../../voice-service-manager.js';
 
 export interface WhisperServerConfig {
   useServer: boolean;
@@ -33,8 +39,6 @@ export interface TranscriptionResult {
 }
 
 export class WhisperService {
-  private serverStartPromise: Promise<boolean> | null = null;
-
   constructor(private config: WhisperConfig) {}
 
   /**
@@ -120,7 +124,7 @@ export class WhisperService {
    * Transcribe via FastAPI server (preferred method)
    */
   private async transcribeViaServer(audioBuffer: Buffer, audioFormat: string): Promise<TranscriptionResult> {
-    const serverUrl = this.config.server.url;
+    const serverUrl = getVoiceServiceUrl('whisper');
 
     // Ensure server is ready (auto-start if needed)
     const serverReady = await this._ensureServerReady();
@@ -320,7 +324,7 @@ print(json.dumps(result))
 
     let serverAvailable = false;
     if (this.config.server.useServer) {
-      serverAvailable = await this.checkServerHealth(this.config.server.url);
+      serverAvailable = await this.checkServerHealth(getVoiceServiceUrl('whisper'));
     }
 
     return {
@@ -329,7 +333,7 @@ print(json.dumps(result))
       model: this.config.model,
       device: this.config.device,
       computeType: this.config.computeType,
-      serverUrl: this.config.server.useServer ? this.config.server.url : undefined,
+      serverUrl: this.config.server.useServer ? getVoiceServiceUrl('whisper') : undefined,
       serverAvailable,
       error: !installed ? 'Python venv not found. Run: pnpm install' : undefined,
     };
@@ -339,153 +343,38 @@ print(json.dumps(result))
    * Ensure Whisper server is ready, auto-starting if necessary
    */
   private async _ensureServerReady(): Promise<boolean> {
-    const serverUrl = this.config.server.url;
+    const serverUrl = getVoiceServiceUrl('whisper');
     const available = await this.checkServerHealth(serverUrl);
     if (available) return true;
 
-    // Check if auto-start is disabled
     if (this.config.server.autoStart === false) {
       return false;
     }
 
-    // Start server if not already starting
-    if (!this.serverStartPromise) {
-      this.serverStartPromise = this._startWhisperServerProcess()
-        .catch((error) => {
-          console.error('[WhisperService] Auto-start server failed:', error);
-          return false;
-        })
-        .finally(() => {
-          this.serverStartPromise = null;
-        });
-    }
-
-    const started = await this.serverStartPromise;
-    if (!started) {
-      return false;
-    }
-
-    // Verify server is actually healthy
-    return this.checkServerHealth(serverUrl);
-  }
-
-  /**
-   * Start Whisper FastAPI server as a detached background process
-   */
-  private async _startWhisperServerProcess(): Promise<boolean> {
-    const autoStart = this.config.server.autoStart ?? false;
-    if (!autoStart) {
-      return false;
-    }
-
-    const whisperDir = path.join(ROOT, 'external', 'whisper');
-    const pythonBin = path.join(ROOT, 'venv', 'bin', 'python3');
-    const serverScript = path.join(whisperDir, 'whisper_server.py');
-
-    // Validate required files exist
-    if (!fs.existsSync(pythonBin)) {
-      console.warn('[WhisperService] Cannot auto-start: Python venv not found');
-      return false;
-    }
-    if (!fs.existsSync(serverScript)) {
-      console.warn('[WhisperService] Cannot auto-start: whisper_server.py not found');
-      return false;
-    }
-
-    const port = this.config.server.port || 9883;
-    const logDir = path.join(ROOT, 'logs', 'run');
-    const logFile = path.join(logDir, 'whisper-server.log');
-    const pidFile = path.join(logDir, 'whisper-server.pid');
-
     try {
-      // Ensure log directory exists
-      fs.mkdirSync(logDir, { recursive: true });
-      const logFd = fs.openSync(logFile, 'a');
-
-      // Adjust compute type for GPU
-      let computeType = this.config.computeType;
-      if (this.config.device === 'cuda' && computeType === 'int8') {
-        computeType = 'float16';
-      }
-
-      // Spawn server as detached background process
-      const args = [
-        serverScript,
-        '--model', this.config.model,
-        '--device', this.config.device,
-        '--compute-type', computeType,
-        '--port', port.toString(),
-      ];
-
-      const child = spawn(pythonBin, args, {
-        detached: true,
-        stdio: ['ignore', logFd, logFd],
-        cwd: ROOT,
-      });
-
-      // Save PID for later management
-      fs.writeFileSync(pidFile, child.pid!.toString());
-
-      // Unref so parent can exit
-      child.unref();
-
-      console.log(`[WhisperService] Started server (PID ${child.pid}) on port ${port}`);
-
-      // Publish server started event
-      eventBus.emit('whisper', EventTypes.WHISPER_SERVER_STARTED, {
-        pid: child.pid,
-        port,
-        model: this.config.model,
-        device: this.config.device,
-      });
-
-      // Wait for server to respond (not necessarily model loaded - max 10 seconds)
-      const maxWaitMs = 10000;
-      const startWaitTime = Date.now();
-      while (Date.now() - startWaitTime < maxWaitMs) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // Check if server is responding (any status is fine - loading, ready, or error)
-        try {
-          const response = await fetch(`${this.config.server.url}/health`, {
-            signal: AbortSignal.timeout(2000)
-          });
-
-          if (response.ok) {
-            const health = await response.json();
-            console.log(`[WhisperService] Server responding with status: ${health.status}`);
-            return true; // Server is up, even if model still loading
-          }
-        } catch {
-          // Server not responding yet, continue waiting
-        }
-      }
-
-      console.warn('[WhisperService] Server failed to respond within 10 seconds');
-      return false;
+      await ensureVoiceServiceRunning('whisper');
     } catch (error) {
-      console.error('[WhisperService] Failed to start server:', error);
+      console.error('[WhisperService] Auto-start server failed:', error);
       return false;
     }
+
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      const status = await getVoiceServiceStatus('whisper');
+      if (status.health) return true;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return false;
   }
 
   /**
    * Stop the Whisper server
    */
   async stopServer(): Promise<void> {
-    const pidFile = path.join(ROOT, 'logs', 'run', 'whisper-server.pid');
-    if (!fs.existsSync(pidFile)) {
-      return;
-    }
-
     try {
-      const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-      process.kill(pid, 'SIGTERM');
-      fs.unlinkSync(pidFile);
-      console.log(`[WhisperService] Stopped server (PID ${pid})`);
+      const result = await stopVoiceService('whisper');
 
-      // Publish server stopped event
-      eventBus.emit('whisper', EventTypes.WHISPER_SERVER_STOPPED, { pid });
+      eventBus.emit('whisper', EventTypes.WHISPER_SERVER_STOPPED, { message: result.message });
     } catch (error) {
       console.error('[WhisperService] Failed to stop server:', error);
     }

@@ -6,7 +6,7 @@
  *
  * Usage:
  *   pnpm tsx scripts/dev-session.ts --username owner
- *   pnpm tsx scripts/dev-session.ts --username greggles
+ *   pnpm tsx scripts/dev-session.ts --username=owner
  *
  * This will:
  * 1. Create/update a session in logs/run/sessions.json
@@ -22,7 +22,11 @@ import { getUserByUsername } from '@metahuman/core/users';
 
 const args = process.argv.slice(2);
 const usernameArg = args.find(arg => arg.startsWith('--username='));
-const username = usernameArg ? usernameArg.split('=')[1] : 'greggles';
+const username = usernameArg?.split('=')[1];
+if (!username) {
+  console.error('Usage: pnpm tsx scripts/dev-session.ts --username=<username>');
+  process.exit(1);
+}
 
 // Verify user exists
 const user = getUserByUsername(username);

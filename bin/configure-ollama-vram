@@ -3,9 +3,6 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -92,40 +89,9 @@ else
     echo -e "${GREEN}export OLLAMA_GPU_MEM_FRACTION=${GPU_MEM_FRACTION}${NC}"
 fi
 
-# Determine active profile for voice config
-PROFILE=""
-if [ -f "$ROOT_DIR/etc/default-user.txt" ]; then
-    PROFILE=$(cat "$ROOT_DIR/etc/default-user.txt" 2>/dev/null || echo "")
-elif [ -d "$ROOT_DIR/profiles" ]; then
-    PROFILE=$(ls -1 "$ROOT_DIR/profiles" 2>/dev/null | grep -v '^\.' | head -1)
-fi
-
-if [ -n "$PROFILE" ] && [ -f "$ROOT_DIR/profiles/$PROFILE/etc/voice.json" ]; then
-    VOICE_CONFIG="$ROOT_DIR/profiles/$PROFILE/etc/voice.json"
-else
-    VOICE_CONFIG="$ROOT_DIR/etc/voice.json"
-    PROFILE=""
-fi
-
-if [ -f "$VOICE_CONFIG" ]; then
-    echo -e "\n${YELLOW}Recommendation:${NC} Since Ollama now has a VRAM limit, you can disable"
-    echo "auto-pause in RVC settings for better performance."
-    echo ""
-    read -p "Disable RVC auto-pause of Ollama? [Y/n]: " DISABLE_PAUSE
-
-    if [[ ! "$DISABLE_PAUSE" =~ ^[Nn]$ ]]; then
-        # Use jq to update JSON if available, otherwise manual edit needed
-        if command -v jq &> /dev/null; then
-            TMP_FILE=$(mktemp)
-            jq '.tts.rvc.pauseOllamaDuringInference = false' "$VOICE_CONFIG" > "$TMP_FILE"
-            mv "$TMP_FILE" "$VOICE_CONFIG"
-            echo -e "${GREEN}✓ Disabled auto-pause in voice config${NC}"
-        else
-            echo -e "${YELLOW}Please manually set in $VOICE_CONFIG:${NC}"
-            echo '  "pauseOllamaDuringInference": false'
-        fi
-    fi
-fi
+echo -e "\n${YELLOW}Profile note:${NC} RVC auto-pause is a per-user preference."
+echo "If desired, disable it for the relevant profile in Voice Settings; this system tool"
+echo "does not select or rewrite an arbitrary user's configuration."
 
 echo -e "\n${GREEN}=== Configuration Complete ===${NC}"
 echo ""

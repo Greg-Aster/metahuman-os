@@ -6,17 +6,19 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, systemPaths } from '../../path-builder.js';
+import { ROOT } from '../../path-builder.js';
 import { audit } from '../../audit.js';
+import {
+  ensureVoiceServiceRunning,
+  getVoiceServiceUrl,
+  stopVoiceService,
+} from '../../voice-service-manager.js';
 import { eventBus, EventTypes, generateRequestId } from '../../infrastructure/event-bus/index.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
-import { stopServer } from '../server-manager.js';
 import type { ITextToSpeechService, TTSSynthesizeOptions, TTSStatus, KokoroConfig, CacheConfig } from '../interface.js';
 import type { PiperService } from './piper-service.js';
 
 export class KokoroService implements ITextToSpeechService {
-  private serverStartPromise: Promise<boolean> | null = null;
-
   constructor(
     private config: KokoroConfig,
     private cacheConfig: CacheConfig,
@@ -142,7 +144,7 @@ export class KokoroService implements ITextToSpeechService {
     customPath: string,
     signal?: AbortSignal
   ): Promise<Buffer> {
-    const serverUrl = this.config.server.url;
+    const serverUrl = getVoiceServiceUrl('kokoro');
 
     // Ensure server is ready (auto-start if needed)
     const serverReady = await this._ensureServerReady();
@@ -323,7 +325,7 @@ export class KokoroService implements ITextToSpeechService {
 
     let serverAvailable = false;
     if (this.config.server.useServer) {
-      serverAvailable = await this.checkServerHealth(this.config.server.url);
+      serverAvailable = await this.checkServerHealth(getVoiceServiceUrl('kokoro'));
     }
 
     const cacheStats = getCacheStats(this.cacheConfig);
@@ -332,7 +334,7 @@ export class KokoroService implements ITextToSpeechService {
       provider: 'kokoro',
       available: installed && (serverAvailable || !this.config.server.useServer),
       modelPath: kokoroDir,
-      serverUrl: this.config.server.useServer ? this.config.server.url : undefined,
+      serverUrl: this.config.server.useServer ? getVoiceServiceUrl('kokoro') : undefined,
       cacheEnabled: this.cacheConfig.enabled,
       cacheSize: cacheStats.size,
       cacheFiles: cacheStats.files,
@@ -348,180 +350,27 @@ export class KokoroService implements ITextToSpeechService {
    * Ensure Kokoro server is ready, auto-starting if necessary
    */
   private async _ensureServerReady(): Promise<boolean> {
-    const serverUrl = this.config.server.url;
+    const serverUrl = getVoiceServiceUrl('kokoro');
     const available = await this.checkServerHealth(serverUrl);
-    if (available) {
-      // Server is healthy - ensure PID file exists
-      await this._repairPidFileIfMissing();
-      return true;
-    }
+    if (available) return true;
 
-    // Check if auto-start is disabled
     if (this.config.server.autoStart === false) {
       return false;
     }
 
-    // Start server if not already starting
-    if (!this.serverStartPromise) {
-      this.serverStartPromise = this._startKokoroServerProcess()
-        .catch((error) => {
-          console.error('[KokoroService] Auto-start server failed:', error);
-          return false;
-        })
-        .finally(() => {
-          this.serverStartPromise = null;
-        });
-    }
-
-    const started = await this.serverStartPromise;
-    if (!started) {
-      return false;
-    }
-
-    // Verify server is actually healthy
-    return this.checkServerHealth(serverUrl);
-  }
-
-  /**
-   * Repair missing PID file for a running Kokoro server
-   * This handles cases where the server was started externally (e.g., by start-voice-server)
-   */
-  private async _repairPidFileIfMissing(): Promise<void> {
-    const logDir = path.join(ROOT, 'logs', 'run');
-    const pidFile = path.join(logDir, 'kokoro-server.pid');
-
-    // Check if PID file already exists
-    if (fs.existsSync(pidFile)) {
-      return;
-    }
-
     try {
-      // Find Kokoro server process by port using lsof
-      const { execSync } = await import('node:child_process');
-      const port = this.config.server.port || 9882;
-      const output = execSync(`lsof -ti:${port}`, { encoding: 'utf-8' }).trim();
-
-      if (output) {
-        const pid = parseInt(output, 10);
-        if (!isNaN(pid)) {
-          // Ensure directory exists
-          fs.mkdirSync(logDir, { recursive: true });
-
-          // Create PID file
-          fs.writeFileSync(pidFile, pid.toString());
-        }
-      }
+      await ensureVoiceServiceRunning('kokoro');
     } catch (error) {
-      // Silently fail - this is a best-effort repair
-      // The server is working even without the PID file
-    }
-  }
-
-  /**
-   * Start Kokoro FastAPI server as a detached background process
-   */
-  private async _startKokoroServerProcess(): Promise<boolean> {
-    const autoStart = this.config.server.autoStart ?? false;
-    if (!autoStart) {
+      console.error('[KokoroService] Auto-start server failed:', error);
       return false;
     }
 
-    const kokoroDir = path.join(ROOT, 'external', 'kokoro');
-    const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
-    const serverScript = path.join(kokoroDir, 'kokoro_server.py');
-
-    // Validate required files exist
-    if (!fs.existsSync(pythonBin)) {
-      console.warn('[KokoroService] Cannot auto-start: Python venv not found');
-      return false;
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if (await this.checkServerHealth(serverUrl)) return true;
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-    if (!fs.existsSync(serverScript)) {
-      console.warn('[KokoroService] Cannot auto-start: server.py not found');
-      return false;
-    }
-
-    const port = this.config.server.port || 9882;
-    const logDir = path.join(ROOT, 'logs', 'run');
-    const logFile = path.join(logDir, 'kokoro-server.log');
-    const pidFile = path.join(logDir, 'kokoro-server.pid');
-
-    try {
-      // Ensure log directory exists
-      fs.mkdirSync(logDir, { recursive: true });
-      const logFd = fs.openSync(logFile, 'a');
-
-      // Spawn server as detached background process
-      const child = spawn(
-        pythonBin,
-        [serverScript, '--port', String(port)],
-        {
-          cwd: kokoroDir,
-          detached: true,
-          stdio: ['ignore', logFd, logFd],
-          env: {
-            ...process.env,
-            KOKORO_DEFAULT_CONFIG_JSON: JSON.stringify({
-              lang_code: this.config.langCode,
-              voice: this.config.voice,
-              speed: this.config.speed,
-              custom_voicepack: this.config.useCustomVoicepack
-                ? this.config.customVoicepackPath
-                : null,
-              normalize: this.config.useCustomVoicepack
-                ? (this.config.normalizeCustomVoicepacks ?? true)
-                : false,
-            }),
-          },
-        }
-      );
-
-      // Save PID for status checking
-      if (child.pid) {
-        fs.writeFileSync(pidFile, child.pid.toString());
-      }
-
-      child.unref();
-      fs.closeSync(logFd);
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'kokoro_server_auto_start',
-        details: { port },
-        actor: 'system',
-      });
-
-      // Publish server started event
-      eventBus.emit('kokoro', EventTypes.KOKORO_SERVER_STARTED, {
-        pid: child.pid,
-        port,
-      });
-
-      // Poll for server health with timeout (10 seconds default)
-      const timeout = 10000;
-      const pollInterval = 500;
-      const start = Date.now();
-
-      while (Date.now() - start < timeout) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        if (await this.checkServerHealth(this.config.server.url)) {
-          audit({
-            level: 'info',
-            category: 'system',
-            event: 'kokoro_server_auto_started',
-            details: { port, durationMs: Date.now() - start },
-            actor: 'system',
-          });
-          return true;
-        }
-      }
-
-      console.warn('[KokoroService] Server failed to become healthy within timeout');
-      return false;
-    } catch (error) {
-      console.error('[KokoroService] Failed to start server process:', error);
-      return false;
-    }
+    return false;
   }
 
   /**
@@ -529,7 +378,7 @@ export class KokoroService implements ITextToSpeechService {
    */
   async shutdown(): Promise<void> {
     console.log('[KokoroService] Shutting down Kokoro server...');
-    await stopServer('kokoro');
+    await stopVoiceService('kokoro');
 
     // Publish server stopped event
     eventBus.emit('kokoro', EventTypes.KOKORO_SERVER_STOPPED, {});

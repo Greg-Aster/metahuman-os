@@ -9,323 +9,15 @@
  * The toggles in ChatInterface control whether TTS is enabled for each mode.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import { defineNode, type NodeDefinition } from '../types.js';
-import { getProfilePaths, systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
+import { queueTTS, type TTSQueueItem } from '../../tts/delivery-queue.js';
 import {
   getSpeechOutputSettings,
   renderRobotSpeech,
   type RobotSpeechDelivery,
   type SpeechOutputSettings,
 } from '../../tts/robot-speech.js';
-
-// ============================================================================
-// TTS Queue Types and Functions
-// ============================================================================
-
-export interface TTSQueueItem {
-  id: string;
-  text: string;
-  mode: 'conversation' | 'inner';
-  source?: string;
-  timestamp: number;
-}
-
-export interface TTSQueue {
-  items: TTSQueueItem[];
-  lastUpdated: string;
-}
-
-function isNoSpaceError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === 'ENOSPC';
-}
-
-function ensureQueueDir(queuePath: string): void {
-  const queueDir = path.dirname(queuePath);
-  fs.mkdirSync(queueDir, { recursive: true });
-}
-
-function writeQueueFile(
-  queuePath: string,
-  queue: TTSQueue,
-  fallbackPath?: string,
-  context: string = 'write'
-): string {
-  try {
-    ensureQueueDir(queuePath);
-    fs.writeFileSync(queuePath, JSON.stringify(queue, null, 2));
-    return queuePath;
-  } catch (error) {
-    if (fallbackPath && isNoSpaceError(error)) {
-      console.warn(`[TTS Queue] ${context} failed with ENOSPC, using fallback: ${fallbackPath}`);
-      ensureQueueDir(fallbackPath);
-      fs.writeFileSync(fallbackPath, JSON.stringify(queue, null, 2));
-      return fallbackPath;
-    }
-    throw error;
-  }
-}
-
-/**
- * Get TTS queue path for a user
- */
-export function getTTSQueuePath(username: string): string {
-  const profilePaths = getProfilePaths(username);
-  return path.join(profilePaths.state, 'tts-queue.json');
-}
-
-export function getFallbackTTSQueuePath(username: string): string {
-  const fallbackDir = path.join(systemPaths.run, 'tts-queue');
-  return path.join(fallbackDir, `${username}.json`);
-}
-
-/**
- * Get TTS notification path (for fs.watch on local disk)
- */
-export function getTTSNotificationPath(username: string): string {
-  const notifyDir = path.join(systemPaths.run, 'tts-notifications');
-  return path.join(notifyDir, `${username}.notify`);
-}
-
-/**
- * Touch TTS notification file to signal client
- */
-function touchTTSNotification(username: string): void {
-  try {
-    const notifyPath = getTTSNotificationPath(username);
-    const notifyDir = path.dirname(notifyPath);
-    fs.mkdirSync(notifyDir, { recursive: true });
-    fs.writeFileSync(notifyPath, new Date().toISOString());
-  } catch {
-    // Non-critical
-  }
-}
-
-/**
- * Safely load TTS queue from disk with auto-recovery
- * Handles empty files, corrupted JSON, and missing structure fields
- */
-function safeLoadQueue(queuePath: string): TTSQueue {
-  const defaultQueue: TTSQueue = {
-    items: [],
-    lastUpdated: new Date().toISOString(),
-  };
-
-  if (!fs.existsSync(queuePath)) {
-    return defaultQueue;
-  }
-
-  try {
-    const raw = fs.readFileSync(queuePath, 'utf-8').trim();
-
-    // Check for empty file BEFORE parsing
-    if (!raw || raw.length === 0) {
-      console.warn(`[TTS Queue] Queue file is empty: ${queuePath}, initializing with default`);
-      // Auto-recover: Write valid empty queue
-      try {
-        fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
-      } catch (error) {
-        if (isNoSpaceError(error)) {
-          throw error;
-        }
-        throw error;
-      }
-      return defaultQueue;
-    }
-
-    const parsed = JSON.parse(raw);
-
-    // Validate structure
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Parsed queue is not an object');
-    }
-
-    // Ensure required fields exist
-    if (!Array.isArray(parsed.items)) {
-      console.warn(`[TTS Queue] Missing items array, auto-fixing`);
-      parsed.items = [];
-    }
-
-    if (!parsed.lastUpdated) {
-      parsed.lastUpdated = new Date().toISOString();
-    }
-
-    return parsed as TTSQueue;
-
-  } catch (error) {
-    console.error(`[TTS Queue] Failed to parse queue file: ${queuePath}`, error);
-    console.warn(`[TTS Queue] Auto-recovering with default queue`);
-
-    // Auto-recover: Backup corrupted file and reset
-    const backupPath = queuePath.replace('.json', `-corrupted-${Date.now()}.json`);
-    try {
-      fs.copyFileSync(queuePath, backupPath);
-      console.log(`[TTS Queue] Backed up corrupted file to: ${backupPath}`);
-    } catch (backupError) {
-      console.error(`[TTS Queue] Failed to backup corrupted file:`, backupError);
-    }
-
-    // Write fresh queue
-    try {
-      fs.writeFileSync(queuePath, JSON.stringify(defaultQueue, null, 2), 'utf-8');
-    } catch (error) {
-      if (isNoSpaceError(error)) {
-        throw error;
-      }
-      throw error;
-    }
-
-    return defaultQueue;
-  }
-}
-
-/**
- * Add item to TTS queue
- */
-export function queueTTS(
-  username: string,
-  text: string,
-  mode: 'conversation' | 'inner',
-  source?: string
-): TTSQueueItem | null {
-  if (!username || username === 'anonymous' || !text?.trim()) {
-    return null;
-  }
-
-  const queuePath = getTTSQueuePath(username);
-  const fallbackPath = getFallbackTTSQueuePath(username);
-
-  try {
-    // Load existing queue using safe loader
-    let activePath = queuePath;
-    let queue: TTSQueue;
-    try {
-      ensureQueueDir(queuePath);
-      queue = safeLoadQueue(queuePath);
-    } catch (error) {
-      if (isNoSpaceError(error)) {
-        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
-        ensureQueueDir(fallbackPath);
-        queue = safeLoadQueue(fallbackPath);
-        activePath = fallbackPath;
-      } else {
-        throw error;
-      }
-    }
-
-    // Create new item
-    const item: TTSQueueItem = {
-      id: `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: text.trim(),
-      mode,
-      source,
-      timestamp: Date.now(),
-    };
-
-    // Add to queue (keep last 10 items max to prevent unbounded growth)
-    queue.items.push(item);
-    if (queue.items.length > 10) {
-      queue.items = queue.items.slice(-10);
-    }
-    queue.lastUpdated = new Date().toISOString();
-
-    // Save queue
-    const savedPath = writeQueueFile(
-      activePath,
-      queue,
-      activePath === fallbackPath ? undefined : fallbackPath,
-      'Queue write'
-    );
-    console.log(`[TTS Queue] Queued item ${item.id} (${mode}) -> ${savedPath}`);
-
-    // Touch notification file for SSE
-    touchTTSNotification(username);
-
-    return item;
-  } catch (error) {
-    console.error('[TTS Queue] Error:', error);
-    return null;
-  }
-}
-
-/**
- * Pop items from TTS queue (returns and removes items)
- */
-export function popTTSQueue(username: string): TTSQueueItem[] {
-  const queuePath = getTTSQueuePath(username);
-  const fallbackPath = getFallbackTTSQueuePath(username);
-
-  try {
-    // Load queue using safe loader
-    let activePath = queuePath;
-    let queue: TTSQueue;
-    try {
-      ensureQueueDir(queuePath);
-      queue = safeLoadQueue(queuePath);
-    } catch (error) {
-      if (isNoSpaceError(error)) {
-        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
-        ensureQueueDir(fallbackPath);
-        queue = safeLoadQueue(fallbackPath);
-        activePath = fallbackPath;
-      } else {
-        throw error;
-      }
-    }
-    const items = queue.items || [];
-
-    // Return empty array if no items
-    if (items.length === 0) {
-      return [];
-    }
-
-    // Clear the queue
-    queue.items = [];
-    queue.lastUpdated = new Date().toISOString();
-    const savedPath = writeQueueFile(
-      activePath,
-      queue,
-      activePath === fallbackPath ? undefined : fallbackPath,
-      'Queue clear'
-    );
-    console.log(`[TTS Queue] Popped ${items.length} item(s) -> ${savedPath}`);
-
-    return items;
-  } catch (error) {
-    console.error('[TTS Queue] Error in popTTSQueue:', error);
-    return [];
-  }
-}
-
-/**
- * Peek at TTS queue without removing items
- */
-export function peekTTSQueue(username: string): TTSQueueItem[] {
-  const queuePath = getTTSQueuePath(username);
-  const fallbackPath = getFallbackTTSQueuePath(username);
-
-  try {
-    // Load queue using safe loader
-    try {
-      ensureQueueDir(queuePath);
-      const queue = safeLoadQueue(queuePath);
-      return queue.items || [];
-    } catch (error) {
-      if (isNoSpaceError(error)) {
-        console.warn(`[TTS Queue] Primary queue path full, using fallback: ${fallbackPath}`);
-        ensureQueueDir(fallbackPath);
-        const queue = safeLoadQueue(fallbackPath);
-        return queue.items || [];
-      }
-      throw error;
-    }
-  } catch (error) {
-    console.error('[TTS Queue] Error in peekTTSQueue:', error);
-    return [];
-  }
-}
 
 export interface TTSOutputDelivery {
   accepted: boolean;
@@ -358,11 +50,21 @@ export async function deliverTTSOutput(
     text: string;
     mode: 'conversation' | 'inner';
     source: string;
+    generation?: number;
   },
   dependencyOverrides: Partial<TTSOutputDependencies> = {},
 ): Promise<TTSOutputDelivery> {
   const dependencies = { ...defaultTTSOutputDependencies, ...dependencyOverrides };
   const settings = dependencies.getSettings(request.username);
+
+  if (settings.speechDisabled) {
+    return {
+      accepted: false,
+      deliveryId: '',
+      route: settings.outputTarget,
+      reason: 'Speech is disabled by the main chat speaker control',
+    };
+  }
 
   if (settings.outputTarget === 'robot') {
     if (request.source !== 'environment-mode') {
@@ -371,14 +73,6 @@ export async function deliverTTSOutput(
         deliveryId: '',
         route: 'robot',
         reason: 'Robot speech is limited to Environment Mode tts-out',
-      };
-    }
-    if (settings.speechDisabled) {
-      return {
-        accepted: false,
-        deliveryId: '',
-        route: 'robot',
-        reason: 'Speech is disabled by the main chat speaker control',
       };
     }
     if (settings.provider !== 'kokoro') {
@@ -416,6 +110,7 @@ export async function deliverTTSOutput(
     request.text,
     request.mode,
     request.source,
+    request.generation,
   );
   return {
     accepted: Boolean(item),
@@ -529,7 +224,15 @@ export const TTSNode: NodeDefinition = defineNode({
       text: string,
       mode: 'conversation' | 'inner',
     ): Promise<TTSOutputDelivery> => {
-      const delivery = await deliverTTSOutput({ username, text, mode, source });
+      const delivery = await deliverTTSOutput({
+        username,
+        text,
+        mode,
+        source,
+        generation: typeof context.ttsGeneration === 'number'
+          ? context.ttsGeneration
+          : undefined,
+      });
       if (!delivery.accepted) {
         console.warn(`[TTS Node] ${delivery.route} delivery skipped: ${delivery.reason}`);
         return delivery;

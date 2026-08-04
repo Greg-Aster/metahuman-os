@@ -7,6 +7,7 @@
 
 import type { ExecutionEvent } from '../../graph-executor.js';
 import { collectNodeOutputs, extractGraphOutput, namedSse, runGraph } from '../../graph-runtime.js';
+import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 
 /**
  * Format SSE message
@@ -33,6 +34,9 @@ export async function handleExecuteGraphStream(
   onEvent: (chunk: string) => void
 ): Promise<void> {
   const startTime = Date.now();
+  const ttsGeneration = username && userMessage?.trim()
+    ? beginTTSUserTurn(username, 'user-input')?.generation
+    : undefined;
 
   try {
     if (!graph || !graph.nodes || !graph.edges) {
@@ -92,6 +96,7 @@ export async function handleExecuteGraphStream(
       username,
       userId: username, // auth_check node expects userId
       environment: 'server',
+      ttsGeneration,
     }, eventHandler });
 
     const durationMs = Date.now() - startTime;

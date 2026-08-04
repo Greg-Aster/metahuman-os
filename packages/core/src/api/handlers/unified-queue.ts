@@ -15,6 +15,7 @@ import {
   type WorkCognitiveMode,
 } from '../../queue/index.js';
 import { audit } from '../../audit.js';
+import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
 
 function success(data: Record<string, unknown>, status = 200): UnifiedResponse {
@@ -131,6 +132,9 @@ export async function handleEnqueueTask(req: UnifiedRequest): Promise<UnifiedRes
       ? kind === 'response-pipeline' ? 'chat.response-pipeline' : 'chat.persona'
       : DEFAULT_HANDLERS[body.type];
     const system = await ensureQueueSystemStarted();
+    const ttsTurn = body.type === 'user_message'
+      ? beginTTSUserTurn(req.user.username, 'user-input')
+      : null;
     const task = system.enqueue({
       type: body.type,
       handler,
@@ -145,7 +149,10 @@ export async function handleEnqueueTask(req: UnifiedRequest): Promise<UnifiedRes
       metadata: {
         requestUser: { ...req.user },
         requestSessionId: req.sessionId,
-        requestMetadata: req.metadata,
+        requestMetadata: {
+          ...(req.metadata ?? {}),
+          ...(ttsTurn ? { ttsGeneration: ttsTurn.generation } : {}),
+        },
       },
     });
 

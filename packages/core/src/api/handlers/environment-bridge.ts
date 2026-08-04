@@ -31,6 +31,7 @@ import {
 } from '../../environment-interface/index.js';
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
+import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -101,6 +102,21 @@ export function environmentObservationNeedsCognition(
   return false;
 }
 
+export function environmentObservationStartsUserTurn(
+  observation: EnvironmentObservation,
+): boolean {
+  return observation.text?.some(event => (
+    event.text.trim().length > 0
+    && (
+      event.source === 'player'
+      || (
+        observation.metadata?.perceptionEvent === 'audio_utterance'
+        && event.channel === 'microphone'
+      )
+    )
+  )) === true;
+}
+
 function buildFeedback(value: Record<string, unknown>): EnvironmentFeedback | null {
   if (
     typeof value.type !== 'string' ||
@@ -165,7 +181,15 @@ export async function handleEnvironmentBridgeObservation(
             : 'invalid_graph',
       });
     }
-    const published = publishEnvironmentObservation(observation, { username, graph });
+    const hasUserInput = environmentObservationStartsUserTurn(observation);
+    const ttsGeneration = hasUserInput
+      ? beginTTSUserTurn(username, 'user-input')?.generation
+      : getTTSQueueState(username).generation;
+    const published = publishEnvironmentObservation(observation, {
+      username,
+      graph,
+      ttsGeneration,
+    });
     return successResponse({ success: true, bridge: published.summary, graphQueued: true, workId: published.workId });
   } catch (error) {
     return errorResponse((error as Error).message);

@@ -3,6 +3,11 @@ import { errorResponse, successResponse } from '../types.js';
 import { systemPaths, getProfilePaths } from '../../path-builder.js';
 import { storageClient } from '../../storage-client.js';
 import { stopServer } from '../../tts/server-manager.js';
+import {
+  ensureVoiceServiceRunning,
+  getVoiceServiceConfig,
+  getVoiceServiceStatus,
+} from '../../voice-service-manager.js';
 import { spawn, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -569,10 +574,6 @@ function ensureVoiceConfig(
   return config;
 }
 
-const AUTO_START_COOLDOWN_MS = 60000;
-let lastTtsAutostartAt = 0;
-let lastWhisperAutostartAt = 0;
-
 /**
  * GET: Return available voices and current settings
  * POST: Update voice settings
@@ -614,151 +615,24 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
     const kokoroVoices = loadKokoroVoices(rootDir, profileRoot);
     const rvcSpeakers = loadRvcSpeakers(profileRoot);
 
-    // Check Whisper server status and auto-start if configured
-    let whisperServerStatus = 'unknown';
-    if (config.stt?.whisper?.server?.useServer) {
-      const whisperUrl = config.stt.whisper.server.url || 'http://127.0.0.1:9883';
-      const pidFile = path.join(rootDir, 'logs', 'run', 'whisper-server.pid');
+    // Settings reads are observational only. Persistent process lifecycle is
+    // owned by the voice server manager and etc/voice-servers.json, never by a profile GET.
+    const whisperStatus = await getVoiceServiceStatus('whisper');
+    const whisperServerStatus = !config.stt?.whisper?.server?.useServer
+      ? 'disabled'
+      : whisperStatus.readiness === 'ready'
+        ? 'running'
+        : whisperStatus.readiness;
 
-      // First check if already running via health endpoint
-      let isRunning = false;
-      try {
-        const response = await fetch(`${whisperUrl}/health`, { signal: AbortSignal.timeout(1000) });
-        isRunning = response.ok;
-      } catch {
-        // Server not responding
-      }
-
-      // Also check PID file to detect starting/crashed server
-      let pidAlive = false;
-      if (fs.existsSync(pidFile)) {
-        try {
-          const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-          // Check if process is actually running
-          process.kill(pid, 0); // Signal 0 just checks if process exists
-          pidAlive = true;
-        } catch (err: any) {
-          // ESRCH = process doesn't exist, safe to delete PID file
-          // EPERM = process exists but we can't signal it, DON'T delete
-          if (err.code === 'ESRCH') {
-            try { fs.unlinkSync(pidFile); } catch {}
-          } else {
-            // EPERM or other error - assume process is running
-            pidAlive = true;
-          }
-        }
-      }
-
-      if (isRunning) {
-        whisperServerStatus = 'running';
-      } else if (pidAlive) {
-        // PID file exists and process is running, but health check failed
-        // Server is likely still starting up (loading model)
-        whisperServerStatus = 'loading';
-      } else if (config.stt.whisper.server.autoStart) {
-        const now = Date.now();
-        if (now - lastWhisperAutostartAt < AUTO_START_COOLDOWN_MS) {
-          whisperServerStatus = 'cooldown';
-        } else {
-          lastWhisperAutostartAt = now;
-        }
-
-        if (whisperServerStatus === 'cooldown') {
-          // Skip repeated auto-start attempts in a tight loop
-        } else {
-        // No server running and no PID file - safe to start
-        whisperServerStatus = 'starting';
-        console.log('[voice-settings] Auto-starting Whisper server...');
-
-        // Start server in background (don't await - let it load while user continues)
-        const whisperConfig = config.stt.whisper;
-        const pythonBin = path.join(rootDir, 'venv', 'bin', 'python3');
-        const serverScript = path.join(rootDir, 'external', 'whisper', 'whisper_server.py');
-        const logFile = path.join(rootDir, 'logs', 'run', 'whisper-server.log');
-
-        if (fs.existsSync(pythonBin) && fs.existsSync(serverScript)) {
-          const { spawn } = await import('node:child_process');
-          fs.mkdirSync(path.dirname(logFile), { recursive: true });
-          const logFd = fs.openSync(logFile, 'a');
-
-          const model = whisperConfig.model || 'base.en';
-          const device = whisperConfig.device || 'cpu';
-          let computeType = whisperConfig.computeType || 'int8';
-          if (device === 'cuda' && computeType === 'int8') computeType = 'float16';
-          const port = whisperConfig.server?.port || 9883;
-
-          const args = [serverScript, '--model', model, '--device', device, '--compute-type', computeType, '--port', port.toString()];
-          const child = spawn(pythonBin, args, { detached: true, stdio: ['ignore', logFd, logFd], cwd: rootDir });
-          try {
-            fs.writeFileSync(pidFile, child.pid!.toString());
-          } catch (error) {
-            console.warn('[voice-settings] Failed to write Whisper PID file:', error);
-          }
-          child.unref();
-
-          console.log('[voice-settings] Whisper server started with PID:', child.pid);
-        }
-        }
-      } else {
-        whisperServerStatus = 'stopped';
-      }
-    } else {
-      whisperServerStatus = 'disabled';
-    }
-
-    // ==========================================================================
-    // Auto-start TTS server based on saved config
-    // Uses bin/start-voice-server which reads voice.json and starts appropriate server
-    // ==========================================================================
     const activeProvider = config.tts?.provider || 'piper';
-    let ttsServerStatus = 'unknown';
-
-    // Piper doesn't need a server - it's a direct binary call
-    // All other providers may need servers, let the script decide
-    if (activeProvider !== 'piper') {
-      const startScript = path.join(rootDir, 'bin', 'start-voice-server');
-
-      if (fs.existsSync(startScript)) {
-        const now = Date.now();
-        if (now - lastTtsAutostartAt < AUTO_START_COOLDOWN_MS) {
-          ttsServerStatus = 'cooldown';
-        } else {
-          lastTtsAutostartAt = now;
-        }
-
-        if (ttsServerStatus !== 'cooldown') {
-        // Run start-voice-server which reads saved voice.json config
-        // The script handles checking if server is already running
-        console.log(`[voice-settings] Running start-voice-server for saved provider: ${activeProvider}`);
-
-        try {
-          const { spawn } = await import('node:child_process');
-          const logFile = path.join(rootDir, 'logs', 'run', 'voice-server-autostart.log');
-          fs.mkdirSync(path.dirname(logFile), { recursive: true });
-          const logFd = fs.openSync(logFile, 'a');
-
-          const child = spawn(startScript, [], {
-            detached: true,
-            stdio: ['ignore', logFd, logFd],
-            cwd: rootDir,
-            env: { ...process.env, PROFILE: user.username },
-          });
-          child.unref();
-          fs.closeSync(logFd);
-
-          ttsServerStatus = 'starting';
-          console.log(`[voice-settings] start-voice-server launched (PID: ${child.pid})`);
-        } catch (err) {
-          console.error(`[voice-settings] Failed to run start-voice-server:`, err);
-          ttsServerStatus = 'error';
-        }
-        }
-      } else {
-        console.warn(`[voice-settings] start-voice-server script not found at ${startScript}`);
-      }
-    } else {
-      ttsServerStatus = 'not_needed';
-    }
+    const kokoroStatus = await getVoiceServiceStatus('kokoro');
+    const kokoroSystemConfig = getVoiceServiceConfig('kokoro');
+    const whisperSystemConfig = getVoiceServiceConfig('whisper');
+    const ttsServerStatus = activeProvider === 'piper'
+      ? 'not_needed'
+      : activeProvider === 'kokoro'
+        ? kokoroStatus.readiness === 'ready' ? 'running' : kokoroStatus.readiness
+        : 'unknown';
 
     return successResponse({
         provider: providerForUI,
@@ -797,18 +671,18 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
           speed: config.tts.kokoro?.speed || 1.0,
           autoFallbackToPiper: config.tts.kokoro?.autoFallbackToPiper ?? true,
           useCustomVoicepack: config.tts.kokoro?.useCustomVoicepack ?? false,
-          device: config.tts.kokoro?.device || 'cpu',
+          device: kokoroSystemConfig.device,
           voices: kokoroVoices,
         },
         // Generic TTS server status (applies to active provider)
         ttsServerStatus,
         stt: {
-          model: config.stt?.whisper?.model || 'base.en',
-          device: config.stt?.whisper?.device || 'cpu',
-          computeType: config.stt?.whisper?.computeType || 'int8',
+          model: whisperSystemConfig.model || 'base.en',
+          device: whisperSystemConfig.device,
+          computeType: whisperSystemConfig.computeType || 'int8',
           language: config.stt?.whisper?.language || 'en',
           useServer: config.stt?.whisper?.server?.useServer ?? true,
-          autoStart: config.stt?.whisper?.server?.autoStart ?? true,
+          autoStart: true,
           serverStatus: whisperServerStatus,
           vad: {
             voiceThreshold: config.stt?.whisper?.vad?.voiceThreshold ?? 12,
@@ -855,7 +729,6 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
     const previousProvider = config.tts.provider;
     const previousRvcDevice = config.tts.rvc?.device;
-    const previousKokoroDevice = config.tts.kokoro?.device;
 
     console.log('[voice-settings POST] Previous provider:', previousProvider, '→ New provider:', provider);
 
@@ -975,9 +848,6 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
       if (kokoro.customVoicepackPath && !kokoro.voice?.startsWith('custom_')) {
         kokoroConfig.customVoicepackPath = kokoro.customVoicepackPath;
       }
-      if (kokoro.device === 'cuda' || kokoro.device === 'cpu') {
-        kokoroConfig.device = kokoro.device;
-      }
     }
 
     // Update STT (Whisper) settings
@@ -988,25 +858,8 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
       config.stt.whisper.server = config.stt.whisper.server || { useServer: true, url: 'http://127.0.0.1:9883', autoStart: true, port: 9883 };
       config.stt.whisper.vad = config.stt.whisper.vad || { voiceThreshold: 12, silenceDelay: 5000, minDuration: 500 };
 
-      // Update model
-      if (stt.model && ['tiny.en', 'base.en', 'small.en', 'medium.en'].includes(stt.model)) {
-        config.stt.whisper.model = stt.model;
-      }
-
-      // Update device
-      if (stt.device === 'cpu' || stt.device === 'cuda') {
-        config.stt.whisper.device = stt.device;
-
-        // Auto-adjust compute type based on device
-        if (stt.device === 'cuda' && config.stt.whisper.computeType === 'int8') {
-          config.stt.whisper.computeType = 'float16';
-        }
-      }
-
-      // Update compute type
-      if (stt.computeType && ['int8', 'float16', 'float32'].includes(stt.computeType)) {
-        config.stt.whisper.computeType = stt.computeType;
-      }
+      // Model, device, and compute type belong to the shared Whisper system
+      // service. They are configured in etc/voice-servers.json, not a user profile.
 
       // Update language
       if (stt.language && typeof stt.language === 'string') {
@@ -1018,9 +871,7 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
         config.stt.whisper.server.useServer = stt.useServer;
       }
 
-      if (typeof stt.autoStart === 'boolean') {
-        config.stt.whisper.server.autoStart = stt.autoStart;
-      }
+      config.stt.whisper.server.autoStart = true;
 
       // Update VAD settings (desktop)
       if (stt.vad) {
@@ -1045,7 +896,6 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     try {
       await syncTTSBackends(previousProvider, config.tts.provider, config, {
         previousRvcDevice,
-        previousKokoroDevice,
       });
 
       const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
@@ -1081,7 +931,6 @@ async function syncTTSBackends(
   config: VoiceConfig,
   previousDeviceSettings?: {
     previousRvcDevice?: 'cuda' | 'cpu';
-    previousKokoroDevice?: 'cuda' | 'cpu';
   }
 ): Promise<void> {
   const normalize = (provider: string) => provider === 'sovits' || provider === 'gpt-sovits' ? 'gpt-sovits' : provider;
@@ -1093,12 +942,9 @@ async function syncTTSBackends(
     config.tts.rvc?.device &&
     previousDeviceSettings.previousRvcDevice !== config.tts.rvc.device;
 
-  const kokoroDeviceChanged = previousDeviceSettings?.previousKokoroDevice &&
-    config.tts.kokoro?.device &&
-    previousDeviceSettings.previousKokoroDevice !== config.tts.kokoro.device;
-
-  // If provider didn't change and no device changes, nothing to do
-  if (prev === next && !rvcDeviceChanged && !kokoroDeviceChanged) {
+  // Kokoro device selection is system service configuration, not a user
+  // profile preference, so a profile save must never restart that process.
+  if (prev === next && !rvcDeviceChanged) {
     return;
   }
 
@@ -1108,10 +954,6 @@ async function syncTTSBackends(
 
   if (rvcDeviceChanged) {
     console.log(`[voice-settings] RVC device changed: ${previousDeviceSettings?.previousRvcDevice} → ${config.tts.rvc?.device}`);
-  }
-
-  if (kokoroDeviceChanged) {
-    console.log(`[voice-settings] Kokoro device changed: ${previousDeviceSettings?.previousKokoroDevice} → ${config.tts.kokoro?.device}`);
   }
 
   // Handle device changes for active providers (restart servers)
@@ -1124,18 +966,6 @@ async function syncTTSBackends(
       console.log('[voice-settings] RVC server stopped. Will restart with new device on next use.');
     } catch (error) {
       console.error('[voice-settings] Failed to restart RVC server:', error);
-    }
-  }
-
-  if (kokoroDeviceChanged && next === 'kokoro') {
-    try {
-      console.log('[voice-settings] Restarting Kokoro server with new device...');
-      await stopServer('kokoro');
-      // The Kokoro server will auto-start with new device settings on next TTS request
-      // via the server-manager in createTTSService()
-      console.log('[voice-settings] Kokoro server stopped. Will restart with new device on next use.');
-    } catch (error) {
-      console.error('[voice-settings] Failed to restart Kokoro server:', error);
     }
   }
 
@@ -1154,13 +984,6 @@ async function syncTTSBackends(
         await stopServer('rvc');
       } catch (error) {
         console.error('[voice-settings] Failed to stop RVC server:', error);
-      }
-    } else if (prev === 'kokoro') {
-      try {
-        console.log('[voice-settings] Stopping Kokoro server...');
-        await stopServer('kokoro');
-      } catch (error) {
-        console.error('[voice-settings] Failed to stop Kokoro server:', error);
       }
     }
 
@@ -1182,7 +1005,8 @@ async function syncTTSBackends(
     } else if (next === 'rvc') {
       console.log('[voice-settings] Switched to RVC (server will auto-start on next use)');
     } else if (next === 'kokoro') {
-      console.log('[voice-settings] Switched to Kokoro (server will auto-start on next use)');
+      await ensureVoiceServiceRunning('kokoro');
+      console.log('[voice-settings] Switched to Kokoro (shared system service is running)');
     } else if (next === 'piper') {
       console.log('[voice-settings] Switched to Piper (no background service needed)');
     }

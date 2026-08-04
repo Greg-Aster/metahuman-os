@@ -348,7 +348,11 @@ import {
 } from './handlers/voice-training-routes.js';
 import { handleAudioUpload, handleVoiceProfileUpload } from './handlers/audio-uploads.js';
 import { handleProcessStream } from './handlers/process-stream.js';
-import { handleTtsQueueStream } from './handlers/tts-queue-stream.js';
+import {
+  handleTtsQueueDelivery,
+  handleTtsQueueInterrupt,
+  handleTtsQueueStream,
+} from './handlers/tts-queue-stream.js';
 import {
   handleBigBrotherControl,
   handleBigBrotherStatus,
@@ -870,7 +874,9 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/audio/upload', handler: handleAudioUpload, requiresAuth: true },
   { method: 'POST', pattern: '/api/voice-profile/upload', handler: handleVoiceProfileUpload, requiresAuth: true },
   { method: 'POST', pattern: '/api/process-stream', handler: handleProcessStream, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/tts-queue-stream', handler: handleTtsQueueStream },
+  { method: 'GET', pattern: '/api/tts-queue-stream', handler: handleTtsQueueStream, requiresAuth: true },
+  { method: 'POST', pattern: '/api/tts-queue-delivery', handler: handleTtsQueueDelivery, requiresAuth: true },
+  { method: 'POST', pattern: '/api/tts-queue-interrupt', handler: handleTtsQueueInterrupt, requiresAuth: true },
   { method: 'GET', pattern: '/api/rvc-training', handler: handleGetRvcTraining, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/rvc-training', handler: handlePostRvcTraining, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/sovits-training', handler: handleGetSovitsTraining, requiresAuth: true, guard: 'owner' },

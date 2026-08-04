@@ -157,13 +157,17 @@ export * from './tts';
 export * from './tts/robot-audio.js';
 export {
   queueTTS,
-  popTTSQueue,
+  beginTTSUserTurn,
+  interruptTTSQueue,
+  getTTSQueueState,
   peekTTSQueue,
   getTTSQueuePath,
   getTTSNotificationPath,
   type TTSQueueItem,
   type TTSQueue,
-} from './nodes/output/tts.node.js';
+  type TTSInterruptionReason,
+  type TTSQueueInterruptionResult,
+} from './tts/delivery-queue.js';
 export { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
 export * from './stt';
 export * from './voice-training';
@@ -647,6 +651,7 @@ export * from './connectors/clip-tagger.js';
 
 // Maintained inference and training defaults
 export * from './model-defaults.js';
+export * from './voice-service-manager.js';
 
 // Version
 export const VERSION = '0.1.0';

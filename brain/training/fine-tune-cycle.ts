@@ -399,7 +399,7 @@ async function mainWithContext(options: FineTuneOptions) {
         samples_trained: datasetLines,
         mode_filter: options.modeFilter,
         training_success: true,
-      });
+      }, options.username);
 
       console.log(`[fine-tune-cycle] Registered training run in model registry`);
       console.log(`[fine-tune-cycle] Next fine-tune will build on this model (continuous learning)`);
@@ -495,7 +495,7 @@ async function main() {
     modelSource = 'user';
   } else {
     try {
-      const registryModel = getCurrentBaseModel();
+      const registryModel = getCurrentBaseModel(options.username);
       finalBaseModel = registryModel.model;
       modelSource = 'registry';
       console.log(`[fine-tune-cycle] Using base model from registry: ${finalBaseModel}`);

@@ -158,12 +158,16 @@ async function seedDesire(config: CoreDesireConfig, username: string): Promise<v
 async function main(): Promise<void> {
   // Parse command line arguments
   const args = process.argv.slice(2);
-  let username = 'greggles'; // Default to greggles
+  let username = '';
 
   for (const arg of args) {
     if (arg.startsWith('--username=')) {
       username = arg.split('=')[1];
     }
+  }
+
+  if (!username) {
+    throw new Error('Usage: pnpm tsx scripts/seed-core-desires.ts --username=<username>');
   }
 
   console.log('╔════════════════════════════════════════════════════════════╗');

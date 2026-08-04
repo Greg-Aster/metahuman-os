@@ -74,7 +74,7 @@ function checkPath(absolutePath: string, result: PathResolution): PathResolution
 
 /**
  * Finds a path with case-insensitive matching
- * Example: "Docs/user-guide" → "/home/greggles/metahuman/docs/user-guide"
+ * Example: "Docs/user-guide" resolves beneath the current MetaHuman installation root.
  */
 function findCaseInsensitivePath(userPath: string, workingDir: string): string | null {
   const segments = userPath.split('/').filter(s => s.length > 0);

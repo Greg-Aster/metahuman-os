@@ -24,6 +24,9 @@ interface AudioChunk {
   played: boolean;
 }
 
+export type TTSPlaybackOutcome = 'completed' | 'interrupted' | 'suppressed' | 'failed';
+export type TTSStopReason = 'interrupted' | 'disabled' | 'superseded' | 'cleanup';
+
 // Constants
 const VOICE_MODELS_CACHE_TTL = 60_000; // 1 minute
 const VOICE_PROVIDER_CACHE_TTL = 30_000; // 30 seconds
@@ -107,6 +110,8 @@ function createTTS() {
   let currentObjectUrl: string | null = null;
   let currentTtsAbort: AbortController | null = null;
   let ttsPlaybackToken = 0;
+  const livePlaybackTokens = new Set<number>();
+  const playbackStopReasons = new Map<number, TTSStopReason>();
   let audioUnlocked = false;
   let webAudioSource: AudioBufferSourceNode | null = null; // Web Audio API (doesn't steal media session)
 
@@ -133,6 +138,26 @@ function createTTS() {
   // Buffer 2 paragraphs to smooth over any synthesis delays
   const BUFFER_THRESHOLD = 2;
   let streamComplete = false; // Track if all chunks have been received
+  let streamPlaybackFailed = false;
+
+  function markPlaybackStopped(reason: TTSStopReason): void {
+    if (livePlaybackTokens.has(ttsPlaybackToken) && !playbackStopReasons.has(ttsPlaybackToken)) {
+      playbackStopReasons.set(ttsPlaybackToken, reason);
+    }
+  }
+
+  function finishPlayback(token: number, completed: boolean): TTSPlaybackOutcome {
+    const reason = playbackStopReasons.get(token);
+    playbackStopReasons.delete(token);
+    livePlaybackTokens.delete(token);
+    if (reason === 'disabled') return 'suppressed';
+    if (reason === 'interrupted' || reason === 'superseded') return 'interrupted';
+    return completed ? 'completed' : 'failed';
+  }
+
+  function playbackWasStopped(token: number): boolean {
+    return token !== ttsPlaybackToken || playbackStopReasons.has(token);
+  }
 
   /**
    * Revoke current audio object URL to free memory
@@ -147,7 +172,8 @@ function createTTS() {
   /**
    * Stop active audio playback
    */
-  function stopActiveAudio() {
+  function stopActiveAudio(reason: TTSStopReason = 'interrupted') {
+    markPlaybackStopped(reason);
     // Check if we were playing before stopping
     const wasPlaying = get(isPlaying);
 
@@ -177,6 +203,7 @@ function createTTS() {
 
     // Also stop streaming if active
     stopStreaming();
+    stopNativeTTS(reason);
   }
 
   /**
@@ -202,6 +229,7 @@ function createTTS() {
     currentChunkIndex = 0;
     isPlayingChunk = false;
     streamComplete = false;
+    streamPlaybackFailed = false;
     isStreaming.set(false);
     streamProgress.set({ current: 0, total: 0 });
   }
@@ -209,7 +237,8 @@ function createTTS() {
   /**
    * Cancel in-flight TTS request
    */
-  function cancelInFlightTts() {
+  function cancelInFlightTts(reason: TTSStopReason = 'interrupted') {
+    markPlaybackStopped(reason);
     if (currentTtsAbort) {
       currentTtsAbort.abort();
       currentTtsAbort = null;
@@ -317,7 +346,7 @@ function createTTS() {
    * Uses Web Audio API instead of Audio elements to avoid stealing media session
    * Automatically routes to native TTS if native voice mode is enabled
    */
-  async function speakText(text: string): Promise<void> {
+  async function speakText(text: string): Promise<TTSPlaybackOutcome> {
     // Check if native voice mode is enabled - route to native TTS
     if (isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
       console.log('[useTTS] Native voice mode enabled - routing to native TTS');
@@ -330,12 +359,13 @@ function createTTS() {
     console.log('[useTTS] normalized text length:', speechText?.length || 0);
     if (!speechText) {
       console.log('[useTTS] No speech text after normalization, aborting');
-      return;
+      return 'failed';
     }
 
+    stopActiveAudio('superseded');
+    cancelInFlightTts('superseded');
     const token = ++ttsPlaybackToken;
-    stopActiveAudio();
-    cancelInFlightTts();
+    livePlaybackTokens.add(token);
 
     const controller = new AbortController();
     currentTtsAbort = controller;
@@ -373,19 +403,19 @@ function createTTS() {
         signal: controller.signal
       });
 
-      if (token !== ttsPlaybackToken) return;
+      if (playbackWasStopped(token)) return finishPlayback(token, false);
       currentTtsAbort = null;
       isLoading.set(false);
 
       if (!ttsRes.ok) {
         console.warn('[useTTS] TTS request failed:', ttsRes.status);
-        return;
+        return finishPlayback(token, false);
       }
 
       // Use Web Audio API instead of Audio element
       // This plays audio WITHOUT claiming the media session!
       const arrayBuffer = await ttsRes.arrayBuffer();
-      if (token !== ttsPlaybackToken) return;
+      if (playbackWasStopped(token)) return finishPlayback(token, false);
 
       // Create/resume AudioContext
       audioCtx = audioCtx || new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -395,34 +425,39 @@ function createTTS() {
 
       // Decode the audio
       const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      if (token !== ttsPlaybackToken) return;
+      if (playbackWasStopped(token)) return finishPlayback(token, false);
 
       // Create source node and play
-      webAudioSource = audioCtx.createBufferSource();
-      webAudioSource.buffer = audioBuffer;
-      webAudioSource.connect(audioCtx.destination);
+      const source = audioCtx.createBufferSource();
+      webAudioSource = source;
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
 
       isPlaying.set(true);
       reportTTSState(true); // Tell server we're speaking
       console.log('[useTTS] Playing via Web Audio API (no media session steal)');
 
-      webAudioSource.onended = () => {
-        if (token !== ttsPlaybackToken) return;
-        console.log('[useTTS] Web Audio playback ended');
-        isPlaying.set(false);
-        reportTTSState(false); // Tell server we're done speaking
-        webAudioSource = null;
-      };
-
-      webAudioSource.start(0);
+      await new Promise<void>((resolve) => {
+        source.onended = () => {
+          if (!playbackWasStopped(token)) {
+            console.log('[useTTS] Web Audio playback ended');
+            isPlaying.set(false);
+            reportTTSState(false); // Tell server we're done speaking
+          }
+          if (webAudioSource === source) webAudioSource = null;
+          resolve();
+        };
+        source.start(0);
+      });
+      return finishPlayback(token, true);
 
     } catch (e) {
       if (controller.signal.aborted) {
-        // Expected when superseded by a new utterance
-        return;
+        return finishPlayback(token, false);
       }
       console.warn('[useTTS] speakText failed:', e);
       isPlaying.set(false);
+      return finishPlayback(token, false);
     } finally {
       if (currentTtsAbort === controller) {
         currentTtsAbort = null;
@@ -444,24 +479,27 @@ function createTTS() {
     speed?: number;       // Speaking rate (0.5-2.0)
     source?: string;
     requestId?: string;
-  }): Promise<void> {
+  }): Promise<TTSPlaybackOutcome> {
     console.log('[useTTS] speakTextStreaming called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
     console.log('[useTTS] normalized text length:', speechText?.length || 0);
     if (!speechText) {
       console.log('[useTTS] No speech text after normalization, aborting');
-      return;
+      return 'failed';
     }
 
     // Stop any existing playback
-    stopActiveAudio();
-    cancelInFlightTts();
+    stopActiveAudio('superseded');
+    cancelInFlightTts('superseded');
+    const token = ++ttsPlaybackToken;
+    livePlaybackTokens.add(token);
 
     // Initialize streaming state
     audioQueue = [];
     currentChunkIndex = 0;
     isPlayingChunk = false;
     streamComplete = false;
+    streamPlaybackFailed = false;
     streamAbortController = new AbortController();
 
     isStreaming.set(true);
@@ -543,6 +581,8 @@ function createTTS() {
             // Handle error event
             if (data.event === 'error') {
               console.error('[useTTS] Stream error:', data.error);
+              streamPlaybackFailed = true;
+              streamComplete = true;
               throw new Error(data.error);
             }
 
@@ -593,24 +633,33 @@ function createTTS() {
         }
       }
 
+      if (!streamComplete) {
+        console.warn('[useTTS] TTS stream ended before its completion event');
+        streamPlaybackFailed = true;
+        streamComplete = true;
+        playNextChunk();
+      }
+
       // Wait for all chunks to finish playing
-      await waitForPlaybackComplete();
+      await waitForPlaybackComplete(token);
+      return finishPlayback(token, !streamPlaybackFailed);
 
     } catch (e) {
       if ((e as Error).name === 'AbortError') {
         console.log('[useTTS] Streaming aborted');
-        return;
+        return finishPlayback(token, false);
       }
       console.warn('[useTTS] Streaming failed:', e);
 
       if (await fetchSpeechOutputTarget() === 'robot') {
-        return;
+        return finishPlayback(token, false);
       }
 
       // Fallback to non-streaming mode
       console.log('[useTTS] Falling back to non-streaming TTS');
       stopStreaming();
-      await speakText(text);
+      finishPlayback(token, false);
+      return await speakText(text);
     } finally {
       isLoading.set(false);
       isStreaming.set(false);
@@ -659,6 +708,7 @@ function createTTS() {
 
     chunk.audio.onerror = () => {
       console.warn(`[useTTS] Chunk ${chunk.index} playback error`);
+      streamPlaybackFailed = true;
       URL.revokeObjectURL(chunk.audio.src);
       isPlayingChunk = false;
       currentChunkIndex++;
@@ -667,6 +717,7 @@ function createTTS() {
 
     chunk.audio.play().catch((err) => {
       console.warn(`[useTTS] Failed to play chunk ${chunk.index}:`, err);
+      streamPlaybackFailed = true;
       isPlayingChunk = false;
       currentChunkIndex++;
       playNextChunk();
@@ -676,9 +727,13 @@ function createTTS() {
   /**
    * Wait for all audio chunks to finish playing
    */
-  function waitForPlaybackComplete(): Promise<void> {
+  function waitForPlaybackComplete(token: number): Promise<void> {
     return new Promise((resolve) => {
       const checkComplete = () => {
+        if (playbackWasStopped(token)) {
+          resolve();
+          return;
+        }
         const allPlayed = audioQueue.length === 0 || audioQueue.every(c => c.played);
         if (allPlayed && !isPlayingChunk && streamComplete) {
           isPlaying.set(false);
@@ -695,10 +750,10 @@ function createTTS() {
    * Cleanup function to call on component unmount
    */
   function cleanup() {
-    cancelInFlightTts();
-    stopActiveAudio();
+    cancelInFlightTts('cleanup');
+    stopActiveAudio('cleanup');
     stopStreaming();
-    stopNativeTTS();
+    stopNativeTTS('cleanup');
     if (audioCtx) {
       try { audioCtx.close(); } catch {}
       audioCtx = null;
@@ -707,34 +762,48 @@ function createTTS() {
 
   // Native TTS state
   let nativeUtterance: SpeechSynthesisUtterance | null = null;
+  let finishNativePlayback: (() => void) | null = null;
 
   /**
    * Stop native TTS playback
    */
-  function stopNativeTTS() {
+  function stopNativeTTS(reason: TTSStopReason = 'interrupted') {
+    markPlaybackStopped(reason);
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    finishNativePlayback?.();
+    finishNativePlayback = null;
     nativeUtterance = null;
   }
 
   /**
    * Speak text using native device TTS (Web Speech API)
    */
-  async function speakTextNative(text: string): Promise<void> {
+  async function speakTextNative(text: string): Promise<TTSPlaybackOutcome> {
     const speechText = normalizeTextForSpeech(text);
     if (!speechText) {
       console.log('[useTTS] No speech text after normalization, aborting');
-      return;
+      return 'failed';
     }
 
     // Stop any existing playback
-    stopActiveAudio();
-    stopNativeTTS();
+    stopActiveAudio('superseded');
+    const token = ++ttsPlaybackToken;
+    livePlaybackTokens.add(token);
 
     // Use Web Speech API
     console.log('[useTTS] 🔊 Using Web Speech API');
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (completed: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (finishNativePlayback === interruptNativePlayback) finishNativePlayback = null;
+        resolve(finishPlayback(token, completed));
+      };
+      const interruptNativePlayback = () => settle(false);
+      finishNativePlayback = interruptNativePlayback;
       try {
         nativeUtterance = new SpeechSynthesisUtterance(speechText);
 
@@ -769,7 +838,7 @@ function createTTS() {
           isPlaying.set(false);
           reportTTSState(false); // Tell server we're done speaking
           nativeUtterance = null;
-          resolve();
+          settle(true);
         };
 
         nativeUtterance.onerror = (event) => {
@@ -777,7 +846,7 @@ function createTTS() {
           isPlaying.set(false);
           reportTTSState(false); // Tell server we're done (error case)
           nativeUtterance = null;
-          reject(new Error(event.error));
+          settle(false);
         };
 
         window.speechSynthesis.speak(nativeUtterance);
@@ -785,7 +854,7 @@ function createTTS() {
       } catch (e) {
         console.error('[useTTS] Native TTS failed:', e);
         isPlaying.set(false);
-        reject(e);
+        settle(false);
       }
     });
   }
@@ -800,7 +869,7 @@ function createTTS() {
     speed?: number;
     source?: string;
     requestId?: string;
-  }): Promise<void> {
+  }): Promise<TTSPlaybackOutcome> {
     const outputTarget = await fetchSpeechOutputTarget();
     // Check if native voice mode is enabled
     if (

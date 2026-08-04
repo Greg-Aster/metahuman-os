@@ -174,6 +174,29 @@ export const environmentContextBuilderNode = defineNode({
       ? observation.metadata.taskValidatorCommand
       : null;
     const queuedContinuation = Boolean(validatorCommand);
+    const commandContract = environmentTaskContractFromRouting({
+      actionParams: {
+        continuationPolicy: validatorCommand?.continuationPolicy,
+        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
+      },
+    }, typeof validatorCommand?.objective === 'string' ? validatorCommand.objective : '');
+    // The context router sees the utterance and recent conversation, but not the
+    // current environment state. It may authorize current work, but it cannot own
+    // the task's completion contract. Only a contract persisted by the validator
+    // from an admitted action/continuation is authoritative on a later pass.
+    const taskContract = commandContract
+      || parseEnvironmentTaskInstruction(observation.metadata?.originatingInstruction);
+    const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
+      && typeof routingAnalysis.needsEnvironment === 'boolean'
+      && typeof routingAnalysis.needsVision === 'boolean';
+    const includeActionContracts = !hasTypedContextAdmission
+      || routingAnalysis.needsAction === true
+      || queuedContinuation
+      || Boolean(taskContract);
+    const includeEnvironmentContext = !hasTypedContextAdmission
+      || routingAnalysis.needsEnvironment === true
+      || routingAnalysis.needsVision === true
+      || includeActionContracts;
     const includeRecentHistory = routingAnalysis.isFollowUp === true && !queuedContinuation;
     const includeSemanticMemory = routingAnalysis.needsMemory === true;
     const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
@@ -182,7 +205,14 @@ export const environmentContextBuilderNode = defineNode({
     const correlatedVisual = visualFrames.some(frame => (
       typeof frame.metadata?.correlationId === 'string'
     )) || typeof effectiveObservation.metadata?.correlationId === 'string';
-    const useImages = correlatedVisual;
+    const observerVisualEvidence = isRecord(effectiveObservation.metadata?.robotObserver);
+    const visualRequiredByTask = taskContract?.requiredCompletionBasis === 'visual_observation';
+    const useImages = correlatedVisual && (
+      !hasTypedContextAdmission
+      || routingAnalysis.needsVision === true
+      || visualRequiredByTask
+      || observerVisualEvidence
+    );
     const selectedImages = useImages ? images : [];
     const promptObservation = useImages
       ? effectiveObservation
@@ -190,7 +220,11 @@ export const environmentContextBuilderNode = defineNode({
     const instruction = rawInstruction
       ? `\n\nTask instruction:\n${rawInstruction}`
       : '';
-    const message = `${stringifyEnvironmentObservation(promptObservation, systemPrompt)}${instruction}`;
+    const message = `${stringifyEnvironmentObservation(promptObservation, systemPrompt, {
+      includeEnvironmentContext,
+      includeVisionContext: useImages,
+      includeActionContracts,
+    })}${instruction}`;
     const history = conversationMessages(
       inputs.conversationHistory,
       includeRecentHistory,
@@ -204,18 +238,6 @@ export const environmentContextBuilderNode = defineNode({
     const taskOwnershipBoundary = queuedContinuation
       ? 'This is a coordinator continuation of the original user-owned objective. Pronouns and actor roles remain anchored to the original user message.'
       : '';
-    const commandContract = environmentTaskContractFromRouting({
-      actionParams: {
-        continuationPolicy: validatorCommand?.continuationPolicy,
-        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
-      },
-    }, typeof validatorCommand?.objective === 'string' ? validatorCommand.objective : '');
-    // The context router sees the utterance and recent conversation, but not the
-    // current environment state. It may authorize current work, but it cannot own
-    // the task's completion contract. Only a contract persisted by the validator
-    // from an admitted action/continuation is authoritative on a later pass.
-    const taskContract = commandContract
-      || parseEnvironmentTaskInstruction(observation.metadata?.originatingInstruction);
     const taskCompletionBoundary = taskContract
       ? [
           'Task completion contract:',
@@ -266,8 +288,14 @@ export const environmentContextBuilderNode = defineNode({
           recentHistoryCount: history.length,
           semanticMemory: includeSemanticMemory,
         },
+        contextAdmission: {
+          typed: hasTypedContextAdmission,
+          environment: includeEnvironmentContext,
+          vision: useImages,
+          actionContracts: includeActionContracts,
+        },
         imageSelection: {
-          requested: useImages,
+          requested: routingAnalysis.needsVision === true || visualRequiredByTask || observerVisualEvidence,
           available: images.length,
           used: selectedImages.length,
         },

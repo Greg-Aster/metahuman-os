@@ -147,13 +147,20 @@ const context = await environmentContextBuilderNode.execute({
   ],
   memories: [{ content: 'User: My name is Greg.\n\nAssistant: Nice to meet you, Greg.' }],
   personaText: '## Identity\n- Name: Ainekio\n- Role: Quadruped robot companion',
-  routingAnalysis: { needsMemory: true, isFollowUp: false },
+  routingAnalysis: {
+    needsMemory: true,
+    needsEnvironment: false,
+    needsVision: false,
+    needsAction: false,
+    isFollowUp: false,
+  },
 }, {}, {});
 
 assert.equal(context.messages.length, 2);
 assert.match(String(context.messages[0]?.content), /My name is Greg/);
 assert.match(String(context.messages[0]?.content), /Quadruped robot companion/);
 assert.match(String(context.messages.at(-1)?.content), /What is my name/);
+assert.doesNotMatch(String(context.messages.at(-1)?.content), /Available actions/);
 assert.deepEqual(context.context.contextSelection, {
   recentHistory: false,
   recentHistoryCount: 0,
@@ -179,7 +186,13 @@ const selfContainedContext = await environmentContextBuilderNode.execute({
   instruction: 'Hello, how are you?',
   conversationHistory: [...unifiedInnerDialogue, ...fullConversationWindow],
   memories: [{ content: 'A stale movement request from an earlier turn.' }],
-  routingAnalysis: { needsMemory: false, isFollowUp: false },
+  routingAnalysis: {
+    needsMemory: false,
+    needsEnvironment: false,
+    needsVision: false,
+    needsAction: false,
+    isFollowUp: false,
+  },
 }, {}, {});
 
 const selfContainedMessages = selfContainedContext.messages as Array<{ role: string; content: string }>;
@@ -193,6 +206,17 @@ assert.equal(
   false,
   'Unrequested semantic memory must not enter the prompt',
 );
+assert.doesNotMatch(
+  String(selfContainedMessages.at(-1)?.content),
+  /EXECUTION GROUNDING CONTRACT|Available actions|Sensor truth contract/,
+  'Ordinary conversation must not receive environment action or sensor context',
+);
+assert.deepEqual(selfContainedContext.context.contextAdmission, {
+  typed: true,
+  environment: false,
+  vision: false,
+  actionContracts: false,
+});
 
 const followUpInstruction = 'What did you mean by that?';
 const followUpContext = await environmentContextBuilderNode.execute({
@@ -209,7 +233,13 @@ const followUpContext = await environmentContextBuilderNode.execute({
     ...fullConversationWindow,
     { role: 'user', content: followUpInstruction },
   ],
-  routingAnalysis: { needsMemory: false, isFollowUp: true },
+  routingAnalysis: {
+    needsMemory: false,
+    needsEnvironment: false,
+    needsVision: false,
+    needsAction: false,
+    isFollowUp: true,
+  },
 }, {}, { recentHistoryLimit: 4 });
 
 const followUpMessages = followUpContext.messages as Array<{ role: string; content: string }>;
@@ -233,6 +263,34 @@ assert.equal(
   1,
   'The current instruction must appear exactly once in the final environment prompt',
 );
+
+const currentStateContext = await environmentContextBuilderNode.execute({
+  observation: {
+    environmentId: 'test',
+    adapter: 'test-adapter',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], robotCommands: ['wave'] },
+    state: { batteryPercent: 72 },
+  },
+  instruction: 'What is the current battery level?',
+  routingAnalysis: {
+    needsMemory: false,
+    needsEnvironment: true,
+    needsVision: false,
+    needsAction: false,
+    isFollowUp: false,
+  },
+}, {}, { systemPrompt: 'EXECUTION GROUNDING CONTRACT' });
+
+assert.match(String(currentStateContext.message), /batteryPercent/);
+assert.doesNotMatch(String(currentStateContext.message), /EXECUTION GROUNDING CONTRACT/);
+assert.deepEqual(currentStateContext.context.contextAdmission, {
+  typed: true,
+  environment: true,
+  vision: false,
+  actionContracts: false,
+});
 
 const emptyCapture = await MemoryCaptureNode.execute({
   userMessage: '',

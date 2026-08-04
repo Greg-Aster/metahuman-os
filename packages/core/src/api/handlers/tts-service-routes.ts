@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
 import { getProfilePaths, systemPaths } from '../../path-builder.js';
+import {
+  ensureVoiceServiceRunning,
+  getVoiceServiceStatus,
+  stopVoiceService,
+} from '../../voice-service-manager.js';
 
 const rootPath = systemPaths.root;
 const KOKORO_DIR = path.join(rootPath, 'external', 'kokoro');
@@ -74,19 +79,6 @@ async function runInstallScript(scriptName: string): Promise<{ success: boolean;
   }
 }
 
-function killPidFile(pidFile: string): void {
-  if (!fs.existsSync(pidFile)) return;
-  try {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-    if (Number.isFinite(pid)) {
-      process.kill(pid, 'SIGTERM');
-    }
-    fs.unlinkSync(pidFile);
-  } catch {
-    // Ignore stop failures during uninstall cleanup.
-  }
-}
-
 export const handleKokoroAddon: UnifiedHandler = async (req) => {
   try {
     if (req.method === 'GET') {
@@ -125,7 +117,7 @@ export const handleKokoroAddon: UnifiedHandler = async (req) => {
       if (!fs.existsSync(KOKORO_DIR)) {
         return { status: 200, data: { success: true, message: 'Kokoro is not installed' } };
       }
-      killPidFile(path.join(rootPath, 'logs', 'run', 'kokoro-server.pid'));
+      await stopVoiceService('kokoro');
       fs.rmSync(KOKORO_DIR, { recursive: true, force: true });
       return { status: 200, data: { success: true, message: 'Kokoro uninstalled successfully' } };
     }
@@ -185,157 +177,18 @@ export const handleRvcAddon: UnifiedHandler = async (req) => {
   }
 };
 
-async function getKokoroServerStatus(): Promise<Record<string, unknown>> {
-  const pythonBin = path.join(KOKORO_DIR, 'venv', 'bin', 'python3');
-  const serverScript = path.join(KOKORO_DIR, 'kokoro_server.py');
-  const installed = fs.existsSync(pythonBin) && fs.existsSync(serverScript);
-  const pidFile = path.join(rootPath, 'logs', 'run', 'kokoro-server.pid');
-
-  if (!fs.existsSync(pidFile)) {
-    return { running: false, installed };
-  }
-
-  try {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-    try {
-      process.kill(pid, 0);
-    } catch {
-      fs.unlinkSync(pidFile);
-      return { running: false, installed };
-    }
-
-    const url = 'http://127.0.0.1:9882';
-    let healthy = false;
-    let lang: string | undefined;
-    try {
-      const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-      if (response.ok) {
-        const data = await response.json() as { lang?: string };
-        healthy = true;
-        lang = data.lang;
-      }
-    } catch {
-      // Not responding.
-    }
-
-    return { running: true, installed, pid, healthy, url, lang };
-  } catch {
-    return { running: false, installed };
-  }
-}
-
-async function startKokoroServer(port = 9882, lang = 'a', device = 'cuda'): Promise<Record<string, unknown>> {
-  const pidFile = path.join(rootPath, 'logs', 'run', 'kokoro-server.pid');
-  const logFile = path.join(rootPath, 'logs', 'run', 'kokoro-server.log');
-
-  if (fs.existsSync(pidFile)) {
-    try {
-      const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-      process.kill(pid, 0);
-      return { success: false, error: `Server already running (PID ${pid})` };
-    } catch {
-      fs.unlinkSync(pidFile);
-    }
-  }
-
-  const pythonBin = path.join(KOKORO_DIR, 'venv', 'bin', 'python3');
-  const serverScript = path.join(KOKORO_DIR, 'kokoro_server.py');
-  if (!fs.existsSync(pythonBin)) return { success: false, error: 'Kokoro not installed. Run installation first.' };
-  if (!fs.existsSync(serverScript)) return { success: false, error: 'Server script not found. Reinstall Kokoro.' };
-
-  try {
-    fs.mkdirSync(path.dirname(logFile), { recursive: true });
-    const logFd = fs.openSync(logFile, 'a');
-    const child = spawn(pythonBin, [serverScript, '--port', String(port), '--lang', lang, '--device', device], {
-      cwd: KOKORO_DIR,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-    });
-    fs.writeFileSync(pidFile, String(child.pid));
-    fs.closeSync(logFd);
-
-    const url = `http://127.0.0.1:${port}`;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 10000) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      try {
-        const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) });
-        if (response.ok) {
-          child.unref();
-          return { success: true, message: 'Server started successfully', pid: child.pid, url };
-        }
-      } catch {
-        // Continue polling.
-      }
-    }
-    child.unref();
-    return { success: true, message: 'Server process started but not responding yet. Check logs.', pid: child.pid, url };
-  } catch (error) {
-    return { success: false, error: `Failed to start server: ${String(error)}` };
-  }
-}
-
-async function stopPidServer(pidFile: string, stoppedMessage: string, notRunningMessage: string): Promise<Record<string, unknown>> {
-  if (!fs.existsSync(pidFile)) {
-    return { success: true, message: notRunningMessage };
-  }
-
-  try {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-    process.kill(pid, 'SIGTERM');
-
-    let stopped = false;
-    for (let i = 0; i < 10; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      try {
-        process.kill(pid, 0);
-      } catch {
-        stopped = true;
-        break;
-      }
-    }
-
-    if (!stopped) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // Already stopped.
-      }
-    }
-
-    fs.unlinkSync(pidFile);
-    return { success: true, message: stoppedMessage };
-  } catch (error) {
-    return { success: false, error: `Failed to stop server: ${String(error)}` };
-  }
-}
-
 export const handleKokoroServer: UnifiedHandler = async (req) => {
   try {
-    if (req.method === 'GET') return { status: 200, data: await getKokoroServerStatus() };
+    if (req.method === 'GET') return { status: 200, data: await getVoiceServiceStatus('kokoro') };
 
-    const { action, port, lang, device } = req.body ?? {};
+    const { action } = req.body ?? {};
     if (action === 'start') {
-      let effectiveDevice = device;
-      if (!effectiveDevice) {
-        try {
-          const profilePaths = getProfilePaths(req.user.username);
-          if (fs.existsSync(profilePaths.voiceConfig)) {
-            const voiceConfig = JSON.parse(fs.readFileSync(profilePaths.voiceConfig, 'utf-8'));
-            effectiveDevice = voiceConfig.tts?.kokoro?.device;
-          }
-        } catch (error) {
-          console.warn('[kokoro-server] Failed to read voice config for device setting:', error);
-        }
-        effectiveDevice = effectiveDevice || 'cuda';
-      }
-
-      const result = await startKokoroServer(port || 9882, lang || 'a', effectiveDevice);
-      return { status: result.success ? 200 : 500, data: result };
+      const result = await ensureVoiceServiceRunning('kokoro');
+      return { status: 200, data: { success: true, message: 'Kokoro server start accepted', ...result } };
     }
 
     if (action === 'stop') {
-      const result = await stopPidServer(path.join(rootPath, 'logs', 'run', 'kokoro-server.pid'), 'Server stopped successfully', 'Server is not running');
+      const result = await stopVoiceService('kokoro');
       return { status: result.success ? 200 : 500, data: result };
     }
 

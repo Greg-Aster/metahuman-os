@@ -10,7 +10,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths } from './paths.js';
+import { getUserContext } from './context.js';
+import { getProfilePaths } from './path-builder.js';
 
 export interface ModelRegistryEntry {
   version: number;
@@ -52,18 +53,25 @@ export interface ModelRegistry {
   };
 }
 
-const REGISTRY_PATH = path.join(systemPaths.etc, 'model-registry.json');
+function registryPath(username?: string): string {
+  const resolvedUsername = username ?? getUserContext()?.username
+  if (!resolvedUsername) {
+    throw new Error('A user context or explicit username is required for the training model registry')
+  }
+  return path.join(getProfilePaths(resolvedUsername).etc, 'model-registry.json')
+}
 
 /**
  * Load training registry (model fine-tuning lineage)
  * Note: This is different from loadModelRegistry in model-resolver.ts which handles role-based model config
  */
-export function loadTrainingRegistry(): ModelRegistry {
-  if (!fs.existsSync(REGISTRY_PATH)) {
-    throw new Error(`Training registry not found: ${REGISTRY_PATH}`);
+export function loadTrainingRegistry(username?: string): ModelRegistry {
+  const registryFile = registryPath(username)
+  if (!fs.existsSync(registryFile)) {
+    throw new Error(`Training registry not found: ${registryFile}`);
   }
 
-  const content = fs.readFileSync(REGISTRY_PATH, 'utf-8');
+  const content = fs.readFileSync(registryFile, 'utf-8');
   const { comment, notes, ...registry } = JSON.parse(content);
   return registry as ModelRegistry;
 }
@@ -71,7 +79,7 @@ export function loadTrainingRegistry(): ModelRegistry {
 /**
  * Save model registry
  */
-export function saveModelRegistry(registry: ModelRegistry): void {
+export function saveModelRegistry(registry: ModelRegistry, username?: string): void {
   const fullRegistry = {
     comment: 'Model registry tracks fine-tuning lineage and current base model',
     notes: [
@@ -83,14 +91,14 @@ export function saveModelRegistry(registry: ModelRegistry): void {
     ...registry,
   };
 
-  fs.writeFileSync(REGISTRY_PATH, JSON.stringify(fullRegistry, null, 2));
+  fs.writeFileSync(registryPath(username), JSON.stringify(fullRegistry, null, 2));
 }
 
 /**
  * Get the current base model to use for training
  */
-export function getCurrentBaseModel(): { model: string; type: 'huggingface' | 'local' } {
-  const registry = loadTrainingRegistry();
+export function getCurrentBaseModel(username?: string): { model: string; type: 'huggingface' | 'local' } {
+  const registry = loadTrainingRegistry(username);
 
   return {
     model: registry.current_base_model,
@@ -101,8 +109,8 @@ export function getCurrentBaseModel(): { model: string; type: 'huggingface' | 'l
 /**
  * Get the next version number
  */
-export function getNextVersion(): number {
-  const registry = loadTrainingRegistry();
+export function getNextVersion(username?: string): number {
+  const registry = loadTrainingRegistry(username);
   if (registry.training_history.length === 0) {
     return 1;
   }
@@ -113,14 +121,14 @@ export function getNextVersion(): number {
 /**
  * Register a successful training run and update the base model
  */
-export function registerTrainingRun(entry: Omit<ModelRegistryEntry, 'version'>): void {
-  const registry = loadTrainingRegistry();
+export function registerTrainingRun(entry: Omit<ModelRegistryEntry, 'version'>, username?: string): void {
+  const registry = loadTrainingRegistry(username);
 
   if (!entry.training_success) {
     return;
   }
 
-  const version = getNextVersion();
+  const version = getNextVersion(username);
 
   const fullEntry: ModelRegistryEntry = {
     version,
@@ -136,33 +144,33 @@ export function registerTrainingRun(entry: Omit<ModelRegistryEntry, 'version'>):
     registry.model_type = 'local';
   }
 
-  saveModelRegistry(registry);
+  saveModelRegistry(registry, username);
 }
 
 /**
  * Reset to original base model (useful for testing or starting fresh)
  */
-export function resetToOriginalBase(): void {
-  const registry = loadTrainingRegistry();
+export function resetToOriginalBase(username?: string): void {
+  const registry = loadTrainingRegistry(username);
   registry.current_base_model = registry.original_base_model;
   registry.model_type = 'huggingface';
 
-  saveModelRegistry(registry);
+  saveModelRegistry(registry, username);
 }
 
 /**
  * Get training history summary
  */
-export function getTrainingHistory(): ModelRegistryEntry[] {
-  const registry = loadTrainingRegistry();
+export function getTrainingHistory(username?: string): ModelRegistryEntry[] {
+  const registry = loadTrainingRegistry(username);
   return registry.training_history;
 }
 
 /**
  * Get latest trained model info
  */
-export function getLatestModel(): ModelRegistryEntry | null {
-  const registry = loadTrainingRegistry();
+export function getLatestModel(username?: string): ModelRegistryEntry | null {
+  const registry = loadTrainingRegistry(username);
 
   if (registry.training_history.length === 0) {
     return null;
@@ -181,7 +189,7 @@ export function getLatestModel(): ModelRegistryEntry | null {
 /**
  * Check if we're using a locally trained model or the original HuggingFace model
  */
-export function isUsingLocalModel(): boolean {
-  const registry = loadTrainingRegistry();
+export function isUsingLocalModel(username?: string): boolean {
+  const registry = loadTrainingRegistry(username);
   return registry.model_type === 'local';
 }

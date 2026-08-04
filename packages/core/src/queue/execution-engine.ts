@@ -254,6 +254,9 @@ export class ExecutionEngine {
               ? robotOperatorConfig.environmentGraph
               : undefined,
             abortSignal: context.signal,
+            ttsGeneration: typeof task.input.ttsGeneration === 'number'
+              ? task.input.ttsGeneration
+              : undefined,
           },
         }),
       );

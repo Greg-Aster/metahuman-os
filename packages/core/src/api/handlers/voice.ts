@@ -18,6 +18,7 @@ import { successResponse, errorResponse, badRequestResponse } from '../types.js'
 import { createVoiceLoop, VoiceLoopController } from '../../voice/index.js';
 import type { VoiceLoopConfig } from '../../voice/types.js';
 import { audit } from '../../audit.js';
+import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 
 // Store active voice loops by username
 const activeVoiceLoops = new Map<string, VoiceLoopController>();
@@ -122,6 +123,7 @@ export async function handleVoiceTranscript(req: UnifiedRequest): Promise<Unifie
     };
 
     if (asrResult.isFinal) {
+      beginTTSUserTurn(req.user.username, 'user-input');
       await loop.onTranscriptFinal(asrResult);
     } else {
       loop.onTranscriptPartial(asrResult.text);
@@ -271,6 +273,7 @@ export async function handleVoiceBargeIn(req: UnifiedRequest): Promise<UnifiedRe
       return errorResponse('No active voice session', 404);
     }
 
+    beginTTSUserTurn(req.user.username, 'barge-in');
     loop.onBargeIn();
 
     return successResponse({

@@ -10,6 +10,12 @@ const centerContent = read('apps/site/src/components/CenterContent.svelte');
 const queueConsumer = read('apps/site/src/components/TTSQueueConsumer.svelte');
 const ttsComposable = read('apps/site/src/lib/client/composables/useTTS.ts');
 const speechPreference = read('apps/site/src/lib/client/assistant-speech-preference.ts');
+const queueHandler = read('packages/core/src/api/handlers/tts-queue-stream.ts');
+const deliveryQueue = read('packages/core/src/tts/delivery-queue.ts');
+const deliveryTransport = read('apps/site/src/pages/api/tts-queue-delivery.ts');
+const interruptionTransport = read('apps/site/src/pages/api/tts-queue-interrupt.ts');
+const unifiedQueueHandler = read('packages/core/src/api/handlers/unified-queue.ts');
+const environmentBridgeHandler = read('packages/core/src/api/handlers/environment-bridge.ts');
 
 assert.ok(
   !chat.includes('speakAssistantResponse'),
@@ -60,7 +66,7 @@ assert.match(
 );
 assert.match(
   chat,
-  /function toggleAssistantSpeech\(\): void \{[\s\S]*?ttsEnabled = !ttsEnabled;[\s\S]*?ttsApi\.stopActiveAudio\(\);[\s\S]*?ttsApi\.cancelInFlightTts\(\);[\s\S]*?saveChatPrefs\(\);[\s\S]*?\}/,
+  /function toggleAssistantSpeech\(\): void \{[\s\S]*?ttsEnabled = !ttsEnabled;[\s\S]*?interruptAssistantSpeech\('speech-disabled'\)[\s\S]*?saveChatPrefs\(\);[\s\S]*?\}/,
   'disabling speech from the main chat must stop current audio, cancel synthesis, and persist the choice',
 );
 assert.doesNotMatch(
@@ -80,8 +86,8 @@ assert.ok(
 );
 assert.match(
   queueConsumer,
-  /apiEventSource\(['"]\/api\/tts-queue-stream['"]\)/,
-  'the app-level consumer must listen to the existing node-owned local TTS queue',
+  /apiEventSource\([\s\S]*?\/api\/tts-queue-stream\?consumerId=/,
+  'the app-level consumer must identify itself to the node-owned local TTS queue',
 );
 assert.match(
   queueConsumer,
@@ -103,8 +109,63 @@ assert.match(
   /const sharedTTSApi = createTTS\(\);[\s\S]*?export function useTTS\(\) \{[\s\S]*?return sharedTTSApi;/,
   'manual and automatic speech must share one audio channel and browser unlock state',
 );
+assert.doesNotMatch(
+  queueHandler,
+  /popTTSQueue/,
+  'the queue stream must never remove speech before delivery is acknowledged',
+);
+assert.match(
+  queueHandler,
+  /claimNextTTS\([\s\S]*?handleTtsQueueDelivery[\s\S]*?updateTTSDelivery/,
+  'the core queue handler must own claim and delivery acknowledgement',
+);
+assert.match(
+  queueConsumer,
+  /action: DeliveryAction[\s\S]*?'renew'[\s\S]*?outcome === 'completed'[\s\S]*?'interrupt'[\s\S]*?'retry'/,
+  'the playback client must renew its lease and distinguish completion, interruption, and failure',
+);
+assert.match(
+  deliveryQueue,
+  /interrupt\([\s\S]*?advanceGeneration[\s\S]*?queue\.items = \[\][\s\S]*?updateDelivery\(/,
+  'the TTS delivery owner must atomically supersede queued speech and retain explicit item lifecycle updates',
+);
+assert.match(
+  deliveryTransport,
+  /export const POST = astroHandler;/,
+  'the TTS delivery API shell must remain thin transport over the core handler',
+);
+assert.match(
+  interruptionTransport,
+  /export const POST = astroHandler;/,
+  'the TTS interruption API shell must remain thin transport over the core handler',
+);
+assert.match(
+  chat,
+  /sendMessage\(\)[\s\S]*?interruptAssistantSpeech\('user-input'\)/,
+  'new chat input must interrupt prior speech without waiting for audio completion',
+);
+assert.match(
+  queueConsumer,
+  /data\.type === 'interrupt'[\s\S]*?stopActiveAudio\('interrupted'\)/,
+  'server-owned supersession must immediately stop the browser playback actuator',
+);
+assert.match(
+  unifiedQueueHandler,
+  /body\.type === 'user_message'[\s\S]*?beginTTSUserTurn[\s\S]*?ttsGeneration/,
+  'the work coordinator must capture a speech generation when it accepts user input',
+);
+assert.match(
+  environmentBridgeHandler,
+  /environmentObservationStartsUserTurn[\s\S]*?audio_utterance[\s\S]*?beginTTSUserTurn/,
+  'Environment Bridge microphone input must use the same core interruption contract',
+);
 
 const ttsNode = read('packages/core/src/nodes/output/tts.node.ts');
+assert.match(
+  ttsNode,
+  /generation:[\s\S]*?context\.ttsGeneration/,
+  'tts-out must preserve the generation captured by the user-input owner',
+);
 assert.match(
   ttsNode,
   /settings\.outputTarget === 'robot'[\s\S]*?renderRobot\([\s\S]*?dependencies\.queue/,

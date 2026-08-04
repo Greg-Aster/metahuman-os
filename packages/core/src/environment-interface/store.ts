@@ -298,7 +298,7 @@ export function recordEnvironmentRobotStatus(
 
 export function publishEnvironmentObservation(
   observation: EnvironmentObservation,
-  options: { username: string; graph?: string },
+  options: { username: string; graph?: string; ttsGeneration?: number },
 ): { summary: EnvironmentBridgeSummary; workId: string } {
   const contextualObservation = attachEnvironmentActionContext(observation);
   const summary = recordEnvironmentObservation(contextualObservation);
@@ -308,7 +308,11 @@ export function publishEnvironmentObservation(
     resource: 'local-llm',
     source: 'environment',
     priority: 'high',
-    input: { observation: contextualObservation, graph: options.graph },
+    input: {
+      observation: contextualObservation,
+      graph: options.graph,
+      ttsGeneration: options.ttsGeneration,
+    },
     username: options.username,
     cognitiveMode: 'environment',
     correlationId: typeof contextualObservation.metadata?.correlationId === 'string'

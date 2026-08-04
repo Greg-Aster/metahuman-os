@@ -1,7 +1,8 @@
 // Test: path-builder should now auto-load users.ts via dynamic require
 import { getProfilePathsWithStatus } from '../packages/core/src/path-builder.js';
 
-const username = process.argv[2] || 'greggles';
+const username = process.argv[2];
+if (!username) throw new Error('Usage: pnpm tsx scripts/test-path.ts <username>');
 console.log(`Testing path resolution for user: ${username}\n`);
 
 try {

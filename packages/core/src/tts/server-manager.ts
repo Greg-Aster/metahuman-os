@@ -1,7 +1,7 @@
 /**
  * TTS Server Manager
- * Centralized lifecycle management for TTS server processes
- * Ensures only one TTS server runs at a time and handles cleanup
+ * Lifecycle compatibility for the remaining profile-coupled RVC and SoVITS
+ * servers. Kokoro is a shared system service owned by voice-service-manager.
  */
 
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 
-export type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro';
+export type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc';
 
 interface ServerInfo {
   provider: TTSProvider;
@@ -29,12 +29,6 @@ function getServerInfo(provider: TTSProvider): ServerInfo | null {
         provider: 'rvc',
         pidFile: path.join(runDir, 'rvc-server.pid'),
         logFile: path.join(runDir, 'rvc-server.log'),
-      };
-    case 'kokoro':
-      return {
-        provider: 'kokoro',
-        pidFile: path.join(runDir, 'kokoro-server.pid'),
-        logFile: path.join(runDir, 'kokoro-server.log'),
       };
     case 'gpt-sovits':
       return {
@@ -157,7 +151,7 @@ export async function stopServer(provider: TTSProvider): Promise<boolean> {
  * Returns count of servers that were stopped
  */
 export async function stopAllServers(): Promise<number> {
-  const providers: TTSProvider[] = ['rvc', 'kokoro', 'gpt-sovits'];
+  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
   let stoppedCount = 0;
 
   console.log('[ServerManager] Stopping all TTS servers...');
@@ -178,7 +172,7 @@ export async function stopAllServers(): Promise<number> {
  * Returns array of providers that have running servers
  */
 export function getRunningServers(): TTSProvider[] {
-  const providers: TTSProvider[] = ['rvc', 'kokoro', 'gpt-sovits'];
+  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
   const running: TTSProvider[] = [];
 
   for (const provider of providers) {
@@ -202,7 +196,7 @@ export function getRunningServers(): TTSProvider[] {
  * Clean up stale PID files (processes that aren't running)
  */
 export function cleanupStalePidFiles(): number {
-  const providers: TTSProvider[] = ['rvc', 'kokoro', 'gpt-sovits'];
+  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
   let cleaned = 0;
 
   for (const provider of providers) {

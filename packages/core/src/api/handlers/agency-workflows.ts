@@ -26,7 +26,7 @@ import {
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
-import { queueTTS } from '../../nodes/output/tts.node.js';
+import { queueTTS } from '../../tts/delivery-queue.js';
 import type { TrustLevel } from '../../skills.js';
 import {
   ensureBackendsInitialized,

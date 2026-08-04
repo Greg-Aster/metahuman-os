@@ -4,12 +4,15 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+KOKORO_PYTHON="$REPO_ROOT/external/kokoro/venv/bin/python3"
 DATASET_DIR="$1"
 BACKUP_DIR="${DATASET_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
 
 if [ -z "$DATASET_DIR" ]; then
   echo "Usage: $0 <dataset-directory>"
-  echo "Example: $0 /home/greggles/metahuman/profiles/greggles/out/voices/kokoro-datasets/default"
+  echo "Example: $0 <profile-root>/out/voices/kokoro-datasets/default"
   exit 1
 fi
 
@@ -55,7 +58,7 @@ echo "✓ Backup created: $BACKUP_DIR"
 # Analyze before normalization
 echo ""
 echo "Analyzing samples before normalization..."
-/home/greggles/metahuman/external/kokoro/venv/bin/python3 -c "
+"$KOKORO_PYTHON" -c "
 import soundfile as sf
 import numpy as np
 from pathlib import Path
@@ -115,7 +118,7 @@ echo "✓ Normalization complete: $PROCESSED succeeded, $FAILED failed"
 # Analyze after normalization
 echo ""
 echo "Analyzing samples after normalization..."
-/home/greggles/metahuman/external/kokoro/venv/bin/python3 -c "
+"$KOKORO_PYTHON" -c "
 import soundfile as sf
 import numpy as np
 from pathlib import Path

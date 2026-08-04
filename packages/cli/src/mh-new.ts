@@ -74,6 +74,7 @@ import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
 import { rvcCommand } from './commands/rvc.js';
 import { kokoroCommand } from './commands/kokoro.js';
+import { voiceServerCommand } from './commands/voice-server.js';
 import { profileCommand } from './commands/profile.js';
 
 // Get default owner username for CLI operations
@@ -1238,6 +1239,11 @@ Voice Training:
   voice delete <id>   Delete a voice sample
   voice export        Export dataset for training
 
+Voice Servers:
+  voice-server status <kokoro|whisper|--all>
+  voice-server start <kokoro|whisper|--all>
+  voice-server stop <kokoro|whisper|--all>
+
 Indexing:
   index build         Build embeddings index over memory
   index query "text"  Semantic search using the index
@@ -1278,7 +1284,6 @@ For more information, see DESIGN.md and ARCHITECTURE.md
 }
 
   async function agent(args: string[]): Promise<void> {
-  ensureInitialized();
   const subcommand = args[0];
 
   if (!subcommand) {
@@ -1323,6 +1328,7 @@ For more information, see DESIGN.md and ARCHITECTURE.md
         break;
       }
 
+      ensureInitialized();
       const username = getUserContext()?.username
         || listUsers().find(user => user.role === 'owner')?.username
         || 'system';
@@ -2355,6 +2361,9 @@ async function main() {
         break;
       case 'voice':
         voiceCmd(args);
+        break;
+      case 'voice-server':
+        await voiceServerCommand(args);
         break;
       case 'user':
         userCmd(args);

@@ -87,6 +87,17 @@ function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis:
   };
 }
 
+export function resolveOrchestratorActionRequirement(input: {
+  declaredNeedsAction: boolean;
+  actionType: string;
+  complexity: number;
+  cognitiveMode?: string;
+}): boolean {
+  return input.declaredNeedsAction
+    || input.actionType !== 'none'
+    || (input.cognitiveMode !== 'environment' && input.complexity > 0.7);
+}
+
 export const OrchestratorLLMNode: NodeDefinition = defineNode({
   id: 'orchestrator_llm',
   name: 'Orchestrator LLM',
@@ -103,6 +114,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
     { name: 'memoryQuery', type: 'string', description: 'Optimized search query' },
     { name: 'memoryTypes', type: 'array', description: 'Exact stored memory types selected semantically by the LLM; empty for broad recall' },
+    { name: 'needsEnvironment', type: 'boolean', description: 'Whether current environment state or capabilities are needed' },
+    { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
     { name: 'needsAction', type: 'boolean', description: 'Whether an action/skill is needed (routes to Big Brother)' },
     { name: 'actionType', type: 'string', description: 'Type of action to perform' },
     { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
@@ -178,6 +191,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
         memoryTier: 'hot',
         memoryQuery: '',
         memoryTypes: [],
+        needsEnvironment: false,
+        needsVision: false,
         needsAction: false,
         actionType: 'none',
         actionParams: {},
@@ -249,6 +264,12 @@ Adjust your routing based on this feedback. If memory search already failed, con
 
       try {
         const parsed = JSON.parse(response.content);
+        const needsEnvironment = typeof parsed.needsEnvironment === 'boolean'
+          ? parsed.needsEnvironment
+          : undefined;
+        const needsVision = typeof parsed.needsVision === 'boolean'
+          ? parsed.needsVision
+          : undefined;
 
         // Force medium+ response length in active conversations
         let responseLength = parsed.responseLength || 'medium';
@@ -257,16 +278,28 @@ Adjust your routing based on this feedback. If memory search already failed, con
         }
 
         // Determine if action requires Big Brother
-        const needsAction = parsed.needsAction ?? false;
-        const complexity = parsed.complexity ?? 0.3;
+        const needsAction = parsed.needsAction === true;
+        const complexity = typeof parsed.complexity === 'number' && Number.isFinite(parsed.complexity)
+          ? Math.max(0, Math.min(1, parsed.complexity))
+          : 0.3;
         const actionType = parsed.actionType || 'none';
-        const triggersBigBrother = needsAction || complexity > 0.7 || actionType !== 'none';
+        // Environment Mode consumes needsAction as physical-action authority.
+        // Complexity may request escalation in other modes, but it must never
+        // silently authorize robot or sensor work.
+        const triggersBigBrother = resolveOrchestratorActionRequirement({
+          declaredNeedsAction: needsAction,
+          actionType,
+          complexity,
+          cognitiveMode: context.cognitiveMode,
+        });
 
         return withAnalysis({
           needsMemory: parsed.needsMemory ?? false,
           memoryTier: parsed.memoryTier || 'hot',
           memoryQuery: parsed.memoryQuery || '',
           memoryTypes: Array.isArray(parsed.memoryTypes) ? parsed.memoryTypes : [],
+          needsEnvironment,
+          needsVision,
           needsAction: triggersBigBrother,
           actionType: actionType,
           actionParams: parsed.actionParams || {},
@@ -282,13 +315,18 @@ Adjust your routing based on this feedback. If memory search already failed, con
       } catch {
         // Fallback parsing for malformed JSON
         const needsMemoryMatch = response.content.match(/needsMemory[":]\s*(true|false)/i);
+        const needsEnvironmentMatch = response.content.match(/needsEnvironment[":]\s*(true|false)/i);
+        const needsVisionMatch = response.content.match(/needsVision[":]\s*(true|false)/i);
         const tierMatch = response.content.match(/memoryTier[":]\s*["']?(hot|warm|cold|facts|all)/i);
         const needsActionMatch = response.content.match(/needsAction[":]\s*(true|false)/i);
         const actionTypeMatch = response.content.match(/actionType[":]\s*["']?(\w+)/i);
         const complexityMatch = response.content.match(/complexity[":]\s*([\d.]+)/i);
         const responseLengthMatch = response.content.match(/responseLength[":]\s*["']?(brief|medium|detailed)/i);
 
-        const complexity = complexityMatch ? parseFloat(complexityMatch[1]) : 0.3;
+        const parsedComplexity = complexityMatch ? parseFloat(complexityMatch[1]) : 0.3;
+        const complexity = Number.isFinite(parsedComplexity)
+          ? Math.max(0, Math.min(1, parsedComplexity))
+          : 0.3;
         const needsAction = needsActionMatch?.[1]?.toLowerCase() === 'true';
         const actionType = actionTypeMatch?.[1]?.toLowerCase() || 'none';
 
@@ -297,7 +335,18 @@ Adjust your routing based on this feedback. If memory search already failed, con
           memoryTier: tierMatch?.[1]?.toLowerCase() || 'hot',
           memoryQuery: '',
           memoryTypes: [],
-          needsAction: needsAction || complexity > 0.7 || actionType !== 'none',
+          needsEnvironment: needsEnvironmentMatch
+            ? needsEnvironmentMatch[1]?.toLowerCase() === 'true'
+            : undefined,
+          needsVision: needsVisionMatch
+            ? needsVisionMatch[1]?.toLowerCase() === 'true'
+            : undefined,
+          needsAction: resolveOrchestratorActionRequirement({
+            declaredNeedsAction: needsAction,
+            actionType,
+            complexity,
+            cognitiveMode: context.cognitiveMode,
+          }),
           actionType,
           actionParams: {},
           complexity,
@@ -317,6 +366,8 @@ Adjust your routing based on this feedback. If memory search already failed, con
         memoryTier: 'hot',
         memoryQuery: '',
         memoryTypes: [],
+        needsEnvironment: undefined,
+        needsVision: undefined,
         needsAction: false,
         actionType: 'none',
         actionParams: {},

@@ -119,6 +119,8 @@ profiles/*/etc/*.pem
 /etc/runpod.json
 /etc/config
 /etc/legacy/
+/etc/default-user.txt
+/etc/model-registry.json
 # Keep template/example configs
 !/etc/*.template
 !/etc/README*.md

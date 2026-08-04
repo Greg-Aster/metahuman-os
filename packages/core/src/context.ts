@@ -46,7 +46,7 @@ const contextStorage = new AsyncLocalStorage<UserContext | undefined>();
  * @example
  * ```typescript
  * await withUserContext(
- *   { userId: 'abc123', username: 'greggles', role: 'owner' },
+ *   { userId: 'abc123', username: 'profile-user', role: 'owner' },
  *   async () => {
  *     const memories = findUnprocessedMemories(); // Uses context!
  *     await processMemories(memories);

@@ -8,9 +8,8 @@
  * - Low quality (file size doesn't match expected duration)
  *
  * Usage:
- *   pnpm tsx scripts/audio-cleanup.ts --dry-run    # Preview what would be deleted
- *   pnpm tsx scripts/audio-cleanup.ts --delete     # Actually delete files
- *   pnpm tsx scripts/audio-cleanup.ts --path /media/greggles/STACK/metahuman/out/voice-training/recordings
+ *   pnpm tsx scripts/audio-cleanup.ts --dry-run --path <recordings-directory>
+ *   pnpm tsx scripts/audio-cleanup.ts --delete --path <recordings-directory>
  */
 
 import fs from 'node:fs';
@@ -59,11 +58,12 @@ const INCOMPLETE_PATTERNS = [
 
 function parseArgs(): { dryRun: boolean; delete: boolean; targetPath?: string } {
   const args = process.argv.slice(2);
+  const pathIndex = args.indexOf('--path');
   return {
     dryRun: args.includes('--dry-run') || (!args.includes('--delete')),
     delete: args.includes('--delete'),
     targetPath: args.find(a => a.startsWith('--path='))?.split('=')[1] ||
-                args[args.indexOf('--path') + 1],
+                (pathIndex >= 0 ? args[pathIndex + 1] : undefined),
   };
 }
 
@@ -226,13 +226,10 @@ function deleteFile(filePath: string, dryRun: boolean): boolean {
 async function main() {
   const { dryRun, delete: doDelete, targetPath } = parseArgs();
 
-  // Default paths to check
-  const pathsToCheck = targetPath ? [targetPath] : [
-    '/media/greggles/STACK/metahuman/out/voice-training/recordings',
-    '/media/greggles/STACK/metahuman/profiles/*/out/voice-training/recordings',
-    '/home/greggles/metahuman/out/voice-training/recordings',
-    '/home/greggles/metahuman/profiles/*/out/voice-training/recordings',
-  ];
+  if (!targetPath) {
+    throw new Error('A target is required. Pass --path <recordings-directory>.');
+  }
+  const pathsToCheck = [targetPath];
 
   console.log('=== Audio Cleanup Script ===');
   console.log(`Mode: ${dryRun ? 'DRY-RUN (preview)' : 'DELETE'}`);

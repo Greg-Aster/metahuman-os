@@ -10,15 +10,14 @@
  * - mh profile migrate status    - Show migration status
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import {
   getProfilePaths,
   getProfilePathsWithStatus,
   getDefaultProfilePath,
   getUserByUsername,
   audit,
-  ROOT,
+  getUserContext,
+  listUsers,
 } from '@metahuman/core';
 import { validateProfilePath } from '@metahuman/core/path-security';
 import {
@@ -32,20 +31,23 @@ import {
   estimateMigrationDuration,
 } from '@metahuman/core/profile-migration';
 
-// Get default user from etc/default-user.txt
-function getDefaultUsername(): string {
-  const defaultUserFile = path.join(ROOT, 'etc', 'default-user.txt');
-  if (fs.existsSync(defaultUserFile)) {
-    return fs.readFileSync(defaultUserFile, 'utf-8').trim();
-  }
-  return 'greggles'; // Fallback
+function resolveUsername(username?: string): string {
+  if (username?.trim()) return username.trim()
+  const contextUsername = getUserContext()?.username
+  if (contextUsername) return contextUsername
+
+  const users = listUsers()
+  const owners = users.filter(user => user.role === 'owner')
+  if (owners.length === 1) return owners[0].username
+  if (users.length === 1) return users[0].username
+  throw new Error('A username is required when there is no active user context. Pass the username explicitly.')
 }
 
 /**
  * Show current profile path
  */
 export async function profilePath(username?: string): Promise<void> {
-  const user = username || getDefaultUsername();
+  const user = resolveUsername(username);
 
   const { paths: profilePaths, resolution } = getProfilePathsWithStatus(user);
   const defaultPath = getDefaultProfilePath(user);
@@ -90,7 +92,7 @@ export async function profilePath(username?: string): Promise<void> {
  * launchers do not duplicate external/encrypted profile resolution.
  */
 function printVoiceConfigPath(username?: string): never {
-  const user = username || getDefaultUsername();
+  const user = resolveUsername(username);
 
   try {
     console.log(getProfilePaths(user).voiceConfig);
@@ -109,7 +111,7 @@ export async function profilePathSet(
   username?: string,
   options: { keepSource?: boolean } = {}
 ): Promise<void> {
-  const user = username || getDefaultUsername();
+  const user = resolveUsername(username);
   const { keepSource = true } = options;
 
   console.log('\nProfile Migration\n');
@@ -196,7 +198,7 @@ export async function profilePathSet(
  * Reset profile to default location
  */
 export async function profilePathReset(username?: string): Promise<void> {
-  const user = username || getDefaultUsername();
+  const user = resolveUsername(username);
 
   const userRecord = getUserByUsername(user);
   if (!userRecord) {
@@ -233,7 +235,10 @@ export async function profileDevices(): Promise<void> {
     return;
   }
 
-  const defaultUser = getDefaultUsername();
+  let suggestedProfile = '<username>'
+  try {
+    suggestedProfile = resolveUsername()
+  } catch {}
 
   for (const device of devices) {
     const typeIcon =
@@ -248,7 +253,7 @@ export async function profileDevices(): Promise<void> {
     console.log(`   Filesystem: ${device.fsType || 'N/A'}`);
     console.log(`   Free Space: ${formatBytes(device.freeSpace)}`);
     console.log(`   Writable:   ${device.writable ? 'Yes' : 'No'}`);
-    console.log(`   Suggested:  ${device.path}/metahuman-profiles/${defaultUser}`);
+    console.log(`   Suggested:  ${device.path}/metahuman-profiles/${suggestedProfile}`);
     console.log('');
   }
 
@@ -389,7 +394,7 @@ Options:
 Examples:
   mh profile path
   mh profile path --voice-config
-  mh profile path set /media/usb-drive/metahuman/greggles
+  mh profile path set /media/usb-drive/metahuman/<username>
   mh profile path reset
   mh profile devices
   mh profile validate /mnt/external/profiles

@@ -908,11 +908,11 @@
 
         <div class="mb-6">
           <label for="kokoro-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Device for Inference</label>
-          <select id="kokoro-device" bind:value={config.kokoro.device} disabled={saving} class="select-field">
+          <select id="kokoro-device" bind:value={config.kokoro.device} disabled class="select-field">
             <option value="cpu">CPU - Fast & no GPU conflicts</option>
             <option value="cuda">GPU (CUDA) - Faster (requires GPU)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Kokoro is optimized for CPU inference. GPU recommended only if CPU is slow.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Shared system server setting from etc/voice-servers.json.</p>
         </div>
 
         <div class="mb-6">
@@ -957,32 +957,32 @@
 
         <div class="mb-6">
           <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Model Size</label>
-          <select bind:value={config.stt.model} disabled={saving} class="select-field">
+          <select bind:value={config.stt.model} disabled class="select-field">
             <option value="tiny.en">Tiny (~75MB, fastest)</option>
             <option value="base.en">Base (~140MB, balanced)</option>
             <option value="small.en">Small (~460MB, more accurate)</option>
             <option value="medium.en">Medium (~1.5GB, most accurate)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Smaller models are faster but less accurate. GPU recommended for medium/large models.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Shared system server setting from etc/voice-servers.json.</p>
         </div>
 
         <div class="mb-6">
           <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Processing Device</label>
-          <select bind:value={config.stt.device} disabled={saving} class="select-field">
+          <select bind:value={config.stt.device} disabled class="select-field">
             <option value="cpu">CPU</option>
             <option value="cuda">GPU (CUDA)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">GPU processing is 10-50x faster than CPU. Requires NVIDIA GPU with CUDA support.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">This machine-level setting comes from etc/voice-servers.json.</p>
         </div>
 
         <div class="mb-6">
           <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Compute Type</label>
-          <select bind:value={config.stt.computeType} disabled={saving} class="select-field">
+          <select bind:value={config.stt.computeType} disabled class="select-field">
             <option value="int8">INT8 (fastest, CPU-friendly)</option>
             <option value="float16">FLOAT16 (balanced, GPU-optimized)</option>
             <option value="float32">FLOAT32 (highest precision)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Use INT8 for CPU, FLOAT16 for GPU. FLOAT32 only if precision is critical.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">This machine-level setting comes from etc/voice-servers.json.</p>
         </div>
 
         <div class="mb-6">
@@ -1009,12 +1009,7 @@
         </div>
 
         {#if config.stt.useServer}
-          <div class="mb-6">
-            <label class="flex items-center gap-2 cursor-pointer font-normal">
-              <input type="checkbox" bind:checked={config.stt.autoStart} disabled={saving} />
-              Auto-start server on boot
-            </label>
-          </div>
+          <p class="mb-6 text-xs text-gray-500 dark:text-gray-400">Boot lifecycle is system-managed; status and controls are available in the Server tab.</p>
 
           <div class="mb-6">
             <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>

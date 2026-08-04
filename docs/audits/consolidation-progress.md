@@ -2,6 +2,22 @@
 
 This document tracks the MetaHuman cleanup/refactor. The kickoff and first full-plan cleanup are complete. The active goal is now the bounded follow-up consolidation plan below.
 
+## User-Agnostic Voice Service Ownership - 2026-08-04
+
+- Moved Whisper and Kokoro into an independent, boot-managed voice server owner.
+- Added one core voice server manager for configuration, status, direct process
+  lifecycle, lazy start, and stop behavior.
+- Removed profile discovery from boot and compatibility launchers; settings GET
+  requests are observational and no longer spawn servers.
+- Moved process settings to `etc/voice-servers.json` while retaining per-user voice,
+  language, speed, provider, VAD, and output preferences in profile voice config.
+- Removed the tracked default-user selector and global personal training model
+  registry; training lineage now resolves through an explicit profile.
+- Added a build-time user-agnostic source guard.
+- Added a build-time ownership guard that prevents any voice server lifecycle or
+  status code from entering Agent Monitor, and prevents voice server owners from
+  importing or controlling Agent Monitor.
+
 ## Active Follow-Up Consolidation Goal
 
 Started on 2026-07-01 after the architecture baseline reached 75 remaining `custom-api-route` violations.

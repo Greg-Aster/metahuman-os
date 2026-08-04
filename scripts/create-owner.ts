@@ -6,26 +6,21 @@
  * This is a temporary solution until CLI user management is implemented.
  *
  * Usage:
- *   1. Edit the credentials below
- *   2. Run: npx tsx scripts/create-owner.ts
+ *   MH_OWNER_PASSWORD='<password>' npx tsx scripts/create-owner.ts \
+ *     --username=<username> --display-name='<name>' [--email=<email>]
  */
 
 import { createUser, deleteUser } from '../packages/core/src/users.js';
 import { initializeProfile } from '../packages/core/src/profile.js';
 import { generateRecoveryCodes, saveRecoveryCodes } from '../packages/core/src/recovery-codes.js';
 
-// =============================================================================
-// CONFIGURATION - EDIT THESE VALUES
-// =============================================================================
+const valueFor = (name: string): string | undefined =>
+  process.argv.find(arg => arg.startsWith(`${name}=`))?.slice(name.length + 1)
 
-const username = 'greggles';  // Your desired username (lowercase, no spaces)
-const password = 'password';   // Your password (change this!)
-const displayName = 'Greg';    // Your display name
-const email = 'greg@example.com';  // Optional: your email
-
-// =============================================================================
-// DO NOT EDIT BELOW THIS LINE
-// =============================================================================
+const username = valueFor('--username')
+const password = process.env.MH_OWNER_PASSWORD
+const displayName = valueFor('--display-name')
+const email = valueFor('--email')
 
 async function main() {
   console.log('');
@@ -35,17 +30,13 @@ async function main() {
   console.log('');
 
   // Validate input
-  if (!username || username.trim() === '' || username === 'your-username') {
-    console.error('❌ Error: Please edit the script and set a valid username');
-    console.error('   Open: scripts/create-owner.ts');
-    console.error('   Change line: const username = \'your-username\'');
+  if (!username?.trim()) {
+    console.error('❌ Error: Pass --username=<username>');
     process.exit(1);
   }
 
-  if (!password || password === 'your-secure-password') {
-    console.error('❌ Error: Please edit the script and set a password');
-    console.error('   Open: scripts/create-owner.ts');
-    console.error('   Change line: const password = \'your-secure-password\'');
+  if (!password) {
+    console.error('❌ Error: Set MH_OWNER_PASSWORD in the command environment');
     process.exit(1);
   }
 

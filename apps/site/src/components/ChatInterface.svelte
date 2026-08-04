@@ -308,11 +308,30 @@
     if (ttsEnabled) {
       ttsApi.prefetchVoiceResources();
     } else {
-      ttsApi.stopActiveAudio();
-      ttsApi.cancelInFlightTts();
+      void interruptAssistantSpeech('speech-disabled');
     }
     saveChatPrefs();
     void syncSpeechDisabledPreference(!ttsEnabled);
+  }
+
+  async function interruptAssistantSpeech(
+    reason: 'user-input' | 'barge-in' | 'manual-stop' | 'speech-disabled',
+  ): Promise<void> {
+    const stopReason = reason === 'speech-disabled' ? 'disabled' : 'interrupted';
+    ttsApi.stopActiveAudio(stopReason);
+    ttsApi.cancelInFlightTts(stopReason);
+    try {
+      const response = await apiFetch('/api/tts-queue-interrupt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) {
+        console.warn(`[tts-interrupt] Queue interruption was rejected (${response.status})`);
+      }
+    } catch (error) {
+      console.warn('[tts-interrupt] Could not notify the queue owner:', error);
+    }
   }
 
   function updateReasoningDepth(value: number, persist = false) {
@@ -1392,6 +1411,7 @@
     if (sendInProgress) return;
 
     sendInProgress = true;
+    await interruptAssistantSpeech('user-input');
 
     // Claude Code and Codex are exposed through the visible system terminal.
     // Mount the terminal manager before escalation so the live transcript and
@@ -2575,8 +2595,9 @@
             }}
             on:deleteMessage={(e) => handleDelete(e.detail.relPath)}
             on:validateMessage={(e) => handleValidate(e.detail.relPath, e.detail.status)}
-            on:speakMessage={(e) => {
+            on:speakMessage={async (e) => {
               if (ttsEnabled) {
+                await interruptAssistantSpeech('manual-stop');
                 void ttsApi.speak(e.detail.content);
               }
             }}
@@ -2668,14 +2689,12 @@
         mic.toggleConversationMode();
       }}
       on:ttsStop={() => {
-        ttsApi.stopActiveAudio();
-        ttsApi.cancelInFlightTts();
+        void interruptAssistantSpeech('manual-stop');
       }}
       on:ttsStopAndListen={() => {
         // Tap-to-interrupt: Stop TTS and start listening (ChatGPT/Google style)
         console.log('[chat-mic] Tap-to-interrupt: stopping TTS and starting to listen');
-        ttsApi.stopActiveAudio();
-        ttsApi.cancelInFlightTts();
+        void interruptAssistantSpeech('barge-in');
         // If in conversation mode, VAD will auto-restart
         // If not, enter conversation mode
         if (!$micIsConversationMode) {

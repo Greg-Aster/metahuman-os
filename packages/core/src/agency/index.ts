@@ -10,13 +10,13 @@
  * import { agency } from '@metahuman/core';
  *
  * // Check if agency is enabled
- * const enabled = await agency.isEnabled('greggles');
+ * const enabled = await agency.isEnabled('profile-user');
  *
  * // Load all active desires
- * const desires = await agency.storage.listActiveDesires('greggles');
+ * const desires = await agency.storage.listActiveDesires('profile-user');
  *
  * // Get configuration
- * const config = await agency.config.loadConfig('greggles');
+ * const config = await agency.config.loadConfig('profile-user');
  * ```
  */
 

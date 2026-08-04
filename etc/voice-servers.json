@@ -1,0 +1,22 @@
+{
+  "$schema": "https://metahuman.dev/schemas/voice-servers.json",
+  "version": "1.0.0",
+  "description": "Shared local voice inference server configuration",
+  "servers": {
+    "kokoro": {
+      "enabled": true,
+      "startOnSystemBoot": true,
+      "port": 9882,
+      "device": "cpu",
+      "langCode": "a"
+    },
+    "whisper": {
+      "enabled": true,
+      "startOnSystemBoot": true,
+      "port": 9883,
+      "device": "cpu",
+      "model": "base.en",
+      "computeType": "int8"
+    }
+  }
+}

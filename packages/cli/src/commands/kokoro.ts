@@ -6,11 +6,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { ROOT, systemPaths } from '@metahuman/core';
+import {
+  ROOT,
+  systemPaths,
+  ensureVoiceServiceRunning,
+  getVoiceServiceStatus,
+  stopVoiceService,
+} from '@metahuman/core';
 import { createTTSService } from '@metahuman/core';
 
 const KOKORO_DIR = path.join(ROOT, 'external', 'kokoro');
-const SERVER_PID_FILE = path.join(systemPaths.logs, 'run', 'kokoro-server.pid');
 
 export async function kokoroCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -124,44 +129,11 @@ async function checkStatus(): Promise<void> {
 
   console.log(`Directory:        ${KOKORO_DIR}`);
 
-  // Check server status
-  let serverRunning = false;
-  let serverPid: number | null = null;
-
-  if (fs.existsSync(SERVER_PID_FILE)) {
-    try {
-      const pidStr = fs.readFileSync(SERVER_PID_FILE, 'utf-8').trim();
-      serverPid = parseInt(pidStr, 10);
-
-      // Check if process is still running
-      try {
-        process.kill(serverPid, 0); // Signal 0 checks if process exists
-        serverRunning = true;
-      } catch {
-        // Process not running, clean up stale PID file
-        fs.unlinkSync(SERVER_PID_FILE);
-        serverPid = null;
-      }
-    } catch (err) {
-      // Ignore read errors
-    }
-  }
-
-  console.log(`Server:           ${serverRunning ? `✓ Running (PID ${serverPid})` : '✗ Not running'}`);
-
-  if (serverRunning) {
-    // Try to check server health
-    try {
-      const response = await fetch('http://127.0.0.1:9882/health', { signal: AbortSignal.timeout(2000) });
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`Server Health:    ✓ Healthy`);
-        console.log(`Language:         ${data.lang || 'unknown'}`);
-      }
-    } catch {
-      console.log(`Server Health:    ⚠ Not responding`);
-    }
-  }
+  const status = await getVoiceServiceStatus('kokoro');
+  console.log(`Server:           ${status.running ? `✓ Running${status.pid ? ` (PID ${status.pid})` : ''}` : '✗ Not running'}`);
+  console.log(`Server Health:    ${status.healthy ? '✓ Healthy' : status.running ? `⚠ ${status.readiness}` : '✗ Stopped'}`);
+  console.log(`Server URL:       ${status.url}`);
+  if (status.health?.lang) console.log(`Language:         ${status.health.lang}`);
 
   // Check voices catalog
   const voicesFile = path.join(KOKORO_DIR, 'VOICES.md');
@@ -188,130 +160,18 @@ async function manageServer(args: string[]): Promise<void> {
 }
 
 async function startServer(args: string[]): Promise<void> {
-  // Check if already running
-  if (fs.existsSync(SERVER_PID_FILE)) {
-    try {
-      const pidStr = fs.readFileSync(SERVER_PID_FILE, 'utf-8').trim();
-      const pid = parseInt(pidStr, 10);
-      process.kill(pid, 0);
-      console.log(`⚠ Server already running (PID ${pid})`);
-      console.log('  To restart, run: mh kokoro serve stop && mh kokoro serve start');
-      return;
-    } catch {
-      // Stale PID file, clean it up
-      fs.unlinkSync(SERVER_PID_FILE);
-    }
+  if (args.length > 0) {
+    console.warn('Port, language, and device are system service settings; configure them in etc/voice-servers.json.');
   }
-
-  // Parse arguments
-  let port = 9882;
-  let lang: string | undefined;
-  let device = 'cpu'; // Default to CPU for Kokoro
-
-  const portIndex = args.indexOf('--port');
-  if (portIndex !== -1 && args[portIndex + 1]) {
-    port = parseInt(args[portIndex + 1], 10);
-  }
-
-  const langIndex = args.indexOf('--lang');
-  if (langIndex !== -1 && args[langIndex + 1]) {
-    lang = args[langIndex + 1];
-  }
-
-  const deviceIndex = args.indexOf('--device');
-  if (deviceIndex !== -1 && args[deviceIndex + 1]) {
-    device = args[deviceIndex + 1];
-  }
-
-  const pythonBin = path.join(KOKORO_DIR, 'venv', 'bin', 'python3');
-  const serverScript = path.join(KOKORO_DIR, 'kokoro_server.py');
-
-  if (!fs.existsSync(pythonBin)) {
-    console.error('✗ Kokoro not installed');
-    console.error('  Run: mh kokoro install');
-    process.exit(1);
-  }
-
-  console.log(`Starting Kokoro server on port ${port} (device: ${device})...`);
-
-  const logFile = path.join(systemPaths.logs, 'run', 'kokoro-server.log');
-  const logFd = fs.openSync(logFile, 'a');
-
-  const serverArgs = [serverScript, '--port', port.toString(), '--device', device];
-  if (lang) {
-    serverArgs.push('--lang', lang);
-  }
-  const server = spawn(pythonBin, serverArgs, {
-    cwd: KOKORO_DIR,
-    detached: true,
-    stdio: ['ignore', logFd, logFd],
-  });
-
-  // Close log file descriptor after spawn (child process has its own reference)
-  fs.closeSync(logFd);
-
-  // Save PID
-  fs.writeFileSync(SERVER_PID_FILE, server.pid!.toString());
-
-  // Wait a moment to check if server started successfully
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
-    if (response.ok) {
-      console.log(`✓ Kokoro server started successfully`);
-      console.log(`  PID: ${server.pid}`);
-      console.log(`  URL: http://127.0.0.1:${port}`);
-      console.log(`  Log: ${logFile}`);
-      server.unref(); // Detach from parent process
-      return;
-    }
-  } catch {
-    // Server not responding yet
-  }
-
-  console.log(`⚠ Server process started (PID ${server.pid}) but not responding yet`);
-  console.log(`  Check logs: tail -f ${logFile}`);
-  server.unref();
+  const status = await ensureVoiceServiceRunning('kokoro');
+  console.log(`✓ Kokoro server start accepted${status.pid ? ` (PID ${status.pid})` : ''}`);
+  console.log(`  URL: ${status.url}`);
 }
 
 async function stopServer(): Promise<void> {
-  if (!fs.existsSync(SERVER_PID_FILE)) {
-    console.log('⚠ Server is not running');
-    return;
-  }
-
   try {
-    const pidStr = fs.readFileSync(SERVER_PID_FILE, 'utf-8').trim();
-    const pid = parseInt(pidStr, 10);
-
-    console.log(`Stopping Kokoro server (PID ${pid})...`);
-
-    process.kill(pid, 'SIGTERM');
-
-    // Wait for graceful shutdown
-    let stopped = false;
-    for (let i = 0; i < 10; i++) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      try {
-        process.kill(pid, 0);
-      } catch {
-        stopped = true;
-        break;
-      }
-    }
-
-    if (!stopped) {
-      console.log('⚠ Server did not stop gracefully, forcing...');
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // Already stopped
-      }
-    }
-
-    fs.unlinkSync(SERVER_PID_FILE);
-    console.log('✓ Server stopped');
+    const result = await stopVoiceService('kokoro');
+    console.log(`✓ ${result.message}`);
   } catch (err) {
     console.error('✗ Failed to stop server:', (err as Error).message);
     process.exit(1);
@@ -515,10 +375,8 @@ async function trainVoicepack(args: string[]): Promise<void> {
 async function uninstallKokoro(): Promise<void> {
   console.log('⚠ Uninstalling Kokoro TTS...\n');
 
-  // Stop server first
-  if (fs.existsSync(SERVER_PID_FILE)) {
-    await stopServer();
-  }
+  // Stop the shared voice server before removing its installation.
+  await stopServer();
 
   if (!fs.existsSync(KOKORO_DIR)) {
     console.log('⚠ Kokoro is not installed');

@@ -26,6 +26,7 @@ import {
   type CachedGraphEntry,
 } from '../../graph-runtime.js';
 import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
+import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 
 // ============================================================================
 // Types
@@ -48,6 +49,8 @@ export interface ResponsePipelineRequest {
   responseBufferId?: string;
   /** Session ID */
   sessionId?: string;
+  /** Speech generation captured when this user turn was admitted. */
+  ttsGeneration?: number;
 }
 
 export interface ResponsePipelineResult {
@@ -168,7 +171,7 @@ export async function handleResponsePipeline(
   try {
     logStep(1, 'HANDLER STARTED', { username, requestKeys: Object.keys(request) });
 
-    const { message, cardType, cardData, responseBufferId, sessionId } = request;
+    const { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration } = request;
 
     // Step 2: Validate inputs
     logStep(2, 'Validating inputs');
@@ -211,6 +214,7 @@ export async function handleResponsePipeline(
       cognitiveMode: 'response_pipeline',
       allowMemoryWrites: true,
       environment: 'server',
+      ttsGeneration,
     };
 
     logStep(4, 'Context built', {
@@ -349,7 +353,7 @@ export function streamResponsePipeline(
   request: ResponsePipelineRequest,
   username: string
 ): Response {
-  const { message, cardType, cardData, responseBufferId, sessionId } = request;
+  const { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration } = request;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -392,6 +396,7 @@ export function streamResponsePipeline(
           cognitiveMode: 'response_pipeline',
           allowMemoryWrites: true,
           environment: 'server',
+          ttsGeneration,
         };
 
         const startedAt = Date.now();
@@ -519,7 +524,18 @@ export async function handleResponsePipelineApi(req: UnifiedRequest): Promise<Un
   }
 
   try {
-    const pipelineRequest = { message, cardType, cardData, responseBufferId };
+    const inheritedTTSGeneration = typeof req.metadata?.ttsGeneration === 'number'
+      ? req.metadata.ttsGeneration
+      : undefined;
+    const ttsGeneration = inheritedTTSGeneration
+      ?? beginTTSUserTurn(req.user.username, 'user-input')?.generation;
+    const pipelineRequest = {
+      message,
+      cardType,
+      cardData,
+      responseBufferId,
+      ttsGeneration,
+    };
 
     if (streaming) {
       const response = streamResponsePipeline(pipelineRequest, req.user.username);

@@ -13,6 +13,17 @@
     details?: any;
   }
 
+  function normalizeServerState(data: any): Pick<ServerInfo, 'status' | 'healthy'> {
+    const readiness = typeof data?.readiness === 'string' ? data.readiness : '';
+    const healthy = data?.healthy === true || readiness === 'ready';
+    const running = data?.running === true || healthy || readiness === 'loading';
+
+    return {
+      status: running ? 'running' : 'stopped',
+      healthy,
+    };
+  }
+
   interface AstroServer {
     port: number;
     pid: number;
@@ -251,13 +262,13 @@
             const response = await fetchStatusEndpoint(config.endpoint);
             if (response.ok) {
               const data = await response.json();
+              const state = normalizeServerState(data);
               newServers.push({
                 name: config.name,
                 displayName: config.displayName,
                 endpoint: config.endpoint,
                 port: config.port,
-                status: data.running ? 'running' : 'stopped',
-                healthy: data.healthy ?? data.running,
+                ...state,
                 installed: data.installed ?? true,
                 details: data,
               });

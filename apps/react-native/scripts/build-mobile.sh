@@ -210,7 +210,7 @@ echo "[5/5] Building APK..."
 cd "$RN_DIR/android"
 
 # Use bundled JDK from Android Studio
-export JAVA_HOME="${JAVA_HOME:-/home/greggles/android-studio/jbr}"
+export JAVA_HOME="${JAVA_HOME:-${ANDROID_STUDIO_JBR:-$HOME/android-studio/jbr}}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 ./gradlew assembleDebug

@@ -37,7 +37,7 @@ import {
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
-import { queueTTS } from '../../nodes/output/tts.node.js';
+import { queueTTS } from '../../tts/delivery-queue.js';
 import { submitAgencyConversationEntry } from '../../buffer-admission.js';
 import { submitCoordinatorWork } from '../../queue/index.js';
 

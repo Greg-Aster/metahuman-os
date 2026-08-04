@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deliverTTSOutput, type TTSQueueItem } from './tts.node.js';
+import { deliverTTSOutput } from './tts.node.js';
+import type { TTSQueueItem } from '../../tts/delivery-queue.js';
 import { normalizeRobotSpeechText } from '../../tts/robot-speech.js';
 
 const request = {
@@ -37,6 +38,26 @@ test('local speech keeps using the existing browser queue', async () => {
   });
   assert.equal(queued, 1);
   assert.equal(rendered, 0);
+});
+
+test('the main speech disable state prevents local queue admission', async () => {
+  let queued = 0;
+  const result = await deliverTTSOutput(request, {
+    getSettings: () => ({
+      provider: 'kokoro',
+      outputTarget: 'local',
+      speechDisabled: true,
+    }),
+    queue: () => {
+      queued += 1;
+      return null;
+    },
+  });
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.route, 'local');
+  assert.match(result.reason || '', /disabled/i);
+  assert.equal(queued, 0);
 });
 
 test('Environment Mode robot speech bypasses the browser queue exactly once', async () => {

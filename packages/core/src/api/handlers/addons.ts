@@ -12,6 +12,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, streamResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
 import { stopServer } from '../../tts/server-manager.js';
+import { stopVoiceService } from '../../voice-service-manager.js';
 
 /**
  * Check if an addon is actually installed
@@ -170,7 +171,7 @@ async function toggleAddonConfiguration(addonId: string, enabled: boolean): Prom
       }
     } else if (addonId === 'kokoro') {
       try {
-        await stopServer('kokoro');
+        await stopVoiceService('kokoro');
       } catch (error) {
         console.error('[addons-handler] Failed to stop Kokoro server:', error);
       }
@@ -494,17 +495,7 @@ async function uninstallAddonFiles(addonId: string): Promise<{ success: boolean;
         return { success: true, message: 'Kokoro already uninstalled' };
       }
       try {
-        // Stop server if running
-        const pidFile = path.join(rootPath, 'logs', 'run', 'kokoro-server.pid');
-        if (fs.existsSync(pidFile)) {
-          try {
-            const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-            process.kill(pid, 'SIGTERM');
-            fs.unlinkSync(pidFile);
-          } catch {
-            // Ignore errors stopping server
-          }
-        }
+        await stopVoiceService('kokoro');
         fs.rmSync(kokoroDir, { recursive: true, force: true });
         return { success: true, message: 'Kokoro TTS uninstalled successfully' };
       } catch (error) {

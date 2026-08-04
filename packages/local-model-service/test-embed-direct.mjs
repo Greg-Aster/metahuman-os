@@ -1,7 +1,8 @@
 import { getLlama } from 'node-llama-cpp';
 
 async function main() {
-  const modelPath = '/home/greggles/metahuman/models/nomic-embed-text-v1.5.Q4_K_M.gguf';
+  const modelPath = process.argv[2];
+  if (!modelPath) throw new Error('Usage: node test-embed-direct.mjs <model-path>');
   
   console.log('Initializing llama...');
   const llama = await getLlama({ gpu: false });

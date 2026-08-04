@@ -21,7 +21,7 @@ ROOT_DIR="$RN_DIR/../.."
 ANDROID_SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
 EMULATOR="$ANDROID_SDK/emulator/emulator"
 ADB="$ANDROID_SDK/platform-tools/adb"
-JAVA_HOME="${JAVA_HOME:-/home/greggles/android-studio/jbr}"
+JAVA_HOME="${JAVA_HOME:-${ANDROID_STUDIO_JBR:-$HOME/android-studio/jbr}}"
 
 # AVD name (first available)
 AVD_NAME=""
