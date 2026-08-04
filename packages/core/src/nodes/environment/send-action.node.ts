@@ -6,13 +6,10 @@ import {
   summarizeEnvironmentBridgeState,
   type EnvironmentActionType,
 } from '../../environment-interface/index.js';
-import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import {
   beginEnvironmentPerceptionCycle,
-  isRobotObserverEnabled,
   loadRobotOperatorConfig,
   nextRobotObserverCycle,
-  robotObserverSourceAllowed,
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 
@@ -43,6 +40,7 @@ export const environmentSendActionNode = defineNode({
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
     { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or rejection to show instead' },
+    { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -110,10 +108,14 @@ export const environmentSendActionNode = defineNode({
     const currentUserInstruction = typeof context.userMessage === 'string'
       ? context.userMessage.trim()
       : '';
+    const validatedTaskInstruction = typeof inputs.taskInstruction === 'string'
+      ? inputs.taskInstruction.trim()
+      : '';
     const originatingInstruction = (
-      typeof context.environmentTaskInstruction === 'string'
+      validatedTaskInstruction
+      || (typeof context.environmentTaskInstruction === 'string'
         ? context.environmentTaskInstruction.trim()
-        : ''
+        : '')
     ) || currentUserInstruction;
     const shouldStartCycle = (
       !existingCycle
@@ -125,7 +127,7 @@ export const environmentSendActionNode = defineNode({
     const startedCycle = cycleConfig
       ? beginEnvironmentPerceptionCycle(
           `environment-task-${randomUUID()}`,
-          cycleConfig.graph,
+          cycleConfig.environmentGraph,
           cycleConfig.maxCycleSteps,
         )
       : null;
@@ -181,17 +183,6 @@ export const environmentSendActionNode = defineNode({
       status = 'no_actions';
       reason = 'no_actions';
       message = 'No environment action was produced from this message, so nothing was sent to the robot bridge.';
-    } else if (
-      actionCycle?.requestedBy === 'robot-observer'
-      && !isRobotObserverEnabled()
-    ) {
-      status = 'rejected';
-      reason = 'robot_observer_disabled';
-      message = 'The robot action was stopped because Robot Observer is disabled.';
-    } else if (actionCycle && !robotObserverSourceAllowed(getOperatorMode(), actionCycle.triggerSource)) {
-      status = 'rejected';
-      reason = 'active_operator_reactive';
-      message = 'The autonomous robot action was stopped because Active Operator is now in reactive mode.';
     } else if (actionCycle && !nextObserverStep) {
       status = 'rejected';
       reason = 'robot_observer_step_limit';
@@ -302,9 +293,11 @@ export const environmentSendActionNode = defineNode({
     const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
       ? 'Camera request queued; waiting for a fresh image.'
       : bodyActions.length > 0
-        // Terminal feedback owns the visible completion response. Keep this
-        // transient queue state in the structured Robot Buffer record only.
-        ? ''
+        // The initial user turn needs its non-terminal acknowledgement so chat
+        // work completes instead of retrying and admitting the action again.
+        // Coordinator continuations have no current user message and stay
+        // silent; terminal feedback still owns the completion report.
+        ? currentUserInstruction ? conversationalResponse : ''
         : conversationalResponse;
     return {
       commands,

@@ -7,6 +7,10 @@ import type {
 } from '../../environment-interface/index.js';
 import { hasFreshCorrelatedVisual } from '../../environment-interface/index.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
+import {
+  environmentTaskContractFromRouting,
+  parseEnvironmentTaskInstruction,
+} from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -66,19 +70,7 @@ function terminalFeedbackEvent(
   return {
     id: `environment-feedback-${terminal.id}`,
     source: 'system',
-    text: terminal.type === 'completed'
-      ? [
-          `Robot action completed: ${terminal.message}.`,
-          'Inspect the fresh correlated observation and report what happened once to the user.',
-          'This completed action is only one step; it does not by itself mean the original objective or its stop condition is complete.',
-          'Do not issue a new action from this completion event.',
-          'If the original objective remains incomplete, set taskDecision.objectiveComplete=false and provide one bounded nextInstruction so the validator can queue a later workflow step.',
-        ].join(' ')
-      : [
-          `Robot action ${terminal.type}: ${terminal.message}.`,
-          'Report this result once and do not issue a new action from this completion event.',
-          'Do not mark the original objective complete unless its actual completion condition is independently satisfied.',
-        ].join(' '),
+    text: `Robot action ${terminal.type}: ${terminal.message}.`,
     timestamp: terminal.timestamp,
     metadata: { actionId: terminal.actionId, feedbackId: terminal.id },
   };
@@ -94,6 +86,7 @@ export const environmentInstructionInterpreterNode = defineNode({
   outputs: [
     { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
     { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
+    { name: 'routingRequest', type: 'string', description: 'Compact state-aware envelope for Environment context and task-contract routing' },
     { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
     { name: 'state', type: 'object', description: 'Environment state payload' },
     { name: 'location', type: 'object', description: 'Environment location payload' },
@@ -112,10 +105,27 @@ export const environmentInstructionInterpreterNode = defineNode({
     const queuedObjective = typeof validatorCommand?.objective === 'string'
       ? validatorCommand.objective.trim()
       : '';
+    const queuedInstruction = typeof validatorCommand?.instruction === 'string'
+      ? validatorCommand.instruction.trim()
+      : '';
     const observationText = filterTextEvents(rawObservation?.text ?? []);
-    const currentTaskEvent = textEventFromMessage(contextMessage || queuedObjective);
+    const currentTaskEvent = textEventFromMessage(contextMessage || queuedInstruction || queuedObjective);
     const originatingInstruction = typeof rawObservation?.metadata?.originatingInstruction === 'string'
       ? rawObservation.metadata.originatingInstruction.trim()
+      : '';
+    const taskContract = environmentTaskContractFromRouting({
+      actionParams: {
+        continuationPolicy: validatorCommand?.continuationPolicy,
+        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
+      },
+    }, queuedObjective) || parseEnvironmentTaskInstruction(originatingInstruction);
+    const originalObjective = taskContract?.objective || originatingInstruction;
+    const taskContractInstruction = taskContract
+      ? [
+          `Task continuation policy: ${taskContract.continuationPolicy}.`,
+          `Required whole-objective completion basis: ${taskContract.requiredCompletionBasis}.`,
+          `Do not claim the objective complete from any other evidence basis.`,
+        ].join(' ')
       : '';
     const robotObserver = readRobotObserverCycle(rawObservation);
     const captureSatisfied = Boolean(
@@ -134,21 +144,23 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? [
           'A fresh correlated robot image has returned, so the visual acquisition for this interaction is complete.',
           'Use the attached image to answer the original user goal now. Do not request another image in this continuation.',
-          originatingInstruction ? `Original user goal: ${originatingInstruction}` : '',
+          originalObjective ? `Original user goal: ${originalObjective}` : '',
+          taskContractInstruction,
         ].filter(Boolean).join('\n')
       : '';
     const feedbackInstruction = feedbackEvent
       ? [
           feedbackEvent.text,
-          originatingInstruction
-            ? `Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): ${originatingInstruction}`
+          originalObjective
+            ? `Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): ${originalObjective}`
             : '',
+          taskContractInstruction,
         ].filter(Boolean).join('\n')
       : '';
     const instruction = currentTaskEvent?.text
       || feedbackInstruction
       || satisfiedCaptureInstruction
-      || originatingInstruction
+      || originalObjective
       || text.map(event => event.text).join('\n').trim();
     const sessionId = rawObservation?.sessionId ?? '';
     const timestamp = rawObservation?.timestamp || new Date().toISOString();
@@ -177,10 +189,31 @@ export const environmentInstructionInterpreterNode = defineNode({
       feedback: rawObservation?.feedback,
       metadata: rawObservation?.metadata,
     };
+    const visualFrames = [observation.visual, ...(observation.visuals ?? [])]
+      .filter((frame): frame is NonNullable<EnvironmentObservation['visual']> => Boolean(frame))
+      .map(frame => ({
+        id: frame.id,
+        timestamp: frame.timestamp,
+        source: frame.source ?? null,
+        correlationId: frame.metadata?.correlationId ?? null,
+      }));
+    const routingRequest = JSON.stringify({
+      currentInstruction: instruction,
+      currentEnvironment: {
+        state: observation.state ?? {},
+        capabilities: observation.capabilities,
+        visualFrames,
+        hasFreshCorrelatedVisual: Boolean(
+          robotObserver && hasFreshCorrelatedVisual(observation, robotObserver.cycleId),
+        ),
+        persistedTaskContract: taskContract ?? null,
+      },
+    });
 
     return {
       observation,
       instruction,
+      routingRequest,
       text,
       state: observation.state ?? {},
       location: observation.location ?? null,

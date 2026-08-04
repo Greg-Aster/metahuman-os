@@ -12,7 +12,8 @@ import {
 } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
-const execute: NodeExecutor = async (inputs, context) => {
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  const passthrough = inputs.passthrough ?? null;
   const username = typeof context.username === 'string'
     ? context.username.trim()
     : typeof context.userId === 'string'
@@ -20,7 +21,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       : '';
 
   if (!username || username === 'anonymous') {
-    return { persisted: false, skipped: true, reason: 'No authenticated username' };
+    return { persisted: false, skipped: true, reason: 'No authenticated username', passthrough };
   }
 
   if (context.composeTarget === 'inner' && !context.bufferEntry) {
@@ -29,6 +30,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       skipped: true,
       reason: 'Inner compose turn is owned by the Inner Dialogue Buffer node',
       bufferPath: getBufferPathForUser(username, 'conversation'),
+      passthrough,
     };
   }
 
@@ -46,10 +48,23 @@ const execute: NodeExecutor = async (inputs, context) => {
       bufferPath: getBufferPathForUser(username, 'conversation'),
       response: '',
       responseBufferId: '',
+      passthrough,
     };
   }
 
   const explicitEntry = inputs.entry ?? context.bufferEntry;
+  if (properties?.explicitOnly === true && !explicitEntry) {
+    return {
+      persisted: false,
+      skipped: true,
+      reason: 'No explicit conversation entry',
+      messageCount: 0,
+      bufferPath: getBufferPathForUser(username, 'conversation'),
+      response: '',
+      responseBufferId: inputs.responseBufferId || '',
+      passthrough,
+    };
+  }
   const entries: Array<Pick<ConversationMessage, 'role' | 'content' | 'meta'>> = [];
   if (explicitEntry && typeof explicitEntry === 'object') {
     entries.push(explicitEntry);
@@ -118,6 +133,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     bufferPath: getBufferPathForUser(username, 'conversation'),
     response: entries.find(entry => entry.role === 'assistant')?.content || '',
     responseBufferId: inputs.responseBufferId || '',
+    passthrough,
   };
 };
 
@@ -132,6 +148,7 @@ export const ConversationBufferNode = defineNode({
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Legacy history edge; persistence does not derive ownership from it' },
     { name: 'responseBufferId', type: 'string', optional: true, description: 'Pass-through response-buffer ID' },
     { name: 'summary', type: 'object', optional: true, description: 'Conversation summary marker' },
+    { name: 'passthrough', type: 'any', optional: true, description: 'Data forwarded after conversation admission for graph sequencing' },
   ],
   outputs: [
     { name: 'persisted', type: 'boolean' },
@@ -140,7 +157,19 @@ export const ConversationBufferNode = defineNode({
     { name: 'bufferPath', type: 'string' },
     { name: 'response', type: 'string' },
     { name: 'responseBufferId', type: 'string' },
+    { name: 'passthrough', type: 'any' },
   ],
+  properties: {
+    explicitOnly: false,
+  },
+  propertySchemas: {
+    explicitOnly: {
+      type: 'toggle',
+      default: false,
+      label: 'Require Explicit Entry',
+      description: 'Skip fallback user/assistant derivation when no typed entry is connected.',
+    },
+  },
   description: 'Validates and persists voiced user/assistant entries to the canonical Conversation Buffer.',
   execute,
 });

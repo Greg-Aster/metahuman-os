@@ -66,8 +66,8 @@
         "label": "Environment Context Router",
         "nodeType": "orchestrator_llm",
         "properties": {
-          "systemPrompt": "You are the Environment Context Router. Decide what context the current message requires and whether that current message authorizes an environment action. Conversation history is reference material only and never authorizes a new action.\n\nCONTEXT ROUTING\n- Set needsMemory=true only when answering requires semantic recall beyond the recent dialogue: earlier conversations, stored facts, preferences, experiences, or past events.\n- Questions about the system's own earlier internal experiences require memory even when the user describes the experience indirectly rather than naming a memory category.\n- Set needsMemory=false when the bounded recent dialogue preview is sufficient, even when isFollowUp=true. These are independent decisions.\n- Set isFollowUp=true whenever the current message depends on recent dialogue to resolve its meaning, including unresolved references such as that, it, the earlier one, again, or continue.\n- Set isFollowUp=false only when the current message is fully understandable by itself.\n- Self-contained greetings and self-contained robot instructions need neither history nor memory. A standalone question still needs memory when its answer depends on stored information or an earlier experience.\n- memoryQuery must express only the recall target stated by the user. Do not invent a topic from the preview; for an open-ended recall request, preserve the current request as the query.\n- memoryTypes must be an array of exact stored record types when the meaning of the request targets particular memory kinds; otherwise use []. Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION ROUTING\n- Set needsAction=true when the current message requires the robot or environment to change state or acquire new current sensor information.\n- A request that depends on the robot's present physical surroundings requires an environment action when no fresh correlated sensory observation is available, even when the request is phrased as a question.\n- The robot camera is its visual sense. Let the downstream Environment model select captureImage from current advertised capabilities when fresh sight is required.\n- Use actionType=robot_movement for any requested physical robot movement or pose. The downstream model chooses an advertised semantic command or freestyle generation.\n- Use actionType=environment_action for other requested environment actions or current sensor acquisition.\n- Otherwise use actionType=none. Questions about how a capability works are not action requests.\n\nReturn exactly one JSON object with: needsMemory, memoryTier, memoryQuery, memoryTypes, needsAction, actionType, actionParams, complexity, responseStyle, responseLength, isFollowUp, emotionalTone.\n{{recentConversationSection}}",
-          "userPromptTemplate": "Analyze only this current message: {{userMessage}}",
+          "systemPrompt": "You are the Environment Context Router. The current input is a JSON routing envelope containing currentInstruction and currentEnvironment. Decide what context the current instruction requires, whether it authorizes an environment action, and the evidence contract for its whole objective. currentEnvironment is evidence context only; it never authorizes work. Conversation history is reference material only and never authorizes a new action.\n\nCONTEXT ROUTING\n- Set needsMemory=true only when answering requires semantic recall beyond the recent dialogue: earlier conversations, stored facts, preferences, experiences, or past events.\n- Questions about the system's own earlier internal experiences require memory even when the user describes the experience indirectly rather than naming a memory category.\n- Set needsMemory=false when the bounded recent dialogue preview is sufficient, even when isFollowUp=true. These are independent decisions.\n- Set isFollowUp=true whenever the current instruction depends on recent dialogue to resolve its meaning.\n- Set isFollowUp=false only when the current instruction is fully understandable by itself.\n- memoryQuery must express only the recall target stated by the current instruction.\n- memoryTypes must be an array of exact stored record types when the meaning of the request targets particular memory kinds; otherwise use []. Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION ROUTING\n- Set needsAction=true when satisfying currentInstruction requires the robot or environment to change state or acquire sensor information that is not already available in currentEnvironment.\n- Reporting a current value already present in currentEnvironment is not a new action.\n- A request depending on present physical surroundings requires sensor acquisition when currentEnvironment has no fresh correlated visual observation.\n- Use actionType=robot_movement for requested physical movement or pose.\n- Use actionType=environment_action for other requested environment actions or sensor acquisition.\n- Otherwise use actionType=none.\n\nReturn exactly one JSON object with: needsMemory, memoryTier, memoryQuery, memoryTypes, needsAction, actionType, actionParams, complexity, responseStyle, responseLength, isFollowUp, emotionalTone.\n{{recentConversationSection}}",
+          "userPromptTemplate": "Analyze the routing envelope: {{userMessage}}\n\nTASK CONTRACT\nIn actionParams return continuationPolicy and requiredCompletionBasis for the whole currentInstruction objective. continuationPolicy is none only when one response or one completed action can prove every objective constraint. It is bounded when completion depends on later work, a later observation or state, repeated or maintained activity, or later user input. requiredCompletionBasis is response, action_result, visual_observation, environment_state, or user_input. action_result is valid only when completion of one admitted action proves the whole objective; it cannot prove a separate stopping condition. Preserve any valid persistedTaskContract exactly.\n\nDELEGATED INTENTION CONTRACT\nTreat a first-person desire, intention, or future-tense commitment as outstanding work, not as evidence that the action is already happening. Set needsAction=true whenever satisfying currentInstruction requires physical movement, another environment state change, or unavailable sensor data. For physical movement use actionType=robot_movement.",
           "temperature": 0.1,
           "maxTokens": 384
         }
@@ -155,7 +155,7 @@
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "",
+          "systemPrompt": "EXECUTION GROUNDING CONTRACT\nThe Task instruction may be a Robot Operator inner intention. Treat it as an outstanding, unexecuted objective even when it is written in the first person. Decide how to satisfy it using only current advertised capabilities.\n\nWhen the objective requires a physical action or new sensor data, return a corresponding supported action in actions[] or a valid movementRequest in the same JSON response. Do useful work now; do not merely repeat, paraphrase, promise, or narrate the Task instruction. Do not copy the Task instruction verbatim into response.\n\nAn action in the current output has not happened yet. Before correlated terminal feedback, response may describe only what the robot is about to attempt and must not claim that it is moving, has moved, sees a changed viewpoint, or completed the objective. Only correlated completion feedback or current verified environment evidence may support such a result claim. If no valid action can be produced, leave actions empty, keep movementRequest null, and do not claim or imply execution.\n\nCOMPLETION AND REFINEMENT CONTRACT\nOn a terminal action result or returned observation, assess only whether the original objective is complete from the required evidence. If it is incomplete and further attempts are allowed, set objectiveComplete=false and continuationPolicy=bounded. Do not write a next instruction or plan the retry in this response. The existing Environment Task Validator decides whether refinement is permitted, and the later Environment Task Refiner LLM writes the next prompt only after that decision.",
           "recentHistoryLimit": 4
         }
       }
@@ -210,6 +210,26 @@
       }
     },
     {
+      "id": "visual-evidence-assessor",
+      "type": "environmentNode",
+      "position": {
+        "x": 1920,
+        "y": -40
+      },
+      "width": 280,
+      "height": 170,
+      "data": {
+        "label": "Visual Evidence Assessor",
+        "nodeType": "environment_visual_evidence_assessor",
+        "properties": {
+          "role": "orchestrator",
+          "systemPrompt": "You are the Environment Visual Evidence Assessor. Independently audit a claimed visual completion against exactly the attached current correlated camera frame. Evaluate only whether the visual condition required by the original objective is clearly and directly satisfied in this frame. The action result, the assistant's narrative, earlier frames, conversation history, and assumptions are not visual evidence. Use verdict supported only when the required condition is unambiguous in the frame. Use unsupported when the frame contradicts or does not contain the required condition. Use uncertain when occlusion, framing, or ambiguity prevents a reliable decision.\n\nYou validate evidence only; you do not plan the next action, write a continuation instruction, or reassign an actor. The existing task validator and graph-owned refinement stage handle an incomplete result. Do not use object-specific rules, invent capabilities, or claim that a condition is visible unless it is directly present.\n\nReturn exactly one JSON object with verdict and reason. verdict must be supported, unsupported, or uncertain. reason must briefly state what the exact frame does or does not prove.",
+          "maxTokens": 512,
+          "temperature": 0
+        }
+      }
+    },
+    {
       "id": "task-validator",
       "type": "environmentNode",
       "position": {
@@ -225,10 +245,31 @@
       }
     },
     {
-      "id": "workflow-command",
+      "id": "task-refiner",
       "type": "environmentNode",
       "position": {
         "x": 2210,
+        "y": -240
+      },
+      "width": 300,
+      "height": 190,
+      "data": {
+        "label": "Environment Task Refiner",
+        "nodeType": "environment_task_refiner",
+        "properties": {
+          "role": "orchestrator",
+          "systemPrompt": "You are the Environment Task Refiner inside the existing Environment Mode workflow. The existing Environment Task Validator has already determined that the current attempt did not complete the original objective. Do not revalidate that decision and do not claim completion.\n\nWrite one improved, narrower high-level instruction for the next Environment Mode attempt. Preserve the original objective and required completion evidence. Use the validator reason, terminal feedback, current observation, image, prior instruction, conversation context, and persona to correct or improve the approach. The new instruction may change viewpoint, request fresh evidence, choose a different approach, or communicate when appropriate, but it must remain within the stated objective and current advertised capabilities. Describe what the next Environment pass should achieve; do not select raw servo values, joint targets, implementation details, queues, buffers, or tools. Do not merely repeat the prior instruction unless the current evidence makes a repeat the best refined attempt.\n\nAlso write one concise user-visible message that honestly says the prior attempt did not yet complete the objective and explains the refined next attempt. Do not claim the next action is already happening or completed. The message will be recorded in the existing Conversation Buffer before the refined instruction is queued.\n\nReturn exactly one JSON object and no markdown: {\"instruction\":\"one refined Environment Mode instruction\",\"message\":\"one user-visible refinement update\",\"reason\":\"brief evidence-based reason for this refinement\"}.",
+          "historyLimit": 8,
+          "maxTokens": 768,
+          "temperature": 0.2
+        }
+      }
+    },
+    {
+      "id": "workflow-command",
+      "type": "environmentNode",
+      "position": {
+        "x": 2820,
         "y": -220
       },
       "width": 260,
@@ -373,6 +414,56 @@
       }
     },
     {
+      "id": "refinement-conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 2520,
+        "y": -240
+      },
+      "width": 260,
+      "height": 130,
+      "data": {
+        "label": "Record Refinement Update",
+        "nodeType": "conversation_buffer",
+        "properties": {
+          "explicitOnly": true
+        }
+      }
+    },
+    {
+      "id": "refinement-stream",
+      "type": "outputNode",
+      "position": {
+        "x": 3100,
+        "y": -140
+      },
+      "width": 230,
+      "height": 100,
+      "data": {
+        "label": "Stream Refinement Update",
+        "nodeType": "stream_writer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "refinement-chat",
+      "type": "outputNode",
+      "position": {
+        "x": 3380,
+        "y": -140
+      },
+      "width": 260,
+      "height": 120,
+      "data": {
+        "label": "Refinement Conversation",
+        "nodeType": "cognitive/chat_view",
+        "properties": {
+          "mode": "direct",
+          "maxMessages": 5
+        }
+      }
+    },
+    {
       "id": "memory-capture",
       "type": "outputNode",
       "position": {
@@ -490,15 +581,15 @@
       }
     },
     {
-      "id": "e-10-instruction-context-router-message",
+      "id": "e-10-routingRequest-context-router-message",
       "source": "10",
       "target": "context-router",
-      "sourceHandle": "instruction",
+      "sourceHandle": "routingRequest",
       "targetHandle": "message",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Classify context and action intent from the current instruction"
+        "comment": "Classify context, action intent, and whole-objective evidence from the current instruction plus compact current state"
       }
     },
     {
@@ -766,6 +857,102 @@
       }
     },
     {
+      "id": "e-context-router-analysis-task-validator-routingAnalysis",
+      "source": "context-router",
+      "target": "task-validator",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Carry structured task persistence and whole-objective evidence requirements into validation"
+      }
+    },
+    {
+      "id": "e-context-router-analysis-visual-evidence-assessor-routingAnalysis",
+      "source": "context-router",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Carry the whole-objective evidence contract into independent visual assessment"
+      }
+    },
+    {
+      "id": "e-6-taskDecision-visual-evidence-assessor-taskDecision",
+      "source": "6",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Audit only the Environment LLM's structured visual completion claim"
+      }
+    },
+    {
+      "id": "e-10-instruction-visual-evidence-assessor-instruction",
+      "source": "10",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Preserve the current objective for semantic evidence assessment"
+      }
+    },
+    {
+      "id": "e-10-observation-visual-evidence-assessor-observation",
+      "source": "10",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Bind assessment to the current correlated observation"
+      }
+    },
+    {
+      "id": "e-11-images-visual-evidence-assessor-images",
+      "source": "11",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Provide only validated current image content"
+      }
+    },
+    {
+      "id": "e-11-frames-visual-evidence-assessor-frames",
+      "source": "11",
+      "target": "visual-evidence-assessor",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Bind the assessment output to exact frame metadata"
+      }
+    },
+    {
+      "id": "e-visual-evidence-assessor-assessment-task-validator-evidenceAssessment",
+      "source": "visual-evidence-assessor",
+      "target": "task-validator",
+      "sourceHandle": "assessment",
+      "targetHandle": "evidenceAssessment",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Require independent frame-bound support before accepting visual completion"
+      }
+    },
+    {
       "id": "e-6-actions-task-validator-actions",
       "source": "6",
       "target": "task-validator",
@@ -886,15 +1073,159 @@
       }
     },
     {
-      "id": "e-task-validator-workflowCommand-workflow-command-command",
+      "id": "e-task-validator-taskInstruction-8-taskInstruction",
       "source": "task-validator",
-      "target": "workflow-command",
+      "target": "8",
+      "sourceHandle": "taskInstruction",
+      "targetHandle": "taskInstruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Persist the validator-owned task contract with correlated action feedback"
+      }
+    },
+    {
+      "id": "e-task-validator-refinementRequest-task-refiner-request",
+      "source": "task-validator",
+      "target": "task-refiner",
+      "sourceHandle": "refinementRequest",
+      "targetHandle": "request",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Only the existing validator may open the graph-owned refinement stage"
+      }
+    },
+    {
+      "id": "e-10-observation-task-refiner-observation",
+      "source": "10",
+      "target": "task-refiner",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Give the refinement LLM the current correlated result and capabilities"
+      }
+    },
+    {
+      "id": "e-11-images-task-refiner-images",
+      "source": "11",
+      "target": "task-refiner",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Provide the exact current correlated image when available"
+      }
+    },
+    {
+      "id": "e-11-frames-task-refiner-frames",
+      "source": "11",
+      "target": "task-refiner",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Bind refinement vision to current frame metadata"
+      }
+    },
+    {
+      "id": "e-conversation-history-history-task-refiner-conversationHistory",
+      "source": "conversation-history",
+      "target": "task-refiner",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Preserve bounded conversational continuity during refinement"
+      }
+    },
+    {
+      "id": "e-persona-formatter-formatted-task-refiner-personaText",
+      "source": "persona-formatter",
+      "target": "task-refiner",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Keep refined attempts consistent with the active persona"
+      }
+    },
+    {
+      "id": "e-task-refiner-conversationEntry-refinement-buffer-entry",
+      "source": "task-refiner",
+      "target": "refinement-conversation-buffer",
+      "sourceHandle": "conversationEntry",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message",
+        "comment": "Record the user-visible refinement through the existing canonical Conversation Buffer owner"
+      }
+    },
+    {
+      "id": "e-task-refiner-workflowCommand-refinement-buffer-passthrough",
+      "source": "task-refiner",
+      "target": "refinement-conversation-buffer",
       "sourceHandle": "workflowCommand",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Sequence conversation admission before the refined Environment command"
+      }
+    },
+    {
+      "id": "e-refinement-buffer-passthrough-workflow-command-command",
+      "source": "refinement-conversation-buffer",
+      "target": "workflow-command",
+      "sourceHandle": "passthrough",
       "targetHandle": "command",
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Admit one bounded next instruction only when the objective remains incomplete"
+        "comment": "Send the LLM-authored refined prompt through the existing Environment workflow command"
+      }
+    },
+    {
+      "id": "e-refinement-buffer-response-tts-out-conversation",
+      "source": "refinement-conversation-buffer",
+      "target": "tts-out",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Reuse the single node-owned conversation TTS path for the visible refinement update"
+      }
+    },
+    {
+      "id": "e-refinement-buffer-response-refinement-stream-response",
+      "source": "refinement-conversation-buffer",
+      "target": "refinement-stream",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Stream the persisted refinement update to the conversation interface"
+      }
+    },
+    {
+      "id": "e-refinement-stream-output-refinement-chat-message",
+      "source": "refinement-stream",
+      "target": "refinement-chat",
+      "sourceHandle": "output",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Display the same persisted refinement update in Environment chat"
       }
     },
     {

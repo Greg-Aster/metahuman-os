@@ -230,15 +230,19 @@ try {
   resetState();
   const lifecycle = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
   assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, lifecycle.id);
-  const accepted = recordEnvironmentActionResult({
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'bridge-secret';
+  const acceptedResponse = await handleEnvironmentBridgeActionResult(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+  }, {
     id: 'accepted-1',
     timestamp: new Date().toISOString(),
     type: 'accepted',
     message: 'accepted',
     actionId: lifecycle.id,
-  });
-  assert.equal(accepted?.action.status, 'dispatched');
-  assert.equal(accepted?.username, 'system');
+  }));
+  assert.equal(acceptedResponse.status, 200);
+  assert.equal(acceptedResponse.data.action.status, 'dispatched');
+  assert.equal(acceptedResponse.data.robotBufferPersisted, false);
   assert.equal(manager.getTask(lifecycle.id)?.state, 'leased');
   assert.equal(readEnvironmentBridgeState().feedback.length, 0);
 
@@ -260,6 +264,13 @@ try {
     readEnvironmentBridgeState().feedback.filter(item => item.id === 'accepted-1').length,
     1,
   );
+  recordEnvironmentActionResult({
+    id: 'completed-1',
+    timestamp: new Date().toISOString(),
+    type: 'completed',
+    message: 'done',
+    actionId: lifecycle.id,
+  });
 
   const cancellable = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
   assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, cancellable.id);
@@ -524,16 +535,21 @@ try {
   assert.equal(bodyQueued.status, 'coordinated_for_adapter');
   assert.equal(bodyQueued.count, 1);
   assert.equal(bodyQueued.ready, true);
-  assert.equal(bodyQueued.response, '');
+  assert.equal(bodyQueued.response, 'Walking.');
   const queuedBodyCommand = bodyQueued.commands[0];
   assert.ok(queuedBodyCommand);
   const queuedCycle = queuedBodyCommand.metadata?.robotObserver as
-    | { requestedBy?: string }
+    | { requestedBy?: string; graph?: string }
     | undefined;
   assert.equal(
     queuedCycle?.requestedBy,
     'environment-perception',
     'a user-originated asynchronous action must reuse the bounded perception cycle',
+  );
+  assert.equal(
+    queuedCycle?.graph,
+    'environment',
+    'user-owned action feedback must return to Environment Mode instead of creating a Robot Operator intention',
   );
   assert.equal(
     manager.getTask(queuedBodyCommand.id)?.metadata?.originatingInstruction,

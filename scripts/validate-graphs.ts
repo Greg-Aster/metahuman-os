@@ -96,7 +96,11 @@ for (const file of files) {
 
     // Maintained conversational graphs use strict runtime wiring: every handle
     // and persisted property must match a registered node contract.
-    if (file === 'dual-mode.json' || file === 'environment-mode.json') {
+    if (
+      file === 'dual-mode.json'
+      || file === 'environment-mode.json'
+      || file === 'robot-operator-mode.json'
+    ) {
       validateRegisteredNodeContracts(graph);
     }
 

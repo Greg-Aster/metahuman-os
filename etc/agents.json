@@ -1,14 +1,14 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
   "version": "1.1.0",
-  "revision": 4,
+  "revision": 5,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
   "description": "Canonical Trigger Manager configuration for finite work",
   "globalSettings": {
-    "pauseAll": true,
+    "pauseAll": false,
     "timezone": "America/Los_Angeles",
     "quietHours": {
       "enabled": false,
@@ -102,7 +102,7 @@
     "robot-observer": {
       "id": "robot-observer",
       "displayName": "Robot Observer",
-      "description": "Requests a current robot camera image and runs a bounded Environment Mode observation cycle.",
+      "description": "Requests a current robot camera image and sends the correlated observation to Robot Operator Mode.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -122,7 +122,7 @@
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Runs Environment Mode with the robot-advertised stationary movement catalog and permits one in-place semantic command.",
+      "description": "Sends an idle stimulus and the robot-advertised stationary movement catalog to Robot Operator Mode.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",

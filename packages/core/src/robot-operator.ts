@@ -24,7 +24,6 @@ export interface BoredomMovementMetadata {
   triggerSource: RobotObserverTriggerSource
   requestedBy: 'boredom-movement'
   stationaryCommands: string[]
-  selectedCommand: string
 }
 
 export interface RobotOperatorConfig {
@@ -35,6 +34,7 @@ export interface RobotOperatorConfig {
   boredomMovementJitterMs: number
   maxCycleSteps: number
   graph: string
+  environmentGraph: string
   sessionId?: string
 }
 
@@ -45,7 +45,8 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomMovementInactivityThresholdSeconds: 600,
   boredomMovementJitterMs: 120_000,
   maxCycleSteps: 8,
-  graph: 'environment',
+  graph: 'robot-operator',
+  environmentGraph: 'environment',
 }
 
 const FORBIDDEN_BOREDOM_COMMANDS = new Set(['stop', 'walk', 'backward', 'left', 'right'])
@@ -71,6 +72,10 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
   const graph = typeof configured.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.graph.trim())
     ? configured.graph.trim()
     : DEFAULT_CONFIG.graph
+  const environmentGraph = typeof configured.environmentGraph === 'string'
+    && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.environmentGraph.trim())
+    ? configured.environmentGraph.trim()
+    : DEFAULT_CONFIG.environmentGraph
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
     ? configured.sessionId.trim()
     : undefined
@@ -97,6 +102,7 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     ),
     maxCycleSteps: Math.floor(boundedNumber(configured.maxCycleSteps, DEFAULT_CONFIG.maxCycleSteps, 1, 10)),
     graph,
+    environmentGraph,
     sessionId,
   }
 }

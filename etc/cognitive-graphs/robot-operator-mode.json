@@ -1,0 +1,298 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Operator Mode",
+  "description": "High-level autonomous robot deliberation. Uses current perception, persona, and conversation context to decide whether to delegate one intention to Environment Mode. It never selects or executes robot actions itself.",
+  "cognitiveMode": "environment",
+  "last_modified": "2026-08-03",
+  "nodes": [
+    {
+      "id": "observation",
+      "type": "environmentNode",
+      "position": { "x": 80, "y": 160 },
+      "width": 240,
+      "height": 120,
+      "data": {
+        "label": "Robot Stimulus",
+        "nodeType": "environment_observation",
+        "properties": {}
+      }
+    },
+    {
+      "id": "image-input",
+      "type": "environmentNode",
+      "position": { "x": 380, "y": 300 },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Correlated Robot Image",
+        "nodeType": "environment_image_input",
+        "properties": {}
+      }
+    },
+    {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": { "x": 80, "y": -80 },
+      "width": 250,
+      "height": 110,
+      "data": {
+        "label": "Conversation History",
+        "nodeType": "conversation_history",
+        "properties": { "limit": 20 }
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": { "x": 80, "y": 500 },
+      "width": 220,
+      "height": 110,
+      "data": {
+        "label": "Persona Loader",
+        "nodeType": "persona_loader",
+        "properties": {}
+      }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": { "x": 380, "y": 500 },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": true
+        }
+      }
+    },
+    {
+      "id": "operator-context",
+      "type": "operatorNode",
+      "position": { "x": 700, "y": 130 },
+      "width": 330,
+      "height": 220,
+      "data": {
+        "label": "Robot Operator Context",
+        "nodeType": "robot_operator_context_builder",
+        "properties": {
+          "systemPrompt": "You are Robot Operator Mode, the robot's high-level autonomous deliberation workflow. You perform the role that a human input would normally perform before Environment Mode: examine the current robot stimulus in light of the active persona and recent conversation, decide whether anything is worth doing, and if so express one concise high-level intention for Environment Mode.\n\nYou decide WHAT the robot wants to do or communicate. Environment Mode decides HOW to execute it. Do not select robot commands, motion plans, joint values, tools, TTS operations, buffers, or implementation details. Do not copy a supported command name merely because it is available. The delegated instruction is an outstanding, unexecuted objective. Describe the circumstance and desire in natural first-person language, such as: I see a red ball and want to investigate it. For physical activity, use desire or intent language such as I want to, I intend to, or I would like to. Do not use I will for a physical action: it sounds like an execution promise rather than an unexecuted intention. Never state or imply that an action is already happening or has completed; avoid forms such as I am moving and I have moved because only Environment Mode and correlated robot feedback can establish that.\n\nTreat conversation history, persona, and prior inner-thought context as continuity, not as new commands. Ground visual claims only in the attached current correlated image. An observation does not require a reaction; waiting is a valid deliberate choice. Keep the decision open-ended and persona-consistent rather than using object-specific rules. The instruction will be recorded as an unspoken inner intention and separately delegated to Environment Mode; it is not itself a spoken response.\n\nReturn exactly one JSON object and no markdown or extra prose. Use one of these forms:\n{\"route\":\"environment\",\"instruction\":\"one concise first-person outstanding intention for Environment Mode\",\"reason\":\"brief reason this is worth delegating\"}\n{\"route\":\"wait\",\"instruction\":\"\",\"reason\":\"brief reason no response is useful now\"}",
+          "historyLimit": 12
+        }
+      }
+    },
+    {
+      "id": "operator-llm",
+      "type": "llmNode",
+      "position": { "x": 1100, "y": 150 },
+      "width": 230,
+      "height": 120,
+      "data": {
+        "label": "Robot Operator LLM",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "persona",
+          "maxTokens": 768,
+          "temperature": 0.55
+        }
+      }
+    },
+    {
+      "id": "thinking-stripper",
+      "type": "outputNode",
+      "position": { "x": 1400, "y": 150 },
+      "width": 230,
+      "height": 110,
+      "data": {
+        "label": "Thinking Stripper",
+        "nodeType": "thinking_stripper",
+        "properties": {}
+      }
+    },
+    {
+      "id": "decision-parser",
+      "type": "operatorNode",
+      "position": { "x": 1700, "y": 150 },
+      "width": 270,
+      "height": 140,
+      "data": {
+        "label": "Intention Route Parser",
+        "nodeType": "robot_operator_decision_parser",
+        "properties": {}
+      }
+    },
+    {
+      "id": "environment-dispatch",
+      "type": "operatorNode",
+      "position": { "x": 2380, "y": 150 },
+      "width": 290,
+      "height": 150,
+      "data": {
+        "label": "Delegate to Environment Mode",
+        "nodeType": "robot_operator_environment_dispatch",
+        "properties": {
+          "graph": "environment",
+          "maxSteps": 8
+        }
+      }
+    },
+    {
+      "id": "intention-inner-dialogue",
+      "type": "outputNode",
+      "position": { "x": 2040, "y": 360 },
+      "width": 280,
+      "height": 150,
+      "data": {
+        "label": "Record Unspoken Intention",
+        "nodeType": "inner_dialogue_buffer",
+        "properties": {
+          "tags": ["robot-operator", "observation", "intention", "inner"],
+          "dialogueSource": "robot-operator-mode",
+          "role": "reflection",
+          "captureMemory": false
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-observation-visual-image-input-visual",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
+      "type": "default",
+      "data": { "type": "object", "comment": "Current visual frame" }
+    },
+    {
+      "id": "e-observation-visuals-image-input-visuals",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
+      "type": "default",
+      "data": { "type": "array", "comment": "Current visual frame list" }
+    },
+    {
+      "id": "e-observation-observation-operator-context-observation",
+      "source": "observation",
+      "target": "operator-context",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object", "comment": "Original structured robot stimulus" }
+    },
+    {
+      "id": "e-image-input-images-operator-context-images",
+      "source": "image-input",
+      "target": "operator-context",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": { "type": "array", "comment": "Validated correlated image content" }
+    },
+    {
+      "id": "e-image-input-frames-operator-context-frames",
+      "source": "image-input",
+      "target": "operator-context",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": { "type": "array", "comment": "Frame correlation metadata" }
+    },
+    {
+      "id": "e-conversation-history-history-operator-context-conversationHistory",
+      "source": "conversation-history",
+      "target": "operator-context",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": { "type": "array", "comment": "Canonical recent conversation and configured unified inner context" }
+    },
+    {
+      "id": "e-persona-loader-persona-persona-formatter-persona",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "type": "default",
+      "data": { "type": "object", "comment": "Active persona" }
+    },
+    {
+      "id": "e-persona-formatter-formatted-operator-context-personaText",
+      "source": "persona-formatter",
+      "target": "operator-context",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": { "type": "string", "comment": "Formatted identity, traits, values, and goals" }
+    },
+    {
+      "id": "e-operator-context-messages-operator-llm-messages",
+      "source": "operator-context",
+      "target": "operator-llm",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": { "type": "array", "comment": "Graph-configured multimodal deliberation messages" }
+    },
+    {
+      "id": "e-operator-llm-response-thinking-stripper-response",
+      "source": "operator-llm",
+      "target": "thinking-stripper",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": { "type": "llm_response", "comment": "Strip private model reasoning before parsing" }
+    },
+    {
+      "id": "e-thinking-stripper-stripped-decision-parser-response",
+      "source": "thinking-stripper",
+      "target": "decision-parser",
+      "sourceHandle": "stripped",
+      "targetHandle": "response",
+      "type": "default",
+      "data": { "type": "string", "comment": "Visible structured decision only" }
+    },
+    {
+      "id": "e-decision-parser-decision-intention-inner-dialogue-passthrough",
+      "source": "decision-parser",
+      "target": "intention-inner-dialogue",
+      "sourceHandle": "decision",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": { "type": "object", "comment": "Preserve the validated decision while recording its authored intention" }
+    },
+    {
+      "id": "e-decision-parser-instruction-intention-inner-dialogue-text",
+      "source": "decision-parser",
+      "target": "intention-inner-dialogue",
+      "sourceHandle": "instruction",
+      "targetHandle": "text",
+      "type": "default",
+      "data": { "type": "string", "comment": "Record only the clean authored intention; wait decisions provide empty text" }
+    },
+    {
+      "id": "e-intention-inner-dialogue-passthrough-environment-dispatch-decision",
+      "source": "intention-inner-dialogue",
+      "target": "environment-dispatch",
+      "sourceHandle": "passthrough",
+      "targetHandle": "decision",
+      "type": "default",
+      "data": { "type": "object", "comment": "Delegate only after the intention has passed through canonical Inner Dialogue admission" }
+    },
+    {
+      "id": "e-observation-observation-environment-dispatch-observation",
+      "source": "observation",
+      "target": "environment-dispatch",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object", "comment": "Preserve the exact correlated observation for Environment Mode" }
+    }
+  ]
+}

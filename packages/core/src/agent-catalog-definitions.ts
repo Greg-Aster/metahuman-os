@@ -226,7 +226,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'robot-observer': {
     id: 'robot-observer',
     displayName: 'Robot Observer',
-    description: 'Requests one correlated robot camera image and routes the bounded observation cycle through Environment Mode.',
+    description: 'Requests one correlated robot camera image and routes it to Robot Operator Mode for high-level deliberation.',
     lifecycle: 'workflow',
     handler: 'workflow.robot-observer',
     taskType: 'generic',
@@ -240,7 +240,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'boredom-movement': {
     id: 'boredom-movement',
     displayName: 'Boredom Movement',
-    description: 'Asks Environment Mode to choose one robot-advertised stationary semantic movement after prolonged inactivity.',
+    description: 'Submits an idle robot stimulus and bounded stationary capability catalog to Robot Operator Mode.',
     lifecycle: 'workflow',
     handler: 'workflow.boredom-movement',
     taskType: 'generic',

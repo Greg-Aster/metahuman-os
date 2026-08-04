@@ -102,6 +102,7 @@ Robot-specific autonomous admission currently follows a second path:
 Active Operator Semi or Full
   -> Robot Operator inactivity timers
   -> Robot Observer or Boredom Movement
+  -> Robot Operator Mode graph
   -> Work Coordinator
   -> Environment Mode / Environment Bridge
 ```
@@ -120,18 +121,19 @@ refreshed before implementation or physical validation.
 | Environment Bridge process | Implemented | Boot-managed, event-driven, and transports observations, semantic actions, and feedback. |
 | Audio command path | Implemented, still being refined | Robot audio can enter Environment Mode; semantic commands and correlated completion return through the bridge. |
 | Environment image input | Implemented | Bounded JPEG observations can enter the Environment Mode vision path. |
-| Robot Observer | Partially implemented | Can queue a correlated `captureImage` request and route a returned image into Environment Mode. |
-| Boredom Movement | Implemented as a limited behavior | Uses a timer and randomly chooses one allowed stationary command; it does not reason from a new image first. |
+| Robot Observer | Implemented at code level, physically exercised | Queues a correlated `captureImage` request and routes the returned image through Robot Operator Mode before delegating an intention and the same observation to Environment Mode. |
+| Boredom Movement | Implemented at code level, physically exercised | Uses its inactivity trigger to emit a typed autonomous stimulus through Robot Operator Mode; the agent no longer chooses a random robot command or calls an LLM. |
 | Completion feedback | Implemented | Action results update coordinator work and can return to Environment Mode. |
-| User-task completion validator | Implemented, partially physically validated | `Environment Task Validator` consumes a structured LM decision, owns current action admission, blocks repeats and out-of-mode continuations, and emits at most one bounded workflow command. Conditional actions have repeated physically, but stop-condition and long-loop behavior still need refinement. |
-| Environment workflow command node | Implemented, partially physically validated | A reusable node admits a validated `nextInstruction` to the existing Work Coordinator as a separate Environment Mode run and exposes its task ID/status. Physical tests have demonstrated bounded successor admission. |
-| Semi philosophy | Partially implemented and physically exercised | User-owned terminal results can queue one bounded next instruction; conditional tasks now continue beyond one action in some tests. Boredom/report-only behavior and reliable end-to-end termination still need validation. |
+| User-task completion validator | Implemented, partially physically validated | The single existing `Environment Task Validator` consumes the graph's structured decision, validates completion evidence, and emits a typed refinement request only when the objective remains incomplete inside its bounded cycle. Active Operator mode controls trigger scheduling; downstream nodes do not re-decide an admitted graph action. |
+| Environment task refiner | Implemented, awaiting physical validation | A configurable LLM node runs only from the existing validator's incomplete result. It writes one refined Environment prompt plus a user-visible update; the canonical Conversation Buffer records the update before the existing Workflow Command queues the prompt. |
+| Environment workflow command node | Implemented, partially physically validated | The existing reusable node admits the refiner's prompt to the existing Work Coordinator as a separate Environment Mode run and exposes its task ID/status. It is not a second queue or validator. |
+| Semi philosophy | Partially implemented and physically exercised | Bounded terminal results can enter the same validator-owned refinement loop until completion or the eight-step limit. Reliable end-to-end termination still needs physical validation. |
 | Full philosophy | Missing | Full starts a generic bounded policy service, but robot work still uses the same inactivity timers and workflows as Semi. |
-| Completion-driven successor work | Partially implemented | Completed bounded user tasks, and bounded Full autonomy tasks, can queue one validated Environment successor; the perpetual Full successor policy is not implemented. |
+| Completion-driven successor work | Partially implemented | Incomplete bounded tasks can enter one validator-approved Environment refinement at a time. The higher-level Full policy that selects a new objective after completion is not implemented. |
 | Full curiosity/background selection | Missing | The robot LM does not choose Curiosity or background work as part of one embodied successor policy. |
 | Physical observe-decide-act capability | Partial | The latest physical `ainekio-01` snapshot advertises `captureImage`, `robotCommand`, `robotMotionPlan`, and `sendText`; command reliability and autonomous policy remain incomplete. |
 | Observe/report safety behavior | In progress | Current working-tree Environment nodes route candidate actions through the validator, treat terminal completion feedback as reportable evidence, and suppress unsupported continuations. |
-| Robot speech command lifecycle | Degraded; queue blocker confirmed | A robot-routed `tts-out` command can remain leased without correlated terminal feedback. Later commands on the same `environment:ainekio-01` resource remain queued behind it. This failure is separate from validator continuation logic. |
+| Robot command lifecycle | Protocol repaired and physically validated | MetaHuman keeps the resource lease after adapter acceptance and releases it only on correlated terminal feedback. The Ainekio adapter holds commands until MetaHuman acknowledges admission and retains unacknowledged feedback across reconnects. Live commands completed serially without leaving the environment resource blocked. This repair is separate from validator continuation logic. |
 
 At the latest diagnostic snapshot, Active Operator was `semi`. The Agent Monitor
 processes for Robot Operator and Environment Bridge were running, the physical
@@ -243,8 +245,8 @@ inside capability, safety, action-count, and resource budgets.
 ## Environment Task Validator
 
 The first feature is now implemented as a dedicated Environment Mode validator
-node. It is the mode-aware authority for deciding whether a task is complete and
-whether a proposed successor instruction is permitted.
+node. It validates whether the graph's task decision is complete and whether an
+incomplete result may enter another stage of the bounded task contract.
 
 Implemented node identity:
 
@@ -254,17 +256,22 @@ Implemented node identity:
 
 Instruction ownership is intentionally split:
 
-- The existing Environment LLM proposes a structured `taskDecision` and, when
-  needed, one `nextInstruction` for the same objective.
-- `Environment Task Validator` deterministically checks mode, source, terminal
-  feedback, original objective, repeated-action risk, and the bounded cycle. It
-  does not invent an instruction when the LM omitted one.
-- `Environment Workflow Command` rechecks mode and bounds, wraps the original
-  objective with the next instruction, and admits one `environment_observation`
-  item to the existing Work Coordinator.
-- The next instruction therefore runs as a separate, visible Environment Mode
-  execution. It does not execute as a hidden second action in the completion
-  pass.
+- The existing Environment LLM proposes a structured `taskDecision`; it does
+  not write the next attempt before validation.
+- `Environment Task Validator` deterministically checks terminal feedback,
+  completion evidence, the original objective, and the bounded cycle. It does
+  not invent a retry prompt or reapply trigger policy after the graph has
+  decided.
+- When that validator emits an incomplete refinement request, `Environment Task
+  Refiner` uses the configured graph-owned LLM prompt, current evidence,
+  persona, and conversation context to author one narrower instruction and one
+  candid user-visible update.
+- The existing Conversation Buffer records that update before `Environment
+  Workflow Command` validates the bounded command envelope and admits one
+  `environment_observation` item to the existing Work Coordinator.
+- The refined instruction therefore runs as a separate, visible Environment
+  Mode execution. It does not execute as a hidden second action in the
+  completion pass.
 
 Required inputs:
 
@@ -290,13 +297,9 @@ Required structured outcomes:
 - `request_user`: authority or information is missing;
 - `wait`: no useful task is currently justified.
 
-Mode enforcement:
-
-- Reactive accepts no autonomous successor.
-- Semi may continue only the active user objective. Semi boredom observations
-  may end only in `report` or `wait`.
-- Full must emit one successor outcome after every terminal task result and may
-  select a new bounded objective when the prior objective is complete.
+Mode affects whether an automated workflow is triggered. Once the configured
+graph is running, validator, refiner, command, and bridge nodes do not reapply a
+mode/source veto to the graph's validated result.
 
 The validator must not write a second task store or conversation-memory system.
 It should consume the existing graph context, coordinator work, Environment
@@ -341,19 +344,22 @@ authoritative:
 
 ### Phase 1: Make completion explicit in Environment Mode
 
-- Implemented: added the Environment Task Validator node and executable Node
-  Editor definition.
+- Implemented: refined the existing Environment Task Validator node and its
+  executable Node Editor definition.
 - Implemented: added the reusable Environment Workflow Command node for explicit
   coordinator admission.
 - Implemented: placed completion validation after action parsing and before the
   separate successor-command branch. Parser candidates no longer bypass the
   validator: validated current actions and movement requests flow from the
   validator to Environment Bridge Out and Movement Generator.
-- Implemented: terminal feedback stays reportable, and an incomplete explicit
-  user objective may produce one different, bounded `nextInstruction`.
-- Implemented in focused node tests: complete/continue gating, Reactive denial,
-  Semi report-only action gating, repeat denial, Full bounded admission, step
-  limits, and queue payload ownership.
+- Implemented: terminal feedback stays reportable. A completed one-shot action
+  closes by default, while an incomplete bounded objective opens the graph-owned
+  refiner without accepting a prewritten successor from the first LLM.
+- Implemented: the refiner's visible update passes through the existing
+  Conversation Buffer before its prompt reaches the existing Workflow Command.
+- Implemented in focused node tests: complete/continue validation, independent
+  visual evidence, refinement admission, graph-owned prompt authorship,
+  mode-independent downstream execution, step limits, and queue ownership.
 
 Exit condition: a user-owned conditional objective can complete multiple bounded
 steps in Semi without losing its termination criterion or inventing an unrelated
@@ -408,61 +414,242 @@ explicitly authorized before editing those surfaces.
 
 ## 2026-08-03 Validator Implementation Log
 
-- Extended the existing Environment LLM JSON contract with a structured
-  `taskDecision`; no second LLM call was added.
-- Added `Environment Task Validator` and `Environment Workflow Command` as
-  reusable Environment nodes automatically exposed by the executable node
-  registry used by the editor.
+- Kept the existing `Environment Task Validator` as the only task-completion
+  authority and extended its incomplete result with a typed refinement request.
+- Added `Environment Task Refiner` as a conditional graph-owned LLM stage. It is
+  not a validator: it runs only after the validator reports incomplete and only
+  writes the next high-level Environment prompt and user-visible update.
+- Reused `Environment Workflow Command` and the canonical Conversation Buffer;
+  no second validator, queue, task store, buffer, or execution pipeline was
+  added.
 - Rewired only the Environment Mode graph. Current parser candidates now pass
   through the validator before Environment Bridge Out or Movement Generator;
-  completion decisions use the separate validator-to-command branch.
+  an incomplete terminal result uses the validator-to-refiner branch.
 - The command node strips terminal feedback before the queued run, preserves the
   original objective in a bounded instruction envelope, reuses correlated cycle
   metadata, applies an idempotency key, and returns the coordinator task ID.
 - Completion now uses a generic task-state contract rather than matching words in
   the objective: the decision declares whether the objective is complete, its
-  evidence basis and evidence, and whether a continuation advances or repeats.
-- A completed action or response completes one workflow step, not automatically
-  the whole objective. Incomplete user-owned work can queue exactly one later
-  step in Semi; a user-authorized repeat remains bounded by the same cycle limit.
+  evidence basis and evidence, and whether the same objective is bounded.
+- A completed action closes a one-shot objective by default. Incomplete
+  bounded work can enter exactly one refinement stage when its task decision
+  explicitly declares `continuationPolicy: "bounded"` and the existing validator
+  confirms that the objective remains incomplete below the step limit.
 - The validator checks that the declared evidence source is currently available.
   Visual completion requires a fresh image correlated to the active cycle.
-- Response-only successors advance the persisted cycle step when queued. An
-  action-result successor retains its current step and advances only when its
-  next physical action is admitted, preventing the same continuation from
-  spending the cycle budget twice.
+- The refiner's visible update is admitted through the existing Conversation
+  Buffer before its typed command reaches Environment Workflow Command. The next
+  physical action advances the cycle when it is admitted, preventing one
+  refinement from spending the step budget twice.
 - User-owned robot cycles allow up to eight bounded steps. This supports a real
   conditional loop while preserving the existing hard ceiling and the separate
   coordinator rate limit.
-- An incomplete decision can no longer stall because the model omitted optional
-  continuation refinements. The validator re-admits the original objective for
-  one fresh bounded evaluation, while explicit narrower instructions still take
-  precedence.
-- A narrower continuation instruction is admitted only when its structured type
-  is present in the same decision. Partial suggestions cannot replace the
-  original user-owned objective, and queued passes suppress conversational
-  history so speaker and actor roles cannot drift.
+- Missing bounded authorization, an invalid validator request, or an invalid
+  refiner response queues nothing. The validator never derives a successor by
+  replaying the objective, and the first Environment LLM cannot prewrite the
+  next instruction before validation.
+- The original objective remains available only for completion validation. A
+  refined pass executes the refiner-authored instruction while preserving that
+  objective and the correlated evidence contract.
 - Once an objective is known to depend on external robot evidence, a generated
   response alone cannot prove completion. The evidence must come from an allowed
   current external basis such as correlated vision, environment state, an action
   result, or current user input.
 - No object name, gesture, command sentence, or conditional-task phrase is
   embedded in validator control logic.
-- No generic Work Coordinator, execution engine, Active Operator controller,
+- No generic Work Coordinator, Active Operator controller,
   Environment Interface, bridge transport, Chat Interface, or controller code
   was modified for this feature.
-- Focused validator/command tests pass (18 tests), the Robot Operator contract
-  tests pass (8 tests), and all 25 cognitive graphs pass schema validation.
-- A broader compatibility run passes 19 of 20 tests. Its only failure is an
-  exact-string assertion in the generic Environment Interface suite that still
-  requires the superseded `context only` completion wording. That out-of-scope
-  test was not edited without permission; the focused Environment-node test now
-  owns the objective-authority behavior.
+- Focused validator, refiner, command, and Robot Operator coverage passes 47
+  tests, and all 26 cognitive graphs pass schema validation.
 - The full core typecheck remains red on pre-existing diagnostics. After the one
   validator-local diagnostic was corrected, no reported diagnostic referenced
   the new validator or workflow-command files.
 
-## 2026-08-03 Robot Speech Queue Diagnosis
+### One-shot repetition diagnosis and repair
+
+The repeated `wave`, `stand`, and `rest` behavior was not a robot-controller
+retry. It was created inside the Environment Mode continuation path:
+
+1. An audio instruction opened a bounded Robot Observer cycle and the validator
+   treated that current instruction as its objective.
+2. After correlated `completed` feedback, the model reported that the physical
+   step had completed but used response evidence for objective completion.
+3. The validator rejected that evidence, inferred a missing continuation, and
+   copied the original objective into a successor workflow command.
+4. The queued Instruction Interpreter then selected the stored objective instead
+   of the command's narrower instruction, so every successor repeated the first
+   command until the cycle budget ended.
+
+The repair is task-state based and contains no command or phrase matching:
+
+- `continuationPolicy: "none"` is the default and correlated `completed`
+  feedback closes the one-shot action with `action_result` evidence;
+- only `continuationPolicy: "bounded"` plus the existing validator's typed
+  incomplete result can open the refiner;
+- no successor instruction is accepted from the pre-validation Environment LLM
+  or reconstructed from the original objective;
+- the graph-owned refiner LLM authors each revised prompt from current evidence;
+- the policy is persisted on the workflow command; and
+- the queued run executes the admitted successor instruction while retaining
+  the original objective only for completion validation.
+
+Focused coverage proves that a completed one-shot action creates no successor,
+partial continuation data creates no successor, an explicitly bounded
+conditional task can continue, cycle bounds remain in force, and the queued run
+executes the refiner's narrower instruction.
+
+### Live conditional-evidence failure and contract repair
+
+The first live retest separated two behaviors clearly:
+
+- `please wave` completed once and produced no repeated successor;
+- the vision-conditional task completed incorrectly. The initial Environment
+  decision described a continuous action with a visual completion condition but
+  emitted `continuationPolicy: "none"`. On terminal feedback it claimed that the
+  visual condition was satisfied using only `completionBasis: "action_result"`
+  and evidence `done`. A follow-up inspection of the same image reported that
+  the required visual subject was not present.
+
+This exposed a contract problem rather than a command-recognition problem:
+action completion was still able to stand in for a different whole-objective
+completion requirement.
+
+The Environment Context Router now declares two generic values in its existing
+`actionParams` output:
+
+- `continuationPolicy`: `none` or `bounded`; and
+- `requiredCompletionBasis`: the evidence type that can prove the whole
+  objective.
+
+The validator receives that task contract directly, persists it with admitted
+actions as structured MetaHuman-owned context, restores it from correlated
+terminal feedback, and carries it through workflow commands. A completion claim
+is accepted only when its evidence basis matches the persisted whole-objective
+requirement and that evidence is actually available. The Environment prompt
+also receives the restored contract so it can assess the current result against
+the right completion basis. If that assessment remains incomplete, only the
+existing validator may open the graph-owned refiner that writes a narrower next
+prompt.
+
+No objective words, command names, gesture names, visual subjects, or conditional
+phrases are parsed by the control logic. Focused coverage now reproduces the live
+failure generically: a persisted visual requirement rejects an `action_result`
+completion claim and produces a typed incomplete result for bounded refinement.
+Live physical retesting remains required after rebuilding and restarting the
+production server.
+
+### Live visual-semantic gap and boredom-agent collision
+
+Two later physical tests exposed separate remaining failures.
+
+In the first test, the persisted contract correctly required
+`visual_observation`, terminal feedback carried a fresh correlated frame, and
+the Environment model declared that the frame showed the user's hands. Direct
+inspection of that exact `ainekio-camera-38` JPEG showed no hands. A follow-up
+question used a different frame, `ainekio-camera-39`, 17.6 seconds later; that
+frame also showed no hands. The contract therefore fixed evidence provenance but
+not evidence semantics: the deterministic validator proves that the claimed
+frame exists and belongs to the task, but it cannot prove that an open-ended
+visual claim about that frame is true.
+
+The Environment graph now owns that semantic verification explicitly:
+
+- `Environment Visual Evidence Assessor` runs only when the Environment LLM
+  claims whole-objective completion from `visual_observation`.
+- It receives the original objective, the currently admitted instruction, the
+  claimed evidence, and exactly one validated frame correlated to the active
+  cycle. It receives no conversation history or earlier image as evidence.
+- Its graph-owned prompt produces only `supported`, `unsupported`, or
+  `uncertain` evidence plus a reason. It is not a second action planner.
+- The deterministic Task Validator accepts visual completion only when a valid
+  `supported` assessment names the exact current frame. Unsupported, uncertain,
+  missing, malformed, or mismatched assessments cannot complete the objective.
+- A rejected bounded visual condition produces a typed incomplete result. The
+  validator does not copy or invent an instruction; the later graph-owned
+  refiner LLM writes the revised attempt from current evidence.
+- Intermediate completion prose is suppressed whenever the validator has
+  opened refinement, preventing a temporary action result from being shown as
+  if the whole objective stopped.
+
+The recorded false-positive `ainekio-camera-49` frame was passed through the new
+node using Ainekio's configured vision model. The assessor returned
+`unsupported`, stated that no hand was visible, and bound the result to
+`ainekio-camera-49`. The validator then rejected completion; under the current
+design that result opens the graph-owned refiner instead of a coded repeat. No
+hand name, action name, or conditional phrase is present in the node
+implementation or validator control logic. Physical activation of the current
+refinement path still requires an owner-managed server restart.
+
+The 05:02 physical retest did not yet exercise that assessor. The running server
+started at 16:47:32, while the final assessor, validator, and graph files were
+written between 16:51:24 and 16:51:50. Its Environment trace therefore logged
+`No executor found` for `environment_visual_evidence_assessor` and passed the
+main model output through without an independent verdict. Direct inspection of
+the exact task frames `ainekio-camera-57` through `ainekio-camera-60` showed no
+raised hand in any frame.
+
+That retest also exposed two independent workflow-ownership defects:
+
+- The original typed chat task returned no visible response after admitting its
+  body action. Chat work consequently failed with `Graph executed but produced
+  no response` twice, and normal coordinator retry semantics admitted the same
+  wave three times. Environment Bridge Out now preserves the model's
+  non-terminal acknowledgement for the initial user turn, while automatic
+  continuation actions remain silent and terminal feedback still owns the
+  completion report.
+- A user-owned body action initialized its feedback cycle with the autonomous
+  Robot Operator graph. Terminal feedback was therefore allowed to produce the
+  visible Idle Thought `I will stop waving now that I see your hand raised` and
+  delegate that invented intention back to Environment Mode. User action
+  feedback cycles now use the configured Environment execution graph; only a
+  cycle explicitly started by Robot Observer enters Robot Operator Mode.
+
+The two additional visible user turns were separate controller STT observations
+with distinct audio correlation IDs, not agent-authored user text. One was the
+partial transcript `until you see me raise my hand then stop` and the other was
+the later pluralized instruction. They ran as separate user inputs because both
+were received while the original chat work and its retries were still active.
+
+Current-source verification finds the evidence assessor and its executor in the
+node registry. The graph executor coverage audit reports 235 checked nodes and
+zero missing executors. Focused Environment tests pass 23/23, focused Robot
+Operator and boredom tests pass 10/10, and all 26 cognitive graphs validate.
+Passing the exact false-positive `ainekio-camera-60` frame through current source
+returns `unsupported` and prevents a false completion claim. The existing
+validator may then open the graph-owned refiner; it does not deterministically
+repeat the admitted instruction. The owner-managed restart remains required
+before another physical retest.
+
+In the second test, the user said only `Please wave until you see my hands then
+stop`. The visible `perform sit` turn was not user input. Coordinator evidence
+identified it as background `boredom-movement` work with `source: autonomy` and
+its own cycle ID. It started 92 milliseconds after the leased user observation,
+copied the latest audio observation's correlation metadata, and was consequently
+misclassified as part of the user-owned wave cycle. The sit command then expired
+without executing because the wave command already owned the serialized robot
+resource; the visible completion report belonged to the wave action.
+
+The agent repair is ownership-based:
+
+- Boredom Movement now treats any queued, leased, or waiting Environment
+  observation, Environment command, or Robot Observer work as active robot work
+  and does not emit a competing stimulus.
+- Its own workflow and child observation are excluded from that test so the
+  agent does not block itself.
+- A boredom observation no longer inherits user audio, action, feedback, or
+  visual correlation metadata. It receives its own cycle correlation and an
+  explicit `boredom_movement` perception source.
+- The in-progress Robot Operator graph receives the stationary capability
+  catalog as autonomous stimulus data; the agent no longer writes a fabricated
+  user command into conversation.
+
+Focused arbitration coverage proves that an active user observation and an
+active robot command both block boredom work, while completed work and the
+agent's own child do not. Physical retesting requires a server restart by the
+owner.
+
+## 2026-08-03 Robot Command Queue Diagnosis and Repair
 
 This diagnosis is based on the live physical `ainekio-01` session and is
 separate from the Environment Task Validator implementation.
@@ -489,19 +676,92 @@ separate from the Environment Task Validator implementation.
   indefinitely leased environment command. The missing speech terminal result
   therefore becomes a persistent queue lock.
 
-The primary repair is to make the speech lifecycle produce exactly one bounded,
-correlated terminal result even when playback overflows, the robot reconnects,
-or the controller never confirms completion. The preferred result is real
-controller/gateway feedback. A bounded Environment Bridge failure fallback may
-be added as defense in depth, but it must report failure rather than claim that
-playback completed. A generic queue lease watchdog or a TTS/resource-lane change
-would touch explicitly permissioned MetaHuman surfaces and is not the first-line
-repair.
+The queue was not the source of the deadlock. It correctly serialized commands
+behind a work item whose ownership had never reached a terminal state. The
+underlying defect was an ambiguous adapter handoff: the adapter could begin
+physical execution before MetaHuman had durably admitted the command, while
+terminal feedback could be lost if the bridge connection was unavailable.
+Binary `AIKAUD01` microphone frames could also be routed through JSON parsing
+when the WebSocket library exposed them as buffer-backed messages.
 
-No queue item was cancelled and no generic queue, TTS, Ainekio gateway, or
-firmware code was changed during this diagnosis. A controller/gateway repair or
-generic queue/TTS mitigation requires explicit owner permission under this
-roadmap's scope boundary.
+The implemented repair defines one command-ownership protocol:
+
+1. The adapter parses a command, retains it, and sends correlated `accepted`
+   feedback without executing it.
+2. MetaHuman records that acceptance while keeping the queue resource leased,
+   then acknowledges whether the command was admitted.
+3. The adapter executes only after an admitted acknowledgement and retains each
+   terminal feedback item until MetaHuman acknowledges receipt.
+4. On reconnect, the adapter replays unacknowledged feedback. If the bridge
+   disconnects before adapter acceptance, MetaHuman fails that exact action
+   instead of leaving its lease unresolved.
+
+Only terminal feedback (`completed`, `failed`, `rejected`, `cancelled`, or
+`expired`) releases the resource. `accepted` is deliberately non-terminal and
+is not written as a Robot Buffer completion. Binary routing now recognizes the
+audio envelope by its protocol magic rather than relying only on a WebSocket
+frame flag.
+
+This is an event-driven ownership repair. It adds no lease timer, watchdog,
+command-specific phrase matching, fallback execution path, or parallel queue.
+Focused MetaHuman bridge tests pass, all 25 cognitive graphs validate, the site
+build passes, and the Ainekio adapter/speech suite passes 33 tests. The broader
+Environment compatibility script reaches the pre-existing completion-prompt
+exact-string mismatch documented above; the new acceptance and terminal-release
+assertions pass before that unrelated mismatch.
+
+Live activation replaced the pre-repair site, gateway, and Environment Bridge
+processes through their maintained launch paths. The physical `ainekio-01` body
+reports authenticated with motion, camera, and speaker ready. After the final
+bridge reload, four consecutive Environment commands
+received distinct correlated `completed` feedback and released
+`environment:ainekio-01`; the controller reported no pending sequence and the
+MetaHuman queue had no active Environment command. Activation also exposed and
+fixed one acknowledgement race: a correlated observation could clear the shared
+pending-feedback slot while the bridge awaited MetaHuman admission. The bridge
+now keeps a transaction-local feedback reference for its acknowledgement, and
+no new occurrence was logged during the physical command sequence.
+
+## 2026-08-03 Environment Response Suppression Diagnosis and Repair
+
+The live requests `What's your current battery voltage at?`, `battery voltage.`,
+and `What's your current battery voltage?` reached Environment Mode normally.
+The Environment model generated a direct response from current robot state and
+declared `completionBasis: response`, but the response never reached chat or
+TTS. Environment Task Validator logged `requiredCompletionBasis:
+visual_observation`, `blockedReason: required_action_missing`, and
+`responseSuppressed: true`; Stream Writer consequently received an empty
+string. Environment Bridge remained connected and had no command to transport.
+
+The cause was task-contract ownership, not missing wording. Environment Context
+Router sees the current utterance and bounded dialogue but does not receive the
+current Environment observation. Its speculative completion policy was copied
+into the Environment model prompt and could also be preferred by the validator.
+A router false positive therefore overruled the state-aware model and converted
+a report-only request into an incomplete visual/action task. Robot Operator then
+observed the unanswered turn and emitted the visible inner intention to report
+the value, which entered the same suppression path; that Idle Thought was a
+secondary symptom, not the requested answer.
+
+The repaired ownership boundary is:
+
+- Environment Context Router selects conversational context and authorizes
+  current actions. It no longer defines the initial task completion contract.
+- The state-aware Environment model defines the initial continuation policy and
+  required evidence in its structured task decision.
+- Environment Task Validator owns admission and persists that contract only
+  with admitted action or continuation work.
+- On later correlated feedback passes, the persisted validator contract remains
+  authoritative over new model or router guesses.
+
+No battery, telemetry, command, or phrase-specific branch was added. The generic
+tests prove that a false router guess cannot enter an initial completion
+contract, a response-only state answer remains visible, unsupported action
+completion narration remains blocked, and a persisted bounded visual contract
+still controls later feedback. Focused Environment coverage passes 28/28 and
+all 26 cognitive graphs validate. The owner-managed server must be restarted
+before physical retesting because node executors are loaded by the running
+process and the log above came from the pre-repair ownership path.
 
 ## Validation and Safety Gates
 

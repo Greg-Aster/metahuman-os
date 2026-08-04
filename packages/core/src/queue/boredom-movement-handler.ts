@@ -7,7 +7,6 @@ import {
   type EnvironmentObservation,
 } from '../environment-interface/index.js'
 import {
-  chooseBoredomMovementCommand,
   eligibleBoredomMovementCommands,
   isBoredomMovementEnabled,
   loadRobotOperatorConfig,
@@ -36,20 +35,34 @@ function hasRobotCycleMetadata(value: unknown): boolean {
   )
 }
 
-function anotherRobotCycleIsActive(currentTaskId: string): boolean {
-  return getQueueManager().getAllTasks().some(candidate => (
-    candidate.id !== currentTaskId
-    && ['queued', 'leased', 'waiting'].includes(candidate.state)
+function belongsToCurrentBoredomWork(task: QueuedTask, currentTaskId: string): boolean {
+  return task.parentTaskId === currentTaskId
     && (
-      candidate.handler === 'workflow.robot-observer'
-      || candidate.handler === 'workflow.boredom-movement'
-      || hasRobotCycleMetadata(candidate.input)
+      task.metadata?.producer === 'boredom-movement'
+      || task.input?.triggeredBy === 'boredom-movement'
+      || Boolean(task.input?.metadata?.boredomMovement)
+      || Boolean(task.input?.observation?.metadata?.boredomMovement)
     )
-  ))
 }
 
-function movementInstruction(command: string): string {
-  return `perform ${command}`
+export function workBlocksBoredomMovement(
+  task: QueuedTask,
+  currentTaskId: string,
+): boolean {
+  if (task.id === currentTaskId) return false
+  if (!['queued', 'leased', 'waiting'].includes(task.state)) return false
+  if (belongsToCurrentBoredomWork(task, currentTaskId)) return false
+  return task.handler === 'environment.observation'
+    || task.handler === 'environment.command'
+    || task.handler === 'workflow.robot-observer'
+    || task.handler === 'workflow.boredom-movement'
+    || hasRobotCycleMetadata(task.input)
+}
+
+function anotherRobotCycleIsActive(currentTaskId: string): boolean {
+  return getQueueManager().getAllTasks().some(candidate => (
+    workBlocksBoredomMovement(candidate, currentTaskId)
+  ))
 }
 
 export async function executeBoredomMovementWork(
@@ -93,11 +106,6 @@ export async function executeBoredomMovementWork(
   if (commands.length === 0) {
     return { skipped: true, reason: 'stationary_command_catalog_unavailable', sessionId: session.sessionId }
   }
-  const selectedCommand = chooseBoredomMovementCommand(commands)
-  if (!selectedCommand) {
-    return { skipped: true, reason: 'stationary_command_selection_failed', sessionId: session.sessionId }
-  }
-
   const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
     ? task.input.cycleId.trim()
     : randomUUID()
@@ -106,9 +114,7 @@ export async function executeBoredomMovementWork(
     triggerSource,
     requestedBy: 'boredom-movement',
     stationaryCommands: commands,
-    selectedCommand,
   }
-  const instruction = movementInstruction(selectedCommand)
   const now = new Date().toISOString()
   const observation: EnvironmentObservation = {
     ...session.latestObservation,
@@ -116,17 +122,20 @@ export async function executeBoredomMovementWork(
     capabilities: {
       ...session.latestObservation.capabilities,
       actions: ['robotCommand'],
-      robotCommands: [selectedCommand],
+      robotCommands: commands,
     },
-    text: [{
-      id: `boredom-movement:${cycleId}`,
-      source: 'system',
-      text: instruction,
-      timestamp: now,
-      metadata: { boredomMovement: true },
-    }],
+    visual: undefined,
+    visuals: undefined,
+    text: [],
     metadata: {
-      ...(session.latestObservation.metadata ?? {}),
+      correlationId: cycleId,
+      ...(typeof session.latestObservation.metadata?.robotId === 'string'
+        ? { robotId: session.latestObservation.metadata.robotId }
+        : {}),
+      ...(typeof session.latestObservation.metadata?.epoch === 'number'
+        ? { epoch: session.latestObservation.metadata.epoch }
+        : {}),
+      perceptionEvent: 'boredom_movement',
       boredomMovement,
     },
   }
@@ -161,7 +170,6 @@ export async function executeBoredomMovementWork(
       cycleId,
       triggerSource,
       stationaryCommands: commands,
-      selectedCommand,
       mode,
     },
   })
@@ -169,7 +177,6 @@ export async function executeBoredomMovementWork(
     queued: true,
     childTaskId: child.id,
     sessionId: session.sessionId,
-    selectedCommand,
     boredomMovement,
   }
 }

@@ -552,7 +552,13 @@ export function graphNameToFilename(name: string): string {
  * Check if a graph is a built-in template
  */
 export function isBuiltInTemplate(name: string): boolean {
-  return ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode'].includes(name);
+  return [
+    'dual-mode',
+    'agent-mode',
+    'emulation-mode',
+    'environment-mode',
+    'robot-operator-mode',
+  ].includes(name);
 }
 
 /**

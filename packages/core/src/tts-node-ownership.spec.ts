@@ -6,6 +6,10 @@ import { ROOT } from './paths.js';
 const read = (relative: string) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
 const chat = read('apps/site/src/components/ChatInterface.svelte');
+const centerContent = read('apps/site/src/components/CenterContent.svelte');
+const queueConsumer = read('apps/site/src/components/TTSQueueConsumer.svelte');
+const ttsComposable = read('apps/site/src/lib/client/composables/useTTS.ts');
+const speechPreference = read('apps/site/src/lib/client/assistant-speech-preference.ts');
 
 assert.ok(
   !chat.includes('speakAssistantResponse'),
@@ -15,19 +19,19 @@ assert.ok(
   !chat.includes('lastAutoSpoken'),
   'ChatInterface must not retain timer/text deduplication for duplicate TTS admissions',
 );
-assert.equal(
-  (chat.match(/playAdmittedTTSItem\(/g) || []).length,
-  2,
-  'node-admitted browser playback must be defined once and called only by the TTS queue consumer',
+assert.doesNotMatch(
+  chat,
+  /tts-queue-stream|playAdmittedTTSItem|connectTTSQueueStream/,
+  'ChatInterface must not own the node-admitted TTS queue lifecycle',
 );
 assert.equal(
   (chat.match(/ttsApi\.speak\(/g) || []).length,
-  2,
-  'ChatInterface may call TTS only for a node-admitted queue item or an explicit user speak action',
+  1,
+  'ChatInterface may call TTS only for the explicit user speak action',
 );
 assert.ok(
   chat.includes('on:speakMessage='),
-  'the second allowed TTS call must remain the explicit user speak-message control',
+  'the explicit user speak-message control must remain available',
 );
 assert.match(
   chat,
@@ -63,6 +67,41 @@ assert.doesNotMatch(
   chat,
   /enableAssistantSpeech/,
   'microphone modes must not override the explicit disable-speech preference',
+);
+assert.match(
+  centerContent,
+  /import TTSQueueConsumer from ['"]\.\/TTSQueueConsumer\.svelte['"]/,
+  'the always-mounted application center must import the admitted TTS queue consumer',
+);
+assert.ok(
+  centerContent.indexOf('<TTSQueueConsumer />') >= 0
+  && centerContent.indexOf('<TTSQueueConsumer />') < centerContent.indexOf("{#if $activeView === 'chat'}"),
+  'the admitted TTS queue consumer must mount outside the Chat view condition',
+);
+assert.match(
+  queueConsumer,
+  /apiEventSource\(['"]\/api\/tts-queue-stream['"]\)/,
+  'the app-level consumer must listen to the existing node-owned local TTS queue',
+);
+assert.match(
+  queueConsumer,
+  /readAssistantSpeechEnabled\(\)[\s\S]*?ttsApi\.speak\(/,
+  'the app-level consumer must honor the explicit speech disable preference before playback',
+);
+assert.doesNotMatch(
+  queueConsumer,
+  /viewDependency|document\.hidden|connectionPool/,
+  'automatic playback must not stop when Chat unmounts, the tab hides, or passive Chat streams suspend',
+);
+assert.match(
+  speechPreference,
+  /speechDisabled[^]*?=== true/,
+  'only speechDisabled=true may suppress app-level admitted playback',
+);
+assert.match(
+  ttsComposable,
+  /const sharedTTSApi = createTTS\(\);[\s\S]*?export function useTTS\(\) \{[\s\S]*?return sharedTTSApi;/,
+  'manual and automatic speech must share one audio channel and browser unlock state',
 );
 
 const ttsNode = read('packages/core/src/nodes/output/tts.node.ts');
@@ -102,6 +141,15 @@ assert.ok(
     && edge.targetHandle === 'conversation'
   ),
   'Environment Mode single bridge-resolved response must enter the standard TTS conversation input',
+);
+assert.ok(
+  environmentGraph.edges.some(edge =>
+    edge.source === 'refinement-conversation-buffer'
+    && edge.sourceHandle === 'response'
+    && edge.target === ttsNodeId
+    && edge.targetHandle === 'conversation'
+  ),
+  'Environment Mode refinement updates must reuse the single standard TTS conversation input',
 );
 
 for (const node of environmentGraph.nodes) {

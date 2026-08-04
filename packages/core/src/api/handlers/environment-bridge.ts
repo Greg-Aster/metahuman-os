@@ -334,6 +334,9 @@ export async function handleEnvironmentBridgeActionResult(
   if (!result) {
     return successResponse({ success: true, action: undefined, robotBufferPersisted: false });
   }
+  if (feedback.type === 'accepted') {
+    return successResponse({ success: true, action: result.action, robotBufferPersisted: false });
+  }
 
   const bridgeRecord = {
     direction: 'inbound',

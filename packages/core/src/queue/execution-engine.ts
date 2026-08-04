@@ -185,7 +185,11 @@ export class ExecutionEngine {
           };
         }
       }
-      const graphName = task.input.graph;
+      // Robot Observer captures carry a MetaHuman-authored graph owner in their
+      // bounded cycle metadata. This lets an autonomous image run the high-level
+      // Robot Operator graph while ordinary bridge input continues to use the
+      // bridge-configured Environment graph.
+      const graphName = robotObserver?.graph || task.input.graph;
       if (!graphName || task.username === 'system') {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
       }
@@ -221,7 +225,8 @@ export class ExecutionEngine {
           : 'Inspect the returned robot camera image after the previous action. Briefly describe what changed, and choose at most one next semantic action or another camera observation only if it is still useful.'
         : observation.visual || observation.visuals?.length
           ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
-        : 'Review the returned environment state and choose the next semantic action if one is needed.');
+          : 'Review the returned environment state and choose the next semantic action if one is needed.');
+      const robotOperatorConfig = loadRobotOperatorConfig();
       const graphState = await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
         () => runGraph({
@@ -245,6 +250,9 @@ export class ExecutionEngine {
             environmentTaskInstruction: taskInstruction,
             environmentActionSource: robotObserver?.triggerSource,
             robotObserver,
+            robotOperatorEnvironmentGraph: graphName === robotOperatorConfig.graph
+              ? robotOperatorConfig.environmentGraph
+              : undefined,
             abortSignal: context.signal,
           },
         }),

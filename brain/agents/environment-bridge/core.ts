@@ -779,15 +779,16 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           if (message.type === 'environment.feedback') {
             const feedback = message.feedback;
             if (feedback && typeof feedback === 'object') {
-              pendingFeedback = feedback as unknown as EnvironmentFeedback;
-              if (pendingFeedback.actionId) {
-                awaitingAdapterAcceptance.delete(pendingFeedback.actionId);
+              const receivedFeedback = feedback as unknown as EnvironmentFeedback;
+              pendingFeedback = receivedFeedback;
+              if (receivedFeedback.actionId) {
+                awaitingAdapterAcceptance.delete(receivedFeedback.actionId);
               }
               diagnosticEvent({
-                timestamp: pendingFeedback.timestamp,
+                timestamp: receivedFeedback.timestamp,
                 kind: 'action.feedback',
-                status: pendingFeedback.type,
-                message: pendingFeedback.message,
+                status: receivedFeedback.type,
+                message: receivedFeedback.message,
               });
               const result = await postJson(
                 config,
@@ -797,8 +798,8 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               sendMessage({
                 type: 'environment.feedback.ack',
                 version: PROTOCOL_VERSION,
-                feedbackId: pendingFeedback.id,
-                actionId: pendingFeedback.actionId,
+                feedbackId: receivedFeedback.id,
+                actionId: receivedFeedback.actionId,
                 admitted: Boolean(result?.action),
               });
             }

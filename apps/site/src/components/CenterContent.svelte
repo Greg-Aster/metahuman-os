@@ -23,6 +23,7 @@
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
+  import TTSQueueConsumer from './TTSQueueConsumer.svelte';
 
   const ownerSystemSections = new Set([
     'settings',
@@ -646,6 +647,7 @@ async function loadMemoryContent(relPath: string) {
   </script>
 
 <div class="flex flex-col h-full w-full overflow-hidden">
+  <TTSQueueConsumer />
   {#if $activeView === 'chat'}
     <ChatInterface />
   {:else if $activeView === 'dashboard'}

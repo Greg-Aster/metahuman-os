@@ -54,8 +54,6 @@
   let innerDialogueStream: EventSource | null = null;
   let robotHandle: ConnectionHandle | null = null;
   let robotStream: EventSource | null = null;
-  let ttsQueueHandle: ConnectionHandle | null = null;
-  let ttsQueueStream: EventSource | null = null; // TTS queue from node editor
   let isTabVisible = true;
   // View selection: VS Code-style multi-select
   // All three tabs can be combined for unified feed
@@ -305,10 +303,6 @@
     } catch {}
   }
 
-  function assistantSpeechEnabled(): boolean {
-    return ttsEnabled;
-  }
-
   function toggleAssistantSpeech(): void {
     ttsEnabled = !ttsEnabled;
     if (ttsEnabled) {
@@ -491,9 +485,6 @@
     connectMultipleBufferStreams();
     console.log(`[ChatInterface] Connected to buffer streams for:`, Array.from(selectedViews));
 
-    // Connect to TTS queue stream - watches for TTS items from cognitive graph nodes
-    connectTTSQueueStream();
-
     scrollObserver = new IntersectionObserver(
       (entries) => {
         shouldAutoScroll = entries[0].isIntersecting;
@@ -511,7 +502,6 @@
       isTabVisible = !document.hidden;
       if (!isTabVisible) {
         disconnectAllBufferStreams();
-        disconnectTTSQueueStream();
         return;
       }
 
@@ -531,8 +521,6 @@
           connectMultipleBufferStreams();
         }
       }
-
-      connectTTSQueueStream();
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
@@ -557,7 +545,6 @@
       innerDialogueStream?.close();
       robotStream?.close();
       disconnectAllBufferStreams();
-      disconnectTTSQueueStream();
       disconnectProposalsStream();
     };
     window.addEventListener('beforeunload', aggressiveCleanup);
@@ -612,8 +599,6 @@
   // Concurrency guard for buffer fetches - prevents overlapping requests
   let fetchInProgress = false;
   let fetchNeededAfterCurrent = false;
-  let suppressTTSQueueCloseNotice = false;
-
   /**
    * Fetch and merge messages from all selected buffers
    * Merges messages by timestamp for unified display
@@ -693,114 +678,13 @@
     }
   }
 
-  /**
-   * Connect to TTS queue stream
-   * Watches for TTS items queued by cognitive graph nodes
-   * Speaks them if the appropriate toggle is enabled
-   */
-  function connectTTSQueueStream() {
-    if (typeof document !== 'undefined' && document.hidden) {
-      return;
-    }
-    if (ttsQueueHandle) {
-      disconnectTTSQueueStream();
-    }
-
-    console.log('[chat-tts] Requesting TTS queue stream from connection pool...');
-
-    ttsQueueHandle = connectionPool.request({
-      id: 'tts-queue',
-      name: 'TTS Queue Stream',
-      url: '/api/tts-queue-stream',
-      priority: ConnectionPriority.MEDIUM,
-      viewDependency: 'chat',
-      defer: true,
-      onOpen: (source) => {
-        console.log('[chat-tts] TTS queue stream opened via pool');
-        ttsQueueStream = source;
-      },
-      onClose: () => {
-        console.log('[chat-tts] TTS queue stream closed via pool');
-        ttsQueueStream = null;
-        if (!suppressTTSQueueCloseNotice) {
-          messagesApi.pushMessage('system', '⚠️ **TTS Stream Disconnected**\n\nSpeech playback is unavailable until the connection is restored. Refresh the page or re-open the chat tab to reconnect.');
-        }
-        suppressTTSQueueCloseNotice = false;
-      },
-      onMessage: (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'connected') {
-            console.log('[chat-tts] TTS queue stream connected');
-            return;
-          }
-
-          if (data.type === 'error') {
-            console.error('[chat-tts] TTS queue stream error:', data.error);
-            messagesApi.pushMessage('system', '⚠️ **TTS Stream Error**\n\nThe speech stream reported an error. Try refreshing the page or toggling TTS off/on.');
-            return;
-          }
-
-          if (data.type === 'tts' && Array.isArray(data.items)) {
-            handleTTSItems(data.items);
-          }
-        } catch (err) {
-          console.error('[chat-tts] TTS queue stream parse error:', err);
-        }
-      },
-      onError: (err) => {
-        console.error('[chat-tts] TTS queue stream error:', err);
-        messagesApi.pushMessage('system', '⚠️ **TTS Stream Connection Lost**\n\nSpeech playback will not work until the stream reconnects. Try refreshing the page.');
-      },
-    });
-  }
-
-  function disconnectTTSQueueStream() {
-    if (ttsQueueHandle) {
-      console.log('[chat-tts] Disconnecting TTS queue stream');
-      suppressTTSQueueCloseNotice = true;
-      ttsQueueHandle.close();
-      ttsQueueHandle = null;
-      ttsQueueStream = null;
-    }
-  }
-
-  async function playAdmittedTTSItem(
-    text: string | undefined | null,
-    source: string,
-    requestId?: string,
-  ) {
-    const speechText = text?.trim();
-    const speechEnabled = assistantSpeechEnabled();
-    if (!speechEnabled || !speechText) {
-      console.log(`[chat-tts] Skipping admitted TTS item from ${source} (speechEnabled=${speechEnabled}, ttsEnabled=${ttsEnabled}, conversationMode=${get(mic.isConversationMode)}, continuousMode=${get(mic.isContinuousMode)})`);
-      return;
-    }
-
-    try {
-      console.log(`[chat-tts] Playing node-admitted TTS item from ${source} (${speechText.length} chars)`);
-      await ttsApi.ensureAudioUnlocked();
-      if (!assistantSpeechEnabled()) {
-        console.log(`[chat-tts] Speech disabled while preparing ${source}; skipping playback`);
-        return;
-      }
-      await ttsApi.speak(speechText, { source, requestId });
-    } catch (err) {
-      console.warn(`[chat-tts] Admitted TTS playback failed from ${source}:`, err);
-    }
-  }
-
   function pausePassiveChatStreams() {
     // Suspend the shared pool first so closing one stream cannot immediately
     // promote another queued background stream into the freed browser slot.
-    suppressTTSQueueCloseNotice = true;
     connectionPool.suspend();
     disconnectAllBufferStreams();
-    disconnectTTSQueueStream();
     disconnectProposalsStream();
     thinkingTraceApi.pauseTelemetry();
-    suppressTTSQueueCloseNotice = false;
   }
 
   function restorePassiveChatStreams() {
@@ -809,21 +693,8 @@
     }
 
     connectMultipleBufferStreams();
-    connectTTSQueueStream();
     connectProposalsStream();
     connectionPool.resume();
-  }
-
-  function handleTTSItems(items: Array<{ id?: string; text?: string; mode?: string; source?: string }>) {
-    for (const item of items) {
-      console.log(`[chat-tts] TTS queue item: mode=${item.mode}, source=${item.source}, text=${item.text?.substring(0, 50)}`);
-
-      void playAdmittedTTSItem(
-        item.text,
-        item.source || item.mode || 'unknown',
-        item.id,
-      );
-    }
   }
 
 
@@ -839,10 +710,8 @@
     bigBrotherVisibilityHandle?.close();
     bigBrotherVisibilityHandle = null;
     disconnectAllBufferStreams();
-    disconnectTTSQueueStream();
     disconnectProposalsStream(); // Clean up proposals SSE stream
     activityApi.clearActivity();
-    ttsApi.cleanup();
     thinkingTraceApi.cleanup();
     unsubscribeYolo();
     releaseTriggerManager?.();
@@ -1154,14 +1023,6 @@
         closedCount++;
       } catch (e) {
         console.error('[response-pipeline] ❌ Error closing buffer streams:', e);
-      }
-
-      try {
-        disconnectTTSQueueStream();
-        console.log('[response-pipeline] → Closed TTS queue stream');
-        closedCount++;
-      } catch (e) {
-        console.error('[response-pipeline] ❌ Error closing TTS queue stream:', e);
       }
 
       console.log(`[response-pipeline] ✅ Closed ${closedCount} connections`);

@@ -15,6 +15,7 @@ import {
   randomizedRobotOperatorIdleMs,
   readRobotObserverCycle,
   robotObserverSourceAllowed,
+  loadRobotOperatorConfig,
 } from './robot-operator.js'
 import { environmentSendActionNode } from './nodes/environment/send-action.node.js'
 import { environmentActionParserNode } from './nodes/environment/action-parser.node.js'
@@ -97,7 +98,11 @@ test('robot observer and operator have separate lifecycle owners', () => {
   assert.equal(variables.find(variable => variable.key === 'boredomMovementInactivityThreshold')?.value, 600)
   assert.equal(variables.find(variable => variable.key === 'boredomMovementJitterMs')?.value, 120_000)
   assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 8)
-  assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'environment')
+  assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'robot-operator')
+  assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
+  const config = loadRobotOperatorConfig()
+  assert.equal(config.graph, 'robot-operator')
+  assert.equal(config.environmentGraph, 'environment')
 })
 
 test('boredom movement owns and intersects its stationary command allowlist', () => {

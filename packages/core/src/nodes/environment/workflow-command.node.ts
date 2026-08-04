@@ -5,7 +5,28 @@ import type { EnvironmentObservation } from '../../environment-interface/index.j
 import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
 import { readRobotObserverCycle, type RobotObserverCycleMetadata } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
-import type { EnvironmentWorkflowCommand } from './task-validator.node.js';
+import {
+  ENVIRONMENT_COMPLETION_BASES,
+  type EnvironmentCompletionBasis,
+  type EnvironmentContinuationPolicy,
+} from './helpers.js';
+
+export interface EnvironmentWorkflowCommand {
+  kind: 'environment_workflow_command';
+  objective: string;
+  instruction: string;
+  reason: string;
+  source: RobotObserverCycleMetadata['triggerSource'];
+  mode: AutonomyMode;
+  graph: string;
+  cycleId?: string;
+  step: number;
+  maxSteps: number;
+  advanceCycle?: boolean;
+  continuationPolicy: Extract<EnvironmentContinuationPolicy, 'bounded'>;
+  requiredCompletionBasis: EnvironmentCompletionBasis;
+  requireExternalCompletionEvidence?: boolean;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -22,11 +43,6 @@ function currentMode(context: Record<string, unknown>): AutonomyMode {
   return override === 'reactive' || override === 'semi' || override === 'full'
     ? override
     : getOperatorMode();
-}
-
-function commandAllowed(mode: AutonomyMode, source: EnvironmentWorkflowCommand['source']): boolean {
-  if (mode === 'reactive') return false;
-  return mode === 'full' || source === 'user';
 }
 
 function validGraph(value: unknown, fallback: string): string {
@@ -109,6 +125,11 @@ export const environmentWorkflowCommandNode = defineNode({
 
     if (!command) return reject('no_command');
     if (command.kind !== 'environment_workflow_command') return reject('invalid_command');
+    if (command.continuationPolicy !== 'bounded') return reject('continuation_not_authorized');
+    if (
+      command.requiredCompletionBasis === 'none'
+      || !ENVIRONMENT_COMPLETION_BASES.includes(command.requiredCompletionBasis)
+    ) return reject('invalid_completion_basis');
     if (!observation?.sessionId) return reject('missing_observation_session');
     if (command.source !== 'user' && command.source !== 'autonomy') return reject('invalid_source');
     if (!cleanText(command.objective, 1_000) || !cleanText(command.instruction, 500)) {
@@ -124,7 +145,6 @@ export const environmentWorkflowCommandNode = defineNode({
     ) return reject('step_limit');
 
     const mode = currentMode(context);
-    if (!commandAllowed(mode, command.source)) return reject(`mode_${mode}_source_${command.source}`);
     const existingCycle = readRobotObserverCycle(observation);
     if (existingCycle && existingCycle.triggerSource !== command.source) return reject('source_mismatch');
 
@@ -154,13 +174,15 @@ export const environmentWorkflowCommandNode = defineNode({
         correlationId: cycle.cycleId,
         robotObserver: cycle,
         taskValidatorCommand: {
-          version: 1,
+          version: 3,
           objective: cleanText(command.objective, 1_000),
           instruction: cleanText(command.instruction, 500),
           reason: cleanText(command.reason, 500),
           source: command.source,
           step: cycle.step,
           maxSteps: command.maxSteps,
+          continuationPolicy: command.continuationPolicy,
+          requiredCompletionBasis: command.requiredCompletionBasis,
           requireExternalCompletionEvidence: command.requireExternalCompletionEvidence === true,
         },
       },

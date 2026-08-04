@@ -100,7 +100,7 @@ function normalizeTextForSpeech(text: string): string {
  * TTS Composable
  * Provides reactive state and methods for text-to-speech functionality
  */
-export function useTTS() {
+function createTTS() {
   // State
   let audioCtx: AudioContext | null = null;
   let currentAudio: HTMLAudioElement | null = null;
@@ -861,4 +861,13 @@ export function useTTS() {
     refreshVoiceSettings,
     cleanup,
   };
+}
+
+// Speech is one application-level audio channel. Chat controls and the
+// app-level admitted queue consumer must share playback state, AudioContext,
+// cancellation, and the browser gesture used to unlock audio.
+const sharedTTSApi = createTTS();
+
+export function useTTS() {
+  return sharedTTSApi;
 }

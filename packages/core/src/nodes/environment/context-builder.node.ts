@@ -5,7 +5,11 @@ import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
-import { stringifyEnvironmentObservation } from './helpers.js';
+import {
+  environmentTaskContractFromRouting,
+  parseEnvironmentTaskInstruction,
+  stringifyEnvironmentObservation,
+} from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -166,7 +170,10 @@ export const environmentContextBuilderNode = defineNode({
       : '';
     const rawInstruction = conversationalInstruction || taskFallback;
     const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : {};
-    const queuedContinuation = isRecord(observation.metadata?.taskValidatorCommand);
+    const validatorCommand = isRecord(observation.metadata?.taskValidatorCommand)
+      ? observation.metadata.taskValidatorCommand
+      : null;
+    const queuedContinuation = Boolean(validatorCommand);
     const includeRecentHistory = routingAnalysis.isFollowUp === true && !queuedContinuation;
     const includeSemanticMemory = routingAnalysis.needsMemory === true;
     const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
@@ -197,7 +204,33 @@ export const environmentContextBuilderNode = defineNode({
     const taskOwnershipBoundary = queuedContinuation
       ? 'This is a coordinator continuation of the original user-owned objective. Pronouns and actor roles remain anchored to the original user message.'
       : '';
-    const supportingContext = [personaText, contextBoundary, taskOwnershipBoundary, memoryText].filter(Boolean).join('\n\n');
+    const commandContract = environmentTaskContractFromRouting({
+      actionParams: {
+        continuationPolicy: validatorCommand?.continuationPolicy,
+        requiredCompletionBasis: validatorCommand?.requiredCompletionBasis,
+      },
+    }, typeof validatorCommand?.objective === 'string' ? validatorCommand.objective : '');
+    // The context router sees the utterance and recent conversation, but not the
+    // current environment state. It may authorize current work, but it cannot own
+    // the task's completion contract. Only a contract persisted by the validator
+    // from an admitted action/continuation is authoritative on a later pass.
+    const taskContract = commandContract
+      || parseEnvironmentTaskInstruction(observation.metadata?.originatingInstruction);
+    const taskCompletionBoundary = taskContract
+      ? [
+          'Task completion contract:',
+          `- Continuation policy: ${taskContract.continuationPolicy}.`,
+          `- Required evidence basis for the whole objective: ${taskContract.requiredCompletionBasis}.`,
+          '- Evidence from another basis may complete a step but cannot complete the whole objective.',
+        ].join('\n')
+      : '';
+    const supportingContext = [
+      personaText,
+      contextBoundary,
+      taskOwnershipBoundary,
+      taskCompletionBoundary,
+      memoryText,
+    ].filter(Boolean).join('\n\n');
 
     return {
       message,

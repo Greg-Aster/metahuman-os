@@ -47,16 +47,99 @@ export const ENVIRONMENT_COMPLETION_BASES = [
 
 export type EnvironmentCompletionBasis = typeof ENVIRONMENT_COMPLETION_BASES[number];
 
-export const ENVIRONMENT_CONTINUATION_TYPES = ['advance', 'repeat'] as const;
+export const ENVIRONMENT_CONTINUATION_POLICIES = ['none', 'bounded'] as const;
 
-export type EnvironmentContinuationType = typeof ENVIRONMENT_CONTINUATION_TYPES[number];
+export type EnvironmentContinuationPolicy = typeof ENVIRONMENT_CONTINUATION_POLICIES[number];
+
+export interface EnvironmentTaskContract {
+  objective: string;
+  currentInstruction?: string;
+  continuationPolicy: EnvironmentContinuationPolicy;
+  requiredCompletionBasis: EnvironmentCompletionBasis;
+}
+
+const ENVIRONMENT_TASK_CONTRACT_PREFIX = 'EnvironmentTaskContract:';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis | null {
+  return typeof value === 'string'
+    && ENVIRONMENT_COMPLETION_BASES.includes(value as EnvironmentCompletionBasis)
+    ? value as EnvironmentCompletionBasis
+    : null;
+}
+
+export function environmentTaskContractFromRouting(
+  value: unknown,
+  objective = '',
+): EnvironmentTaskContract | null {
+  if (!isRecord(value) || !isRecord(value.actionParams)) return null;
+  const continuationPolicy = value.actionParams.continuationPolicy;
+  const requiredCompletionBasis = normalizedCompletionBasis(
+    value.actionParams.requiredCompletionBasis,
+  );
+  if (
+    (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
+    || !requiredCompletionBasis
+    || requiredCompletionBasis === 'none'
+  ) return null;
+  return {
+    objective: objective.trim().slice(0, 1_000),
+    continuationPolicy,
+    requiredCompletionBasis,
+  };
+}
+
+export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContract): string {
+  return `${ENVIRONMENT_TASK_CONTRACT_PREFIX}${JSON.stringify({
+    version: 1,
+    objective: contract.objective.trim().slice(0, 1_000),
+    ...(contract.currentInstruction?.trim()
+      ? { currentInstruction: contract.currentInstruction.trim().slice(0, 500) }
+      : {}),
+    continuationPolicy: contract.continuationPolicy,
+    requiredCompletionBasis: contract.requiredCompletionBasis,
+  })}`;
+}
+
+export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTaskContract | null {
+  if (typeof value !== 'string' || !value.startsWith(ENVIRONMENT_TASK_CONTRACT_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(value.slice(ENVIRONMENT_TASK_CONTRACT_PREFIX.length));
+    if (!isRecord(parsed)) return null;
+    const objective = typeof parsed.objective === 'string'
+      ? parsed.objective.trim().slice(0, 1_000)
+      : '';
+    const currentInstruction = typeof parsed.currentInstruction === 'string'
+      ? parsed.currentInstruction.trim().slice(0, 500)
+      : '';
+    const continuationPolicy = parsed.continuationPolicy;
+    const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
+    if (
+      !objective
+      || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
+      || !requiredCompletionBasis
+      || requiredCompletionBasis === 'none'
+    ) return null;
+    return {
+      objective,
+      ...(currentInstruction ? { currentInstruction } : {}),
+      continuationPolicy,
+      requiredCompletionBasis,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export interface EnvironmentTaskDecision {
   outcome: EnvironmentTaskOutcome;
   reason: string;
   objectiveComplete: boolean;
-  nextInstruction?: string;
-  continuationType?: EnvironmentContinuationType;
+  continuationPolicy?: EnvironmentContinuationPolicy;
+  requiredCompletionBasis?: EnvironmentCompletionBasis;
   completionBasis?: EnvironmentCompletionBasis;
   completionEvidence?: string;
 }
@@ -186,15 +269,17 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
   ].join('\n'));
   sections.push([
     'Response contract:',
-    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
+    '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
     '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
     '- taskDecision.outcome must be one of: complete, continue, observe, act, report, curiosity, background, request_user, wait.',
     '- Set objectiveComplete=true only when the current objective is actually satisfied.',
     '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
     '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
-    '- When the objective remains incomplete, you may include one narrower objective-bound nextInstruction and continuationType="advance" or "repeat". Use "repeat" only when the original user objective authorizes the same completed action again.',
-    '- If an incomplete decision omits either continuation field, the validator re-admits the original objective for a fresh bounded evaluation instead of ending the task.',
-    '- Never issue the completed action directly during its feedback pass; a permitted repetition must run later through the bounded validator workflow.',
+    '- Every taskDecision must set continuationPolicy="none" or "bounded" and requiredCompletionBasis. Default to "none" only when one response or action result proves the entire objective. Use "bounded" when the objective requires later work or evidence beyond the completed step.',
+    '- requiredCompletionBasis declares the evidence needed to prove the whole objective: response, action_result, visual_observation, environment_state, or user_input. A different basis may prove a step but cannot prove the whole objective.',
+    '- A completed action with continuationPolicy="none" closes that one-shot objective using action_result evidence. Do not keep a simple completed action alive merely because the instruction was recorded as the objective.',
+    '- When the objective remains incomplete after a completed step, use continuationPolicy="bounded". The existing validator and graph-owned refinement stage own any later attempt.',
+    '- Never write a successor instruction in this response or issue the completed action directly during its feedback pass.',
     '- objectiveComplete=true requires completionBasis and completionEvidence proving the whole objective and every constraint. completionBasis is response, action_result, visual_observation, environment_state, or user_input.',
     '- Visual completion evidence must be fresh and correlated; ambiguous, stale, or missing sensory input cannot prove completion.',
   ].join('\n'));
@@ -205,7 +290,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       ...(robotCommands?.length
         ? ['- Use only a command named in Supported robot commands.']
         : []),
-      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}],"movementRequest":null,"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false}}.',
+      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}],"movementRequest":null,"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false,"continuationPolicy":"none","requiredCompletionBasis":"action_result"}}.',
     ].join('\n'));
   }
   if (observation.capabilities.actions.includes('captureImage')) {
@@ -224,7 +309,7 @@ export function stringifyEnvironmentObservation(observation: EnvironmentObservat
       '- Prefer an advertised Supported robot command whenever it represents the requested behavior.',
       '- When a requested movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
       '- Never put robotMotionPlan, joint targets, servo values, PWM values, calibration, or simulator commands in actions.',
-      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"},"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false}}.',
+      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"},"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false,"continuationPolicy":"none","requiredCompletionBasis":"action_result"}}.',
     ].join('\n'));
   }
 
@@ -343,23 +428,32 @@ function parseTaskDecision(
   }
 
   const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 500) : '';
-  const nextInstruction = typeof record.nextInstruction === 'string'
-    ? record.nextInstruction.trim()
-    : '';
-  if (nextInstruction.length > 500) {
-    return { decision: null, error: 'taskDecision nextInstruction exceeds 500 characters' };
-  }
   const completionBasis = typeof record.completionBasis === 'string'
     ? record.completionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
   if (completionBasis !== undefined && !ENVIRONMENT_COMPLETION_BASES.includes(completionBasis)) {
     return { decision: null, error: 'taskDecision completionBasis is not supported' };
   }
-  const continuationType = typeof record.continuationType === 'string'
-    ? record.continuationType.trim() as EnvironmentContinuationType
+  const requiredCompletionBasis = typeof record.requiredCompletionBasis === 'string'
+    ? record.requiredCompletionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
-  if (continuationType !== undefined && !ENVIRONMENT_CONTINUATION_TYPES.includes(continuationType)) {
-    return { decision: null, error: 'taskDecision continuationType is not supported' };
+  if (
+    requiredCompletionBasis !== undefined
+    && (
+      !ENVIRONMENT_COMPLETION_BASES.includes(requiredCompletionBasis)
+      || requiredCompletionBasis === 'none'
+    )
+  ) {
+    return { decision: null, error: 'taskDecision requiredCompletionBasis is not supported' };
+  }
+  const continuationPolicy = typeof record.continuationPolicy === 'string'
+    ? record.continuationPolicy.trim() as EnvironmentContinuationPolicy
+    : undefined;
+  if (
+    continuationPolicy !== undefined
+    && !ENVIRONMENT_CONTINUATION_POLICIES.includes(continuationPolicy)
+  ) {
+    return { decision: null, error: 'taskDecision continuationPolicy is not supported' };
   }
   const completionEvidence = typeof record.completionEvidence === 'string'
     ? record.completionEvidence.trim()
@@ -375,8 +469,8 @@ function parseTaskDecision(
       objectiveComplete: typeof record.objectiveComplete === 'boolean'
         ? record.objectiveComplete
         : outcome === 'complete',
-      ...(nextInstruction ? { nextInstruction } : {}),
-      ...(continuationType ? { continuationType } : {}),
+      ...(continuationPolicy ? { continuationPolicy } : {}),
+      ...(requiredCompletionBasis ? { requiredCompletionBasis } : {}),
       ...(completionBasis ? { completionBasis } : {}),
       ...(completionEvidence ? { completionEvidence } : {}),
     },
