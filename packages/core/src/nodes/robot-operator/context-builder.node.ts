@@ -34,7 +34,7 @@ function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
   };
 }
 
-function boundedHistory(value: unknown, limit: number): Array<Record<string, string>> {
+function boundedHistory(value: unknown, limit: number): Array<Record<string, unknown>> {
   const messages = Array.isArray(value)
     ? value
     : isRecord(value) && Array.isArray(value.messages)
@@ -42,10 +42,27 @@ function boundedHistory(value: unknown, limit: number): Array<Record<string, str
       : [];
   return messages
     .filter(isRecord)
-    .map(message => ({
-      role: cleanText(message.role, 40),
-      content: cleanText(message.content, 2_000),
-    }))
+    .map(message => {
+      const meta = isRecord(message.meta) ? message.meta : null;
+      return {
+        role: cleanText(message.role, 40),
+        content: cleanText(message.content, 2_000),
+        ...(typeof message.timestamp === 'number' || typeof message.timestamp === 'string'
+          ? { timestamp: message.timestamp }
+          : {}),
+        ...(meta
+          ? {
+              context: {
+                cognitiveMode: cleanText(meta.cognitiveMode, 80) || null,
+                dialogueSource: cleanText(meta.dialogueSource, 100) || null,
+                isInnerDialogue: meta.isInnerDialogue === true,
+                refinement: meta.refinement === true,
+                taskLifecycle: boundedObject(meta.taskLifecycle, 4_000),
+              },
+            }
+          : {}),
+      };
+    })
     .filter(message => message.role && message.content)
     .slice(-limit);
 }
@@ -133,10 +150,15 @@ export const robotOperatorContextBuilderNode = defineNode({
     if (!observation?.sessionId) return invalid('Robot Operator context requires a robot observation with a session ID.');
     if (!systemPrompt) return invalid('Robot Operator graph requires a configured system prompt.');
 
-    const historyLimit = Number.isInteger(properties?.historyLimit)
-      ? Math.max(0, Math.min(30, Number(properties.historyLimit)))
+    const configuredHistoryLimit = properties?.historyLimit;
+    const historyLimit = Number.isInteger(configuredHistoryLimit)
+      ? Math.max(0, Math.min(30, Number(configuredHistoryLimit)))
       : 12;
     const history = boundedHistory(inputs.conversationHistory, historyLimit);
+    const recentTaskLifecycle = history
+      .map(message => isRecord(message.context) ? message.context.taskLifecycle : null)
+      .filter(isRecord)
+      .slice(-6);
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
@@ -173,6 +195,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       })),
       visualFrames: frames,
       conversationHistory: history,
+      recentTaskLifecycle,
     };
     const systemContent = [systemPrompt, personaText].filter(Boolean).join('\n\n');
     const stimulusText = JSON.stringify({ robotStimulus: stimulus });
@@ -189,6 +212,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         stimulus,
         personaIncluded: Boolean(personaText),
         historyCount: history.length,
+        taskLifecycleCount: recentTaskLifecycle.length,
         imageCount: images.length,
       },
       valid: true,

@@ -224,23 +224,27 @@ test('Environment Mode routes current work through the validator before bridge a
   const validator = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_task_validator');
   const command = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_workflow_command');
   const parser = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_action_parser');
+  const taskContract = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_task_contract');
   const bridge = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_send_action');
   const evidenceAssessor = environmentGraph.nodes.find(
     node => node.data.nodeType === 'environment_visual_evidence_assessor',
   );
   const refiner = environmentGraph.nodes.find(node => node.data.nodeType === 'environment_task_refiner');
-  const refinementBuffer = environmentGraph.nodes.find(node => (
-    node.id === 'refinement-conversation-buffer'
-    && node.data.nodeType === 'conversation_buffer'
-  ));
+  const conversationBuffers = environmentGraph.nodes.filter(
+    node => node.data.nodeType === 'conversation_buffer',
+  );
+  const refinementBuffer = conversationBuffers[0];
   assert(validator);
   assert(command);
   assert(parser);
+  assert(taskContract);
   assert(bridge);
   assert(evidenceAssessor);
   assert(refiner);
   assert(refinementBuffer);
-  assert.equal(graphEdge(parser.id, 'taskDecision', validator.id, 'taskDecision'), true);
+  assert.equal(conversationBuffers.length, 1);
+  assert.equal(graphEdge(parser.id, 'taskDecision', taskContract.id, 'taskDecision'), true);
+  assert.equal(graphEdge(taskContract.id, 'taskDecision', validator.id, 'taskDecision'), true);
   assert.equal(graphEdge('context-router', 'analysis', validator.id, 'routingAnalysis'), true);
   assert.equal(graphEdge(validator.id, 'refinementRequest', refiner.id, 'request'), true);
   assert.equal(graphEdge(validator.id, 'workflowCommand', command.id, 'command'), false);
@@ -252,7 +256,7 @@ test('Environment Mode routes current work through the validator before bridge a
   assert.equal(graphEdge(validator.id, 'actions', bridge.id, 'actions'), true);
   assert.equal(graphEdge(validator.id, 'response', bridge.id, 'response'), true);
   assert.equal(graphEdge(validator.id, 'movementRequest', 'movement-generator', 'movementRequest'), true);
-  assert.equal(graphEdge(parser.id, 'taskDecision', evidenceAssessor.id, 'taskDecision'), true);
+  assert.equal(graphEdge(taskContract.id, 'taskDecision', evidenceAssessor.id, 'taskDecision'), true);
   assert.equal(graphEdge(evidenceAssessor.id, 'assessment', validator.id, 'evidenceAssessment'), true);
 
   const contextRouter = environmentGraph.nodes.find(node => node.id === 'context-router');
@@ -719,6 +723,11 @@ test('a completed action defaults to one-shot completion and never replays its o
   assert.equal(result.decision.completionBasis, 'action_result');
   assert.equal(result.decision.completionEvidence, 'done');
   assert.equal(result.decision.blockedReason, '');
+  assert.equal(result.decision.kind, 'environment_task_lifecycle');
+  assert.equal(result.decision.owner, 'environment-task-validator');
+  assert.equal(result.decision.cycleId, 'cycle-1');
+  assert.equal(result.decision.step, 1);
+  assert.equal(result.decision.maxSteps, 3);
 });
 
 test('a persisted visual completion contract rejects action-result-only objective completion', async () => {

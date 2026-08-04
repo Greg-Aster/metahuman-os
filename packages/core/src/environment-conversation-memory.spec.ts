@@ -60,6 +60,7 @@ const bridgeId = nodeId('environment_send_action');
 const robotBufferId = nodeId('robot_buffer');
 const personaId = nodeId('persona_formatter');
 const bufferId = nodeId('conversation_buffer');
+const validatorId = nodeId('environment_task_validator');
 const captureId = nodeId('memory_capture');
 const streamId = nodeId('stream_writer');
 const ttsId = nodeId('tts');
@@ -75,9 +76,10 @@ assert.ok(hasEdge(contextRouterId, 'analysis', contextId, 'routingAnalysis'));
 assert.ok(hasEdge(contextRouterId, 'analysis', actionParserId, 'routingAnalysis'));
 assert.ok(hasEdge(personaId, 'formatted', contextId, 'personaText'));
 assert.ok(hasEdge(bridgeId, 'response', bufferId, 'response'));
+assert.ok(hasEdge(validatorId, 'decision', bufferId, 'taskLifecycle'));
 assert.ok(hasEdge(bridgeId, 'response', captureId, 'assistantResponse'));
-assert.ok(hasEdge(bridgeId, 'response', streamId, 'response'));
-assert.ok(hasEdge(bridgeId, 'response', ttsId, 'conversation'));
+assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
+assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
 assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'response_synthesizer'),

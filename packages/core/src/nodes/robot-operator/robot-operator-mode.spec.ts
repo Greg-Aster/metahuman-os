@@ -56,7 +56,22 @@ test('Robot Operator context combines configured prompt, persona, history, and o
     observation,
     conversationHistory: [
       { role: 'user', content: 'Please keep an eye on the room.' },
-      { role: 'assistant', content: 'I will stay observant.' },
+      {
+        role: 'assistant',
+        content: 'The requested observation is complete.',
+        meta: {
+          cognitiveMode: 'environment',
+          taskLifecycle: {
+            kind: 'environment_task_lifecycle',
+            owner: 'environment-task-validator',
+            cycleId: 'completed-cycle',
+            objective: 'Inspect the room once.',
+            outcome: 'complete',
+            complete: true,
+            completionVerified: true,
+          },
+        },
+      },
     ],
     personaText: '## Personality Traits\n- curious: high\n- pragmatic: medium',
     images: [{ type: 'image_url', image_url: { url: observation.visual.dataUrl } }],
@@ -69,12 +84,15 @@ test('Robot Operator context combines configured prompt, persona, history, and o
   assert.equal(result.valid, true);
   assert.equal(result.context.imageCount, 1);
   assert.equal(result.context.historyCount, 2);
+  assert.equal(result.context.taskLifecycleCount, 1);
   assert.match(String(result.messages[0]?.content), /high-level intention/);
   assert.match(String(result.messages[0]?.content), /curious: high/);
   const userContent = result.messages[1]?.content as Array<{ type: string; text?: string }>;
   assert.equal(Array.isArray(userContent), true);
   assert.equal(userContent.length, 2);
   assert.match(String(userContent[0]?.text), /Please keep an eye on the room/);
+  assert.match(String(userContent[0]?.text), /environment_task_lifecycle/);
+  assert.match(String(userContent[0]?.text), /completionVerified/);
   assert.doesNotMatch(String(userContent[0]?.text), /data:image\/jpeg;base64/);
 
   const stale = await robotOperatorContextBuilderNode.execute({
@@ -182,7 +200,7 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   assert.equal(queued, true);
 });
 
-test('Robot Operator graph records one bounded inner intention before Environment dispatch', () => {
+test('Robot Operator graph publishes grounded rationale and one bounded inner intention before Environment dispatch', () => {
   const graph = JSON.parse(fs.readFileSync(
     path.join(ROOT, 'etc/cognitive-graphs/robot-operator-mode.json'),
     'utf8',
@@ -204,10 +222,22 @@ test('Robot Operator graph records one bounded inner intention before Environmen
   assert.equal(nodeTypes.has('robot_operator_decision_parser'), true);
   assert.equal(nodeTypes.has('robot_operator_environment_dispatch'), true);
   const innerNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'inner_dialogue_buffer');
-  assert.equal(innerNodes.length, 1);
-  assert.equal(innerNodes[0]?.data?.properties?.captureMemory, false);
-  assert.equal(innerNodes[0]?.data?.properties?.role, 'reflection');
-  assert.equal(innerNodes[0]?.data?.properties?.dialogueSource, 'robot-operator-mode');
+  assert.equal(innerNodes.length, 2);
+  const reasonNode = innerNodes.find((node: any) => node.id === 'reason-inner-dialogue');
+  const intentionNode = innerNodes.find((node: any) => node.id === 'intention-inner-dialogue');
+  assert.equal(reasonNode?.data?.properties?.captureMemory, false);
+  assert.equal(reasonNode?.data?.properties?.role, 'reflection');
+  assert.equal(reasonNode?.data?.properties?.dialogueSource, 'robot-operator-mode');
+  assert.equal(intentionNode?.data?.properties?.captureMemory, false);
+  assert.equal(intentionNode?.data?.properties?.role, 'reflection');
+  assert.equal(intentionNode?.data?.properties?.dialogueSource, 'robot-operator-mode');
+  const reasonEdge = graph.edges.find((edge: any) => (
+    edge.source === 'decision-parser'
+    && edge.sourceHandle === 'reason'
+    && edge.target === 'reason-inner-dialogue'
+    && edge.targetHandle === 'text'
+  ));
+  assert.ok(reasonEdge, 'grounded decision rationale must enter the canonical Inner Dialogue Buffer as an idle thought');
   const intentionEdge = graph.edges.find((edge: any) => (
     edge.source === 'decision-parser'
     && edge.sourceHandle === 'instruction'
@@ -215,6 +245,13 @@ test('Robot Operator graph records one bounded inner intention before Environmen
     && edge.targetHandle === 'text'
   ));
   assert.ok(intentionEdge, 'clean authored intention must enter the canonical Inner Dialogue Buffer');
+  const reasonCheckpointEdge = graph.edges.find((edge: any) => (
+    edge.source === 'reason-inner-dialogue'
+    && edge.sourceHandle === 'passthrough'
+    && edge.target === 'intention-inner-dialogue'
+    && edge.targetHandle === 'passthrough'
+  ));
+  assert.ok(reasonCheckpointEdge, 'intention publication must follow grounded rationale publication');
   const dispatchEdge = graph.edges.find((edge: any) => (
     edge.source === 'intention-inner-dialogue'
     && edge.sourceHandle === 'passthrough'
@@ -235,6 +272,13 @@ test('Robot Operator graph records one bounded inner intention before Environmen
   assert.match(String(prompt), /Do not use I will for a physical action/i);
   assert.match(String(prompt), /Never state or imply that an action is already happening or has completed/i);
   assert.match(String(prompt), /not itself a spoken response/i);
+  assert.match(String(prompt), /user-visible decision rationale/i);
+  assert.match(String(prompt), /current correlated image is attached/i);
+  assert.match(String(prompt), /not private chain-of-thought/i);
+  assert.match(String(prompt), /OBJECTIVE LIFECYCLE CONTRACT/);
+  assert.match(String(prompt), /taskLifecycle\.complete=true/);
+  assert.match(String(prompt), /does not ask you to resume the latest task/i);
+  assert.match(String(prompt), /Otherwise route wait/i);
 
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/services.json'), 'utf8'));
   assert.equal(services.services['robot-operator'].graph, 'robot-operator');

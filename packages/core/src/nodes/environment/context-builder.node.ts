@@ -95,7 +95,7 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
     { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
-    { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona for the single Environment LLM pass' },
+    { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona for the primary Environment decision pass' },
     { name: 'routingAnalysis', type: 'object', optional: true, description: 'LLM-selected context policy for the current instruction' },
   ],
   outputs: [

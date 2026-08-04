@@ -12,8 +12,40 @@ import {
 } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
-const execute: NodeExecutor = async (inputs, context, properties) => {
+function assistantResponseText(inputs: Record<string, any>, context: Record<string, any>): string {
+  const explicitEntry = inputs.entry ?? context.bufferEntry;
+  if (
+    explicitEntry
+    && typeof explicitEntry === 'object'
+    && explicitEntry.role === 'assistant'
+    && typeof explicitEntry.content === 'string'
+  ) return explicitEntry.content.trim();
+
+  const rawResponse = inputs.response ?? inputs.assistantResponse;
+  return typeof rawResponse === 'string'
+    ? rawResponse.trim()
+    : typeof rawResponse?.response === 'string'
+      ? rawResponse.response.trim()
+      : typeof rawResponse?.content === 'string'
+        ? rawResponse.content.trim()
+        : '';
+}
+
+function taskLifecycleMetadata(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  try {
+    const encoded = JSON.stringify(value);
+    if (encoded.length > 8_000) return null;
+    return JSON.parse(encoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+const execute: NodeExecutor = async (inputs, context) => {
   const passthrough = inputs.passthrough ?? null;
+  const assistantResponse = assistantResponseText(inputs, context);
+  const taskLifecycle = taskLifecycleMetadata(inputs.taskLifecycle);
   const username = typeof context.username === 'string'
     ? context.username.trim()
     : typeof context.userId === 'string'
@@ -21,7 +53,14 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       : '';
 
   if (!username || username === 'anonymous') {
-    return { persisted: false, skipped: true, reason: 'No authenticated username', passthrough };
+    return {
+      persisted: false,
+      skipped: true,
+      reason: 'No authenticated username',
+      response: assistantResponse,
+      responseBufferId: inputs.responseBufferId || '',
+      passthrough,
+    };
   }
 
   if (context.composeTarget === 'inner' && !context.bufferEntry) {
@@ -30,6 +69,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       skipped: true,
       reason: 'Inner compose turn is owned by the Inner Dialogue Buffer node',
       bufferPath: getBufferPathForUser(username, 'conversation'),
+      response: assistantResponse,
+      responseBufferId: inputs.responseBufferId || '',
       passthrough,
     };
   }
@@ -53,36 +94,27 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   const explicitEntry = inputs.entry ?? context.bufferEntry;
-  if (properties?.explicitOnly === true && !explicitEntry) {
-    return {
-      persisted: false,
-      skipped: true,
-      reason: 'No explicit conversation entry',
-      messageCount: 0,
-      bufferPath: getBufferPathForUser(username, 'conversation'),
-      response: '',
-      responseBufferId: inputs.responseBufferId || '',
-      passthrough,
-    };
-  }
   const entries: Array<Pick<ConversationMessage, 'role' | 'content' | 'meta'>> = [];
   if (explicitEntry && typeof explicitEntry === 'object') {
-    entries.push(explicitEntry);
+    entries.push({
+      ...explicitEntry,
+      ...(explicitEntry.role === 'assistant' && taskLifecycle
+        ? {
+            meta: {
+              ...(explicitEntry.meta && typeof explicitEntry.meta === 'object'
+                ? explicitEntry.meta
+                : {}),
+              taskLifecycle,
+            },
+          }
+        : {}),
+    });
   } else {
     const userText = typeof inputs.userMessage === 'string'
       ? inputs.userMessage.trim()
       : typeof context.userMessage === 'string'
         ? context.userMessage.trim()
         : '';
-    const rawResponse = inputs.response ?? inputs.assistantResponse;
-    const responseText = typeof rawResponse === 'string'
-      ? rawResponse.trim()
-      : typeof rawResponse?.response === 'string'
-        ? rawResponse.response.trim()
-        : typeof rawResponse?.content === 'string'
-          ? rawResponse.content.trim()
-          : '';
-
     if (userText && context.userMessageAdmitted !== true) {
       entries.push({
         role: 'user',
@@ -97,15 +129,16 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         },
       });
     }
-    if (responseText) {
+    if (assistantResponse) {
       entries.push({
         role: 'assistant',
-        content: responseText,
+        content: assistantResponse,
         meta: {
           ...(context.replyToDesireId ? { replyToDesireId: context.replyToDesireId } : {}),
           ...(context.replyToDesireTitle ? { replyToDesireTitle: context.replyToDesireTitle } : {}),
           ...(context.cognitiveMode ? { cognitiveMode: context.cognitiveMode } : {}),
           ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          ...(taskLifecycle ? { taskLifecycle } : {}),
         },
       });
     }
@@ -131,7 +164,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     skipped: persistedCount === 0,
     messageCount: persistedCount,
     bufferPath: getBufferPathForUser(username, 'conversation'),
-    response: entries.find(entry => entry.role === 'assistant')?.content || '',
+    response: entries.find(entry => entry.role === 'assistant')?.content || assistantResponse,
     responseBufferId: inputs.responseBufferId || '',
     passthrough,
   };
@@ -146,6 +179,7 @@ export const ConversationBufferNode = defineNode({
     { name: 'userMessage', type: 'string', optional: true, description: 'Voiced user message' },
     { name: 'response', type: 'any', optional: true, description: 'Assistant response' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Legacy history edge; persistence does not derive ownership from it' },
+    { name: 'taskLifecycle', type: 'object', optional: true, description: 'Existing task owner lifecycle decision attached to an assistant result' },
     { name: 'responseBufferId', type: 'string', optional: true, description: 'Pass-through response-buffer ID' },
     { name: 'summary', type: 'object', optional: true, description: 'Conversation summary marker' },
     { name: 'passthrough', type: 'any', optional: true, description: 'Data forwarded after conversation admission for graph sequencing' },
@@ -159,17 +193,6 @@ export const ConversationBufferNode = defineNode({
     { name: 'responseBufferId', type: 'string' },
     { name: 'passthrough', type: 'any' },
   ],
-  properties: {
-    explicitOnly: false,
-  },
-  propertySchemas: {
-    explicitOnly: {
-      type: 'toggle',
-      default: false,
-      label: 'Require Explicit Entry',
-      description: 'Skip fallback user/assistant derivation when no typed entry is connected.',
-    },
-  },
   description: 'Validates and persists voiced user/assistant entries to the canonical Conversation Buffer.',
   execute,
 });

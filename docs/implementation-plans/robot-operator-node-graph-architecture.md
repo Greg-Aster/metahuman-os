@@ -56,7 +56,8 @@ Implemented on 2026-08-03:
 - reuse of the canonical Conversation Buffer, Environment Workflow Command, and
   Work Coordinator for each refined attempt, with no second validator, buffer,
   queue, or execution path;
-- Node Editor discovery, graph validation, and focused contract coverage.
+- Node Editor discovery, graph validation, focused contract coverage, and the
+  full repository build.
 
 Not yet claimed: stable live model quality, physical completion-loop reliability,
 completion-driven Full operation after a whole objective terminates, or
@@ -250,6 +251,7 @@ terminal objective outcome to Robot Operator to select a new objective.
 | Work Coordinator | The one finite-work queue, leases, retries, cancellation, visible lifecycle | Robot-specific semantic policy |
 | Robot Operator graph | Persona-aware high-level deliberation, intention creation, and route selection | Robot command selection, movement generation, TTS, direct buffer writes |
 | Environment Mode graph | Interpret the delegated intention and decide how to speak, observe, or act | Invent an autonomous objective without an admitted human or Robot Operator instruction |
+| Environment Task Contract | Reconcile the bounded policy and required evidence before completion validation | Deciding completion, writing a retry prompt, actions, queues, or persistence |
 | Environment Task Validator | Sole task-completion decision, completion-evidence checks, and bounded incomplete-result admission | Writing a retry prompt, open-ended scene interpretation, queues, or persistence |
 | Environment Task Refiner | Graph-configured LLM authorship of one narrower prompt and visible update after the validator reports incomplete | Revalidating completion, direct action execution, queues, or persistence |
 | Other validator nodes | Schema, capability, correlation, and physical safety enforcement | Task-completion ownership or open-ended scene interpretation |
@@ -625,6 +627,9 @@ Each implementation batch must prove:
 - all Robot Operator LLM prompt prose is present in graph configuration;
 - one autonomous stimulus runs one Robot Operator decision and queues at most
   one Environment Mode execution;
+- validator-owned completion lifecycle is preserved through Conversation
+  Buffer history so a later Robot Observer stimulus cannot promote a closed
+  objective into new work;
 - Conversation, Inner Dialogue, System, and Robot Buffer ownership remains
   unchanged;
 - Phase 1 writes only the thinking-stripped delegated intention to Inner

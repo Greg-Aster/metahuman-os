@@ -962,8 +962,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'userMessage', type: 'string', optional: true },
       { name: 'response', type: 'any', optional: true },
       { name: 'conversationHistory', type: 'array', optional: true },
+      { name: 'taskLifecycle', type: 'object', optional: true },
       { name: 'responseBufferId', type: 'string', optional: true },
       { name: 'summary', type: 'object', optional: true },
+      { name: 'passthrough', type: 'any', optional: true },
     ],
     outputs: [
       { name: 'persisted', type: 'boolean' },
@@ -972,6 +974,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'bufferPath', type: 'string' },
       { name: 'response', type: 'string' },
       { name: 'responseBufferId', type: 'string' },
+      { name: 'passthrough', type: 'any' },
     ],
     description: 'Persists voiced user and assistant entries to the canonical Conversation Buffer.',
   }),

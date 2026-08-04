@@ -101,7 +101,8 @@ test('routes eligible off-script requests while known semantic commands bypass g
       robotCommands: [
         'walk', 'wave', 'bow', 'shrug', 'nod', 'celebrate', 'stretch',
         'macarena', 'salsa', 'surprised', 'sad', 'curious',
-        'turn_left_90', 'turn_right_90', 'walk_slow', 'run',
+        'turn_left_45', 'turn_right_45', 'turn_left_90', 'turn_right_90',
+        'turn_left_180', 'turn_right_180', 'walk_slow', 'run',
       ],
     },
   };
@@ -137,7 +138,8 @@ test('routes eligible off-script requests while known semantic commands bypass g
 
   for (const command of [
     'nod', 'celebrate', 'stretch', 'macarena', 'salsa', 'surprised', 'sad',
-    'curious', 'turn_left_90', 'turn_right_90', 'walk_slow', 'run',
+    'curious', 'turn_left_45', 'turn_right_45', 'turn_left_90', 'turn_right_90',
+    'turn_left_180', 'turn_right_180', 'walk_slow', 'run',
   ]) {
     const permanentCommand = await environmentActionParserNode.execute({
       response: JSON.stringify({

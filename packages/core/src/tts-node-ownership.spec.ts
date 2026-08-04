@@ -135,21 +135,12 @@ assert.equal(ttsNodes[0]?.data?.properties?.source, 'environment-mode');
 const ttsNodeId = ttsNodes[0]!.id;
 assert.ok(
   environmentGraph.edges.some(edge =>
-    edge.source === '8'
+    edge.source === 'conversation-buffer'
     && edge.sourceHandle === 'response'
     && edge.target === ttsNodeId
     && edge.targetHandle === 'conversation'
   ),
-  'Environment Mode single bridge-resolved response must enter the standard TTS conversation input',
-);
-assert.ok(
-  environmentGraph.edges.some(edge =>
-    edge.source === 'refinement-conversation-buffer'
-    && edge.sourceHandle === 'response'
-    && edge.target === ttsNodeId
-    && edge.targetHandle === 'conversation'
-  ),
-  'Environment Mode refinement updates must reuse the single standard TTS conversation input',
+  'Environment Mode responses and refinement updates must pass through the canonical Conversation Buffer before the standard TTS input',
 );
 
 for (const node of environmentGraph.nodes) {

@@ -233,7 +233,7 @@ export const environmentTaskValidatorNode = defineNode({
     { name: 'shouldRefine', type: 'boolean', description: 'Whether the existing task should enter another bounded refinement stage' },
     { name: 'taskInstruction', type: 'string', description: 'Structured task contract persisted with admitted actions' },
   ],
-  description: 'Validates graph-authored task completion and emits a bounded next-workflow command without mutating the queue.',
+  description: 'Validates graph-authored task completion and emits a typed incomplete result for bounded graph refinement.',
   async execute(inputs, context) {
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
@@ -494,6 +494,11 @@ export const environmentTaskValidatorNode = defineNode({
       movementRequest: admittedMovementRequest,
       response: visibleResponse,
       decision: {
+        kind: 'environment_task_lifecycle',
+        owner: 'environment-task-validator',
+        cycleId: cycle?.cycleId ?? (cleanText(commandMetadata?.cycleId, 200) || null),
+        step,
+        maxSteps,
         outcome,
         complete,
         explicit: explicitDecision,

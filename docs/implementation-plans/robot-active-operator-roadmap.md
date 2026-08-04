@@ -256,6 +256,9 @@ Implemented node identity:
 
 Instruction ownership is intentionally split:
 
+- `Environment Context Router` and the deterministic `Environment Task Contract`
+  node classify the bounded policy and required evidence. They do not decide
+  whether the objective is complete and do not write another attempt.
 - The existing Environment LLM proposes a structured `taskDecision`; it does
   not write the next attempt before validation.
 - `Environment Task Validator` deterministically checks terminal feedback,
@@ -460,8 +463,8 @@ explicitly authorized before editing those surfaces.
 - No generic Work Coordinator, Active Operator controller,
   Environment Interface, bridge transport, Chat Interface, or controller code
   was modified for this feature.
-- Focused validator, refiner, command, and Robot Operator coverage passes 47
-  tests, and all 26 cognitive graphs pass schema validation.
+- Focused validator, refiner, command, Robot Operator, buffer-ownership, and TTS
+  coverage passes 50 tests, and all 26 cognitive graphs pass schema validation.
 - The full core typecheck remains red on pre-existing diagnostics. After the one
   validator-local diagnostic was corrected, no reported diagnostic referenced
   the new validator or workflow-command files.
@@ -743,25 +746,90 @@ observed the unanswered turn and emitted the visible inner intention to report
 the value, which entered the same suppression path; that Idle Thought was a
 secondary symptom, not the requested answer.
 
-The repaired ownership boundary is:
+Removing the state-blind router contract fixed report-only suppression but
+exposed the inverse defect during later physical tests. The Environment model
+correctly understood instructions whose physical activity remained subject to
+a later visual condition, but encoded them as `continuationPolicy: none` and
+`requiredCompletionBasis: action_result`. A controller `done` for one wave or
+bow was then accepted as whole-objective completion without any visual audit;
+the validator record showed `completionEvidence: done` and
+`evidenceAssessment: null`. Later direct questions about the same frame
+correctly reported that the required visual condition was absent.
 
-- Environment Context Router selects conversational context and authorizes
-  current actions. It no longer defines the initial task completion contract.
-- The state-aware Environment model defines the initial continuation policy and
-  required evidence in its structured task decision.
-- Environment Task Validator owns admission and persists that contract only
-  with admitted action or continuation work.
-- On later correlated feedback passes, the persisted validator contract remains
-  authoritative over new model or router guesses.
+The final repaired ownership boundary is:
 
-No battery, telemetry, command, or phrase-specific branch was added. The generic
-tests prove that a false router guess cannot enter an initial completion
-contract, a response-only state answer remains visible, unsupported action
-completion narration remains blocked, and a persisted bounded visual contract
-still controls later feedback. Focused Environment coverage passes 28/28 and
-all 26 cognitive graphs validate. The owner-managed server must be restarted
-before physical retesting because node executors are loaded by the running
-process and the log above came from the pre-repair ownership path.
+- Environment Instruction Interpreter gives the existing Context Router a
+  compact routing envelope containing the current instruction, robot state,
+  capabilities, correlated-frame metadata, and any persisted contract. Image
+  payloads are excluded.
+- Environment Context Router independently classifies action authorization,
+  continuation policy, and the evidence required for the whole objective. It
+  can distinguish a report using already supplied state from unavailable sensor
+  evidence because it now receives that state.
+- Environment LLM continues to own actions, response content, current outcome,
+  and claimed completion evidence.
+- The graph-visible Environment Task Contract node reconciles only
+  `continuationPolicy` and `requiredCompletionBasis`; it cannot invent or alter
+  actions, outcomes, completion claims, or evidence.
+- Environment Task Validator remains the sole completion/admission authority.
+  It persists the reconciled contract, treats controller `done` as completion
+  of the current step, and permits whole-objective completion only from the
+  contract's required evidence basis.
+- If a completed step leaves a bounded objective incomplete, the existing Task
+  Refiner authors the next attempt and the existing Environment Workflow Command
+  queues it. No second queue, validator, or operator subsystem was added.
+
+No battery, telemetry, movement, object, or conditional phrase branch was
+added. Generic coverage proves that report-only state answers remain visible,
+one-shot actions can still close from action results, sensor-bounded objectives
+survive controller completion, and rejected completion opens bounded refinement
+with the visual contract intact. Focused coverage passes 29/29 existing
+validator/refiner tests, 4/4 Task Contract tests, and 3/3 state-aware routing
+tests; all 26 cognitive graphs validate. The owner-managed server must be
+restarted before physical retesting because node executors and the graph are
+cached by the running process.
+
+## 2026-08-03 Robot Operator Objective-Lineage Repair
+
+The live wave test showed that the bounded Environment validator stopped its
+own cycle correctly, but a later Robot Observer image caused Robot Operator to
+turn the completed result into a new objective. The new Environment cycle then
+spent its eight-step budget refining acknowledgements and visual confirmation
+of work that was already closed. A second manual Observer request waited behind
+that cycle and correctly exited as `robot_observer_cycle_active`; the queue and
+bridge were not the source of the repetition.
+
+The ownership gap was at the conversation-to-operator boundary. Environment
+Task Validator already knew the objective was complete, but Conversation Buffer
+stored only the visible response, and Robot Operator Context reduced history to
+role and content. The next operator decision therefore received completion
+prose without the validator-owned lifecycle that gave the prose its meaning.
+
+The repair keeps the existing owners:
+
+- Environment Task Validator now emits its normalized decision as a typed
+  `environment_task_lifecycle` record carrying owner, correlation cycle, step
+  bound, objective, outcome, and verified completion state.
+- The existing Environment Mode graph passes that decision into the one
+  canonical Conversation Buffer, which attaches it to the corresponding
+  assistant result as `taskLifecycle` metadata.
+- Robot Operator Context preserves a bounded form of that metadata and presents
+  recent lifecycle records to the configured Robot Operator graph.
+- The Robot Operator graph prompt treats verified completion as a closed
+  objective, treats prior completion reports and inner intentions as context
+  rather than commands, and selects `wait` unless the current stimulus supports
+  a genuinely new objective.
+
+No completion wording, command name, gesture, or object is matched in code. No
+second validator, task store, queue, scheduler, buffer, or agent-owned prompt was
+added. Environment Task Validator remains the completion authority; Robot
+Operator remains the high-level graph-owned decision point; Environment Mode
+still owns execution and refinement. Older buffer entries do not contain the
+new lifecycle metadata, so the graph prompt also uses their user-assistant
+chronology without promoting assistant completion reports into fresh work.
+
+The owner-managed server must be rebuilt or restarted before the lifecycle
+metadata and updated graph prompt can affect a physical retest.
 
 ## Validation and Safety Gates
 

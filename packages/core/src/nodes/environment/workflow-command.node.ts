@@ -86,7 +86,7 @@ export const environmentWorkflowCommandNode = defineNode({
   name: 'Environment Workflow Command',
   category: 'environment',
   inputs: [
-    { name: 'command', type: 'object', optional: true, description: 'Validated command from Environment Task Validator' },
+    { name: 'command', type: 'object', optional: true, description: 'Refined command opened by the existing Environment Task Validator' },
     { name: 'observation', type: 'object', optional: true, description: 'Current observation to carry into the next bounded workflow run' },
   ],
   outputs: [
