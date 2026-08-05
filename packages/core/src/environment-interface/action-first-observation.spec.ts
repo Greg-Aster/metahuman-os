@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { getQueueManager } from '../queue/index.js'
-import { readRobotObserverCycle } from '../robot-operator.js'
+import { readBoredomMovementCycle } from '../robot-operator.js'
+import { environmentObservationNeedsCognition } from '../api/handlers/environment-bridge.js'
 import {
+  attachEnvironmentActionContext,
   enqueueEnvironmentAction,
   recordEnvironmentActionResult,
 } from './store.js'
@@ -37,7 +39,7 @@ test('image acquisition has a longer dispatch window without weakening control e
   }
 })
 
-test('action-first autonomy queues exactly one correlated image after action completion', () => {
+test('Boredom Movement queues exactly one correlated image after its movement completes', () => {
   const manager = getQueueManager()
   const originalState = manager.exportState()
   try {
@@ -47,21 +49,18 @@ test('action-first autonomy queues exactly one correlated image after action com
       command: 'model-authored-command',
       sessionId: 'robot-1',
       metadata: {
-        robotObserver: {
+        boredomMovement: {
           cycleId: 'boredom-cycle',
-          step: 2,
-          maxSteps: 8,
           triggerSource: 'autonomy',
-          graph: 'environment',
-          requestedBy: 'environment-perception',
-          observationTiming: 'after_intention',
+          graph: 'boredom-movement',
+          requestedBy: 'boredom-movement',
+          selectedCommand: 'wave',
         },
       },
     }, {
       username: 'owner',
       source: 'autonomy',
       correlationId: 'boredom-cycle',
-      originatingInstruction: 'A model-authored intention.',
     })
     manager.claim(action.id, 'environment-adapter:robot-1')
 
@@ -74,11 +73,11 @@ test('action-first autonomy queues exactly one correlated image after action com
     })
     assert.equal(completed?.postActionObservation?.type, 'captureImage')
     assert.equal(completed?.postActionObservation?.correlationId, 'boredom-cycle')
-    const captureCycle = readRobotObserverCycle({
+    const captureCycle = readBoredomMovementCycle({
       metadata: completed?.postActionObservation?.metadata,
     })
-    assert.equal(captureCycle?.step, 3)
-    assert.equal(captureCycle?.observationTiming, 'after_intention')
+    assert.equal(captureCycle?.graph, 'boredom-movement')
+    assert.equal(captureCycle?.selectedCommand, 'wave')
 
     const repeated = recordEnvironmentActionResult({
       id: 'action-complete-repeat',
@@ -128,6 +127,96 @@ test('image-first observer actions do not acquire an automatic post-action image
     })
     assert.equal(completed?.postActionObservation, undefined)
     assert.equal(manager.getAllTasks().some(task => task.input.type === 'captureImage'), false)
+  } finally {
+    manager.importState(originalState)
+  }
+})
+
+test('completed motion carries cycle-owned control state into the correlated observation', () => {
+  const manager = getQueueManager()
+  const originalState = manager.exportState()
+  try {
+    manager.clear()
+    const motionControl = {
+      version: 1 as const,
+      cycleId: 'observer-cycle',
+      planIds: ['plan-1'],
+      lastPlanId: 'plan-1',
+      lastVisualFrameId: 'frame-before-motion',
+      lastVisualFrameTimestamp: '2026-08-04T12:00:00.000Z',
+      consecutiveIdentical: 1,
+    }
+    const action = enqueueEnvironmentAction({
+      type: 'robotCommand',
+      command: 'model-authored-command',
+      sessionId: 'robot-1',
+      metadata: { motionControl },
+    }, {
+      username: 'owner',
+      source: 'autonomy',
+      correlationId: 'observer-cycle',
+    })
+    const observation = attachEnvironmentActionContext({
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'robot-1',
+      timestamp: '2026-08-04T12:00:05.000Z',
+      capabilities: { actions: ['robotCommand'] },
+      feedback: [{
+        id: 'motion-completed',
+        timestamp: '2026-08-04T12:00:05.000Z',
+        type: 'completed',
+        message: 'done',
+        actionId: action.id,
+      }],
+    })
+
+    assert.deepEqual(observation.metadata?.motionControl, motionControl)
+    assert.equal(observation.metadata?.correlationId, 'observer-cycle')
+    assert.equal(observation.metadata?.actionId, action.id)
+  } finally {
+    manager.importState(originalState)
+  }
+})
+
+test('a failed Boredom Movement capture remains lifecycle telemetry instead of invoking its graph', () => {
+  const manager = getQueueManager()
+  const originalState = manager.exportState()
+  try {
+    manager.clear()
+    const capture = enqueueEnvironmentAction({
+      type: 'captureImage',
+      sessionId: 'robot-1',
+      metadata: {
+        boredomMovement: {
+          cycleId: 'boredom-failed-capture',
+          triggerSource: 'autonomy',
+          requestedBy: 'boredom-movement',
+          graph: 'boredom-movement',
+          selectedCommand: 'wave',
+        },
+      },
+    }, {
+      username: 'owner',
+      source: 'autonomy',
+      correlationId: 'boredom-failed-capture',
+    })
+    const observation = attachEnvironmentActionContext({
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'robot-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['captureImage'], visual: true },
+      feedback: [{
+        id: 'capture-expired',
+        timestamp: new Date().toISOString(),
+        type: 'expired',
+        message: 'capture expired',
+        actionId: capture.id,
+      }],
+    })
+    assert.equal(readBoredomMovementCycle(observation)?.cycleId, 'boredom-failed-capture')
+    assert.equal(environmentObservationNeedsCognition(observation), false)
   } finally {
     manager.importState(originalState)
   }

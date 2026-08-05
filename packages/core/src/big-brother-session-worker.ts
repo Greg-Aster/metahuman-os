@@ -19,6 +19,7 @@ import {
   type ParsedBigBrotherEvent,
   type TerminalBigBrotherProvider,
 } from './big-brother-cli.js'
+import type { EscalationOptions } from './escalation-backend.js'
 
 interface WorkerJob {
   provider: TerminalBigBrotherProvider
@@ -27,6 +28,7 @@ interface WorkerJob {
   workingDirectory?: string
   timeout?: number
   sessionId?: string
+  images?: EscalationOptions['images']
 }
 
 const jobPath = process.argv[2]
@@ -74,6 +76,7 @@ try {
     workingDirectory: job.workingDirectory,
     timeout: job.timeout,
     sessionId: job.sessionId,
+    images: job.images,
   })
 } catch (error) {
   const message = error instanceof Error ? error.message : 'Failed to prepare Big Brother CLI'

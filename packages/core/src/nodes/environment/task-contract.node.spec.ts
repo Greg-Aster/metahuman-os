@@ -90,6 +90,45 @@ test('a valid Environment task decision owns a new action contract over router f
   });
 });
 
+test('Robot Operator delegation keeps the independent router evidence contract', async () => {
+  const currentObservation = observation();
+  currentObservation.metadata = {
+    ...currentObservation.metadata,
+    robotOperatorDecision: {
+      observed: 'The current frame contains a scene worth examining.',
+      instruction: 'I want a clearer view of the current subject.',
+      requiresAction: true,
+      reason: 'A clearer view would satisfy my present curiosity.',
+    },
+  };
+  const result = await environmentTaskContractNode.execute({
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Execute one supported body command.',
+      objectiveComplete: false,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+    },
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: {
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        motionClass: 'target_relative',
+      },
+    },
+    observation: currentObservation,
+  }, {});
+
+  assert.equal(result.reconciled, true);
+  assert.equal(result.contract.continuationPolicy, 'bounded');
+  assert.equal(result.contract.requiredCompletionBasis, 'visual_observation');
+  assert.equal(result.contract.motionClass, 'target_relative');
+  assert.equal(result.taskDecision.motionClass, 'target_relative');
+  assert.equal(result.taskDecision.taskContractSource, 'robot_operator_router');
+});
+
 test('bounded objectives use the router evidence classification without changing model-owned continuation', async () => {
   const result = await environmentTaskContractNode.execute({
     taskDecision: {
@@ -204,11 +243,12 @@ test('a validator-persisted contract remains authoritative on a later no-action 
   currentObservation.metadata = {
     ...currentObservation.metadata,
     taskValidatorCommand: {
-      version: 3,
+      version: 4,
       objective,
       instruction: 'Inspect the current view for the requested condition.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
+      motionClass: 'target_relative',
     },
   };
   const result = await environmentTaskContractNode.execute({
@@ -236,6 +276,8 @@ test('a validator-persisted contract remains authoritative on a later no-action 
   assert.equal(result.contract.currentInstruction, 'Inspect the current view for the requested condition.');
   assert.equal(result.taskDecision.continuationPolicy, 'bounded');
   assert.equal(result.taskDecision.requiredCompletionBasis, 'visual_observation');
+  assert.equal(result.contract.motionClass, 'target_relative');
+  assert.equal(result.taskDecision.motionClass, 'target_relative');
   assert.equal(result.taskDecision.taskContractSource, 'persisted');
 });
 

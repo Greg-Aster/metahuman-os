@@ -41,7 +41,7 @@ pip install unsloth
 
 # Install additional dependencies
 echo "📦 Installing additional dependencies..."
-pip install datasets transformers accelerate bitsandbytes
+pip install datasets 'transformers>=5,<6' accelerate bitsandbytes
 
 # Install GGUF conversion dependencies
 echo "📦 Installing GGUF conversion tools..."

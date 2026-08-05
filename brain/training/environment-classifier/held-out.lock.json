@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "algorithm": "sha256",
   "canonicalization": "recursive-key-sort-json",
   "caseIds": [
@@ -20,5 +20,5 @@
     "state-003",
     "vision-acquisition-002"
   ],
-  "digest": "f439401d8aa6716981c2c1d49063f28bc7a106e840540f74e0291d9c905d176c"
+  "digest": "6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6"
 }

@@ -1,4 +1,12 @@
-import type { EnvironmentAction, EnvironmentActionType, EnvironmentObservation } from '../../environment-interface/index.js';
+import {
+  ENVIRONMENT_MOTION_CLASSES,
+  normalizeEnvironmentVisualInspectionTarget,
+  normalizeEnvironmentVisualTarget,
+  type EnvironmentAction,
+  type EnvironmentActionType,
+  type EnvironmentMotionClass,
+  type EnvironmentObservation,
+} from '../../environment-interface/index.js';
 
 // robotMotionPlan is intentionally excluded. Only Movement Generator may create it.
 const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
@@ -9,6 +17,8 @@ const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
   'stop',
   'captureImage',
   'robotCommand',
+  'inspect',
+  'visualApproach',
   'sendText',
 ]);
 
@@ -20,6 +30,8 @@ export interface DirectRobotInstruction {
 export interface EnvironmentMovementRequest {
   description: string;
   sessionId?: string;
+  /** Router-owned motion reference; never authored by the movement model. */
+  motionClass: Extract<EnvironmentMotionClass, 'body_local'>;
 }
 
 export const ENVIRONMENT_TASK_OUTCOMES = [
@@ -56,11 +68,14 @@ export interface EnvironmentTaskContract {
   currentInstruction?: string;
   continuationPolicy: EnvironmentContinuationPolicy;
   requiredCompletionBasis: EnvironmentCompletionBasis;
+  /** Absent only on legacy or non-motion contracts. */
+  motionClass?: EnvironmentMotionClass;
 }
 
 export type EnvironmentTaskContractSource =
   | 'persisted'
   | 'environment_decision'
+  | 'robot_operator_router'
   | 'bounded_router_evidence'
   | 'router_fallback';
 
@@ -98,6 +113,13 @@ function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis |
     : null;
 }
 
+export function normalizedEnvironmentMotionClass(value: unknown): EnvironmentMotionClass | null {
+  return typeof value === 'string'
+    && ENVIRONMENT_MOTION_CLASSES.includes(value as EnvironmentMotionClass)
+    ? value as EnvironmentMotionClass
+    : null;
+}
+
 export function environmentTaskContractFromRouting(
   value: unknown,
   objective = '',
@@ -107,6 +129,7 @@ export function environmentTaskContractFromRouting(
   const requiredCompletionBasis = normalizedCompletionBasis(
     value.actionParams.requiredCompletionBasis,
   );
+  const motionClass = normalizedEnvironmentMotionClass(value.actionParams.motionClass);
   if (
     (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
     || !requiredCompletionBasis
@@ -116,6 +139,7 @@ export function environmentTaskContractFromRouting(
     objective: objective.trim().slice(0, 1_000),
     continuationPolicy,
     requiredCompletionBasis,
+    ...(motionClass ? { motionClass } : {}),
   };
 }
 
@@ -135,6 +159,7 @@ export function environmentTaskContractFromObservation(
     actionParams: {
       continuationPolicy: command?.continuationPolicy,
       requiredCompletionBasis: command?.requiredCompletionBasis,
+      motionClass: command?.motionClass,
     },
   }, objective);
   if (commandContract) {
@@ -148,13 +173,14 @@ export function environmentTaskContractFromObservation(
 
 export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContract): string {
   return `${ENVIRONMENT_TASK_CONTRACT_PREFIX}${JSON.stringify({
-    version: 1,
+    version: 2,
     objective: contract.objective.trim().slice(0, 1_000),
     ...(contract.currentInstruction?.trim()
       ? { currentInstruction: contract.currentInstruction.trim().slice(0, 500) }
       : {}),
     continuationPolicy: contract.continuationPolicy,
     requiredCompletionBasis: contract.requiredCompletionBasis,
+    ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
   })}`;
 }
 
@@ -171,6 +197,8 @@ export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTask
       : '';
     const continuationPolicy = parsed.continuationPolicy;
     const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
+    const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
+    if (parsed.motionClass !== undefined && !motionClass) return null;
     if (
       !objective
       || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
@@ -182,6 +210,7 @@ export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTask
       ...(currentInstruction ? { currentInstruction } : {}),
       continuationPolicy,
       requiredCompletionBasis,
+      ...(motionClass ? { motionClass } : {}),
     };
   } catch {
     return null;
@@ -196,6 +225,8 @@ export interface EnvironmentTaskDecision {
   requiredCompletionBasis?: EnvironmentCompletionBasis;
   completionBasis?: EnvironmentCompletionBasis;
   completionEvidence?: string;
+  /** Internal router-owned motion reference; never accepted from model output. */
+  motionClass?: EnvironmentMotionClass;
   /** Internal provenance added after model output parsing by Environment Task Contract. */
   taskContractSource?: EnvironmentTaskContractSource;
   /** Typed disagreement retained for lifecycle telemetry; never model-authored. */
@@ -344,6 +375,8 @@ export function stringifyEnvironmentObservation(
 
   if (includeEnvironmentContext) {
     sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
+    sections.push(`Target-aware navigation: ${observation.capabilities.navigation === true ? 'available' : 'unavailable'}`);
+    sections.push(`Admitted motion classes: ${observation.capabilities.motionClasses?.join(', ') || 'none explicitly advertised'}`);
   }
   const robotCommands = observation.capabilities.robotCommands
     ?.map(command => command.trim())
@@ -386,11 +419,14 @@ export function stringifyEnvironmentObservation(
   if (includeActionContracts && observation.capabilities.actions.includes('robotCommand')) {
     sections.push([
       'Robot command contract:',
-      '- A robotCommand contains a semantic command and optional units, never simulator commands or raw servo values.',
+      '- A robotCommand contains a named body command and optional units, never simulator commands or raw servo values.',
       ...(robotCommands?.length
         ? ['- Use only a command named in Supported robot commands.']
         : []),
-      '- Example: {"response":"I will walk forward.","actions":[{"type":"robotCommand","command":"walk","units":3}],"movementRequest":null,"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false,"continuationPolicy":"none","requiredCompletionBasis":"action_result"}}.',
+      '- Named body commands are open-loop unless Target-aware navigation is explicitly available.',
+      '- body_local changes pose or orientation without claiming an environmental destination. open_loop_displacement executes an explicit user-authorized direction without tracking a target. target_relative requires an advertised target-relative feedback capability.',
+      '- Do not treat an open-loop command as target tracking, path planning, obstacle avoidance, distance control, or arrival.',
+      '- Command completion proves only that the named command ran. A claimed scene or spatial outcome requires matching current environment evidence.',
     ].join('\n'));
   }
   if (includeActionContracts && observation.capabilities.actions.includes('captureImage')) {
@@ -401,15 +437,35 @@ export function stringifyEnvironmentObservation(
       '- Do not describe the scene until a fresh correlated visual observation arrives.',
     ].join('\n'));
   }
+  if (includeActionContracts && observation.capabilities.actions.includes('visualApproach')) {
+    sections.push([
+      'Visual approach contract:',
+      '- visualApproach is the only camera-feedback target approach action. It runs a bounded adapter-owned image and movement loop and returns typed progress.',
+      '- Use it only for a target_relative route and only when visualApproach and target_relative are both advertised.',
+      '- visualTarget must identify the exact fresh frame and one normalized target box: {"version":1,"targetId":"bounded id","frameId":"exact current frame id","frameTimestamp":"exact frame timestamp","box":{"x":0..1,"y":0..1,"width":0..1,"height":0..1},"confidence":0..1,"description":"short appearance description"}.',
+      '- The box is normalized to the full image, has visible area, and remains inside the frame. Box size is not metric distance.',
+      '- Never substitute move, robotCommand, or robotMotionPlan for visualApproach when motionClass is target_relative.',
+    ].join('\n'));
+  }
+  if (includeActionContracts && observation.capabilities.actions.includes('inspect')) {
+    sections.push([
+      'Active inspection contract:',
+      '- inspect asks the adapter to acquire and preserve one current target, improve its view through bounded camera feedback, reacquire it after temporary loss, and verify the same target before returning one result.',
+      '- Use it only for a target_relative route and only when inspect, activeView, and target_relative are advertised.',
+      '- inspectionTarget names what current visible subject to acquire: {"version":1,"targetId":"request id","frameId":"exact current frame id","frameTimestamp":"exact frame timestamp","query":"concise visible subject"}.',
+      '- Do not invent a target box. The adapter perception system owns localization. seedBox and seedConfidence are optional paired fields only when the current evidence already provides them.',
+      '- The adapter owns tracking, view correction, reacquisition, and verification. Do not replace inspect with repeated captureImage, move, robotCommand, robotMotionPlan, or LLM retries.',
+    ].join('\n'));
+  }
   if (includeActionContracts && observation.capabilities.actions.includes('robotMotionPlan')) {
     sections.push([
       'Off-script movement routing:',
       '- Decide movement only from the current Task instruction. Conversation history, memories, prior actions, and feedback never authorize a new movement.',
       '- For greetings, general conversation, information questions, or any Task instruction that does not ask the robot to move, keep movementRequest null.',
       '- Prefer an advertised Supported robot command whenever it represents the requested behavior.',
-      '- When a requested movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
+      '- Movement Generator is body-local only. When a body_local movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
+      '- Never use movementRequest for open_loop_displacement or target_relative work.',
       '- Never put robotMotionPlan, joint targets, servo values, PWM values, calibration, or simulator commands in actions.',
-      '- Example: {"response":"I will generate that movement.","actions":[],"movementRequest":{"description":"crouch, lift the front-right leg, pause, then stand"},"taskDecision":{"outcome":"act","reason":"This is the current required step.","objectiveComplete":false,"continuationPolicy":"none","requiredCompletionBasis":"action_result"}}.',
     ].join('\n'));
   }
 
@@ -466,6 +522,29 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     return null;
   }
 
+  if (type === 'inspect' && (!record.inspectionTarget || typeof record.inspectionTarget !== 'object')) {
+    return null;
+  }
+  if (type === 'visualApproach' && (!record.visualTarget || typeof record.visualTarget !== 'object')) {
+    return null;
+  }
+  let inspectionTarget: EnvironmentAction['inspectionTarget'];
+  if (type === 'inspect') {
+    try {
+      inspectionTarget = normalizeEnvironmentVisualInspectionTarget(record.inspectionTarget);
+    } catch {
+      return null;
+    }
+  }
+  let visualTarget: EnvironmentAction['visualTarget'];
+  if (type === 'visualApproach') {
+    try {
+      visualTarget = normalizeEnvironmentVisualTarget(record.visualTarget);
+    } catch {
+      return null;
+    }
+  }
+
   const vector = record.vector && typeof record.vector === 'object'
     ? record.vector as EnvironmentAction['vector']
     : undefined;
@@ -481,6 +560,8 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     amount: typeof record.amount === 'number' ? record.amount : undefined,
     durationMs: typeof record.durationMs === 'number' ? record.durationMs : undefined,
     target: typeof record.target === 'string' ? record.target : undefined,
+    inspectionTarget,
+    visualTarget,
     vector,
     metadata: record.metadata && typeof record.metadata === 'object'
       ? record.metadata as Record<string, unknown>
@@ -508,7 +589,7 @@ function parseMovementRequest(
   if (!description || description.length > 500) {
     return { request: null, error: 'movementRequest description must contain 1..500 characters' };
   }
-  return { request: { description, sessionId }, error: '' };
+  return { request: { description, sessionId, motionClass: 'body_local' }, error: '' };
 }
 
 function parseTaskDecision(

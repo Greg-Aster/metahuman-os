@@ -34,12 +34,19 @@ export interface EscalationOptions {
   workingDirectory?: string;
   /** Username for user-specific context (profile path, CLAUDE.md, etc.) */
   username?: string;
+  /** Validated images to attach to a multimodal terminal-provider request. */
+  images?: EscalationImageInput[];
   /** Called when a reasoning step is detected */
   onReasoningStep?: (step: ReasoningStep) => void;
   /** Called on each raw output chunk (for terminal display) */
   onChunk?: (chunk: string) => void;
   /** Called when backend is waiting for user input (bidirectional communication) */
   onWaitingForInput?: (question: string) => void;
+}
+
+export interface EscalationImageInput {
+  mimeType: string;
+  base64: string;
 }
 
 /**

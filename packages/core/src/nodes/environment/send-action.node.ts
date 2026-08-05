@@ -13,7 +13,7 @@ import {
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 
-const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText'];
+const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'];
 const BODY_ACTIONS = new Set<EnvironmentActionType>(ACTION_OPTIONS.filter(action => action !== 'sendText'));
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
 
@@ -36,10 +36,8 @@ export const environmentSendActionNode = defineNode({
   inputs: [
     { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
     { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
-    { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
-    { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or rejection to show instead' },
     { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
   ],
   outputs: [
@@ -95,7 +93,6 @@ export const environmentSendActionNode = defineNode({
   async execute(inputs, context, properties) {
     const requestedActions = [
       ...(Array.isArray(inputs.actions) ? inputs.actions : []),
-      ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
     const existingCycle = context.robotObserver && typeof context.robotObserver === 'object'
@@ -134,11 +131,7 @@ export const environmentSendActionNode = defineNode({
     const actionCycle = existingCycle ?? startedCycle;
     const nextObserverStep = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
-    const generatedResponse = typeof inputs.generatedResponse === 'string'
-      ? inputs.generatedResponse.trim()
-      : '';
-    const conversationalResponse = generatedResponse
-      || (typeof inputs.response === 'string' ? inputs.response.trim() : '');
+    const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
     const commands = [];
     const rejectedActions = [];
     const options = {

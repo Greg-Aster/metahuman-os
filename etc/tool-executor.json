@@ -50,6 +50,7 @@
       "enabled": true,
       "command": "codex",
       "args": ["exec", "--color", "always", "--json"],
+      "reasoningEffort": "low",
       "timeout": 120000,
       "dangerouslySkipPermissions": true
     }

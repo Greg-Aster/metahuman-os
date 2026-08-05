@@ -240,7 +240,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'boredom-movement': {
     id: 'boredom-movement',
     displayName: 'Boredom Movement',
-    description: 'Starts action-first robot autonomy through Robot Operator Mode, followed by a fresh image and Environment Mode assessment.',
+    description: 'Chooses one safe stationary robot movement, then routes its correlated post-movement image through Boredom Movement Mode.',
     lifecycle: 'workflow',
     handler: 'workflow.boredom-movement',
     taskType: 'generic',
@@ -254,7 +254,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'robot-operator': {
     id: 'robot-operator',
     displayName: 'Robot Operator',
-    description: 'Owns inactivity timing for image-first Robot Observer and action-first Boredom Movement work while Active Operator is semi or full.',
+    description: 'Owns inactivity timing for the separate Robot Observer and Boredom Movement workflows while Active Operator is semi or full.',
     lifecycle: 'service',
     executionContext: 'system',
     servicePath: 'services/robot-operator.ts',

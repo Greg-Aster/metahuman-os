@@ -495,14 +495,220 @@ First milestone:
 
 Completion gate: the corpus is reviewed, the held-out split is locked, the harness is repeatable, and the 9B/2B baselines are recorded. Only then begin the `qwen3.5:2b` classifier fine-tune.
 
+### 2026-08-04 - Gold Corpus and Dual-Model Baseline Complete
+
+Status: milestone complete. None of the three baseline models cleared the live-assignment gate.
+
+Implemented ownership:
+
+- `packages/core/src/environment-classifier.ts` now owns the Environment Context Router decision type, strict validator, JSON parser, and exact safety-relevant route view. The Environment Orchestrator consumes this validator from Core, and the training lane imports it through the public `@metahuman/core/environment-classifier` export.
+- `brain/training/environment-classifier/corpus.json` contains 64 synthetic system-owned cases: 48 development and 16 held out. It contains no user/profile records, runtime images, local absolute paths, or persona LoRA material.
+- `held-out.lock.json` freezes the held-out ids and recursively canonicalized case contents. Locked digest: `f439401d8aa6716981c2c1d49063f28bc7a106e840540f74e0291d9c905d176c`.
+- `benchmark.ts` loads the active `context-router` prompt from the Environment graph, uses the same Core contract for both models, runs models sequentially, excludes one reported warm-up, and writes detailed JSON plus a short Markdown report under `out/environment-classifier/`.
+- Exact route parity covers memory admission, environment admission, vision admission, action authority/type, continuation policy, and required completion basis. Full 14-field output validity is measured separately. Any false-positive `needsAction` or non-`none` action type is counted as an unsafe action-authority error.
+
+Coverage includes ordinary conversation, semantic memory, state reads, fresh-frame vision, missing-frame acquisition, one-shot movement, visually bounded work, delegated action decisions, persisted lifecycle contracts, ambiguity, unavailable capability, classifier disagreement, and stale/history evidence that must not authorize work.
+
+Final current-prompt baseline:
+
+| Model | Split | JSON valid | Core contract valid | Exact route | Unsafe action errors | Unnecessary vision | Median latency | Prompt tokens | Completion tokens | Gate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `qwen3.5:9b` | all 64 | 64/64 | 62/64 | 36/64 (56.3%) | 9 | 5 | 2,240 ms | 57,041 | 8,944 | FAIL |
+| `qwen3.5:2b` | all 64 | 64/64 | 53/64 | 20/64 (31.3%) | 24 | 10 | 1,175 ms | 57,041 | 9,446 | FAIL |
+| `qwen3.5:0.8b` | all 64 | 57/64 | 45/64 | 0/64 (0.0%) | 23 | 28 | 813 ms | 57,041 | 9,652 | FAIL |
+| `qwen3.5:9b` | held out 16 | 16/16 | 15/16 | 10/16 (62.5%) | 1 | 1 | 2,135 ms | 14,307 | 2,229 | FAIL |
+| `qwen3.5:2b` | held out 16 | 16/16 | 16/16 | 6/16 (37.5%) | 5 | 3 | 1,177 ms | 14,307 | 2,400 | FAIL |
+| `qwen3.5:0.8b` | held out 16 | 14/16 | 12/16 | 0/16 (0.0%) | 6 | 9 | 813 ms | 14,307 | 2,409 | FAIL |
+
+The 2B model reduced median warm routing latency by approximately 47.6% relative to 9B, but its action-authority and vision-admission regressions make it unsafe for live routing. It remains a training candidate only. Neither the 9B nor 2B baseline missed an expected action; their dominant safety problem is over-authorization.
+
+The untrained 0.8B model reduced median latency by approximately 63.7% relative to 9B and 30.8% relative to 2B, but it did not produce one exact route. It also missed two required actions, emitted seven non-JSON responses, produced 23 unsafe action-authority errors, and over-admitted vision 28 times. Its speed is useful enough to retain it as a later training candidate, but its raw behavior is substantially below the live gate.
+
+The 9B/2B machine and human reports are `out/environment-classifier/benchmark-2026-08-04T23-08-24-097Z.json` and `.md`. The 0.8B reports are `out/environment-classifier/benchmark-2026-08-04T23-23-36-115Z.json` and `.md`. All fingerprint corpus digest `0579cc482dd67b17da81cccc48b5bfdd0ac388889bff872bb036d3e25d09a028` and active prompt digest `ea61199b93ea5c91f95563d164855b1a181ffa4ebc4ad40d020cbc6357cb4ce3`. An earlier exploratory run was not adopted as the baseline because the active graph prompt changed during the work; the recorded runs each loaded the same current prompt and locked corpus.
+
+Acceptance result: corpus, lock, reusable harness, and all three raw-model baselines are complete. Neither small model is assigned live. The next active work is development-only 2B fine-tuning from the 48-case split plus separately authored training expansions; the 16 locked cases remain evaluation-only.
+
+### 2026-08-04 - Development Training Corpus Ready
+
+Status: dataset generation and the local 2B training entrypoint are complete. The first GPU run described below proved the training pipeline, but a later routing-contract change made that checkpoint pre-drift rather than deployable.
+
+- `development-training.jsonl` contains 480 deterministic training records: 10 controlled variations for each of the 48 development cases. No held-out case id is a training source.
+- The records preserve the exact active Context Router system/user messages and train the complete 14-field Core-validated response as one output. Prompt rendering is shared with the benchmark rather than copied.
+- The original run-001 variations exercised instruction casing/spacing, irrelevant state telemetry, JSON key ordering, stale uncorrelated frames, completed prior actions, future conditional instructions, stale instruction state, and combined distractors. The current run-002 dataset replaces invented telemetry keys with reordered existing state/capability keys plus stale or future conversation, action-history, and frame evidence.
+- Coverage includes 100 positive robot-movement records so safety training does not suppress legitimate action, plus 340 negative action-authority records and 340 negative vision-admission records.
+- The run-001 manifest fingerprinted the corpus, 48-case development split, then-current held-out lock, active prompt, and generated records. Its historical dataset digest was `6867744ff18af34da47fa8cb50bade4ebd14b2e4963e585c77f4e55bb68551e3`; the current run-002 fingerprints are recorded in the migration section below.
+- `training-qwen3.5-2b.json` uses the original trainable `unsloth/Qwen3.5-2B` weights in BF16 with a rank-16 system adapter. Artifacts are confined to `out/environment-classifier/training/`; the profile/persona adapter pipeline is not used.
+- The shared Unsloth trainer now accepts exact per-record system/user messages without changing legacy instruction/input datasets. Qwen3.5 selects Unsloth's maintained `FastModel` API and native SDPA instead of forcing the old global eager-attention fallback.
+- The first model-load preflight exposed a stale local training dependency: `transformers 4.57.1` predates the `qwen3_5` architecture. The maintained setup now requires Transformers 5.x; this is isolated to the Python training environment and does not alter the Node/Ollama runtime.
+
+Training acceptance remains unchanged: do not deploy or train 0.8B unless the 2B candidate produces 100% strict JSON, 100% Core-contract validity, exact held-out route parity, zero unsafe action-authority errors, zero vision over-admission, and materially lower latency than 9B.
+
+### 2026-08-04 - First 2B LoRA Training Run and Serving Decision
+
+Status: the development-only training pipeline completed successfully. The resulting adapter is not approved for deployment and the 0.8B stage has not started.
+
+Training evidence:
+
+- Base: `unsloth/Qwen3.5-2B`, using original trainable BF16 weights rather than an Ollama GGUF.
+- Dataset: 480 records derived only from the 48 development cases; held-out digest remained `f439401d8aa6716981c2c1d49063f28bc7a106e840540f74e0291d9c905d176c`.
+- Adapter: rank 16, alpha 32, 10,911,744 trainable parameters out of 2,224,153,408 total parameters, approximately 0.49%.
+- Run: 3 epochs, 180 optimizer steps, 418.5 seconds of trainer runtime and approximately 7.6 minutes for the complete launch-to-artifact pipeline.
+- Loss: approximately 3.007 at the start, 0.009084 at the final logged step, and 0.3366 aggregate training loss. This proves optimization occurred; training loss is not acceptance evidence.
+- System-owned safetensors artifacts are under `out/environment-classifier/training/qwen3.5-2b-run-001/`, including checkpoint 120 and the final adapter. No profile/persona adapter location was used.
+
+Serving findings:
+
+- Ollama 0.20.7 accepted Modelfiles referencing the converted Qwen3.5 LoRA, but model initialization failed with `loras are not yet implemented`. A merged GGUF fallback was started and then deliberately stopped because it duplicates the full base and is inferior to the repository's existing native LoRA serving path.
+- The repository's vLLM owner already supports PEFT safetensors adapters through named `--lora-modules`; no profile discovery or duplicate adapter registry is needed for this system benchmark.
+- The installed vLLM 0.18.1 registry recognizes `Qwen3_5ForConditionalGeneration`. Evaluation must load the exact 2B base used for training; the configured 9B AWQ vLLM base cannot accept a 2B adapter.
+- The shared benchmark now supports `--provider ollama|vllm` and uses wall-clock latency as the provider-neutral timing measure. It retains one corpus, one Core validator, one prompt renderer, and one report format. The deployment gate now correctly fails on unnecessary vision admission as well as unsafe action authorization.
+- Do not keep independently loaded Ollama and vLLM models active on this 16 GB GPU during acceptance measurements. An idle Ollama daemon is harmless, but loaded weights compete for the same VRAM. The repository's operational backend switch already follows the single-active-runtime rule.
+
+Contract-drift finding:
+
+- The training artifact captured prompt digest `ea61199b93ea5c91f95563d164855b1a181ffa4ebc4ad40d020cbc6357cb4ce3` at 16:44 local time, and the first adapter finished at 17:06.
+- At 17:16 the active Environment Context Router gained a required `actionParams.motionClass` contract and a new prompt digest, `557b5f84ac8c85e0e8a253f4c329d4f91c4b56c04e49c75e4ce858fc8c349c68`.
+- The dataset drift test now fails intentionally because the checked training messages no longer equal the active prompt. The current Core classifier validator and gold route view also do not yet require or compare `motionClass`, so evaluating the old checkpoint as if it represented the new routing contract could produce a false pass.
+- The first adapter is therefore a pipeline-proof artifact only. Before a deployment evaluation, reconcile `motionClass` in the single Core routing contract and gold expectations, version the held-out lock only as an explicit contract migration, regenerate development-only training data, and retrain 2B. Do not expose held-out cases to that regeneration or retraining.
+
+### 2026-08-04 - `motionClass` Contract Migration and Second 2B LoRA Evaluation
+
+Status: the active routing contract, corpus, generated development data, and training artifacts are aligned again. The second 2B run proves the corrected train/serve/evaluate pipeline, but no checkpoint passes deployment acceptance and the 0.8B stage remains blocked.
+
+Contract and data migration:
+
+- `packages/core/src/environment-classifier.ts` now validates `actionParams.motionClass` through the Environment Interface's existing `body_local`, `open_loop_displacement`, and `target_relative` values. A newly authorized `robot_movement` requires a valid motion class; newly authorized non-robot actions may not invent one. The safety route view compares this field instead of introducing a duplicate benchmark schema.
+- The gold corpus and held-out lock are version 2 solely because the active contract changed. The 16 held-out ids remain locked and evaluation-only; no held-out case contributed a training record or prompt edit.
+- Current fingerprints: corpus `229abd06ee095065796b5fbb58d03cda1a80f08afd47d0b3323c5464eabf91ad`, held out `6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6`, Context Router prompt `557b5f84ac8c85e0e8a253f4c329d4f91c4b56c04e49c75e4ce858fc8c349c68`.
+- Regeneration produced 480 records from the 48 development cases, including 100 positive robot-action records. Dataset digest: `2cf16c1baa490b357d79488399bcce2944e45c6e985e31b475d27bda69f21cd6`.
+- Run 002 used the same BF16 `unsloth/Qwen3.5-2B` base and rank-16 adapter shape for 3 epochs/180 steps. All epoch checkpoints were retained. Trainer runtime was 324.5 seconds and complete launch-to-artifact time was approximately 5.9 minutes. Logged loss fell from approximately 3.046 to 0.008589; aggregate training loss was 0.3412.
+
+Held-out checkpoint result through native vLLM LoRA serving:
+
+| Checkpoint | JSON valid | Core contract valid | Exact route | Unsafe action errors | Unnecessary vision | Missed actions | Median latency | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Step 60 | 16/16 | 1/16 | 1/16 | 0 | 0 | 1 | 3,922 ms | FAIL |
+| Step 120 | 16/16 | 15/16 | 6/16 | 0 | 0 | 5 | 3,972 ms | FAIL |
+| Step 180 | 16/16 | 6/16 | 2/16 | 0 | 0 | 6 | 3,503 ms | FAIL |
+
+Step 120 is the best checkpoint from run 002, but it only matches 37.5% of held-out routes. It removed the raw 2B model's unsafe-action and excess-vision errors on this set by becoming overly conservative: five legitimate actions were missed. One response also misspelled the required `memoryQuery` field as `memoryQueries`. Later training degraded contract validity and exact routing, so final training loss did not predict generalization.
+
+Serving and latency interpretation:
+
+- The report is `out/environment-classifier/benchmark-2026-08-05T01-06-09-393Z.json` with its companion `.md` file.
+- The unadapted 2B base under the same vLLM path measured 4,380 ms median and produced only 1/16 strict JSON responses, 0/16 Core-valid responses, and 0/16 exact routes. This control confirms the LoRA changed behavior, while also showing that most of the latency belongs to this vLLM/base-model serving combination rather than adapter switching.
+- Run-001 LoRA controls measured approximately 4,867-4,935 ms median. Run 002 improved that vLLM latency, but its best checkpoint is still slower than both the 2B Ollama baseline at 1,177 ms and the 9B Ollama baseline at 2,135 ms.
+- vLLM reserved KV cache during the run, but live utilization stayed below 1% for these sequential requests. Reducing the reservation merely to lower displayed VRAM use would not repair the measured latency and is not a current objective.
+- The vLLM benchmark server was stopped after measurement. Ollama remains idle with no resident model, and the GPU compute allocation was released.
+
+Acceptance decision: do not deploy run 002 and do not start 0.8B training. The next training revision must be designed and selected using development-only validation. Held-out results remain a final pass/fail gate and must not become examples or prompt-tuning material.
+
+### 2026-08-04 - Semantic Development Expansion and Compact Candidate Pivot
+
+Status: the development-only selection lane is repaired and the current model candidate is Qwen3.5-0.8B. The locked held-out set has not been used for this selection work.
+
+Development-data correction:
+
+- The 480-record Qwen run-002 dataset had only 48 distinct instruction surfaces. Most of its ten variations changed serialization order, whitespace, or stale context rather than meaning, so it mainly taught formatting invariance and did not establish semantic generalization.
+- The current generated dataset contains 1,720 system-owned records from the same 48 development source cases. Each case now has its canonical instruction plus four curated semantic paraphrases, for 240 instruction surfaces before controlled context variation.
+- Four source-case folds prevent paraphrases or context variants of one case from leaking across training and development validation. Fold record counts are 420, 440, 440, and 420; each fold contains 12 complete source cases and all routing suites.
+- Coverage includes 700 positive action-authority records and 1,020 negative records, including 500 positive robot actions. It emphasizes false authorization, excess vision, ambiguity, stale instructions, state queries, persisted contracts, and matching legitimate movement.
+- The specialized input contains only the current instruction, current environment, and last four conversation messages. Routing policy is learned rather than resending the long general Context Router manual on every call. The dataset digest is `dbbd5208e277d2f3f96c11b0c4a5b57b8d82f9d1fca05bbe7a6ae86c247f521f`; the held-out digest remains `6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6`.
+
+Candidate decision:
+
+- Qwen and LoRA are no longer assumed. The target is the smallest specialized model that clears the same safety, accuracy, and latency gates.
+- A short FLAN-T5-base pipeline probe was rejected as the deployment direction. Its older tokenizer maps JSON braces to an unknown token, which made strict JSON generation impossible without vocabulary surgery. The probe used development fold 0 only, never read held-out model inputs, and its temporary trainer was removed from the maintained source lane.
+- FunctionGemma 270M was considered because it is purpose-built for function calling, but the official weights require accepting a gated license. The project declined that dependency. Its temporary trainer, config, package command, and Core tool projection were removed so there is no dormant second training architecture.
+- The current candidate is `unsloth/Qwen3.5-0.8B`, using the same Qwen/Unsloth/vLLM integration already proven by the 2B experiments. The upstream Qwen weights are Apache 2.0. The raw Ollama artifact previously measured 813 ms median, but failed routing accuracy and safety; specialization must repair behavior without surrendering that latency advantage.
+- The 0.8B lane uses the repository's existing Unsloth LoRA trainer, full BF16 base weights, a rank-16 system-owned adapter, the compact router input, and four source-case-isolated development folds. Persona and profile adapters remain outside this lane.
+- `packages/core/src/environment-classifier.ts` remains the only 14-field decision contract and validates every model response before the graph can act. The training lane contains targets, not a duplicate schema.
+
+This model is not accepted yet. Run the fold-0 preflight, train fold 0, inspect Core-scored development errors, then complete the remaining development folds only if the pilot is credible. Only one selected checkpoint may be evaluated on the 16 locked cases. Deployment still requires 100% strict JSON, 100% Core validity, exact held-out routing parity, zero unsafe action authorization, zero excess vision, and latency materially below the 9B baseline.
+
+### 2026-08-05 - Qwen3.5-0.8B Development Fold-0 Pilot
+
+Status: rejected before full cross-validation. The 16 locked cases were not read or invoked. Folds 1-3 were not trained because no fold-0 checkpoint cleared the development safety gate.
+
+Training design and runtime:
+
+- The pilot used the Apache-2.0 `unsloth/Qwen3.5-0.8B` BF16 weights with a rank-16, 6,389,760-parameter system adapter. The base has 859,375,680 parameters; 0.74% were trainable.
+- Fold 0 held back 420 controlled records from 12 complete source cases. Training used 1,300 records from the other 36 source cases. Source-case ids, semantic paraphrases, and context variants never crossed the fold boundary.
+- The initial launch was stopped before its first checkpoint after confirming that the shared trainer still computed loss over prompt tokens. The maintained run uses response-only masking: a measured 238-token sample had only its 77 JSON-answer tokens trainable.
+- Three epochs produced checkpoints 163, 326, and 489 in 14.1 minutes. Development generation and scoring brought the complete pilot to approximately 20.6 minutes. Validation loss was 0.09562, 0.09919, and 0.10424, so the trainer restored checkpoint 163 as its best-loss adapter.
+- Checkpoint evaluation is now development-locked and repeatable through `evaluate:environment-classifier:checkpoint`. It refuses held-out ids, requires fold provenance, and writes the existing Core scorer's prediction format.
+
+Development results:
+
+| Checkpoint | JSON valid | Core valid | Exact route | Full output exact | Unsafe action | Excess vision | Missed action | Robust source cases | Median latency | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 163 / best loss | 420/420 | 403/420 | 233/420 | 96/420 | 48 | 0 | 6 | 1/12 | 813 ms | FAIL |
+| 326 | 420/420 | 418/420 | 296/420 | 143/420 | 18 | 0 | 36 | 1/12 | 830 ms | FAIL |
+| 489 | 420/420 | 419/420 | 289/420 | 134/420 | 12 | 0 | 46 | 2/12 | 821 ms | FAIL |
+
+Interpretation:
+
+- Specialization repaired strict JSON and eliminated vision over-admission on this fold. It also raised exact routing far above the untrained 0.8B baseline, but did not approach deployment accuracy.
+- Later epochs reduced unsafe authorization while sharply increasing false refusals. Training loss therefore optimized common output tokens without reliably preserving the action decision boundary.
+- The best exact-route checkpoint was 326, not the lowest validation-loss checkpoint. This confirms that generic language-model loss cannot select this safety-sensitive router by itself.
+- Failure clustering is structural. Checkpoint 326 was perfect on the two conversation cases, the state case, the one-shot movement case, and the authority case, but it missed 36/50 legitimate visual-capture actions, made unsafe decisions on fresh-vision, delegated, persisted-contract, and ambiguity cases, and never preserved the completed persisted contract exactly.
+- A fold-support audit found one safety-relevant route stratum absent from each fold's training side. For fold 0, no training record combined `needsAction=false`, `actionType=none`, `motionClass=body_local`, and `requiredCompletionBasis=action_result`; all 30 examples of that combination belonged to the held-back `persisted-003` source. The other unsupported strata are persisted `user_input`, persisted `environment_state`, and one-shot `open_loop_displacement` in folds 1, 2, and 3. Asking the model to extrapolate unseen contract combinations makes the current cross-validation design unsuitable for selection.
+
+Decision: retain the open Qwen integration and measured speed, but reject this dataset/config as a deployment training recipe. Before any second run, add controlled route-changing counterfactuals under the existing 48 development source cases so every fold's training side covers every safety-relevant validation stratum. Add a guard that fails generation when a fold has an unsupported route stratum. Then repeat fold 0 only. Do not train the remaining folds or inspect held-out cases until that repaired pilot is credible.
+
+### 2026-08-05 - Route-Stratum Repair and Viable 0.8B Pilot
+
+Status: the repaired fold-0 pilot is viable and clears the revised aggregate accuracy target. It is not deployed and the 16 locked cases remain untouched.
+
+Dataset repair:
+
+- Thirteen controlled counterfactual route surfaces were added under the existing development source cases: persisted-contract terminal states, open-loop one-shot motion, bounded body-local motion, fresh visual evidence, and missing visual evidence. The 102 derived records remain attached to their original source case and fold, so no semantic family crosses a fold boundary.
+- The generated development dataset now contains 1,822 records: 1,062 negative action-authority records, 760 positive action-authority records, and 520 positive robot-action records. Fold sizes are 446, 466, 456, and 454.
+- Generation now fails if any validation route view is absent from that fold's training side. This removes the unsupported-route flaw found in the first pilot without duplicating the Core contract or using held-out examples.
+- Dataset digest: `7e115f3127b4e66eb374c843e868fc95ba4087c59d9d19517adde231308cf5d5`. The held-out digest remains `6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6`.
+
+Repaired fold-0 run:
+
+- Run root: `out/environment-classifier/training/qwen3.5-0.8b-cv-002`.
+- Fold 0 used 1,376 training records from 36 source cases and 446 validation records from 12 isolated source cases. The same BF16 Qwen3.5-0.8B base, rank-16 adapter, compact input, response-only loss, and three-epoch recipe were retained.
+- Training completed 516 optimizer steps in 14.9 minutes. Validation generation brought the full pipeline to 21.5 minutes. Epoch validation losses were 0.08625, 0.09413, and 0.1013.
+- Generic validation loss selected epoch 1, but Core routing metrics selected epoch 3. This operational selection rule is now locked before running folds 1-3.
+
+Development results:
+
+| Checkpoint | JSON valid | Core valid | Exact route | Full output exact | Unsafe action | Excess vision | Missed action | Median latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 172 / best loss | 446/446 | 442/446 | 346/446 (77.6%) | 199/446 | 12 | 0 | 57 | 775 ms |
+| 344 | 446/446 | 445/446 | 365/446 (81.8%) | 213/446 | 20 | 0 | 50 | 775 ms |
+| 516 / epoch 3 | 446/446 | 446/446 | 374/446 (83.9%) | 216/446 | 4 | 0 | 49 | 775 ms |
+
+Interpretation:
+
+- Epoch 3 is the first checkpoint to combine 100% strict JSON, 100% Core-contract validity, zero excess vision, materially better-than-9B routing accuracy, and sub-second median inference in this development fold.
+- Its four unsafe decisions are all variants of `delegated-004`; they are one remaining decision-boundary cluster rather than errors spread across the corpus. Its 49 missed actions are confined to the fresh-versus-missing visual pair: 10 under `fresh-vision-001` counterfactuals and 39 under `vision-acquisition-001`.
+- Median batch inference was 775 ms, p95 was 931 ms, and mean was 791 ms on the RTX 4080 evaluator. The 9B Ollama held-out reference was 2,135 ms median, although provider differences still require final runtime benchmarking.
+- The user revised the practical exact-routing acceptance floor from 100% to meeting or beating the original 9B held-out 62.5%. Physical-action false positives and missed legitimate actions remain separate reported measures and may not be hidden inside aggregate accuracy.
+
+Decision: lock epoch 3 as the checkpoint policy and complete folds 1-3 without further corpus or prompt tuning. Aggregate the four development folds before selecting or training a final artifact. Do not use the 16 held-out cases until that development decision is complete.
+
+Cross-validation progress:
+
+- Fold 1 trained 1,356 records and held back 466 records from 12 different source cases. Training completed 510 optimizer steps in 14.6 minutes; epoch losses were 0.08216, 0.09936, and 0.1038.
+- Epoch-3 checkpoint 510 produced 466/466 strict JSON and 466/466 Core-valid responses, but only 274/466 exact routes (58.8%). It made 13 unsafe decisions, admitted no excess vision, and missed 100 legitimate actions. This fold is below the revised 62.5% accuracy floor.
+- Failure concentration is explicit: `movement-003` missed 50 actions, `delegated-001` missed all 50 actions, and `bounded-003` matched only 12/50 routes. The 13 unsafe decisions were confined to fresh-vision and vision-acquisition source families. Conversation, two state cases, and ambiguity were perfect.
+- The original post-training generation path reused training compilation state and failed. It was removed from the training owner; retained checkpoints are now evaluated only by the separate checkpoint evaluator.
+- The evaluator then exposed an installed-Unsloth compiled-generation limit after 56 calls. The maintained evaluator now uses Unsloth's supported `UNSLOTH_COMPILE_DISABLE=1` eager mode, set before import. It completed all 466 records without retry chunks or an enlarged compiler cache and reduced batch median to approximately 400 ms. Stable fold-wide prompt padding is also retained.
+- Fold 1 shows that fold 0 was not representative enough to justify deployment. Continue the unchanged folds 2 and 3 so the four-fold aggregate, not one split, determines viability.
+
 ## Current Priorities
 
-1. Build the Environment Classifier Gold Corpus and repeatable 9B/2B benchmark defined above.
-2. Fine-tune and evaluate `qwen3.5:2b` as `environment_classifier`; do not assign it live before it clears the acceptance gates.
-3. Train and benchmark the same classifier task on `qwen3.5:0.8b` after the 2B pipeline is proven.
-4. Evaluate `Qwen3-Reranker-0.6B` against the current Memory Relevance Interpreter using relevance quality and end-to-end latency.
-5. Measure whether explicit model-role resource lanes improve user latency without allowing background work to contend with the primary model.
-6. Evaluate longer Ollama keep-alive separately from prompt, routing, and concurrency architecture.
+1. Train repaired Qwen3.5-0.8B folds 1-3 with the unchanged dataset, prompt, and three-epoch recipe. Evaluate each final epoch through the Core scorer.
+2. Aggregate all four development folds. Require at least 62.5% exact routing, preserve strict JSON/Core validity, and report unsafe actions, missed actions, excess vision, and per-suite failure clusters independently.
+3. If the cross-fold result is credible, train the final system-owned adapter on all 48 development cases using the locked three-epoch policy. Do not add examples or tune prompts after this point.
+4. Run the final artifact against the 16 locked cases exactly once. Keep the result even if it fails; do not tune on the held-out errors.
+5. Benchmark the selected safetensors adapter and merged/quantized artifact through vLLM and llama.cpp before choosing the live runtime.
+6. Evaluate `Qwen3-Reranker-0.6B` against the current Memory Relevance Interpreter using relevance quality and end-to-end latency.
+7. Measure whether explicit model-role resource lanes improve user latency without allowing background work to contend with the primary model.
 
 Deferred, accepted for now:
 
@@ -526,18 +732,46 @@ Deferred, accepted for now:
 
 Passed:
 
+- Repaired Qwen3.5-0.8B fold-0 pilot - 1,376 training records, 446 isolated development records, 516 optimizer steps, 14.9-minute training runtime, and 21.5-minute end-to-end artifact generation
+- Repaired epoch-3 checkpoint - 446/446 strict JSON, 446/446 Core valid, 374/446 exact routes, 4 unsafe actions, 0 excess vision, 49 missed actions, and 775 ms median batch latency
+- Route-stratum generation guard - all validation route views are represented on every fold's training side; 13 controlled surfaces and 102 records remain source-fold attached
+- `pnpm validate:environment-classifier` - 1,822-record repaired dataset and unchanged 16-case held-out lock validated
+- Qwen3.5-0.8B fold-0 response-only LoRA pilot - 1,300 training records, 420 isolated development-validation records, 3 retained checkpoints, 489 optimizer steps, 14.1-minute training runtime
+- Qwen3.5-0.8B checkpoint evaluator - checkpoints 163, 326, and 489 completed the same 420-record development fold with held-out source rejection and separate Core reports
+- `pnpm score:environment-classifier:development -- --root out/environment-classifier/training/qwen3.5-0.8b-cv-001 --fold 0` - best-loss adapter scored through the 14-field Core contract and safety gates
+- Response-mask tokenizer probe - 238 total tokens, 77 answer tokens trainable; prompt and input tokens masked
+- `pnpm train:environment-classifier:0.8b -- --dry-run --fold 0` - 1,720 records validated; 1,300/420 record and 36/12 source-case split; held-out digest excluded
+- FunctionGemma access probe - official weights were confirmed gated; the candidate was declined without adding credentials or exposing held-out data, and its temporary maintained-source lane was removed
+- Qwen3.5-0.8B upstream review - Apache 2.0 weights, official PEFT-compatible chat template, and existing local Qwen/Unsloth/vLLM integration selected for the compact pilot
+- `git diff --check` - current maintained-source changes have no whitespace errors
+- Second `qwen3.5:2b` LoRA run - current `motionClass` prompt/contract, 480 development-only records, 3 epoch checkpoints, 180 optimizer steps
+- `pnpm benchmark:environment-classifier -- --provider vllm --models environment-classifier-2b-run-002-step-60,environment-classifier-2b-run-002-step-120,environment-classifier-2b-run-002-step-180 --split held_out` - completed the same 16 locked cases for all three checkpoints; all deployment gates reported explicitly
+- First `qwen3.5:2b` LoRA run - 480 development-only examples, 3 epochs, 180 optimizer steps, system-owned safetensors artifacts
+- Provider-neutral harness unit coverage - Ollama and vLLM share route, safety, token, and wall-latency accounting; unnecessary vision is a deployment-blocking error
+- `pnpm generate:environment-classifier-training` - 480 development-only records; held-out digest unchanged
+- `pnpm train:environment-classifier:2b -- --dry-run` - dataset, manifest, prompt, owner, base-model, and output-lane checks passed
+- `pnpm validate:environment-classifier` - Core contract plus corpus/lock/harness checks
+- `pnpm benchmark:environment-classifier -- --validate-only` - 64 cases; 48 development; 16 hash-locked held out
+- `pnpm benchmark:environment-classifier -- --split all` - completed 64 cases for both `qwen3.5:9b` and `qwen3.5:2b`
+- `pnpm benchmark:environment-classifier -- --models qwen3.5:0.8b --split all` - completed all 64 cases with the same corpus and prompt fingerprints
+- `node --import tsx --test packages/core/src/nodes/llm/orchestrator-llm.node.spec.ts`
+- `pnpm build` - architecture, user-agnostic, 27 graph, TTS/voice ownership, and Astro production build gates passed
 - `pnpm exec tsx packages/core/src/environment-conversation-memory.spec.ts`
 - `pnpm exec tsx --test packages/core/src/nodes/environment/context-builder.node.spec.ts packages/core/src/nodes/environment/instruction-interpreter.node.spec.ts packages/core/src/nodes/environment/task-contract.node.spec.ts packages/core/src/nodes/environment/task-validator.node.spec.ts` - 48/48
 - `pnpm exec tsx --test packages/core/src/nodes/llm/orchestrator-llm.node.spec.ts` - 3/3
 - `pnpm exec tsx --test packages/core/src/nodes/environment/instruction-interpreter.node.spec.ts packages/core/src/nodes/environment/task-contract.node.spec.ts`
 - `pnpm exec tsx --test packages/core/src/nodes/environment/task-validator.node.spec.ts` - 29/29
 - `pnpm exec tsx packages/core/src/providers/multimodal.spec.ts`
-- `pnpm validate:graphs` - 26/26
-- `pnpm validate:user-agnostic` - 776 maintained runtime files checked
+- `pnpm validate:graphs` - 27/27
+- `pnpm validate:user-agnostic` - 778 maintained runtime files checked
 - `pnpm validate:voice-service-ownership`
 - `pnpm -s check:architecture` - zero violations beyond baseline
 - `pnpm --dir apps/site build`
 - `git diff --check`
+
+Resolved protective validation:
+
+- `pnpm validate:environment-classifier` again passes after the explicit version-2 `motionClass` contract migration and development-only dataset regeneration. Run 001 remains fingerprinted as a pre-drift artifact and is not deployable against the current prompt.
 
 Known unrelated baseline failures encountered during validation:
 

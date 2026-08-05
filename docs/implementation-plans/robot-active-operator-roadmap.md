@@ -54,6 +54,10 @@ permission:
    - `packages/core/src/robot-operator.spec.ts`
    - `packages/core/src/queue/robot-observer-handler.ts`
    - `packages/core/src/queue/boredom-movement-handler.ts`
+   - `packages/core/src/nodes/robot-operator/**`
+   - `packages/core/src/nodes/boredom-movement/**`
+   - `etc/cognitive-graphs/robot-operator-mode.json`
+   - `etc/cognitive-graphs/boredom-movement-mode.json`
    - the `robot-operator`, `environment-bridge`, `robot-observer`, and
      `boredom-movement` entries in `etc/services.json` and `etc/agents.json`
    - `etc/boredom-movement.json`
@@ -101,10 +105,12 @@ Robot-specific autonomous admission currently follows a second path:
 ```text
 Active Operator Semi or Full
   -> Robot Operator inactivity timers
-  -> Robot Observer or Boredom Movement
-  -> Robot Operator Mode graph
-  -> Work Coordinator
-  -> Environment Mode / Environment Bridge
+  -> Robot Observer -> capture image -> Robot Operator Mode
+       -> grounded Idle Thought
+       -> Environment Mode only when new environment work is required
+  -> Boredom Movement -> one allowlisted stationary command
+       -> capture image after completion -> Boredom Movement Mode
+       -> grounded Idle Thought and stop
 ```
 
 That second path is the primary target of this roadmap because Semi and Full
@@ -121,8 +127,8 @@ refreshed before implementation or physical validation.
 | Environment Bridge process | Implemented | Boot-managed, event-driven, and transports observations, semantic actions, and feedback. |
 | Audio command path | Implemented, still being refined | Robot audio can enter Environment Mode; semantic commands and correlated completion return through the bridge. |
 | Environment image input | Implemented | Bounded JPEG observations can enter the Environment Mode vision path. |
-| Robot Observer | Implemented at code level, physically exercised | Queues a correlated `captureImage` request and routes the returned image through Robot Operator Mode before delegating an intention and the same observation to Environment Mode. |
-| Boredom Movement | Implemented at code level, physically exercised | Uses its inactivity trigger to emit a typed autonomous stimulus through Robot Operator Mode; the agent no longer chooses a random robot command or calls an LLM. |
+| Robot Observer | Implemented at code level, physically exercised before the 2026-08-04 split | Queues a correlated `captureImage` request and routes the returned image through Robot Operator Mode. Observation-only decisions stop there; only decisions requiring environment work delegate to Environment Mode. |
+| Boredom Movement | Implemented at code level, awaiting physical retest after the 2026-08-04 split | Intersects its dedicated stationary allowlist with robot-advertised commands, selects one command randomly without an LLM, waits for completion, captures a correlated image, and routes only that image through Boredom Movement Mode for one reflection. |
 | Completion feedback | Implemented | Action results update coordinator work and can return to Environment Mode. |
 | User-task completion validator | Implemented, partially physically validated | The single existing `Environment Task Validator` consumes the graph's structured decision, validates completion evidence, and emits a typed refinement request only when the objective remains incomplete inside its bounded cycle. Active Operator mode controls trigger scheduling; downstream nodes do not re-decide an admitted graph action. |
 | Environment task refiner | Implemented, awaiting physical validation | A configurable LLM node runs only from the existing validator's incomplete result. It writes one refined Environment prompt plus a user-visible update; the canonical Conversation Buffer records the update before the existing Workflow Command queues the prompt. |
@@ -830,6 +836,44 @@ chronology without promoting assistant completion reports into fresh work.
 
 The owner-managed server must be rebuilt or restarted before the lifecycle
 metadata and updated graph prompt can affect a physical retest.
+
+## 2026-08-04 Robot Observer and Boredom Movement Graph Separation
+
+The shared Robot Operator graph made two different agents pay for the same
+decision and Environment delegation path. It also allowed Boredom Movement to
+choose no action at all, which violated that agent's movement-first contract.
+
+The current ownership is now explicit:
+
+- Robot Observer captures first and enters only Robot Operator Mode. It may
+  publish one grounded Idle Thought and optionally delegate a high-level
+  intention to Environment Mode. A `requiresAction: false` decision stops in
+  Robot Operator Mode and does not create a redundant Environment graph run.
+- Boredom Movement randomly selects one safe stationary command directly in
+  agent code from the intersection of its configuration and the robot's live
+  advertised catalog. This stage invokes no LLM.
+- Completed Boredom movement queues exactly one correlated camera capture using
+  the existing Environment Interface action/result path.
+- The returned image enters only Boredom Movement Mode. That graph has one
+  vision-model call and can publish one grounded reflection through the
+  canonical Inner Dialogue and TTS owners. It has no action or Environment
+  delegation output.
+- Typed `robotObserver` and `boredomMovement` metadata route the returned frames
+  independently. Neither workflow is converted into the other's cycle type.
+
+This split reuses the existing Robot Operator timer service, Work Coordinator,
+Environment Interface, Environment Bridge, persona nodes, image validator,
+Inner Dialogue Buffer, and TTS node. It adds no parallel transport, queue,
+scheduler, memory, or robot-control subsystem. Physical retesting requires an
+owner-managed site rebuild/restart; no physical movement was triggered during
+source validation.
+
+Source validation passes 27 focused Robot Observer/Boredom tests, Environment
+Bridge compatibility checks, all 27 graph schemas, all 248 registered graph
+executors, the architecture and user-agnostic guardrails, Agent Monitor's 70
+checks, TTS ownership/delivery checks, and the production site build. Core-wide
+typechecking remains red only on the repository's existing unrelated
+diagnostics; none identify the split workflow files.
 
 ## Validation and Safety Gates
 

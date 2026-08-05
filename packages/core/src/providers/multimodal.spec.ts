@@ -121,10 +121,10 @@ assert.throws(
   (error: unknown) => error instanceof ProviderInputError && /2-image limit/.test(error.message),
 );
 assert.throws(
-  () => assertAdapterPreservesImageInput('Big Brother', 1),
+  () => assertAdapterPreservesImageInput('Text-only Big Brother backend', 1),
   (error: unknown) => error instanceof ProviderInputError && /does not preserve image content/.test(error.message),
 );
-assert.doesNotThrow(() => assertAdapterPreservesImageInput('Big Brother', 0));
+assert.doesNotThrow(() => assertAdapterPreservesImageInput('Text-only Big Brother backend', 0));
 await assert.rejects(
   () => callProvider('mock', messages, { model: 'configured-text-model', modelCapabilities: ['text'] }),
   (error: unknown) => error instanceof ProviderInputError

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildBigBrotherCLIInvocation } from './big-brother-cli.js'
 import { parseBigBrotherTerminalEvent } from './big-brother-session.js'
 
 const claude = parseBigBrotherTerminalEvent('claude-code', JSON.stringify({
@@ -30,6 +31,20 @@ const legacyCodexEvent = parseBigBrotherTerminalEvent('codex', JSON.stringify({
 }))
 assert.equal(legacyCodexEvent.reasoningSteps[0]?.content, 'Check the shared session.')
 
+const codexInvocation = buildBigBrotherCLIInvocation('codex', 'Describe the attached image.', {
+  images: [{ mimeType: 'image/jpeg', base64: '/9j/2Q==' }],
+})
+try {
+  assert.ok(codexInvocation.args.includes('model_reasoning_effort="low"'))
+  assert.equal(codexInvocation.args.some(arg => arg.startsWith('service_tier=')), false)
+  const imageArgIndex = codexInvocation.args.indexOf('--image')
+  assert.equal(imageArgIndex, codexInvocation.args.length - 2)
+  const imagePath = codexInvocation.args[imageArgIndex + 1]
+  assert.deepEqual(await fs.readFile(imagePath), Buffer.from('/9j/2Q==', 'base64'))
+} finally {
+  await fs.rm(codexInvocation.tempDir, { recursive: true, force: true })
+}
+
 const sourceRoot = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(sourceRoot, '../../..')
 const read = (relativePath: string) => fs.readFile(path.join(repoRoot, relativePath), 'utf8')
@@ -57,6 +72,8 @@ assert.match(worker, /buildBigBrotherCLIInvocation/)
 assert.match(worker, /spawn\(invocation\.command/)
 assert.doesNotMatch(responseNode, /big-brother-terminal\.js/)
 assert.match(providerBridge, /await ensureBackendsInitialized\(\)/)
+assert.match(providerBridge, /resolvedBackendId === 'codex'/)
+assert.match(providerBridge, /images: preservesImages \? escalationImages/)
 assert.doesNotMatch(legacyAdapters, /executeWith(?:ClaudeCode|CodexCLI)/)
 assert.doesNotMatch(router, /claude-session|spawn-claude|big-brother-input/)
 assert.match(terminalManager, /body: JSON\.stringify\(\{ action: 'stop' \}\)/)

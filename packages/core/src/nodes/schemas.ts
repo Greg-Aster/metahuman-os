@@ -370,6 +370,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'error', type: 'string', description: 'Validation or generation error' },
       { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
       { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
+      { name: 'controlResult', type: 'object', description: 'Cycle-owned plan identity and ready/stuck result' },
     ],
     properties: { role: 'orchestrator', maxTokens: 1536, temperature: 0.2 },
     propertySchemas: {
@@ -386,10 +387,8 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
       { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
-      { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
       { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
-      { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or rejection to show instead' },
     ],
     outputs: [
       { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -411,16 +410,16 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'bridgeRecord', type: 'object', description: 'Structured outbound bridge result for downstream persistence' },
     ],
     properties: {
-      allowedActions: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText'],
+      allowedActions: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
       maxDurationMs: 1500,
       defaultDurationMs: 0,
     },
     propertySchemas: {
       allowedActions: {
         type: 'multiselect',
-        default: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText'],
+        default: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
         label: 'Allowed Actions',
-        options: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'sendText'],
+        options: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
       },
       maxDurationMs: {
         type: 'number',
@@ -639,6 +638,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from iterative refinement loop' },
+      { name: 'precomputedAnalysis', type: 'object', optional: true, description: 'Strict Core-owned routing result for a persisted workflow continuation' },
     ],
     outputs: [
       { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },

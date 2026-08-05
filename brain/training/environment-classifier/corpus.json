@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "owner": "MetaHuman system environment classifier",
   "contract": "@metahuman/core/environment-classifier",
   "classificationTarget": "etc/cognitive-graphs/environment-mode.json#context-router",
@@ -1831,6 +1831,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -1895,6 +1896,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -1959,6 +1961,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2023,6 +2026,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2087,6 +2091,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2151,6 +2156,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "open_loop_displacement",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2215,6 +2221,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2279,6 +2286,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2343,6 +2351,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "target_relative",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2407,6 +2416,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "target_relative",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2471,6 +2481,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2535,6 +2546,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "target_relative",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2599,6 +2611,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2663,6 +2676,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -2898,6 +2912,7 @@
             "visualFrames": [],
             "hasFreshCorrelatedVisual": false,
             "persistedTaskContract": {
+              "motionClass": "body_local",
               "continuationPolicy": "bounded",
               "requiredCompletionBasis": "visual_observation",
               "objective": "Wave until a hand is visible."
@@ -2917,6 +2932,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },
@@ -2966,6 +2982,7 @@
             "visualFrames": [],
             "hasFreshCorrelatedVisual": false,
             "persistedTaskContract": {
+              "motionClass": "body_local",
               "continuationPolicy": "none",
               "requiredCompletionBasis": "action_result",
               "objective": "Bow once."
@@ -2985,6 +3002,7 @@
         "needsAction": true,
         "actionType": "robot_movement",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -3034,6 +3052,7 @@
             "visualFrames": [],
             "hasFreshCorrelatedVisual": false,
             "persistedTaskContract": {
+              "motionClass": "body_local",
               "continuationPolicy": "none",
               "requiredCompletionBasis": "action_result",
               "objective": "Bow once."
@@ -3053,6 +3072,7 @@
         "needsAction": false,
         "actionType": "none",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "none",
           "requiredCompletionBasis": "action_result"
         },
@@ -3109,6 +3129,7 @@
             ],
             "hasFreshCorrelatedVisual": true,
             "persistedTaskContract": {
+              "motionClass": "body_local",
               "continuationPolicy": "bounded",
               "requiredCompletionBasis": "visual_observation",
               "objective": "Wave until a hand is visible."
@@ -3128,6 +3149,7 @@
         "needsAction": false,
         "actionType": "none",
         "actionParams": {
+          "motionClass": "body_local",
           "continuationPolicy": "bounded",
           "requiredCompletionBasis": "visual_observation"
         },

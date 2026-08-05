@@ -8,6 +8,10 @@ import {
 } from '@metahuman/core';
 import {
   applyRobotStatusToEnvironmentObservation,
+  attachEnvironmentObservationTiming,
+  environmentActionStageDurations,
+  mergeEnvironmentActionTiming,
+  type EnvironmentActionTiming,
   type EnvironmentFeedback,
   type EnvironmentObservation,
 } from '@metahuman/core/environment-interface';
@@ -30,6 +34,7 @@ const MAX_MESSAGE_BYTES = audioTransportLimits.maxMessageBytes;
 const MAX_PENDING_AUDIO_UTTERANCES = 2;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
+const MAX_ACTION_TIMINGS = 256;
 const AUDIO_UTTERANCE_MAGIC = Buffer.from('AIKAUD01', 'ascii');
 
 interface DiagnosticEvent {
@@ -291,6 +296,19 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     let diagnosticSessionId = '';
     let telemetryQueue = Promise.resolve();
     const awaitingAdapterAcceptance = new Set<string>();
+    const actionTimings = new Map<string, EnvironmentActionTiming>();
+    const terminalActionsAwaitingObservation = new Set<string>();
+    const rememberActionTiming = (actionId: string, timing: EnvironmentActionTiming) => {
+      if (!actionId) return;
+      actionTimings.delete(actionId);
+      actionTimings.set(actionId, timing);
+      while (actionTimings.size > MAX_ACTION_TIMINGS) {
+        const oldestActionId = actionTimings.keys().next().value;
+        if (typeof oldestActionId !== 'string') break;
+        actionTimings.delete(oldestActionId);
+        terminalActionsAwaitingObservation.delete(oldestActionId);
+      }
+    };
     const mediaUploads = new Set<Promise<void>>();
     const diagnostics: DiagnosticWindow = {
       startedAt: Date.now(),
@@ -382,17 +400,24 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
 
     const sendAction = async (action: Record<string, unknown>) => {
       const actionId = typeof action.id === 'string' ? action.id : '';
+      const actionTiming = mergeEnvironmentActionTiming(
+        action.timing,
+        { bridgeActionSentAt: new Date().toISOString() },
+      );
+      const timedAction = { ...action, timing: actionTiming };
+      rememberActionTiming(actionId, actionTiming);
       if (actionId) awaitingAdapterAcceptance.add(actionId);
       if (action.type !== 'speak') {
         try {
           sendMessage({
             type: 'environment.action',
             version: PROTOCOL_VERSION,
-            action,
+            action: timedAction,
           });
         } catch (error) {
           if (actionId) {
             awaitingAdapterAcceptance.delete(actionId);
+            actionTimings.delete(actionId);
             await failUnacceptedAction(actionId, (error as Error).message);
           }
         }
@@ -409,6 +434,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       if (!actionId || !artifact) {
         if (actionId) {
           awaitingAdapterAcceptance.delete(actionId);
+          actionTimings.delete(actionId);
           await failUnacceptedAction(actionId, 'robot speech artifact is unavailable');
         }
         return;
@@ -435,6 +461,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         });
       } catch (error) {
         awaitingAdapterAcceptance.delete(actionId);
+        actionTimings.delete(actionId);
         await failUnacceptedAction(actionId, (error as Error).message);
       }
     };
@@ -695,10 +722,29 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             const observation = message.observation;
             const receivedObservation = environmentObservation(observation);
             if (receivedObservation) {
+              const bridgeFrameReceivedAt = new Date().toISOString();
+              const observationActionId = typeof receivedObservation.metadata?.actionId === 'string'
+                ? receivedObservation.metadata.actionId
+                : typeof receivedObservation.visual?.metadata?.actionId === 'string'
+                  ? receivedObservation.visual.metadata.actionId
+                  : '';
+              const timedObservation = attachEnvironmentObservationTiming(
+                receivedObservation,
+                mergeEnvironmentActionTiming(
+                  observationActionId ? actionTimings.get(observationActionId) : null,
+                  { bridgeFrameReceivedAt },
+                ),
+              );
+              if (
+                observationActionId
+                && terminalActionsAwaitingObservation.delete(observationActionId)
+              ) {
+                actionTimings.delete(observationActionId);
+              }
               diagnosticSessionId = receivedObservation.sessionId;
-              recordVisual(receivedObservation);
-              recordFreestyleMovement(receivedObservation);
-              let enriched = { ...receivedObservation };
+              recordVisual(timedObservation);
+              recordFreestyleMovement(timedObservation);
+              let enriched = { ...timedObservation };
               if (pendingFeedback) {
                 const pendingFeedbackId = pendingFeedback.id;
                 enriched = attachCorrelatedFeedback(enriched, pendingFeedback);
@@ -780,6 +826,26 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             const feedback = message.feedback;
             if (feedback && typeof feedback === 'object') {
               const receivedFeedback = feedback as unknown as EnvironmentFeedback;
+              const bridgeFeedbackReceivedAt = new Date().toISOString();
+              const actionTiming = mergeEnvironmentActionTiming(
+                receivedFeedback.actionId ? actionTimings.get(receivedFeedback.actionId) : null,
+                receivedFeedback.data?.actionTiming,
+                {
+                  adapterFeedbackSentAt: receivedFeedback.timestamp,
+                  bridgeFeedbackReceivedAt,
+                },
+              );
+              receivedFeedback.data = {
+                ...(receivedFeedback.data ?? {}),
+                actionTiming,
+                actionStageDurations: environmentActionStageDurations(actionTiming),
+              };
+              if (receivedFeedback.actionId) {
+                rememberActionTiming(receivedFeedback.actionId, actionTiming);
+                if (['completed', 'rejected', 'cancelled', 'expired', 'failed'].includes(receivedFeedback.type)) {
+                  terminalActionsAwaitingObservation.add(receivedFeedback.actionId);
+                }
+              }
               pendingFeedback = receivedFeedback;
               if (receivedFeedback.actionId) {
                 awaitingAdapterAcceptance.delete(receivedFeedback.actionId);

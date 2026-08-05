@@ -6,6 +6,8 @@ import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
   beginEnvironmentPerceptionCycle,
+  chooseBoredomMovementCommand,
+  eligibleBoredomMovementCommands,
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotObserverEnabled,
@@ -72,16 +74,15 @@ test('robot audio perception reuses the finite observer counter without dependin
   assert.equal(nextRobotObserverCycle(cycle!)?.step, 2)
 })
 
-test('Boredom Movement carries action-first sequencing without a motion catalog', () => {
+test('Boredom Movement metadata owns its specialized graph and selected safe command', () => {
   const cycle = readBoredomMovementCycle({
     metadata: {
       boredomMovement: {
         cycleId: 'boredom-1',
         triggerSource: 'autonomy',
         requestedBy: 'boredom-movement',
-        graph: 'environment',
-        maxSteps: 8,
-        observationTiming: 'after_intention',
+        graph: 'boredom-movement',
+        selectedCommand: 'wave',
       },
     },
   })
@@ -89,11 +90,23 @@ test('Boredom Movement carries action-first sequencing without a motion catalog'
     cycleId: 'boredom-1',
     triggerSource: 'autonomy',
     requestedBy: 'boredom-movement',
-    graph: 'environment',
-    maxSteps: 8,
-    observationTiming: 'after_intention',
+    graph: 'boredom-movement',
+    selectedCommand: 'wave',
   })
-  assert.equal('stationaryCommands' in cycle!, false)
+  assert.equal(readBoredomMovementCycle({
+    metadata: { boredomMovement: { ...cycle, selectedCommand: 'walk' } },
+  }), null)
+})
+
+test('Boredom Movement selects only safe commands also advertised by the robot', () => {
+  const eligible = eligibleBoredomMovementCommands(
+    ['walk', 'wave', 'rest', 'stop'],
+    ['wave', 'walk', 'rest', 'stop', 'WAVE'],
+  )
+  assert.deepEqual(eligible, ['wave', 'rest'])
+  assert.equal(chooseBoredomMovementCommand(eligible, () => 0), 'wave')
+  assert.equal(chooseBoredomMovementCommand(eligible, () => 0.999), 'rest')
+  assert.equal(chooseBoredomMovementCommand([], () => 0.5), null)
 })
 
 test('Robot Operator owns inactivity timing while Robot Observer owns finite observation work', () => {
@@ -121,9 +134,11 @@ test('Robot Operator owns inactivity timing while Robot Observer owns finite obs
   assert.equal(variables.find(variable => variable.key === 'boredomMovementJitterMs')?.value, 120_000)
   assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 8)
   assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'robot-operator')
+  assert.equal(variables.find(variable => variable.key === 'boredomGraph')?.value, 'boredom-movement')
   assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
   const config = loadRobotOperatorConfig()
   assert.equal(config.graph, 'robot-operator')
+  assert.equal(config.boredomGraph, 'boredom-movement')
   assert.equal(config.environmentGraph, 'environment')
 })
 

@@ -70,6 +70,15 @@ Robot Observer is a finite, separately registered agent. Robot Operator may invo
 - The current allowlist is `sit`, `stand`, `neutral`, `rest`, `wave`, `dance`, `swim`, `point`, `pushup`, `bow`, `cute`, `freaky`, `worm`, `shake`, `shrug`, `dead`, and `crab`. Locomotion and control commands (`walk`, `backward`, `left`, `right`, and `stop`) are excluded.
 - Scope correction: an initial pass added a stationary-capability field to Environment Mode support code and Ainekio. After owner clarification that this work must remain centered on the agents, those additions were removed. The final implementation adds no Boredom Movement logic to Environment Mode nodes and no Boredom Movement capability field to Ainekio.
 
+### 2026-08-04 — Robot Observer and Boredom Movement workflow separation
+
+- Replaced the shared Robot Operator entry point with two graph-owned paths. Robot Observer alone enters `robot-operator-mode.json`; Boredom Movement's correlated post-command image enters `boredom-movement-mode.json`.
+- Restored Boredom Movement's dedicated stationary-command allowlist. The agent intersects it with the connected robot's advertised commands, randomly selects one eligible command, and queues it directly through the existing Environment Interface without an initial LLM decision.
+- On correlated movement completion, the existing action-result owner queues exactly one `captureImage`. The returned image carries typed Boredom Movement metadata to the dedicated graph.
+- Boredom Movement Mode contains one vision-model call, persona context, structured reflection parsing, canonical Inner Dialogue admission, and standard TTS. It contains no conversation history, Robot Operator decision nodes, Environment Mode delegation, action parsing, movement generation, or command output.
+- Removed Boredom-specific timing and metadata handling from Robot Operator context and dispatch. Robot Observer observation-only decisions now stop after their grounded Idle Thought instead of paying for a second Environment Mode run that has no action to perform.
+- Environment Bridge and Work Coordinator remain the shared transport and execution owners. No second queue, bridge, robot controller, scheduler, memory store, or TTS path was added.
+
 ## Validation log
 
 ### 2026-07-17 — Contract and build validation

@@ -47,7 +47,7 @@ test('active environment work blocks a competing Boredom Movement cycle', () => 
   assert.equal(workBlocksBoredomMovement(command, 'boredom-workflow'), true)
 })
 
-test('Boredom Movement does not block its own child but rejects a competing cycle', () => {
+test('an unfinished Boredom Movement stage blocks a new competing cycle', () => {
   const ownChild = task({
     id: 'boredom-child',
     type: 'environment_observation',
@@ -65,16 +65,19 @@ test('Boredom Movement does not block its own child but rejects a competing cycl
     source: 'autonomy',
   })
 
-  assert.equal(workBlocksBoredomMovement(ownChild, 'boredom-workflow'), false)
+  assert.equal(workBlocksBoredomMovement(ownChild, 'boredom-workflow'), true)
   assert.equal(workBlocksBoredomMovement(competing, 'boredom-workflow'), true)
 })
 
-test('Boredom Movement supplies workflow order without an encoded motion catalog', () => {
+test('Boredom Movement chooses one allowlisted command without invoking a decision graph', () => {
   const source = fs.readFileSync(
     path.join(ROOT, 'packages/core/src/queue/boredom-movement-handler.ts'),
     'utf8',
   )
-  assert.match(source, /observationTiming: 'after_intention'/)
-  assert.match(source, /graph: config\.graph/)
-  assert.doesNotMatch(source, /stationaryCommands|eligibleBoredomMovementCommands|robotCommands/)
+  assert.match(source, /eligibleBoredomMovementCommands/)
+  assert.match(source, /chooseBoredomMovementCommand/)
+  assert.match(source, /type: 'robotCommand'/)
+  assert.match(source, /enqueueEnvironmentAction/)
+  assert.match(source, /graph: config\.boredomGraph/)
+  assert.doesNotMatch(source, /context\.enqueue|handler: 'environment\.observation'|observationTiming/)
 })

@@ -1,3 +1,8 @@
+import {
+  ENVIRONMENT_MOTION_CLASSES,
+  type EnvironmentMotionClass,
+} from './environment-interface/types.js'
+
 export const ENVIRONMENT_MEMORY_TIERS = ['hot', 'warm', 'cold', 'facts', 'all'] as const
 export const ENVIRONMENT_ACTION_TYPES = ['none', 'robot_movement', 'environment_action'] as const
 export const ENVIRONMENT_CONTINUATION_POLICIES = ['none', 'bounded'] as const
@@ -19,6 +24,7 @@ export type EnvironmentResponseLength = typeof ENVIRONMENT_RESPONSE_LENGTHS[numb
 export interface EnvironmentRouterActionParams {
   continuationPolicy?: EnvironmentContinuationPolicy
   requiredCompletionBasis?: EnvironmentCompletionBasis
+  motionClass?: EnvironmentMotionClass
   [key: string]: unknown
 }
 
@@ -41,12 +47,11 @@ export interface EnvironmentRouterDecision {
 
 export interface EnvironmentRouterRouteView {
   needsMemory: boolean
-  memoryTier: EnvironmentMemoryTier
-  memoryTypes: string[]
   needsEnvironment: boolean
   needsVision: boolean
   needsAction: boolean
   actionType: EnvironmentClassifierActionType
+  motionClass: EnvironmentMotionClass | null
   continuationPolicy: EnvironmentContinuationPolicy | null
   requiredCompletionBasis: EnvironmentCompletionBasis | null
 }
@@ -148,6 +153,7 @@ export function validateEnvironmentRouterDecision(value: unknown): EnvironmentRo
   const actionParams = isRecord(value.actionParams) ? value.actionParams : {}
   const continuationPolicy = actionParams.continuationPolicy
   const requiredCompletionBasis = actionParams.requiredCompletionBasis
+  const motionClass = actionParams.motionClass
   const hasContinuationPolicy = continuationPolicy !== undefined
   const hasCompletionBasis = requiredCompletionBasis !== undefined
 
@@ -157,6 +163,9 @@ export function validateEnvironmentRouterDecision(value: unknown): EnvironmentRo
   if (hasCompletionBasis && !isEnumValue(ENVIRONMENT_COMPLETION_BASES, requiredCompletionBasis)) {
     errors.push(`actionParams.requiredCompletionBasis must be one of ${ENVIRONMENT_COMPLETION_BASES.join(', ')}`)
   }
+  if (motionClass !== undefined && !isEnumValue(ENVIRONMENT_MOTION_CLASSES, motionClass)) {
+    errors.push(`actionParams.motionClass must be one of ${ENVIRONMENT_MOTION_CLASSES.join(', ')}`)
+  }
   if (hasContinuationPolicy !== hasCompletionBasis) {
     errors.push('actionParams must provide continuationPolicy and requiredCompletionBasis together')
   }
@@ -165,6 +174,12 @@ export function validateEnvironmentRouterDecision(value: unknown): EnvironmentRo
     if (value.actionType === 'none') errors.push('needsAction=true requires a non-none actionType')
     if (!hasContinuationPolicy || !hasCompletionBasis) {
       errors.push('needsAction=true requires a complete action task contract')
+    }
+    if (value.actionType === 'robot_movement' && !isEnumValue(ENVIRONMENT_MOTION_CLASSES, motionClass)) {
+      errors.push('robot_movement requires actionParams.motionClass')
+    }
+    if (value.actionType !== 'robot_movement' && motionClass !== undefined) {
+      errors.push('actionParams.motionClass is only valid for robot_movement work')
     }
   }
   if (value.needsAction === false && value.actionType !== 'none') {
@@ -198,14 +213,14 @@ export function parseEnvironmentRouterDecision(text: string): ParsedEnvironmentR
 export function environmentRouterRouteView(decision: EnvironmentRouterDecision): EnvironmentRouterRouteView {
   const continuationPolicy = decision.actionParams.continuationPolicy
   const requiredCompletionBasis = decision.actionParams.requiredCompletionBasis
+  const motionClass = decision.actionParams.motionClass
   return {
     needsMemory: decision.needsMemory,
-    memoryTier: decision.memoryTier,
-    memoryTypes: [...decision.memoryTypes].sort(),
     needsEnvironment: decision.needsEnvironment,
     needsVision: decision.needsVision,
     needsAction: decision.needsAction,
     actionType: decision.actionType,
+    motionClass: motionClass ?? null,
     continuationPolicy: continuationPolicy ?? null,
     requiredCompletionBasis: requiredCompletionBasis ?? null,
   }

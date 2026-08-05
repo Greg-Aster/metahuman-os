@@ -51,6 +51,7 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'inactivityThreshold',
   'adapterUrl',
   'graph',
+  'boredomGraph',
   'environmentGraph',
   'jitterMs',
   'boredomMovementInactivityThreshold',
@@ -290,6 +291,15 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         applyMode: 'restart',
         writable: true,
         description: 'High-level graph used after an autonomous robot stimulus is collected.',
+      },
+      {
+        key: 'boredomGraph',
+        label: 'Boredom Reflection Graph',
+        type: 'text',
+        value: typeof effective.boredomGraph === 'string' ? effective.boredomGraph : 'boredom-movement',
+        applyMode: 'restart',
+        writable: true,
+        description: 'Specialized graph used only for the fresh image captured after Boredom Movement.',
       },
       {
         key: 'environmentGraph',

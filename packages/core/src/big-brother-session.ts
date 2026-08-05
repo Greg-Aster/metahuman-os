@@ -59,6 +59,7 @@ interface WorkerJob {
   workingDirectory?: string
   timeout?: number
   sessionId?: string
+  images?: EscalationOptions['images']
 }
 
 function terminalUrl(): string {
@@ -192,6 +193,7 @@ class BigBrotherSessionManager extends EventEmitter {
       workingDirectory: options.workingDirectory || ROOT,
       timeout: options.timeout,
       sessionId: options.sessionId,
+      images: options.images,
     }
     fs.writeFileSync(jobPath, JSON.stringify(job), { mode: 0o600 })
     fs.writeFileSync(transcriptPath, '', { mode: 0o600 })

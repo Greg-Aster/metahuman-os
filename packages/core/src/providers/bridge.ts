@@ -55,6 +55,7 @@ import {
   type ProviderType,
   ProviderInputError,
   inspectProviderMessages,
+  parseProviderImageDataUrl,
   providerImagePolicyFromOptions,
   isCloudProvider,
   isRemoteServerProvider,
@@ -66,6 +67,20 @@ function messageText(message: ProviderMessage): string {
     .filter(part => part.type === 'text')
     .map(part => part.text)
     .join('\n');
+}
+
+function escalationImages(
+  messages: ProviderMessage[],
+  imagePolicy: ReturnType<typeof providerImagePolicyFromOptions>,
+): Array<{ mimeType: string; base64: string }> {
+  return messages.flatMap(message => {
+    if (!Array.isArray(message.content)) return []
+    return message.content.flatMap(part => {
+      if (part.type !== 'image_url') return []
+      const parsed = parseProviderImageDataUrl(part.image_url.url, imagePolicy)
+      return [{ mimeType: parsed.mimeType, base64: parsed.base64 }]
+    })
+  })
 }
 
 export function assertAdapterPreservesImageInput(provider: string, imageCount: number): void {
@@ -147,7 +162,6 @@ export async function callProvider(
   }
 
   if (shouldUseBigBrother) {
-    assertAdapterPreservesImageInput('Big Brother', contentInspection.imageCount)
     // Use the provider-agnostic escalation system
     const {
       ensureBackendsInitialized,
@@ -163,6 +177,11 @@ export async function callProvider(
       ? getBackend(preferredBackend) || getActiveBackend(username)
       : getActiveBackend(username);
     const backendName = preferredBackend || backend?.name || 'Big Brother';
+    const resolvedBackendId = backend?.id || preferredBackend
+    const preservesImages = resolvedBackendId === 'codex'
+    if (!preservesImages) {
+      assertAdapterPreservesImageInput(backendName, contentInspection.imageCount)
+    }
 
     console.log('[provider-bridge] Big Brother routing enabled', {
       preferredBackend,
@@ -185,6 +204,7 @@ export async function callProvider(
       username,
       preferredBackend,
       timeout: 300000,
+      images: preservesImages ? escalationImages(messages, imagePolicy) : undefined,
     });
 
     // NO FALLBACK - if Big Brother fails, throw and stop

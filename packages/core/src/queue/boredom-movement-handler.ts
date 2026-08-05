@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { audit } from '../audit.js'
 import { getOperatorMode } from '../active-operator/mode-controller.js'
 import {
+  enqueueEnvironmentAction,
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
-  type EnvironmentObservation,
 } from '../environment-interface/index.js'
 import {
+  chooseBoredomMovementCommand,
+  eligibleBoredomMovementCommands,
   isBoredomMovementEnabled,
   loadRobotOperatorConfig,
   robotObserverSourceAllowed,
@@ -34,20 +36,9 @@ function hasRobotCycleMetadata(value: unknown): boolean {
   )
 }
 
-function belongsToCurrentBoredomWork(task: QueuedTask, currentTaskId: string): boolean {
-  return task.parentTaskId === currentTaskId
-    && (
-      task.metadata?.producer === 'boredom-movement'
-      || task.input?.triggeredBy === 'boredom-movement'
-      || Boolean(task.input?.metadata?.boredomMovement)
-      || Boolean(task.input?.observation?.metadata?.boredomMovement)
-    )
-}
-
 export function workBlocksBoredomMovement(task: QueuedTask, currentTaskId: string): boolean {
   if (task.id === currentTaskId) return false
   if (!['queued', 'leased', 'waiting'].includes(task.state)) return false
-  if (belongsToCurrentBoredomWork(task, currentTaskId)) return false
   return task.handler === 'environment.observation'
     || task.handler === 'environment.command'
     || task.handler === 'workflow.robot-observer'
@@ -61,7 +52,7 @@ function anotherRobotCycleIsActive(currentTaskId: string): boolean {
 
 export async function executeBoredomMovementWork(
   task: QueuedTask,
-  context: WorkHandlerContext,
+  _context: WorkHandlerContext,
 ): Promise<Record<string, unknown>> {
   const manual = task.source === 'user'
   const triggerSource = manual ? 'user' : 'autonomy'
@@ -90,6 +81,26 @@ export async function executeBoredomMovementWork(
   if (getEnvironmentActionSubscriberCount(session.sessionId) < 1) {
     return { skipped: true, reason: 'robot_action_stream_unavailable', sessionId: session.sessionId }
   }
+  if (!session.latestObservation.capabilities.actions.includes('robotCommand')) {
+    return { skipped: true, reason: 'robot_commands_unavailable', sessionId: session.sessionId }
+  }
+  if (
+    !session.latestObservation.capabilities.visual
+    || !session.latestObservation.capabilities.actions.includes('captureImage')
+  ) {
+    return { skipped: true, reason: 'robot_camera_unavailable', sessionId: session.sessionId }
+  }
+
+  const eligibleCommands = eligibleBoredomMovementCommands(
+    session.latestObservation.capabilities.robotCommands,
+  )
+  if (eligibleCommands.length === 0) {
+    return { skipped: true, reason: 'stationary_command_catalog_unavailable', sessionId: session.sessionId }
+  }
+  const selectedCommand = chooseBoredomMovementCommand(eligibleCommands)
+  if (!selectedCommand) {
+    return { skipped: true, reason: 'stationary_command_selection_failed', sessionId: session.sessionId }
+  }
 
   const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
     ? task.input.cycleId.trim()
@@ -98,68 +109,43 @@ export async function executeBoredomMovementWork(
     cycleId,
     triggerSource,
     requestedBy: 'boredom-movement',
-    graph: config.environmentGraph,
-    maxSteps: config.maxCycleSteps,
-    observationTiming: 'after_intention',
+    graph: config.boredomGraph,
+    selectedCommand,
   }
-  const now = new Date().toISOString()
-  const observation: EnvironmentObservation = {
-    ...session.latestObservation,
-    timestamp: now,
-    visual: undefined,
-    visuals: undefined,
-    text: [],
-    feedback: [],
-    metadata: {
-      correlationId: cycleId,
-      ...(typeof session.latestObservation.metadata?.robotId === 'string'
-        ? { robotId: session.latestObservation.metadata.robotId }
-        : {}),
-      ...(typeof session.latestObservation.metadata?.epoch === 'number'
-        ? { epoch: session.latestObservation.metadata.epoch }
-        : {}),
-      perceptionEvent: 'boredom_movement',
-      boredomMovement,
-    },
-  }
-  const child = context.enqueue({
-    type: 'environment_observation',
-    handler: 'environment.observation',
-    resource: 'system',
-    source: task.source,
-    priority: 'background',
+  const command = enqueueEnvironmentAction({
+    type: 'robotCommand',
+    command: selectedCommand,
+    sessionId: session.sessionId,
+    createdAt: new Date().toISOString(),
+    metadata: { boredomMovement },
+  }, {
     username: task.username,
-    cognitiveMode: 'environment',
-    input: {
-      graph: config.graph,
-      observation,
-      triggeredBy: 'boredom-movement',
-    },
-    parentTaskId: task.id,
+    source: triggerSource,
     correlationId: cycleId,
-    idempotencyKey: `boredom-movement:${session.sessionId}:${cycleId}`,
-    maxAttempts: 1,
-    metadata: { producer: 'boredom-movement' },
+    idempotencyKey: `boredom-movement:${session.sessionId}:${cycleId}:movement`,
+    allowedActions: ['robotCommand'],
   })
   audit({
     level: 'info',
     category: 'action',
-    event: 'boredom_movement_robot_operator_work_queued',
+    event: 'boredom_movement_command_queued',
     actor: 'boredom-movement',
     details: {
       taskId: task.id,
-      childTaskId: child.id,
+      commandId: command.id,
       sessionId: session.sessionId,
       cycleId,
       triggerSource,
-      observationTiming: boredomMovement.observationTiming,
+      selectedCommand,
+      eligibleCommands,
       mode,
     },
   })
   return {
     queued: true,
-    childTaskId: child.id,
+    commandId: command.id,
     sessionId: session.sessionId,
+    selectedCommand,
     boredomMovement,
   }
 }

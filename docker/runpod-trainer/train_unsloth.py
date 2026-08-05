@@ -36,9 +36,10 @@ import subprocess
 
 print("[train_unsloth] ✅ Environment prepared for SDPA-only training")
 
-from unsloth import FastLanguageModel
+from unsloth import FastLanguageModel, FastModel, train_on_responses_only
 from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
 from datasets import load_dataset
+import torch
 
 # Progress tracking helper
 def log_progress(stage, message, percent=None):
@@ -102,9 +103,15 @@ def main():
     # Parse command-line arguments for local execution
     parser = argparse.ArgumentParser(description='Train LoRA adapter with Unsloth')
     parser.add_argument('--data', help='Path to training data JSONL file')
+    parser.add_argument('--eval-data', help='Optional development-validation JSONL file')
     parser.add_argument('--config', help='Path to config JSON file')
     parser.add_argument('--output', help='Output directory for adapter')
     parser.add_argument('--skip-gguf', action='store_true', help='Skip GGUF conversion (for vLLM safetensors output)')
+    parser.add_argument(
+        '--skip-validation-generation',
+        action='store_true',
+        help='Use eval data for loss/checkpointing but leave response generation to a fresh evaluator process',
+    )
     args = parser.parse_args()
 
     start_time = time.time()
@@ -153,6 +160,34 @@ def main():
     # Step 1: Load dataset
     log_progress("DATASET", "Loading training data...")
     dataset = load_dataset("json", data_files=data_path, split="train")
+    eval_dataset = (
+        load_dataset("json", data_files=args.eval_data, split="train")
+        if args.eval_data
+        else None
+    )
+    if cfg.get("require_exact_messages", False):
+        required_columns = {"system", "user", "output"}
+        missing_columns = required_columns.difference(dataset.column_names)
+        if missing_columns:
+            raise ValueError(
+                "Exact-message training dataset is missing columns: "
+                + ", ".join(sorted(missing_columns))
+            )
+        for index, example in enumerate(dataset):
+            for field in required_columns:
+                if not isinstance(example.get(field), str) or not example[field].strip():
+                    raise ValueError(f"Training row {index} has no non-empty {field} field")
+        if eval_dataset is not None:
+            missing_eval_columns = required_columns.difference(eval_dataset.column_names)
+            if missing_eval_columns:
+                raise ValueError(
+                    "Exact-message validation dataset is missing columns: "
+                    + ", ".join(sorted(missing_eval_columns))
+                )
+            for index, example in enumerate(eval_dataset):
+                for field in required_columns:
+                    if not isinstance(example.get(field), str) or not example[field].strip():
+                        raise ValueError(f"Validation row {index} has no non-empty {field} field")
     log_progress("DATASET", f"✅ Loaded {len(dataset)} training samples", 100)
 
     # Step 2: Download and load model with 4-bit quantization
@@ -162,15 +197,26 @@ def main():
     # current guide discourages 4-bit QLoRA for this model family.
     load_in_4bit = cfg.get("load_in_4bit", False)
     load_in_16bit = cfg.get("load_in_16bit", not load_in_4bit)
-    dtype = cfg.get("dtype", "bfloat16")
+    dtype_name = str(cfg.get("dtype", "bfloat16")).lower()
+    dtype_by_name = {
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "float32": torch.float32,
+        "fp32": torch.float32,
+    }
+    if dtype_name not in dtype_by_name:
+        raise ValueError(f"Unsupported training dtype: {dtype_name}")
+    dtype = dtype_by_name[dtype_name]
 
     if load_in_4bit and load_in_16bit:
         raise ValueError("Choose either load_in_4bit or load_in_16bit, not both")
 
     if load_in_4bit:
-        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 4-bit quantized {dtype}")
+        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 4-bit quantized {dtype_name}")
     else:
-        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 16-bit {dtype} for supported Qwen 3.5 LoRA training")
+        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 16-bit {dtype_name} for supported Qwen 3.5 LoRA training")
 
     model_start = time.time()
 
@@ -180,9 +226,10 @@ def main():
     log_progress("MODEL_DOWNLOAD", "Using PyTorch SDPA attention (compatible with all GPUs)")
 
     is_qwen35 = 'qwen3.5' in cfg['base_model'].lower()
+    model_api = FastModel if is_qwen35 else FastLanguageModel
 
     try:
-        model, tokenizer = FastLanguageModel.from_pretrained(
+        model, tokenizer = model_api.from_pretrained(
             cfg["base_model"],
             load_in_4bit=load_in_4bit,
             load_in_16bit=load_in_16bit,
@@ -195,7 +242,7 @@ def main():
     except Exception as e:
         # If SDPA fails, try without specifying attention implementation
         log_progress("MODEL_DOWNLOAD", f"SDPA failed, retrying with default attention: {e}")
-        model, tokenizer = FastLanguageModel.from_pretrained(
+        model, tokenizer = model_api.from_pretrained(
             cfg["base_model"],
             load_in_4bit=load_in_4bit,
             load_in_16bit=load_in_16bit,
@@ -207,31 +254,32 @@ def main():
     model_time = time.time() - model_start
     log_progress("MODEL_DOWNLOAD", f"✅ Model loaded in {model_time/60:.1f} minutes", 100)
 
-    # BUGFIX: Explicitly disable Flash Attention in model config and modules after loading
-    # This patches the model's internal attention mechanism to use standard attention
-    try:
-        if hasattr(model, 'config'):
-            model.config._attn_implementation = "eager"
-            if hasattr(model.config, 'use_flash_attention_2'):
-                model.config.use_flash_attention_2 = False
-            if hasattr(model.config, '_flash_attn_2_enabled'):
-                model.config._flash_attn_2_enabled = False
-            log_progress("MODEL_DOWNLOAD", "Patched model config to use eager attention")
+    # The older generic pipeline can retain its eager-attention compatibility
+    # fallback. Maintained Qwen 3.5 runs use native SDPA unless explicitly told
+    # otherwise, avoiding a global slow path on supported GPUs.
+    if cfg.get("force_eager_attention", True):
+        try:
+            if hasattr(model, 'config'):
+                model.config._attn_implementation = "eager"
+                if hasattr(model.config, 'use_flash_attention_2'):
+                    model.config.use_flash_attention_2 = False
+                if hasattr(model.config, '_flash_attn_2_enabled'):
+                    model.config._flash_attn_2_enabled = False
+                log_progress("MODEL_DOWNLOAD", "Patched model config to use eager attention")
 
-        # Also patch all attention modules in the model
-        patched_modules = 0
-        for name, module in model.named_modules():
-            if 'attention' in name.lower() or 'attn' in name.lower():
-                if hasattr(module, '_attn_implementation'):
-                    module._attn_implementation = "eager"
-                    patched_modules += 1
-                if hasattr(module, 'is_causal'):
-                    module.is_causal = True  # Ensure causal masking is explicit
+            patched_modules = 0
+            for name, module in model.named_modules():
+                if 'attention' in name.lower() or 'attn' in name.lower():
+                    if hasattr(module, '_attn_implementation'):
+                        module._attn_implementation = "eager"
+                        patched_modules += 1
+                    if hasattr(module, 'is_causal'):
+                        module.is_causal = True
 
-        if patched_modules > 0:
-            log_progress("MODEL_DOWNLOAD", f"Patched {patched_modules} attention modules to eager mode")
-    except Exception as e:
-        log_progress("MODEL_DOWNLOAD", f"Warning: Could not patch attention config: {e}")
+            if patched_modules > 0:
+                log_progress("MODEL_DOWNLOAD", f"Patched {patched_modules} attention modules to eager mode")
+        except Exception as e:
+            log_progress("MODEL_DOWNLOAD", f"Warning: Could not patch attention config: {e}")
 
     # Get chat template configuration from config file
     chat_template = cfg.get('chat_template', 'auto').lower()
@@ -252,60 +300,68 @@ def main():
     else:
         log_progress("TEMPLATE", f"Using configured chat template: {chat_template}")
 
+    def row_messages(example):
+        """Prefer exact per-record prompts while preserving legacy datasets."""
+        row_system = (example.get("system") or system_prompt).strip()
+        exact_user = (example.get("user") or "").strip()
+        instruction = (example.get("instruction") or "").strip()
+        context = (example.get("input") or "").strip()
+        answer = (example.get("output") or "").strip()
+
+        if exact_user:
+            user_msg = exact_user
+        elif context:
+            user_msg = f"{instruction}\n\n{context}"
+        else:
+            user_msg = instruction
+
+        return row_system, user_msg, answer
+
     # Define formatting function based on template type
     if chat_template == 'harmony':
         # OpenAI Harmony format for gpt-oss models
         eos_token = tokenizer.eos_token or "<|return|>"
 
         def row_to_text(example):
-            instruction = (example.get("instruction") or "").strip()
-            context = (example.get("input") or "").strip()
-            answer = (example.get("output") or "").strip()
-
-            if context:
-                user_msg = f"{instruction}\n\n{context}"
-            else:
-                user_msg = instruction
+            row_system, user_msg, answer = row_messages(example)
 
             # Harmony format: <|start|>role<|message|>content<|end|>
-            merged = f"<|start|>developer<|message|>{system_prompt}<|end|><|start|>user<|message|>{user_msg}<|end|><|start|>assistant<|message|>{answer}<|end|>"
+            merged = f"<|start|>developer<|message|>{row_system}<|end|><|start|>user<|message|>{user_msg}<|end|><|start|>assistant<|message|>{answer}<|end|>"
             return {"text": merged}
+
+        def row_to_prompt(example):
+            row_system, user_msg, _ = row_messages(example)
+            return f"<|start|>developer<|message|>{row_system}<|end|><|start|>user<|message|>{user_msg}<|end|><|start|>assistant<|message|>"
 
     elif chat_template == 'chatml':
         # ChatML format for Qwen and similar models
         eos_token = tokenizer.eos_token or "<|im_end|>"
 
         def row_to_text(example):
-            instruction = (example.get("instruction") or "").strip()
-            context = (example.get("input") or "").strip()
-            answer = (example.get("output") or "").strip()
-
-            if context:
-                user_msg = f"{instruction}\n\n{context}"
-            else:
-                user_msg = instruction
+            row_system, user_msg, answer = row_messages(example)
 
             # ChatML format: <|im_start|>role\ncontent<|im_end|>
-            merged = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n{answer}<|im_end|>"
+            merged = f"<|im_start|>system\n{row_system}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n{answer}<|im_end|>"
             return {"text": merged}
+
+        def row_to_prompt(example):
+            row_system, user_msg, _ = row_messages(example)
+            return f"<|im_start|>system\n{row_system}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
 
     elif chat_template == 'llama':
         # Llama format with [INST] tags
         eos_token = tokenizer.eos_token or "</s>"
 
         def row_to_text(example):
-            instruction = (example.get("instruction") or "").strip()
-            context = (example.get("input") or "").strip()
-            answer = (example.get("output") or "").strip()
-
-            if context:
-                user_msg = f"{instruction}\n\n{context}"
-            else:
-                user_msg = instruction
+            row_system, user_msg, answer = row_messages(example)
 
             # Llama format: <s>[INST] <<SYS>>system<</SYS>>user [/INST] assistant </s>
-            merged = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{user_msg} [/INST] {answer} </s>"
+            merged = f"<s>[INST] <<SYS>>\n{row_system}\n<</SYS>>\n\n{user_msg} [/INST] {answer} </s>"
             return {"text": merged}
+
+        def row_to_prompt(example):
+            row_system, user_msg, _ = row_messages(example)
+            return f"<s>[INST] <<SYS>>\n{row_system}\n<</SYS>>\n\n{user_msg} [/INST]"
 
     else:
         # Unknown template - raise error
@@ -314,6 +370,8 @@ def main():
     # Step 3: Preprocess dataset
     log_progress("PREPROCESSING", "Converting dataset to training format...")
     dataset = dataset.map(row_to_text)
+    if eval_dataset is not None:
+        eval_dataset = eval_dataset.map(row_to_text)
     log_progress("PREPROCESSING", "✅ Dataset preprocessed", 100)
 
     # Step 4: Apply LoRA adapters
@@ -343,7 +401,7 @@ def main():
     }
 
     peft_options["target_modules"] = target_modules
-    model = FastLanguageModel.get_peft_model(model, **peft_options)
+    model = model_api.get_peft_model(model, **peft_options)
     target_description = str(target_modules)
 
     log_progress("LORA_SETUP", f"✅ LoRA adapters configured for: {target_description}", 100)
@@ -362,18 +420,36 @@ def main():
         bf16=True,   # Use bfloat16 precision
         logging_steps=10,
         save_strategy="epoch",
-        save_total_limit=2,
-        # BUGFIX: Force eager mode to bypass Flash Attention
-        torch_compile=False,  # Disable torch compilation
+        eval_strategy="epoch" if eval_dataset is not None else "no",
+        load_best_model_at_end=eval_dataset is not None,
+        metric_for_best_model="eval_loss" if eval_dataset is not None else None,
+        greater_is_better=False if eval_dataset is not None else None,
+        save_total_limit=int(cfg.get("save_total_limit", cfg["num_train_epochs"])),
+        torch_compile=False,
         optim=cfg.get("optimizer", "paged_adamw_8bit"),  # Use config optimizer
+        seed=int(cfg.get("seed", 42)),
     )
 
     trainer = UnslothTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
+        eval_dataset=eval_dataset,
         tokenizer=tokenizer,
     )
+    if cfg.get("train_on_responses_only", False):
+        response_markers = {
+            "chatml": ("<|im_start|>user\n", "<|im_start|>assistant\n"),
+            "harmony": ("<|start|>user<|message|>", "<|start|>assistant<|message|>"),
+            "llama": ("[INST]", "[/INST] "),
+        }
+        instruction_part, response_part = response_markers[chat_template]
+        trainer = train_on_responses_only(
+            trainer,
+            instruction_part=instruction_part,
+            response_part=response_part,
+        )
+        log_progress("TRAINING", "Loss is restricted to assistant response tokens")
 
     training_start = time.time()
     trainer.train()
@@ -385,6 +461,57 @@ def main():
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
     log_progress("SAVE_ADAPTER", "✅ Adapter saved", 100)
+
+    if args.eval_data and not args.skip_validation_generation:
+        log_progress("VALIDATION", "Generating held-back development responses")
+        raw_eval_dataset = load_dataset("json", data_files=args.eval_data, split="train")
+        model_api.for_inference(model)
+        if hasattr(model, "config"):
+            model.config.use_cache = True
+        tokenizer.padding_side = "left"
+        eval_batch_size = int(cfg.get("per_device_eval_batch_size", 8))
+        max_new_tokens = int(cfg.get("generation_max_new_tokens", 512))
+        generation_path = os.path.join(output_dir, "validation-generations.jsonl")
+        with open(generation_path, "w", encoding="utf-8") as handle:
+            for offset in range(0, len(raw_eval_dataset), eval_batch_size):
+                rows = [raw_eval_dataset[index] for index in range(
+                    offset,
+                    min(offset + eval_batch_size, len(raw_eval_dataset)),
+                )]
+                prompts = [row_to_prompt(row) for row in rows]
+                encoded = tokenizer(prompts, padding=True, return_tensors="pt")
+                encoded = {key: value.to(model.device) for key, value in encoded.items()}
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                batch_started = time.perf_counter()
+                with torch.inference_mode():
+                    generated = model.generate(
+                        **encoded,
+                        do_sample=False,
+                        max_new_tokens=max_new_tokens,
+                        eos_token_id=tokenizer.eos_token_id,
+                        pad_token_id=tokenizer.eos_token_id,
+                    )
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                latency_ms = (time.perf_counter() - batch_started) * 1000 / len(rows)
+                output_tokens = generated[:, encoded["input_ids"].shape[1]:]
+                responses = tokenizer.batch_decode(output_tokens, skip_special_tokens=True)
+                for row, response in zip(rows, responses, strict=True):
+                    handle.write(json.dumps({
+                        "model": cfg["base_model"],
+                        "adapter": output_dir,
+                        "expectedText": row["output"],
+                        "rawResponse": response.strip(),
+                        "meanBatchLatencyMs": latency_ms,
+                        "metadata": row.get("metadata", {}),
+                    }, ensure_ascii=False) + "\n")
+        log_progress("VALIDATION", f"✅ Wrote {generation_path}", 100)
+    elif args.eval_data:
+        log_progress(
+            "VALIDATION",
+            "⏭️  Skipping in-process generation; retained checkpoints are ready for the external evaluator",
+        )
 
     # Step 7: Merge and convert to GGUF (skip for vLLM safetensors training)
     # Check both command-line flag and config file
@@ -499,5 +626,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print("[train_unsloth] ERROR:", str(e), file=sys.stderr)
         sys.exit(1)

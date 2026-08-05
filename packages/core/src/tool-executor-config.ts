@@ -45,6 +45,8 @@ export interface CLIBackendConfig {
   terminalPort?: number;
   gitEnabled?: boolean;
   autoCommit?: boolean;
+  /** Codex reasoning effort override. Defaults to low for latency-sensitive escalation. */
+  reasoningEffort?: string;
 }
 
 export interface LLMProxyConfig {
@@ -141,6 +143,7 @@ const defaultConfig: ToolExecutorConfig = {
       command: 'codex',
       args: ['exec', '--color', 'always', '--json'],
       timeout: 120000,
+      reasoningEffort: 'low',
     },
   },
   llmProxy: {

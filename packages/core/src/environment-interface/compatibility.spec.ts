@@ -357,6 +357,64 @@ try {
     'Wave, then use the returned view to tell me what changed.',
     'action context must be recovered from MetaHuman work rather than trusted from the adapter',
   );
+  const contextualTiming = contextualResult.metadata?.actionTiming as Record<string, unknown>;
+  assert.equal(contextualTiming.queueEnteredAt, resultAction.createdAt);
+  assert.equal(contextualTiming.leaseGrantedAt, manager.getTask(resultAction.id)?.startedAt);
+  assert.equal(
+    typeof contextualTiming.coreFeedbackReceivedAt,
+    'string',
+    'a later observation must recover lifecycle timing from the existing Work Coordinator result',
+  );
+
+  const observerCapture = enqueueEnvironmentAction({
+    type: 'captureImage',
+    sessionId: 'robot-1',
+    metadata: {
+      robotObserver: {
+        cycleId: 'observer-capture-cycle',
+        step: 1,
+        maxSteps: 4,
+        triggerSource: 'user',
+        graph: 'robot-operator',
+        requestedBy: 'robot-observer',
+      },
+    },
+  }, {
+    username: 'robot-owner',
+    correlationId: 'observer-capture-cycle',
+  });
+  const expiredCaptureObservation: EnvironmentObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['captureImage'], visual: true },
+    feedback: [{
+      id: 'observer-capture-expired',
+      timestamp: new Date().toISOString(),
+      type: 'expired',
+      message: 'adapter did not dispatch the command in time',
+      actionId: observerCapture.id,
+    }],
+  };
+  const contextualExpiry = attachEnvironmentActionContext(expiredCaptureObservation);
+  assert.equal(contextualExpiry.metadata?.correlationId, 'observer-capture-cycle');
+  assert.equal(
+    (contextualExpiry.metadata?.robotObserver as { requestedBy?: string })?.requestedBy,
+    'robot-observer',
+  );
+  assert.equal(environmentObservationNeedsCognition(contextualExpiry), false);
+  const expiredCaptureResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
+    Authorization: 'Bearer bridge-secret',
+  }, expiredCaptureObservation as unknown as Record<string, unknown>), () => 'robot-owner');
+  assert.equal(expiredCaptureResponse.status, 200);
+  assert.equal(expiredCaptureResponse.data.graphQueued, false);
+  assert.equal(expiredCaptureResponse.data.reason, 'state_only_observation');
+  assert.equal(
+    manager.getAllTasks().filter(task => task.type === 'environment_observation').length,
+    0,
+    'an initial Robot Observer capture failure must remain lifecycle telemetry instead of becoming a chat prompt',
+  );
 
   const rejectedPersistence = await handleEnvironmentBridgeActionResult(bridgeRequest({
     Authorization: 'Bearer bridge-secret',
@@ -595,8 +653,8 @@ try {
   assert.equal(
     contextualInstruction.instruction,
     [
-      'Robot action completed: done. Inspect the fresh correlated observation and report what happened once to the user. The action is finished; do not issue a new action from this completion event.',
-      'Original user goal (context only; not a new command): Wave, then use the returned view to tell me what changed.',
+      'Robot action completed: done. This terminal result is evidence for validation only; do not issue a new action from this event.',
+      'Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): Wave, then use the returned view to tell me what changed.',
     ].join('\n'),
   );
   assert.match(
@@ -631,7 +689,7 @@ try {
       },
     },
   }, { userMessage: '' });
-  assert.match(String(continuationInstruction.instruction), /Inspect the fresh correlated observation/);
+  assert.match(String(continuationInstruction.instruction), /evidence for validation only/);
   assert.match(String(continuationInstruction.instruction), /do not issue a new action/);
 
   const parsedTerminalFeedback = await environmentActionParserNode.execute({
@@ -787,11 +845,11 @@ try {
   const satisfiedCaptureInstruction = await environmentInstructionInterpreterNode.execute({
     observation: satisfiedCaptureObservation,
   }, { userMessage: '' });
-  assert.match(String(satisfiedCaptureInstruction.instruction), /Robot action completed/i);
-  assert.match(String(satisfiedCaptureInstruction.instruction), /do not issue a new action/i);
+  assert.match(String(satisfiedCaptureInstruction.instruction), /fresh correlated robot image has returned/i);
+  assert.match(String(satisfiedCaptureInstruction.instruction), /do not request another image/i);
   assert.match(
     String(satisfiedCaptureInstruction.instruction),
-    /Original user goal \(context only; not a new command\): Can you take a picture/,
+    /Original user goal: Can you take a picture/,
   );
   assert.doesNotMatch(
     String(satisfiedCaptureInstruction.instruction),

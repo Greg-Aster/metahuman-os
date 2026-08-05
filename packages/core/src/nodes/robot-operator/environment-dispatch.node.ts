@@ -4,7 +4,6 @@ import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
 import {
-  readBoredomMovementCycle,
   readRobotObserverCycle,
   type RobotObserverCycleMetadata,
   type RobotObserverTriggerSource,
@@ -37,9 +36,7 @@ function currentMode(context: Record<string, unknown>): AutonomyMode {
 }
 
 function triggerSource(observation: EnvironmentObservation): RobotObserverTriggerSource {
-  const cycle = readRobotObserverCycle(observation);
-  if (cycle) return cycle.triggerSource;
-  return readBoredomMovementCycle(observation)?.triggerSource ?? 'autonomy';
+  return readRobotObserverCycle(observation)?.triggerSource ?? 'autonomy';
 }
 
 function delegatedCycle(
@@ -56,17 +53,14 @@ function delegatedCycle(
       requestedBy: 'environment-perception',
     };
   }
-  const boredomMovement = readBoredomMovementCycle(observation);
   return {
-    cycleId: boredomMovement?.cycleId
-      || cleanText(observation.metadata?.correlationId, 200)
+    cycleId: cleanText(observation.metadata?.correlationId, 200)
       || `robot-operator-${randomUUID()}`,
     step: 1,
-    maxSteps: boredomMovement?.maxSteps ?? maxSteps,
+    maxSteps,
     triggerSource: source,
-    graph: boredomMovement?.graph ?? graph,
+    graph,
     requestedBy: 'environment-perception',
-    ...(boredomMovement ? { observationTiming: boredomMovement.observationTiming } : {}),
   };
 }
 
@@ -105,7 +99,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       step: 1,
     },
   },
-  description: 'Admits every valid Robot Operator observation decision to one Environment Mode execution with the original correlated observation.',
+  description: 'Admits only Robot Observer decisions that require environment work; observation-only decisions stop after the Idle Thought.',
   async execute(inputs, context, properties) {
     const decision = isRecord(inputs.decision)
       ? inputs.decision as unknown as RobotOperatorDecision
@@ -128,6 +122,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     if (!observed || !instruction || typeof requiresAction !== 'boolean' || !reason) {
       return reject('invalid_decision');
     }
+    if (!requiresAction) return reject('observation_only', instruction);
     if (!observation?.sessionId) return reject('missing_observation_session', instruction);
 
     const source = triggerSource(observation);
@@ -185,7 +180,6 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
         sessionId: observation.sessionId,
         observed,
         decisionReason: reason,
-        observationTiming: readBoredomMovementCycle(observation)?.observationTiming ?? 'before_intention',
       },
     };
     const injectedEnqueue = context.enqueueRobotOperatorEnvironment;

@@ -16,6 +16,7 @@ import { loadSleepConfig } from '../sleep-config.js';
 import {
   beginEnvironmentPerceptionCycle,
   loadRobotOperatorConfig,
+  readBoredomMovementCycle,
   readRobotObserverCycle,
 } from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
@@ -164,6 +165,7 @@ export class ExecutionEngine {
     this.registerHandler('environment.observation', async (task, context) => {
       let observation = task.input.observation ?? task.input;
       let robotObserver = readRobotObserverCycle(observation);
+      const boredomMovement = readBoredomMovementCycle(observation);
       if (
         !robotObserver
         && observation?.metadata?.perceptionEvent === 'audio_utterance'
@@ -185,11 +187,10 @@ export class ExecutionEngine {
           };
         }
       }
-      // Robot Observer captures carry a MetaHuman-authored graph owner in their
-      // bounded cycle metadata. This lets an autonomous image run the high-level
-      // Robot Operator graph while ordinary bridge input continues to use the
-      // bridge-configured Environment graph.
-      const graphName = robotObserver?.graph || task.input.graph;
+      // Each autonomous robot workflow carries its own graph owner. Returned
+      // images therefore route to the specialized observer or boredom graph
+      // without relying on the bridge's generic Environment graph header.
+      const graphName = robotObserver?.graph || boredomMovement?.graph || task.input.graph;
       if (!graphName || task.username === 'system') {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
       }
@@ -219,7 +220,9 @@ export class ExecutionEngine {
       const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
         ? observation.metadata.originatingInstruction.trim()
         : '';
-      const taskInstruction = originatingInstruction || text || (robotObserver
+      const taskInstruction = originatingInstruction || text || (boredomMovement
+        ? `Inspect the fresh image captured after the robot performed ${boredomMovement.selectedCommand}. Briefly reflect on what is visible now without requesting another action.`
+        : robotObserver
         ? robotObserver.step === 1
           ? 'Inspect the current robot camera image after inactivity. Briefly describe anything worth responding to, and choose at most one useful semantic robot action or another camera observation only if needed.'
           : 'Inspect the returned robot camera image after the previous action. Briefly describe what changed, and choose at most one next semantic action or another camera observation only if it is still useful.'
@@ -248,8 +251,9 @@ export class ExecutionEngine {
             environment: 'server',
             environmentObservation: observation,
             environmentTaskInstruction: taskInstruction,
-            environmentActionSource: robotObserver?.triggerSource,
+            environmentActionSource: robotObserver?.triggerSource ?? boredomMovement?.triggerSource,
             robotObserver,
+            boredomMovement,
             robotOperatorEnvironmentGraph: graphName === robotOperatorConfig.graph
               ? robotOperatorConfig.environmentGraph
               : undefined,
@@ -267,6 +271,7 @@ export class ExecutionEngine {
         graphExecuted: true,
         graph: graphName,
         robotObserver,
+        boredomMovement,
       };
     });
     this.registerHandler('workflow.robot-observer', async (task, context) => {

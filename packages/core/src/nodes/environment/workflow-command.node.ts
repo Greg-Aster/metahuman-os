@@ -2,6 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
+import type {
+  EnvironmentMotionClass,
+  EnvironmentMotionControlState,
+} from '../../environment-interface/index.js';
 import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
 import { readRobotObserverCycle, type RobotObserverCycleMetadata } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
@@ -25,6 +29,8 @@ export interface EnvironmentWorkflowCommand {
   advanceCycle?: boolean;
   continuationPolicy: Extract<EnvironmentContinuationPolicy, 'bounded'>;
   requiredCompletionBasis: EnvironmentCompletionBasis;
+  motionClass?: EnvironmentMotionClass;
+  motionControl?: EnvironmentMotionControlState;
   requireExternalCompletionEvidence?: boolean;
 }
 
@@ -130,6 +136,12 @@ export const environmentWorkflowCommandNode = defineNode({
       command.requiredCompletionBasis === 'none'
       || !ENVIRONMENT_COMPLETION_BASES.includes(command.requiredCompletionBasis)
     ) return reject('invalid_completion_basis');
+    if (
+      command.motionClass !== undefined
+      && command.motionClass !== 'body_local'
+      && command.motionClass !== 'open_loop_displacement'
+      && command.motionClass !== 'target_relative'
+    ) return reject('invalid_motion_class');
     if (!observation?.sessionId) return reject('missing_observation_session');
     if (command.source !== 'user' && command.source !== 'autonomy') return reject('invalid_source');
     if (!cleanText(command.objective, 1_000) || !cleanText(command.instruction, 500)) {
@@ -174,7 +186,7 @@ export const environmentWorkflowCommandNode = defineNode({
         correlationId: cycle.cycleId,
         robotObserver: cycle,
         taskValidatorCommand: {
-          version: 3,
+          version: 4,
           objective: cleanText(command.objective, 1_000),
           instruction: cleanText(command.instruction, 500),
           reason: cleanText(command.reason, 500),
@@ -183,6 +195,8 @@ export const environmentWorkflowCommandNode = defineNode({
           maxSteps: command.maxSteps,
           continuationPolicy: command.continuationPolicy,
           requiredCompletionBasis: command.requiredCompletionBasis,
+          ...(command.motionClass ? { motionClass: command.motionClass } : {}),
+          ...(command.motionControl ? { motionControl: command.motionControl } : {}),
           requireExternalCompletionEvidence: command.requireExternalCompletionEvidence === true,
         },
       },

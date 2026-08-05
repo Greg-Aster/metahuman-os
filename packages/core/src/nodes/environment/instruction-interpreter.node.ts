@@ -6,6 +6,7 @@ import type {
   EnvironmentTextEvent,
 } from '../../environment-interface/index.js';
 import { hasFreshCorrelatedVisual } from '../../environment-interface/index.js';
+import type { EnvironmentRouterDecision } from '../../environment-classifier.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
   environmentTaskContractFromObservation,
@@ -70,10 +71,20 @@ function terminalFeedbackEvent(
   return {
     id: `environment-feedback-${terminal.id}`,
     source: 'system',
-    text: `Robot action ${terminal.type}: ${terminal.message}.`,
+    text: `Robot action ${terminal.type}: ${terminal.message}. This terminal result is evidence for validation only; do not issue a new action from this event.`,
     timestamp: terminal.timestamp,
     metadata: { actionId: terminal.actionId, feedbackId: terminal.id },
   };
+}
+
+function completedCaptureFeedback(feedback: EnvironmentFeedback[] | undefined): boolean {
+  for (let index = (feedback?.length ?? 0) - 1; index >= 0; index -= 1) {
+    const candidate = feedback?.[index];
+    if (!candidate) continue;
+    if (candidate.type === 'accepted' || candidate.type === 'status') continue;
+    return candidate.type === 'completed' && candidate.data?.command === 'captureImage';
+  }
+  return false;
 }
 
 export const environmentInstructionInterpreterNode = defineNode({
@@ -87,6 +98,7 @@ export const environmentInstructionInterpreterNode = defineNode({
     { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
     { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
     { name: 'routingRequest', type: 'string', description: 'Compact state-aware envelope for Environment context and task-contract routing' },
+    { name: 'persistedRoutingAnalysis', type: 'object', description: 'Strict deterministic route for a persisted continuation, or null for a new instruction' },
     { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
     { name: 'state', type: 'object', description: 'Environment state payload' },
     { name: 'location', type: 'object', description: 'Environment location payload' },
@@ -127,6 +139,7 @@ export const environmentInstructionInterpreterNode = defineNode({
     const captureSatisfied = Boolean(
       !currentTaskEvent
       && robotObserver
+      && completedCaptureFeedback(rawObservation?.feedback)
       && hasFreshCorrelatedVisual(rawObservation, robotObserver.cycleId),
     );
     // A typed or coordinator-supplied current task is the only authoritative
@@ -154,8 +167,8 @@ export const environmentInstructionInterpreterNode = defineNode({
         ].filter(Boolean).join('\n')
       : '';
     const instruction = currentTaskEvent?.text
-      || feedbackInstruction
       || satisfiedCaptureInstruction
+      || feedbackInstruction
       || originalObjective
       || text.map(event => event.text).join('\n').trim();
     const sessionId = rawObservation?.sessionId ?? '';
@@ -165,10 +178,13 @@ export const environmentInstructionInterpreterNode = defineNode({
         ? (rawObservation?.capabilities?.actions ?? []).filter(action => action !== 'captureImage')
         : rawObservation?.capabilities?.actions ?? [],
       robotCommands: rawObservation?.capabilities?.robotCommands,
+      motionClasses: rawObservation?.capabilities?.motionClasses,
       text: rawObservation?.capabilities?.text ?? true,
       movement: rawObservation?.capabilities?.movement ?? false,
       visual: rawObservation?.capabilities?.visual ?? false,
       map: rawObservation?.capabilities?.map ?? false,
+      navigation: rawObservation?.capabilities?.navigation ?? false,
+      visualApproach: rawObservation?.capabilities?.visualApproach,
     };
     const observation: EnvironmentObservation = {
       environmentId: rawObservation?.environmentId ?? 'unavailable',
@@ -206,11 +222,64 @@ export const environmentInstructionInterpreterNode = defineNode({
         delegatedActionRequirement,
       },
     });
+    const hasTerminalFeedback = Boolean(feedbackEvent);
+    const hasFreshVisual = Boolean(
+      robotObserver && hasFreshCorrelatedVisual(observation, robotObserver.cycleId),
+    );
+    const isPersistedContinuation = Boolean(
+      !contextMessage.trim()
+      && taskContract
+      && (validatorCommand || hasTerminalFeedback),
+    );
+    const evidenceAlreadyAvailable = Boolean(
+      hasTerminalFeedback
+      || (taskContract?.requiredCompletionBasis === 'visual_observation' && hasFreshVisual)
+      || (
+        taskContract?.requiredCompletionBasis === 'environment_state'
+        && Object.keys(observation.state ?? {}).length > 0
+      )
+      || taskContract?.requiredCompletionBasis === 'response'
+      || taskContract?.requiredCompletionBasis === 'user_input'
+    );
+    const persistedNeedsAction = Boolean(isPersistedContinuation && !evidenceAlreadyAvailable);
+    const persistedActionType: EnvironmentRouterDecision['actionType'] = !persistedNeedsAction
+      ? 'none'
+      : taskContract?.motionClass
+        ? 'robot_movement'
+        : 'environment_action';
+    const deterministicCompletionBasis = taskContract?.requiredCompletionBasis === 'none'
+      ? null
+      : taskContract?.requiredCompletionBasis;
+    const persistedRoutingAnalysis: EnvironmentRouterDecision | null = (
+      isPersistedContinuation && taskContract && deterministicCompletionBasis
+    )
+      ? {
+          needsMemory: false,
+          memoryTier: 'hot',
+          memoryQuery: '',
+          memoryTypes: [],
+          needsEnvironment: true,
+          needsVision: taskContract.requiredCompletionBasis === 'visual_observation',
+          needsAction: persistedNeedsAction,
+          actionType: persistedActionType,
+          actionParams: {
+            continuationPolicy: taskContract.continuationPolicy,
+            requiredCompletionBasis: deterministicCompletionBasis,
+            ...(taskContract.motionClass ? { motionClass: taskContract.motionClass } : {}),
+          },
+          complexity: 0.2,
+          responseStyle: 'conversational',
+          responseLength: 'brief',
+          isFollowUp: true,
+          emotionalTone: 'neutral',
+        }
+      : null;
 
     return {
       observation,
       instruction,
       routingRequest,
+      persistedRoutingAnalysis,
       text,
       state: observation.state ?? {},
       location: observation.location ?? null,

@@ -2,7 +2,6 @@ import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
-import { readBoredomMovementCycle } from '../../robot-operator.js';
 import { defineNode } from '../types.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -169,10 +168,8 @@ export const robotOperatorContextBuilderNode = defineNode({
     const frames = [observation.visual, ...(observation.visuals ?? [])]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .map(frameSummary);
-    const boredomMovement = readBoredomMovementCycle(observation);
     const stimulus = {
       observedAt: observation.timestamp,
-      freshVisualTiming: boredomMovement ? 'after_intention' : 'before_intention',
       state: boundedObject(observation.state, 8_000),
       location: boundedObject(observation.location, 4_000),
       map: boundedObject(observation.map, 4_000),
@@ -183,21 +180,34 @@ export const robotOperatorContextBuilderNode = defineNode({
         timestamp: event.timestamp,
       })),
       visualFrames: frames,
-      recentIdleThoughts,
     };
     const systemContent = [systemPrompt, personaText].filter(Boolean).join('\n\n');
     const stimulusText = JSON.stringify({ robotStimulus: stimulus });
     const userContent = images.length > 0
       ? [{ type: 'text', text: stimulusText }, ...images]
       : stimulusText;
+    const idleThoughtContext = recentIdleThoughts.length > 0
+      ? {
+          role: 'assistant',
+          content: JSON.stringify({
+            idleThoughtContext: {
+              provenance: 'prior_inner_dialogue',
+              currentEvidence: false,
+              entries: recentIdleThoughts,
+            },
+          }),
+        }
+      : null;
 
     return {
       messages: [
         { role: 'system', content: systemContent },
+        ...(idleThoughtContext ? [idleThoughtContext] : []),
         { role: 'user', content: userContent },
       ],
       context: {
         stimulus,
+        idleThoughtContext: recentIdleThoughts,
         personaIncluded: Boolean(personaText),
         canonicalInnerEntryCount,
         idleThoughtCount: recentIdleThoughts.length,

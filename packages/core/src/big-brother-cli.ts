@@ -6,6 +6,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { loadFreshOperatorConfig } from './config.js'
 import type { EscalationOptions, ReasoningStep } from './escalation-backend.js'
+import { DEFAULT_PROVIDER_IMAGE_POLICY, parseProviderImageDataUrl } from './providers/types.js'
 import { loadToolExecutorConfig, type CLIBackendConfig } from './tool-executor-config.js'
 
 export type TerminalBigBrotherProvider = 'claude-code' | 'codex'
@@ -214,6 +215,40 @@ function ensureArg(args: string[], arg: string, value?: string): void {
   if (value !== undefined) args.push(value)
 }
 
+function ensureConfigOverride(args: string[], key: string, value: string): void {
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if ((args[index] === '--config' || args[index] === '-c')
+      && args[index + 1]?.startsWith(`${key}=`)) return
+  }
+  args.push('--config', `${key}=${JSON.stringify(value)}`)
+}
+
+function materializeCodexImages(tempDir: string, options: EscalationOptions): string[] {
+  const images = options.images || []
+  if (images.length === 0) return []
+  if (images.length > DEFAULT_PROVIDER_IMAGE_POLICY.maxImages) {
+    throw new Error(`Codex Big Brother accepts at most ${DEFAULT_PROVIDER_IMAGE_POLICY.maxImages} images per request`)
+  }
+
+  const extensions: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  }
+
+  return images.map((image, index) => {
+    const parsed = parseProviderImageDataUrl(
+      `data:${image.mimeType};base64,${image.base64}`,
+      DEFAULT_PROVIDER_IMAGE_POLICY,
+    )
+    const extension = extensions[parsed.mimeType]
+    if (!extension) throw new Error(`Codex Big Brother does not support ${parsed.mimeType} attachments`)
+    const imagePath = path.join(tempDir, `image-${index + 1}.${extension}`)
+    fs.writeFileSync(imagePath, Buffer.from(parsed.base64, 'base64'), { mode: 0o600 })
+    return imagePath
+  })
+}
+
 export function buildBigBrotherCLIInvocation(
   provider: TerminalBigBrotherProvider,
   prompt: string,
@@ -252,6 +287,7 @@ export function buildBigBrotherCLIInvocation(
 
   if (args.length === 0 || (args[0] !== 'exec' && args[0] !== 'e')) args.unshift('exec')
   ensureArg(args, '--json')
+  ensureConfigOverride(args, 'model_reasoning_effort', backend.reasoningEffort || 'low')
   const colorIndex = args.indexOf('--color')
   if (colorIndex >= 0 && colorIndex + 1 < args.length) args[colorIndex + 1] = 'never'
   else args.push('--color', 'never')
@@ -259,6 +295,15 @@ export function buildBigBrotherCLIInvocation(
   const resultFile = path.join(tempDir, 'last-message.txt')
   ensureArg(args, '--output-last-message', resultFile)
   if (backend.dangerouslySkipPermissions) ensureArg(args, '--dangerously-bypass-approvals-and-sandbox')
+
+  try {
+    const imagePaths = materializeCodexImages(tempDir, options)
+    // Keep this variadic option last so no later flags can be mistaken for image paths.
+    if (imagePaths.length > 0) args.push('--image', ...imagePaths)
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+    throw error
+  }
 
   return {
     command: backend.command || 'codex',

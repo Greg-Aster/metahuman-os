@@ -1,8 +1,12 @@
 import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import {
   hasFreshCorrelatedVisual,
+  isEnvironmentActiveViewTerminalStatus,
+  normalizeEnvironmentActiveViewProgress,
   type EnvironmentAction,
   type EnvironmentFeedback,
+  type EnvironmentMotionClass,
+  type EnvironmentMotionControlState,
   type EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import {
@@ -41,6 +45,8 @@ export interface EnvironmentTaskRefinementRequest {
   maxSteps: number;
   continuationPolicy: Extract<EnvironmentContinuationPolicy, 'bounded'>;
   requiredCompletionBasis: EnvironmentCompletionBasis;
+  motionClass?: EnvironmentMotionClass;
+  motionControl?: EnvironmentMotionControlState;
   requireExternalCompletionEvidence?: boolean;
   result: {
     outcome: EnvironmentTaskOutcome;
@@ -208,10 +214,14 @@ export const environmentTaskValidatorNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'actions', type: 'array', optional: true, description: 'Current-pass semantic actions from Environment Action Parser' },
+    { name: 'generatedActions', type: 'array', optional: true, description: 'Strictly validated body-local actions from Movement Generator' },
     { name: 'movementRequest', type: 'object', optional: true, description: 'Current-pass off-script movement request' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass through' },
+    { name: 'generatedResponse', type: 'string', optional: true, description: 'Movement Generator result or typed rejection' },
+    { name: 'motionControlResult', type: 'object', optional: true, description: 'Cycle-owned motion-plan ready/stuck result' },
     { name: 'taskDecision', type: 'object', optional: true, description: 'Structured completion decision produced by the Environment LLM' },
     { name: 'taskDecisionError', type: 'string', optional: true, description: 'Task-decision parsing error from Environment Action Parser' },
+    { name: 'actionAdmission', type: 'object', optional: true, description: 'Typed capability admission result from Environment Action Parser' },
     { name: 'evidenceAssessment', type: 'object', optional: true, description: 'Independent frame-bound assessment of a claimed visual completion' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current Environment instruction' },
     { name: 'observation', type: 'object', optional: true, description: 'Current observation and terminal action feedback' },
@@ -233,18 +243,35 @@ export const environmentTaskValidatorNode = defineNode({
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : undefined;
-    const actions = Array.isArray(inputs.actions)
+    const parsedActions = Array.isArray(inputs.actions)
       ? inputs.actions.filter(isRecord) as Partial<EnvironmentAction>[]
       : [];
+    const generatedActions = Array.isArray(inputs.generatedActions)
+      ? inputs.generatedActions.filter(isRecord) as Partial<EnvironmentAction>[]
+      : [];
+    const actions = [...parsedActions, ...generatedActions];
     const movementRequest = isRecord(inputs.movementRequest)
       ? inputs.movementRequest as unknown as EnvironmentMovementRequest
       : null;
     const hasCandidateWork = actions.length > 0 || movementRequest !== null;
-    const response = cleanText(inputs.response, 4_000);
+    const candidateResponse = cleanText(inputs.generatedResponse, 4_000)
+      || cleanText(inputs.response, 4_000);
+    const motionControlResult = isRecord(inputs.motionControlResult)
+      ? inputs.motionControlResult
+      : null;
     const taskDecision = isRecord(inputs.taskDecision)
       ? inputs.taskDecision as unknown as EnvironmentTaskDecision
       : null;
     const taskDecisionError = cleanText(inputs.taskDecisionError, 500);
+    const actionAdmission = isRecord(inputs.actionAdmission) ? inputs.actionAdmission : null;
+    const actionAdmissionBlocked = Boolean(
+      actionAdmission?.kind === 'environment_action_admission'
+      && actionAdmission.admitted === false
+      && cleanText(actionAdmission.reason, 200),
+    );
+    const actionAdmissionReason = actionAdmissionBlocked
+      ? cleanText(actionAdmission?.reason, 200)
+      : '';
     const evidenceAssessment = isRecord(inputs.evidenceAssessment)
       ? inputs.evidenceAssessment as unknown as EnvironmentVisualEvidenceAssessment
       : null;
@@ -255,11 +282,34 @@ export const environmentTaskValidatorNode = defineNode({
     const source = taskSource(observation, context);
     const objective = taskObjective(observation, inputs.instruction, context);
     const terminal = latestTerminalFeedback(observation);
+    const activeViewProgress = normalizeEnvironmentActiveViewProgress(
+      terminal?.data?.activeViewProgress,
+    );
+    const activeViewStopped = Boolean(
+      activeViewProgress
+      && isEnvironmentActiveViewTerminalStatus(activeViewProgress.status)
+      && activeViewProgress.status !== 'reached',
+    );
+    const motionStuck = motionControlResult?.status === 'stuck' || activeViewStopped;
+    const motionStuckReason = motionControlResult?.status === 'stuck'
+      ? cleanText(motionControlResult?.reason, 200) || 'motion_stuck'
+      : activeViewStopped
+        ? `active_view_${activeViewProgress!.status}`
+        : '';
+    const response = candidateResponse
+      || (activeViewStopped ? cleanText(terminal?.message, 4_000) : '');
     const cycle = readRobotObserverCycle(observation);
     const config = loadRobotOperatorConfig();
     const maxSteps = cycle?.maxSteps ?? config.maxCycleSteps;
     const step = cycle?.step ?? 1;
     const commandMetadata = taskCommandMetadata(observation);
+    const motionControl = isRecord(motionControlResult?.state)
+      ? motionControlResult.state as unknown as EnvironmentMotionControlState
+      : isRecord(observation?.metadata?.motionControl)
+        ? observation.metadata.motionControl as unknown as EnvironmentMotionControlState
+        : isRecord(commandMetadata?.motionControl)
+          ? commandMetadata.motionControl as unknown as EnvironmentMotionControlState
+          : undefined;
     const persistedContract = environmentTaskContractFromObservation(observation);
     const fallbackCompletionBasis: EnvironmentCompletionBasis = (
       taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
@@ -275,6 +325,7 @@ export const environmentTaskValidatorNode = defineNode({
         objective,
         continuationPolicy: taskDecision?.continuationPolicy === 'bounded' ? 'bounded' : 'none',
         requiredCompletionBasis: fallbackCompletionBasis,
+        ...(taskDecision?.motionClass ? { motionClass: taskDecision.motionClass } : {}),
       };
     const continuationPolicy = taskContract.continuationPolicy;
     const requiredCompletionBasis = taskContract.requiredCompletionBasis;
@@ -383,7 +434,11 @@ export const environmentTaskValidatorNode = defineNode({
       && response
       && delegatedOperatorInstruction.toLowerCase() === response.toLowerCase()
     );
-    const outcome = complete
+    const outcome = motionStuck
+      ? 'request_user'
+      : actionAdmissionBlocked
+      ? 'request_user'
+      : complete
       ? 'complete'
       : prematureCompletionWithWork
       ? 'act'
@@ -396,7 +451,7 @@ export const environmentTaskValidatorNode = defineNode({
       && actions.length === 0
       && !movementRequest
       && !effectiveClaimedComplete
-      && !currentActionRequired
+      && (!currentActionRequired || actionAdmissionBlocked || motionStuck)
       && !operatorIntentionEcho
     );
     const stepResultReady = Boolean(terminal || responseStepComplete);
@@ -414,7 +469,9 @@ export const environmentTaskValidatorNode = defineNode({
       && objective
       && queueSource
       && step < maxSteps
-      && !complete,
+      && !complete
+      && !actionAdmissionBlocked
+      && !motionStuck,
     );
     const refinementReason = cleanText(
       visualAssessmentRejected ? evidenceAssessment?.reason : '',
@@ -439,6 +496,8 @@ export const environmentTaskValidatorNode = defineNode({
           maxSteps,
           continuationPolicy: 'bounded',
           requiredCompletionBasis,
+          ...(taskContract.motionClass ? { motionClass: taskContract.motionClass } : {}),
+          ...(motionControl ? { motionControl } : {}),
           requireExternalCompletionEvidence: externalCompletionEvidenceRequired,
           result: {
             outcome,
@@ -462,7 +521,9 @@ export const environmentTaskValidatorNode = defineNode({
       : null;
 
     let blockedReason = '';
-    if (visualAssessmentRejected) blockedReason = 'visual_completion_unverified';
+    if (motionStuck) blockedReason = motionStuckReason;
+    else if (actionAdmissionBlocked) blockedReason = actionAdmissionReason;
+    else if (visualAssessmentRejected) blockedReason = 'visual_completion_unverified';
     else if (requiredActionMissing) blockedReason = 'required_action_missing';
     else if (effectiveClaimedComplete && !completionSupported && !oneShotTerminalComplete) blockedReason = 'objective_completion_unverified';
     else if (stepResultReady && incomplete && !objective) blockedReason = 'missing_objective';
@@ -483,7 +544,7 @@ export const environmentTaskValidatorNode = defineNode({
     );
     const responseSuppressed = Boolean(
       shouldRefine
-      || requiredActionNotAdmitted
+      || (requiredActionNotAdmitted && !actionAdmissionBlocked && !motionStuck)
       || unverifiedCompletionClaim
       || operatorIntentionEcho
     );
@@ -519,6 +580,11 @@ export const environmentTaskValidatorNode = defineNode({
         stepComplete: stepResultReady,
         continuationPolicy,
         requiredCompletionBasis,
+        motionClass: taskContract.motionClass ?? null,
+        actionAdmission,
+        motionControl,
+        motionControlResult,
+        activeViewProgress,
         taskContractSource: taskDecision?.taskContractSource ?? null,
         taskContractConflict: taskDecision?.taskContractConflict ?? null,
         externalCompletionEvidenceRequired,
@@ -550,6 +616,7 @@ export const environmentTaskValidatorNode = defineNode({
             currentInstruction: cleanText(inputs.instruction, 500) || undefined,
             continuationPolicy,
             requiredCompletionBasis,
+            ...(taskContract.motionClass ? { motionClass: taskContract.motionClass } : {}),
           })
         : '',
     };

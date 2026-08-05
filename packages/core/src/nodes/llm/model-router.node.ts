@@ -71,9 +71,10 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       return { response: response.content };
     } catch (error) {
       console.error('[ModelRouter] Error:', error);
+      const message = error instanceof Error ? error.message : 'Unknown model routing error';
       return {
-        response: 'Error routing to model',
-        error: (error as Error).message,
+        response: `Model routing failed: ${message}`,
+        error: message,
       };
     }
   },

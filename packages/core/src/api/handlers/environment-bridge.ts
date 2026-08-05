@@ -11,6 +11,8 @@ import {
 } from '../types.js';
 import {
   dispatchEnvironmentActions,
+  attachEnvironmentObservationTiming,
+  attachEnvironmentActionContext,
   getEnvironmentBridgeDiagnosticMedia,
   getEnvironmentBridgeDiagnosticsSnapshot,
   publishEnvironmentObservation,
@@ -28,10 +30,13 @@ import {
   type EnvironmentBridgeDiagnosticEvent,
   type EnvironmentFeedback,
   type EnvironmentObservation,
+  mergeEnvironmentActionTiming,
+  environmentActionStageDurations,
 } from '../../environment-interface/index.js';
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
 import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
+import { readBoredomMovementCycle, readRobotObserverCycle } from '../../robot-operator.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -92,8 +97,23 @@ export function environmentObservationNeedsCognition(
   const hasText = observation.text?.some(event => event.text.trim().length > 0) === true;
   const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
   const hasFeedback = Boolean(observation.feedback?.length);
+  const robotObserver = readRobotObserverCycle(observation);
+  const boredomMovement = readBoredomMovementCycle(observation);
+  const autonomousCaptureEndedWithoutVisual = Boolean(
+    (robotObserver?.requestedBy === 'robot-observer' || boredomMovement)
+    && !hasVisual
+    && observation.feedback?.some(feedback => (
+      feedback.type === 'completed'
+      || feedback.type === 'rejected'
+      || feedback.type === 'cancelled'
+      || feedback.type === 'expired'
+      || feedback.type === 'failed'
+    )),
+  );
+  if (!hasText && autonomousCaptureEndedWithoutVisual) return false;
   const hasPerceptionMetadata = Boolean(
     observation.metadata?.robotObserver
+    || observation.metadata?.boredomMovement
     || observation.metadata?.perceptionEvent,
   );
   if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
@@ -160,7 +180,12 @@ export async function handleEnvironmentBridgeObservation(
   }
 
   try {
-    const observation = body as unknown as EnvironmentObservation;
+    const receivedAt = new Date().toISOString();
+    const timedObservation = attachEnvironmentObservationTiming(
+      body as unknown as EnvironmentObservation,
+      { coreObservationReceivedAt: receivedAt },
+    );
+    const observation = attachEnvironmentActionContext(timedObservation);
     recordEnvironmentBridgeDiagnosticObservation(observation);
     const username = resolveUsername()?.trim() ?? '';
     const graph = requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
@@ -353,6 +378,16 @@ export async function handleEnvironmentBridgeActionResult(
   if (!feedback) {
     return badRequestResponse('Invalid action result payload');
   }
+
+  const actionTiming = mergeEnvironmentActionTiming(
+    feedback.data?.actionTiming,
+    { coreFeedbackReceivedAt: new Date().toISOString() },
+  );
+  feedback.data = {
+    ...(feedback.data ?? {}),
+    actionTiming,
+    actionStageDurations: environmentActionStageDurations(actionTiming),
+  };
 
   const result = recordEnvironmentActionResult(feedback);
   if (!result) {

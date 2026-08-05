@@ -108,6 +108,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
+    { name: 'precomputedAnalysis', type: 'object', optional: true, description: 'Strict Core-owned routing result for a persisted workflow continuation' },
   ],
   outputs: [
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
@@ -173,6 +174,10 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const conversationHistory = inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
     const systemSettings = inputs.systemSettings || inputs[2] || {};
     const feedbackContext = inputs.feedbackContext || inputs[3] || null;
+    if (context.cognitiveMode === 'environment' && inputs.precomputedAnalysis) {
+      const validated = validateEnvironmentRouterDecision(inputs.precomputedAnalysis);
+      if (validated.valid && validated.value) return withAnalysis(validated.value);
+    }
 
     const userMessage = typeof inputData === 'string'
       ? inputData

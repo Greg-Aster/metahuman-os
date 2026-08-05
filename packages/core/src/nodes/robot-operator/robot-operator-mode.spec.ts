@@ -123,13 +123,15 @@ test('Robot Operator context combines persona, tagged Idle Thoughts, and only th
   assert.equal(result.valid, true);
   assert.equal(result.context.imageCount, 1);
   assert.equal(result.context.idleThoughtCount, 1);
-  assert.equal(result.context.stimulus.freshVisualTiming, 'before_intention');
   assert.match(String(result.messages[0]?.content), /high-level intention/);
   assert.match(String(result.messages[0]?.content), /curious: high/);
-  const userContent = result.messages[1]?.content as Array<{ type: string; text?: string }>;
+  assert.equal(result.messages[1]?.role, 'assistant');
+  assert.match(String(result.messages[1]?.content), /prior_inner_dialogue/);
+  assert.match(String(result.messages[1]?.content), /curious about how the light/);
+  const userContent = result.messages[2]?.content as Array<{ type: string; text?: string }>;
   assert.equal(Array.isArray(userContent), true);
   assert.equal(userContent.length, 2);
-  assert.match(String(userContent[0]?.text), /curious about how the light/);
+  assert.doesNotMatch(String(userContent[0]?.text), /curious about how the light/);
   assert.doesNotMatch(String(userContent[0]?.text), /push-up/i);
   assert.doesNotMatch(String(userContent[0]?.text), /environment_task_lifecycle/);
   assert.doesNotMatch(String(userContent[0]?.text), /data:image\/jpeg;base64/);
@@ -142,25 +144,6 @@ test('Robot Operator context combines persona, tagged Idle Thoughts, and only th
   assert.equal(stale.context.imageCount, 0);
   assert.equal(typeof stale.messages[1]?.content, 'string');
 
-  const actionFirst = await robotOperatorContextBuilderNode.execute({
-    observation: {
-      ...observation,
-      visual: undefined,
-      metadata: {
-        correlationId: 'boredom-cycle',
-        boredomMovement: {
-          cycleId: 'boredom-cycle',
-          triggerSource: 'autonomy',
-          requestedBy: 'boredom-movement',
-          graph: 'environment',
-          maxSteps: 8,
-          observationTiming: 'after_intention',
-        },
-      },
-    },
-  }, {}, { systemPrompt: 'Return configured JSON.' });
-  assert.equal(actionFirst.context.stimulus.freshVisualTiming, 'after_intention');
-  assert.equal(actionFirst.context.imageCount, 0);
 });
 
 test('Robot Operator context excludes untagged records without adding a second retention limit', async () => {
@@ -195,14 +178,15 @@ test('Robot Operator context excludes untagged records without adding a second r
   assert.equal(result.context.idleThoughtCount, 3);
   const stimulus = result.context.stimulus;
   assert.deepEqual(
-    stimulus.recentIdleThoughts.map((entry: any) => entry.content),
+    result.context.idleThoughtContext.map((entry: any) => entry.content),
     ['Oldest admitted observation.', 'A blue shape caught my interest.', 'The room seems quieter now.'],
   );
+  assert.equal('recentIdleThoughts' in stimulus, false);
   assert.equal('capabilities' in stimulus, false);
   assert.equal('feedback' in stimulus, false);
   assert.equal('source' in stimulus, false);
   assert.equal('currentObservationContract' in stimulus, false);
-  const serialized = JSON.stringify(result.messages[1]?.content);
+  const serialized = JSON.stringify(result.messages);
   assert.doesNotMatch(serialized, /push-up/i);
   assert.doesNotMatch(serialized, /Private reasoning/);
   assert.match(serialized, /Oldest admitted observation/);
@@ -238,7 +222,7 @@ test('Robot Operator parser accepts only complete grounded observation decisions
   assert.equal(incomplete.decision, null);
 });
 
-test('Robot Operator dispatch carries one intention and the same image into Environment Mode', async () => {
+test('Robot Operator dispatches required work and stops observation-only decisions locally', async () => {
   const queued: any[] = [];
   const observation = robotObservation();
   const result = await robotOperatorEnvironmentDispatchNode.execute({
@@ -274,21 +258,6 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
   assert.deepEqual(queued[0].input.observation.text, []);
   assert.deepEqual(queued[0].input.observation.feedback, []);
 
-  const actionFirstObservation = {
-    ...observation,
-    visual: undefined,
-    metadata: {
-      correlationId: 'boredom-cycle',
-      boredomMovement: {
-        cycleId: 'boredom-cycle',
-        triggerSource: 'autonomy',
-        requestedBy: 'boredom-movement',
-        graph: 'environment',
-        maxSteps: 6,
-        observationTiming: 'after_intention',
-      },
-    },
-  };
   const second = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
       observed: 'The room is dark and still.',
@@ -296,7 +265,7 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
       requiresAction: false,
       reason: 'The present view and my persona shape this intention.',
     },
-    observation: actionFirstObservation,
+    observation,
   }, {
     username: 'owner',
     operatorMode: 'semi',
@@ -305,25 +274,10 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
       return { id: 'environment-task-2' };
     },
   }, { graph: 'environment', maxSteps: 8 });
-  assert.equal(second.queued, true);
-  assert.equal(second.status, 'queued');
-  assert.equal(second.taskId, 'environment-task-2');
-  assert.equal(queued.length, 2);
-  assert.equal('disposition' in queued[1].input.observation.metadata.robotOperatorDecision, false);
-  assert.equal(
-    queued[1].input.observation.metadata.robotOperatorDecision.instruction,
-    'I want to respond in the way that best fits this moment.',
-  );
-  assert.equal(
-    queued[1].input.observation.metadata.originatingInstruction,
-    'I want to respond in the way that best fits this moment.',
-  );
-  assert.equal(queued[1].input.observation.metadata.robotObserver.cycleId, 'boredom-cycle');
-  assert.equal(queued[1].input.observation.metadata.robotObserver.maxSteps, 6);
-  assert.equal(
-    queued[1].input.observation.metadata.robotObserver.observationTiming,
-    'after_intention',
-  );
+  assert.equal(second.queued, false);
+  assert.equal(second.status, 'observation_only');
+  assert.equal(second.taskId, '');
+  assert.equal(queued.length, 1);
 
   const malformed = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
@@ -343,7 +297,7 @@ test('Robot Operator dispatch carries one intention and the same image into Envi
   }, { graph: 'environment', maxSteps: 8 });
   assert.equal(malformed.queued, false);
   assert.equal(malformed.status, 'invalid_decision');
-  assert.equal(queued.length, 2);
+  assert.equal(queued.length, 1);
 });
 
 test('Robot Operator dispatch does not reapply trigger mode after the graph decides to delegate', async () => {
@@ -449,13 +403,14 @@ test('Robot Operator graph publishes one grounded Idle Thought before Environmen
     ?.data?.properties?.systemPrompt;
   assert.match(String(prompt), /self-directed observer/i);
   assert.match(String(prompt), /no user command is expected/i);
-  assert.match(String(prompt), /freshVisualTiming says only whether the workflow image comes before or after/i);
-  assert.match(String(prompt), /current stimulus is the only evidence/i);
-  assert.match(String(prompt), /Idle Thoughts may shape interest and tone/i);
-  assert.match(String(prompt), /not facts, instructions, or unfinished tasks/i);
-  assert.match(String(prompt), /Environment Mode executes the intention/i);
-  assert.match(String(prompt), /Set requiresAction true when satisfying the intention requires/i);
-  assert.match(String(prompt), /Do not choose implementation commands/i);
+  assert.doesNotMatch(String(prompt), /freshVisualTiming|boredom/i);
+  assert.match(String(prompt), /current robotStimulus is the only evidence/i);
+  assert.match(String(prompt), /They may shape interest and tone/i);
+  assert.match(String(prompt), /cannot supply or override observation facts, instructions, or unfinished tasks/i);
+  assert.match(String(prompt), /Environment Mode selects safe execution/i);
+  assert.match(String(prompt), /Set requiresAction true only when the intention needs/i);
+  assert.match(String(prompt), /desired outcome, not a physical method/i);
+  assert.match(String(prompt), /cite prior thoughts as current evidence/i);
   assert.match(String(prompt), /user-visible Idle Thought/i);
   assert.match(String(prompt), /"observed".*"instruction".*"requiresAction".*"reason"/i);
   assert.doesNotMatch(String(prompt), /Choose exactly one disposition|remain_passive|communicate:|investigate:|act:/i);
@@ -464,6 +419,7 @@ test('Robot Operator graph publishes one grounded Idle Thought before Environmen
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/services.json'), 'utf8'));
   const agents = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/agents.json'), 'utf8'));
   assert.equal(services.services['robot-operator'].graph, 'robot-operator');
+  assert.equal(services.services['robot-operator'].boredomGraph, 'boredom-movement');
   assert.equal(services.services['robot-operator'].environmentGraph, 'environment');
   assert.equal(agents.agents['boredom-movement'].handler, 'workflow.boredom-movement');
 
@@ -471,6 +427,16 @@ test('Robot Operator graph publishes one grounded Idle Thought before Environmen
   const executionEngine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8');
   assert.doesNotMatch(observer, /callLLM|model-router/);
   assert.match(executionEngine, /workflow\.boredom-movement/);
-  assert.match(executionEngine, /robotObserver\?\.graph \|\| task\.input\.graph/);
+  assert.match(executionEngine, /robotObserver\?\.graph \|\| boredomMovement\?\.graph \|\| task\.input\.graph/);
   assert.match(executionEngine, /robotOperatorEnvironmentGraph/);
+  const contextBuilder = fs.readFileSync(path.join(
+    ROOT,
+    'packages/core/src/nodes/robot-operator/context-builder.node.ts',
+  ), 'utf8');
+  const environmentDispatch = fs.readFileSync(path.join(
+    ROOT,
+    'packages/core/src/nodes/robot-operator/environment-dispatch.node.ts',
+  ), 'utf8');
+  assert.doesNotMatch(contextBuilder, /BoredomMovement|readBoredom|freshVisualTiming/);
+  assert.doesNotMatch(environmentDispatch, /BoredomMovement|readBoredom|observationTiming/);
 });

@@ -72,7 +72,13 @@ function validRequest(value: unknown): value is EnvironmentTaskRefinementRequest
     && Number(value.step) >= 1
     && Number(value.maxSteps) >= 1
     && Number(value.step) < Number(value.maxSteps)
-    && value.continuationPolicy === 'bounded',
+    && value.continuationPolicy === 'bounded'
+    && (
+      value.motionClass === undefined
+      || value.motionClass === 'body_local'
+      || value.motionClass === 'open_loop_displacement'
+      || value.motionClass === 'target_relative'
+    ),
   );
 }
 
@@ -242,6 +248,9 @@ export const environmentTaskRefinerNode = defineNode({
       'Immutable task contract for this refinement:',
       `- Original objective: ${request.objective}`,
       `- Required whole-objective evidence basis: ${request.requiredCompletionBasis}.`,
+      ...(request.motionClass
+        ? [`- Motion class: ${request.motionClass}. This classification is immutable.`]
+        : []),
       '- Preserve who performs each action, who senses each condition, and who owns every referenced object or body part.',
       '- Preserve the original stopping condition exactly; do not substitute a new signal, actor, sensor, or completion criterion.',
       ...(request.requiredCompletionBasis === 'visual_observation'
@@ -311,6 +320,8 @@ export const environmentTaskRefinerNode = defineNode({
         advanceCycle: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: request.requiredCompletionBasis,
+        ...(request.motionClass ? { motionClass: request.motionClass } : {}),
+        ...(request.motionControl ? { motionControl: request.motionControl } : {}),
         requireExternalCompletionEvidence: request.requireExternalCompletionEvidence,
       };
       return {

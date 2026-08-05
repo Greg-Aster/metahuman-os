@@ -20,8 +20,16 @@ import {
   normalizeEnvironmentMotionPlanFields,
 } from './motion-plan.js';
 import {
-  nextRobotObserverCycle,
-  readRobotObserverCycle,
+  attachEnvironmentObservationTiming,
+  environmentActionStageDurations,
+  mergeEnvironmentActionTiming,
+} from './timing.js';
+import {
+  normalizeEnvironmentVisualInspectionTarget,
+  normalizeEnvironmentVisualTarget,
+} from './visual-approach.js';
+import {
+  readBoredomMovementCycle,
 } from '../robot-operator.js';
 
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
@@ -34,10 +42,10 @@ const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
 const MAX_IMAGE_ACQUISITION_AGE_MS = 10_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'speak', 'sendText',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'speak', 'sendText',
 ]);
 const NON_REPLAYABLE_ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach',
 ]);
 
 function maxQueueAgeMs(type: EnvironmentActionType): number {
@@ -51,6 +59,10 @@ type BridgeStateSubscriber = () => void;
 const actionSubscribers = new Map<string, Set<ActionSubscriber>>();
 const bridgeStateSubscribers = new Set<BridgeStateSubscriber>();
 let bridgeStateNotificationPending = false;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -120,6 +132,11 @@ function commandStatus(task: QueuedTask): EnvironmentCommandWork['status'] {
 function commandView(task: QueuedTask): EnvironmentCommandWork {
   const action = task.input as Omit<EnvironmentAction, 'id' | 'createdAt'>;
   const feedback = task.result?.feedback as EnvironmentFeedback | undefined;
+  const timing = mergeEnvironmentActionTiming(
+    action.timing,
+    { queueEnteredAt: task.createdAt, leaseGrantedAt: task.startedAt },
+    feedback?.data?.actionTiming,
+  );
   return {
     id: task.id,
     createdAt: task.createdAt,
@@ -129,6 +146,11 @@ function commandView(task: QueuedTask): EnvironmentCommandWork {
     completedAt: task.completedAt,
     result: feedback,
     correlationId: task.correlationId,
+    timing,
+    metadata: {
+      ...(action.metadata ?? {}),
+      actionStageDurations: environmentActionStageDurations(timing),
+    },
   };
 }
 
@@ -194,18 +216,53 @@ export function attachEnvironmentActionContext(
       : { ...observation, metadata };
   }
   const task = getQueueManager().getTask(actionId);
+  const taskInputMetadata = isRecord(task?.input?.metadata)
+    ? task.input.metadata
+    : null;
+  if (!isRecord(metadata.robotObserver) && isRecord(taskInputMetadata?.robotObserver)) {
+    metadata.robotObserver = taskInputMetadata.robotObserver;
+  }
+  if (!isRecord(metadata.boredomMovement) && isRecord(taskInputMetadata?.boredomMovement)) {
+    metadata.boredomMovement = taskInputMetadata.boredomMovement;
+  }
+  if (!isRecord(metadata.motionControl) && isRecord(taskInputMetadata?.motionControl)) {
+    metadata.motionControl = taskInputMetadata.motionControl;
+  }
+  if (typeof metadata.correlationId !== 'string' && task?.correlationId) {
+    metadata.correlationId = task.correlationId;
+  }
+  if (typeof metadata.actionId !== 'string') metadata.actionId = actionId;
+  const taskFeedback = isRecord(task?.result?.feedback)
+    ? task.result.feedback
+    : null;
+  const taskFeedbackData = isRecord(taskFeedback?.data)
+    ? taskFeedback.data
+    : null;
+  const observationFeedbackData = observation.feedback
+    ?.filter(item => item.actionId === actionId)
+    .map(item => item.data)
+    .filter(isRecord);
+  const actionTiming = mergeEnvironmentActionTiming(
+    task?.input?.timing,
+    { queueEnteredAt: task?.createdAt, leaseGrantedAt: task?.startedAt },
+    taskFeedbackData?.actionTiming,
+    ...(observationFeedbackData?.map(data => data.actionTiming) ?? []),
+    metadata.actionTiming,
+  );
+  const contextualObservation = attachEnvironmentObservationTiming({
+    ...observation,
+    metadata,
+  }, actionTiming);
   const originatingInstruction = boundedOriginatingInstruction(
     task?.metadata?.originatingInstruction,
   );
   if (!originatingInstruction) {
-    return observation.metadata?.originatingInstruction === undefined
-      ? observation
-      : { ...observation, metadata };
+    return contextualObservation;
   }
   return {
-    ...observation,
+    ...contextualObservation,
     metadata: {
-      ...metadata,
+      ...contextualObservation.metadata,
       originatingInstruction,
     },
   };
@@ -256,7 +313,8 @@ export function applyRobotStatusToEnvironmentObservation(
 
   const cameraReady = robotStatus.camera_ready;
   const actions: EnvironmentActionType[] = observation.capabilities.actions.filter(
-    action => action !== 'captureImage',
+    action => action !== 'captureImage'
+      && (cameraReady || (action !== 'inspect' && action !== 'visualApproach')),
   );
   if (cameraReady) actions.push('captureImage');
   return {
@@ -335,6 +393,7 @@ export function publishEnvironmentObservation(
       producer: 'environment-bridge',
       sessionId: contextualObservation.sessionId,
       robotObserver: contextualObservation.metadata?.robotObserver,
+      boredomMovement: contextualObservation.metadata?.boredomMovement,
     },
   });
   return { summary, workId: work.id };
@@ -427,6 +486,12 @@ function normalizeAction(
     frames: motionPlan.frames,
     endPose: motionPlan.endPose,
   });
+  const inspectionTarget = action.type === 'inspect'
+    ? normalizeEnvironmentVisualInspectionTarget(action.inspectionTarget)
+    : undefined;
+  const visualTarget = action.type === 'visualApproach'
+    ? normalizeEnvironmentVisualTarget(action.visualTarget)
+    : undefined;
 
   const sessionId = action.sessionId || options.sessionId || getLatestEnvironmentObservation()?.sessionId;
   if (!sessionId) throw new Error('Environment action requires a connected target session');
@@ -443,6 +508,8 @@ function normalizeAction(
     target: action.target,
     frames: motionPlan?.frames,
     endPose: motionPlan?.endPose,
+    inspectionTarget,
+    visualTarget,
     speechArtifactId: action.speechArtifactId,
     speechDurationMs: action.speechDurationMs,
     metadata: action.metadata,
@@ -582,16 +649,14 @@ export interface RecordedEnvironmentActionResult {
   postActionObservation?: EnvironmentCommandWork;
 }
 
-function enqueueActionFirstObservation(task: QueuedTask): EnvironmentCommandWork | undefined {
+function enqueueBoredomPostMovementObservation(task: QueuedTask): EnvironmentCommandWork | undefined {
   if (task.input.type === 'captureImage') return undefined;
-  const cycle = readRobotObserverCycle({ metadata: task.input.metadata });
-  if (cycle?.observationTiming !== 'after_intention') return undefined;
-  const captureCycle = nextRobotObserverCycle(cycle);
-  if (!captureCycle) return undefined;
+  const cycle = readBoredomMovementCycle({ metadata: task.input.metadata });
+  if (!cycle) return undefined;
 
   const alreadyQueued = environmentTasks().some(candidate => {
     if (candidate.input.type !== 'captureImage') return false;
-    return readRobotObserverCycle({ metadata: candidate.input.metadata })?.cycleId === cycle.cycleId;
+    return readBoredomMovementCycle({ metadata: candidate.input.metadata })?.cycleId === cycle.cycleId;
   });
   if (alreadyQueued) return undefined;
 
@@ -599,14 +664,14 @@ function enqueueActionFirstObservation(task: QueuedTask): EnvironmentCommandWork
     {
       type: 'captureImage',
       sessionId: String(task.input.sessionId || ''),
-      metadata: { robotObserver: captureCycle },
+      metadata: { boredomMovement: cycle },
     },
     {
       username: task.username,
       source: cycle.triggerSource,
       correlationId: cycle.cycleId,
-      idempotencyKey: `boredom-movement:${cycle.cycleId}:post-action-image:${captureCycle.step}`,
-      originatingInstruction: boundedOriginatingInstruction(task.metadata?.originatingInstruction),
+      idempotencyKey: `boredom-movement:${cycle.cycleId}:post-movement-image`,
+      allowedActions: ['captureImage'],
     },
   );
 }
@@ -635,7 +700,7 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
   }
   const current = manager.getTask(task.id) || task;
   const postActionObservation = feedback.type === 'completed'
-    ? enqueueActionFirstObservation(current)
+    ? enqueueBoredomPostMovementObservation(current)
     : undefined;
   return {
     action: commandView(current),

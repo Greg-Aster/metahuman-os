@@ -173,7 +173,11 @@ test('validator preserves graph-authored actions without reapplying Active Opera
     instruction: 'Inspect the adjacent area.',
     observation: observation({ source: 'autonomy' }),
     sessionId: 'robot-1',
-    routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'body_local' },
+    },
   };
   const parsed = await environmentActionParserNode.execute(inputs, { operatorMode: 'semi' });
   assert.equal(parsed.actions.length, 1);
@@ -244,8 +248,13 @@ test('Environment Mode routes current work through the validator before bridge a
   assert(refiner);
   assert(refinementBuffer);
   assert.equal(conversationBuffers.length, 1);
+  const bridgeAllowedActions = bridge.data.properties?.allowedActions;
+  assert(Array.isArray(bridgeAllowedActions));
+  assert.equal(bridgeAllowedActions.includes('inspect'), true);
+  assert.equal(bridgeAllowedActions.includes('visualApproach'), true);
   assert.equal(graphEdge(parser.id, 'taskDecision', taskContract.id, 'taskDecision'), true);
   assert.equal(graphEdge(taskContract.id, 'taskDecision', validator.id, 'taskDecision'), true);
+  assert.equal(graphEdge(parser.id, 'actionAdmission', validator.id, 'actionAdmission'), true);
   assert.equal(graphEdge('context-router', 'analysis', validator.id, 'routingAnalysis'), true);
   assert.equal(graphEdge(validator.id, 'refinementRequest', refiner.id, 'request'), true);
   assert.equal(graphEdge(validator.id, 'workflowCommand', command.id, 'command'), false);
@@ -256,7 +265,11 @@ test('Environment Mode routes current work through the validator before bridge a
   assert.equal(graphEdge(parser.id, 'actions', bridge.id, 'actions'), false);
   assert.equal(graphEdge(validator.id, 'actions', bridge.id, 'actions'), true);
   assert.equal(graphEdge(validator.id, 'response', bridge.id, 'response'), true);
-  assert.equal(graphEdge(validator.id, 'movementRequest', 'movement-generator', 'movementRequest'), true);
+  assert.equal(graphEdge(parser.id, 'movementRequest', 'movement-generator', 'movementRequest'), true);
+  assert.equal(graphEdge('movement-generator', 'actions', validator.id, 'generatedActions'), true);
+  assert.equal(graphEdge('movement-generator', 'response', validator.id, 'generatedResponse'), true);
+  assert.equal(graphEdge('movement-generator', 'controlResult', validator.id, 'motionControlResult'), true);
+  assert.equal(graphEdge('movement-generator', 'actions', bridge.id, 'generatedActions'), false);
   assert.equal(graphEdge(taskContract.id, 'taskDecision', evidenceAssessor.id, 'taskDecision'), true);
   assert.equal(graphEdge('10', 'observation', evidenceAssessor.id, 'observation'), true);
   assert.equal(graphEdge('11', 'images', evidenceAssessor.id, 'images'), true);
@@ -270,11 +283,13 @@ test('Environment Mode routes current work through the validator before bridge a
     contextRouter?.data.properties?.userPromptTemplate,
   ].join('\n');
   assert.match(contextRouterPrompt, /future-tense commitment as outstanding work/i);
-  assert.match(contextRouterPrompt, /I will/i);
-  assert.match(contextRouterPrompt, /single advertised robot motion/i);
+  assert.match(contextRouterPrompt, /evidence that could actually prove the objective/i);
+  assert.match(contextRouterPrompt, /action_result proves only that the admitted command ran/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /outstanding, unexecuted objective/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /Do not copy the Task instruction verbatim/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /Before correlated terminal feedback/i);
+  assert.match(String(contextBuilder?.data.properties?.systemPrompt), /robotMotionPlan proves only that a bounded joint trajectory can execute/i);
+  assert.doesNotMatch(String(contextBuilder?.data.properties?.systemPrompt), /AINEKIO NAMED|turn_left_45|"command":"walk"/i);
   assert.match(String(contextBuilder?.data.properties?.systemPrompt), /Task Refiner LLM writes the next prompt/i);
   assert.match(String(evidenceAssessor.data.properties?.systemPrompt), /after a completed action step or an explicit completion claim/i);
   assert.match(String(evidenceAssessor.data.properties?.systemPrompt), /Preserve the original actors, ownership, sensor, and stopping condition/i);
@@ -378,7 +393,7 @@ test('validator suppresses an action narration when required work has no admitte
   assert.equal(result.decision.blockedReason, 'required_action_missing');
 });
 
-test('Robot Operator typed action requirement survives an advisory router false negative', async () => {
+test('Robot Operator action authorization cannot bypass a missing typed motion route', async () => {
   const instruction = 'I want Environment Mode to carry out this physical intention.';
   const delegatedObservation = observation({
     source: 'autonomy',
@@ -418,8 +433,9 @@ test('Robot Operator typed action requirement survives an advisory router false 
     },
   }, {});
 
-  assert.equal(parsed.actions.length, 1);
-  assert.equal(parsed.actions[0].command, 'walk');
+  assert.equal(parsed.actions.length, 0);
+  assert.equal(parsed.actionAdmission.admitted, false);
+  assert.equal(parsed.actionAdmission.reason, 'motion_route_not_authorized');
 
   const validated = await environmentTaskValidatorNode.execute({
     ...parsed,
@@ -431,9 +447,170 @@ test('Robot Operator typed action requirement survives an advisory router false 
     },
   }, { operatorMode: 'semi' });
 
-  assert.equal(validated.actions.length, 1);
+  assert.equal(validated.actions.length, 0);
   assert.equal(validated.decision.actionRequired, true);
-  assert.equal(validated.decision.admittedActionCount, 1);
+  assert.equal(validated.decision.admittedActionCount, 0);
+  assert.equal(validated.decision.blockedReason, 'motion_route_not_authorized');
+  assert.equal(validated.outcome, 'request_user');
+  assert.match(validated.response, /did not authorize robot movement/i);
+});
+
+test('target-relative capability rejection is visible and cannot enter bounded refinement', async () => {
+  const instruction = 'Move closer to the current scene target for a better view.';
+  const delegatedObservation = observation({
+    source: 'autonomy',
+    step: 1,
+    maxSteps: 4,
+    objective: instruction,
+  });
+  delegatedObservation.capabilities.actions.push('robotMotionPlan');
+  delegatedObservation.capabilities.motionClasses = ['body_local', 'open_loop_displacement'];
+  delegatedObservation.capabilities.navigation = false;
+  delegatedObservation.metadata = {
+    ...delegatedObservation.metadata,
+    robotOperatorDecision: {
+      observed: 'A scene target is present in the current image.',
+      instruction,
+      requiresAction: true,
+      reason: 'A closer view could provide additional evidence.',
+    },
+  };
+  const routingAnalysis = {
+    needsAction: true,
+    actionType: 'robot_movement',
+    actionParams: {
+      motionClass: 'target_relative',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+    },
+  };
+  const parsed = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I will move closer for a better view.',
+      actions: [{ type: 'robotCommand', command: 'walk' }],
+      movementRequest: { description: 'walk toward the current scene target' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The objective requires a closer viewpoint.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+      },
+    }),
+    instruction,
+    observation: delegatedObservation,
+    sessionId: delegatedObservation.sessionId,
+    routingAnalysis,
+  }, {});
+  const contracted = await environmentTaskContractNode.execute({
+    taskDecision: parsed.taskDecision,
+    routingAnalysis,
+    observation: delegatedObservation,
+  }, {});
+  const validated = await environmentTaskValidatorNode.execute({
+    ...parsed,
+    taskDecision: contracted.taskDecision,
+    instruction,
+    observation: delegatedObservation,
+    routingAnalysis,
+  }, { operatorMode: 'full' });
+
+  assert.equal(validated.actions.length, 0);
+  assert.equal(validated.movementRequest, null);
+  assert.equal(validated.outcome, 'request_user');
+  assert.equal(validated.shouldRefine, false);
+  assert.equal(validated.refinementRequest, null);
+  assert.equal(validated.decision.motionClass, 'target_relative');
+  assert.equal(validated.decision.blockedReason, 'target_relative_capability_unavailable');
+  assert.match(validated.response, /target-relative feedback capability/i);
+});
+
+test('a duplicate generated motion plan becomes a terminal stuck lifecycle result', async () => {
+  const motionControl = {
+    version: 1 as const,
+    cycleId: 'cycle-1',
+    planIds: ['plan-a', 'plan-a'],
+    lastPlanId: 'plan-a',
+    consecutiveIdentical: 2,
+  };
+  const result = await environmentTaskValidatorNode.execute({
+    actions: [],
+    generatedActions: [],
+    movementRequest: { description: 'body-local motion', motionClass: 'body_local' },
+    generatedResponse: 'Motion stopped because the generated plan repeats the previous physical attempt without new progress evidence.',
+    motionControlResult: {
+      status: 'stuck',
+      reason: 'duplicate_motion_plan',
+      planId: 'plan-a',
+      state: motionControl,
+    },
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Attempt the body-local motion.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+    },
+    instruction: 'Attempt one body-local motion.',
+    observation: observation({ source: 'autonomy', step: 2, maxSteps: 4 }),
+  }, { operatorMode: 'full' });
+
+  assert.equal(result.actions.length, 0);
+  assert.equal(result.outcome, 'request_user');
+  assert.equal(result.shouldRefine, false);
+  assert.equal(result.refinementRequest, null);
+  assert.equal(result.decision.blockedReason, 'duplicate_motion_plan');
+  assert.deepEqual(result.decision.motionControl, motionControl);
+  assert.match(result.response, /repeats the previous physical attempt/i);
+});
+
+test('adapter-owned visual no-progress is terminal and cannot reopen locomotion refinement', async () => {
+  const current = observation({ source: 'autonomy', step: 2, maxSteps: 4, terminalCommand: 'visualApproach' });
+  current.feedback = [{
+    id: 'visual-approach-stuck',
+    timestamp: current.timestamp,
+    type: 'failed',
+    message: 'The target remained visible but did not make measurable progress.',
+    actionId: 'visual-approach-1',
+    data: {
+      activeViewProgress: {
+        version: 1,
+        skill: 'visualApproach',
+        targetId: 'target-1',
+        frameId: 'frame-3',
+        timestamp: current.timestamp,
+        status: 'stuck',
+        step: 3,
+        confidence: 0.79,
+        progress: 0.25,
+        box: { x: 0.35, y: 0.2, width: 0.23, height: 0.3 },
+        pathConfidence: 0.76,
+        obstruction: 0.04,
+        reason: 'no_progress_limit',
+      },
+    },
+  }];
+  const result = await environmentTaskValidatorNode.execute({
+    actions: [],
+    movementRequest: null,
+    response: '',
+    taskDecision: {
+      outcome: 'continue',
+      reason: 'The target has not been reached.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+    },
+    observation: current,
+  }, { operatorMode: 'full' });
+
+  assert.equal(result.outcome, 'request_user');
+  assert.equal(result.shouldRefine, false);
+  assert.equal(result.refinementRequest, null);
+  assert.equal(result.decision.blockedReason, 'active_view_stuck');
+  assert.equal(result.decision.activeViewProgress.status, 'stuck');
+  assert.match(result.response, /did not make measurable progress/i);
 });
 
 test('Robot Operator conversational decision cannot be upgraded into an environment action', async () => {
@@ -886,7 +1063,11 @@ test('a premature action-result claim cannot suppress an authorized one-shot com
     instruction: 'Please rest.',
     observation: currentObservation,
     sessionId: currentObservation.sessionId,
-    routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'body_local' },
+    },
   }, {});
   assert.equal(parsed.actions.length, 1);
   assert.equal(parsed.actions[0].command, 'rest');
@@ -1411,6 +1592,15 @@ test('Environment Task Refiner authors the next prompt only after the existing v
 });
 
 test('Environment Workflow Command admits the validated instruction to the coordinator queue', async () => {
+  const motionControl = {
+    version: 1 as const,
+    cycleId: 'cycle-1',
+    planIds: ['plan-1'],
+    lastPlanId: 'plan-1',
+    lastVisualFrameId: 'visual-1',
+    lastVisualFrameTimestamp: '2026-08-03T12:00:00.000Z',
+    consecutiveIdentical: 1,
+  };
   const command: EnvironmentWorkflowCommand = {
     kind: 'environment_workflow_command',
     objective: 'Complete the objective subject to its stated criterion.',
@@ -1424,6 +1614,7 @@ test('Environment Workflow Command admits the validated instruction to the coord
     maxSteps: 3,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
+    motionControl,
   };
   const queuedInputs: TaskInput[] = [];
   const result = await environmentWorkflowCommandNode.execute({
@@ -1450,11 +1641,15 @@ test('Environment Workflow Command admits the validated instruction to the coord
   assert.match(String(queued.input.observation.metadata.originatingInstruction), /step 3 of 3/);
   assert.deepEqual(queued.input.observation.feedback, []);
   assert.equal(queued.input.observation.metadata.robotObserver.step, 3);
-  assert.equal(queued.input.observation.metadata.taskValidatorCommand.version, 3);
+  assert.equal(queued.input.observation.metadata.taskValidatorCommand.version, 4);
   assert.equal(queued.input.observation.metadata.taskValidatorCommand.continuationPolicy, 'bounded');
   assert.equal(
     queued.input.observation.metadata.taskValidatorCommand.requiredCompletionBasis,
     'visual_observation',
+  );
+  assert.deepEqual(
+    queued.input.observation.metadata.taskValidatorCommand.motionControl,
+    motionControl,
   );
 });
 
@@ -1549,7 +1744,11 @@ test('a refined instruction can execute once and a completed objective stops the
     instruction: queuedObservation.metadata?.originatingInstruction,
     observation: queuedObservation,
     sessionId: queuedObservation.sessionId,
-    routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'body_local' },
+    },
   }, { operatorMode: 'semi', cognitiveMode: 'environment' });
   assert.equal(parsedStep.actions[0].command, 'left');
 

@@ -7,8 +7,133 @@ export type EnvironmentActionType =
   | 'captureImage'
   | 'robotCommand'
   | 'robotMotionPlan'
+  | 'inspect'
+  | 'visualApproach'
   | 'speak'
   | 'sendText';
+
+/**
+ * Spatial reference used by an admitted motion objective. These values describe
+ * what the adapter can control, not merely which joint or named commands it can
+ * execute.
+ */
+export const ENVIRONMENT_MOTION_CLASSES = [
+  'body_local',
+  'open_loop_displacement',
+  'target_relative',
+] as const;
+
+export type EnvironmentMotionClass = typeof ENVIRONMENT_MOTION_CLASSES[number];
+
+export interface EnvironmentMotionControlState {
+  version: 1;
+  cycleId?: string;
+  planIds: string[];
+  lastPlanId?: string;
+  lastVisualFrameId?: string;
+  lastVisualFrameTimestamp?: string;
+  consecutiveIdentical: number;
+}
+
+/**
+ * Monotonic action/camera handoff timestamps contributed by their owning
+ * process. Missing stages stay absent rather than being inferred by another
+ * owner.
+ */
+export interface EnvironmentActionTiming {
+  version: 1;
+  queueEnteredAt?: string;
+  leaseGrantedAt?: string;
+  bridgeActionSentAt?: string;
+  adapterActionReceivedAt?: string;
+  captureStartedAt?: string;
+  frameReadyAt?: string;
+  adapterFeedbackSentAt?: string;
+  bridgeFeedbackReceivedAt?: string;
+  coreFeedbackReceivedAt?: string;
+  bridgeFrameReceivedAt?: string;
+  coreObservationReceivedAt?: string;
+}
+
+export interface EnvironmentActionStageDurations {
+  queueToLeaseMs?: number;
+  leaseToBridgeMs?: number;
+  bridgeToAdapterMs?: number;
+  adapterToCaptureMs?: number;
+  captureToFrameMs?: number;
+  frameToBridgeMs?: number;
+  adapterFeedbackToBridgeMs?: number;
+  bridgeToCoreFeedbackMs?: number;
+  bridgeFrameToCoreObservationMs?: number;
+}
+
+export interface EnvironmentNormalizedBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Generic, frame-bound target selected from current visual evidence. */
+export interface EnvironmentVisualTargetSpecification {
+  version: 1;
+  targetId: string;
+  frameId: string;
+  frameTimestamp: string;
+  box: EnvironmentNormalizedBox;
+  confidence: number;
+  description?: string;
+  /** Monocular stop heuristic, not a metric distance estimate. */
+  stopBoxHeight?: number;
+}
+
+/**
+ * Frame-bound request for adapter-owned target acquisition. Cognition names
+ * what to inspect; perception owns localization and physical target identity.
+ */
+export interface EnvironmentVisualInspectionTarget {
+  version: 1;
+  /** Request identity carried through active-view progress and completion. */
+  targetId: string;
+  frameId: string;
+  frameTimestamp: string;
+  query: string;
+  /** Optional detector evidence; never required or invented by the LLM. */
+  seedBox?: EnvironmentNormalizedBox;
+  seedConfidence?: number;
+}
+
+export type EnvironmentActiveViewSkill = 'inspect' | 'visualApproach';
+
+export type EnvironmentActiveViewStatus =
+  | 'acquiring'
+  | 'tracking'
+  | 'improving_view'
+  | 'reacquiring'
+  | 'verifying'
+  | 'progress'
+  | 'reached'
+  | 'lost'
+  | 'blocked'
+  | 'stuck'
+  | 'stopped'
+  | 'failed';
+
+export interface EnvironmentActiveViewProgress {
+  version: 1;
+  skill: EnvironmentActiveViewSkill;
+  targetId: string;
+  frameId: string;
+  timestamp: string;
+  status: EnvironmentActiveViewStatus;
+  step: number;
+  confidence: number;
+  progress: number;
+  box?: EnvironmentNormalizedBox;
+  pathConfidence?: number;
+  obstruction?: number;
+  reason: string;
+}
 
 export type EnvironmentMotionPlanJoint =
   | 'R1'
@@ -33,10 +158,29 @@ export interface EnvironmentMotionPlanFrame {
 export interface EnvironmentCapabilities {
   actions: EnvironmentActionType[];
   robotCommands?: string[];
+  /** Motion references the adapter can truthfully execute. */
+  motionClasses?: EnvironmentMotionClass[];
   text?: boolean;
   movement?: boolean;
   visual?: boolean;
   map?: boolean;
+  /** True only when the adapter provides target-aware path planning and obstacle handling. */
+  navigation?: boolean;
+  /** Local target tracking and view-improvement loop, when inspect is advertised. */
+  activeView?: {
+    maxSteps: number;
+    maxFrameAgeMs: number;
+    minimumConfidence: number;
+    reacquisitionLimit: number;
+  };
+  /** Bounded camera-feedback controller truth, when visualApproach is advertised. */
+  visualApproach?: {
+    maxSteps: number;
+    maxFrameAgeMs: number;
+    minimumConfidence: number;
+    minimumPathConfidence: number;
+    noProgressLimit: number;
+  };
 }
 
 export interface EnvironmentTextEvent {
@@ -169,8 +313,11 @@ export interface EnvironmentAction {
   target?: string;
   frames?: EnvironmentMotionPlanFrame[];
   endPose?: 'hold' | 'stand' | 'neutral';
+  inspectionTarget?: EnvironmentVisualInspectionTarget;
+  visualTarget?: EnvironmentVisualTargetSpecification;
   speechArtifactId?: string;
   speechDurationMs?: number;
+  timing?: EnvironmentActionTiming;
   metadata?: Record<string, unknown>;
 }
 

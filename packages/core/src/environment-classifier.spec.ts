@@ -70,13 +70,32 @@ test('distinguishes strict JSON validity from contract validity', () => {
 test('produces the exact safety-relevant route comparison view', () => {
   assert.deepEqual(environmentRouterRouteView(validDecision), {
     needsMemory: false,
-    memoryTier: 'facts',
-    memoryTypes: [],
     needsEnvironment: true,
     needsVision: true,
     needsAction: true,
     actionType: 'environment_action',
+    motionClass: null,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
   })
+})
+
+test('requires a valid motion class for newly authorized robot movement', () => {
+  const missing = validateEnvironmentRouterDecision({
+    ...validDecision,
+    actionType: 'robot_movement',
+  })
+  assert.equal(missing.valid, false)
+  assert.match(missing.errors.join('\n'), /robot_movement requires actionParams.motionClass/)
+
+  const bodyLocal: EnvironmentRouterDecision = {
+    ...validDecision,
+    actionType: 'robot_movement',
+    actionParams: {
+      ...validDecision.actionParams,
+      motionClass: 'body_local',
+    },
+  }
+  assert.equal(validateEnvironmentRouterDecision(bodyLocal).valid, true)
+  assert.equal(environmentRouterRouteView(bodyLocal).motionClass, 'body_local')
 })

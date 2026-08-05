@@ -3,6 +3,7 @@ import { defineNode } from '../types.js';
 import {
   environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
+  robotOperatorActionRequirement,
   type EnvironmentCompletionBasis,
   type EnvironmentContinuationPolicy,
   type EnvironmentTaskContract,
@@ -27,6 +28,7 @@ function decisionContract(value: EnvironmentTaskDecision): EnvironmentTaskContra
     objective: '',
     continuationPolicy: continuationPolicy as EnvironmentContinuationPolicy,
     requiredCompletionBasis: requiredCompletionBasis as EnvironmentCompletionBasis,
+    ...(value.motionClass ? { motionClass: value.motionClass } : {}),
   };
 }
 
@@ -35,7 +37,12 @@ function contractsDiffer(
   right: EnvironmentTaskContract,
 ): boolean {
   return left.continuationPolicy !== right.continuationPolicy
-    || left.requiredCompletionBasis !== right.requiredCompletionBasis;
+    || left.requiredCompletionBasis !== right.requiredCompletionBasis
+    || (
+      left.motionClass !== undefined
+      && right.motionClass !== undefined
+      && left.motionClass !== right.motionClass
+    );
 }
 
 export const environmentTaskContractNode = defineNode({
@@ -73,12 +80,17 @@ export const environmentTaskContractNode = defineNode({
         ? inputs.observation as unknown as EnvironmentObservation
         : null,
     );
-    // The Environment decision owns whether a new objective is one-shot or
-    // bounded. When both independent classifiers agree it is bounded, the Context
-    // Router owns the whole-objective evidence classification. This keeps a
-    // completion image from turning a one-shot action into a loop while ensuring
-    // that a separate sensor stopping condition cannot be reduced to action_result.
-    // Once persisted, the validator-owned contract is authoritative on every pass.
+    const delegatedActionRequirement = robotOperatorActionRequirement(
+      isRecord(inputs.observation)
+        ? inputs.observation as unknown as EnvironmentObservation
+        : null,
+    );
+    // For ordinary tasks the Environment decision owns whether a new objective
+    // is one-shot or bounded, with router evidence used when both agree it is
+    // bounded. Robot Operator delegation is different: the independent Context
+    // Router interprets the operator-owned intention, so the execution LLM may
+    // choose a step but may not weaken its evidence contract. Once persisted,
+    // the validator-owned contract is authoritative on every later pass.
     const routedContract = routingAnalysis?.needsAction === true
       ? environmentTaskContractFromRouting(routingAnalysis)
       : null;
@@ -88,6 +100,12 @@ export const environmentTaskContractNode = defineNode({
     if (persistedContract) {
       authoritativeContract = persistedContract;
       taskContractSource = 'persisted';
+    } else if (delegatedActionRequirement !== null && routedContract) {
+      // Robot Operator owns the intention and its typed action requirement;
+      // the independent Context Router owns the evidence contract. The
+      // execution LLM may select a step but may not weaken that contract.
+      authoritativeContract = routedContract;
+      taskContractSource = 'robot_operator_router';
     } else if (
       modelContract?.continuationPolicy === 'bounded'
       && routedContract?.continuationPolicy === 'bounded'
@@ -95,6 +113,7 @@ export const environmentTaskContractNode = defineNode({
       authoritativeContract = {
         ...modelContract,
         requiredCompletionBasis: routedContract.requiredCompletionBasis,
+        ...(routedContract.motionClass ? { motionClass: routedContract.motionClass } : {}),
       };
       taskContractSource = contractsDiffer(modelContract, authoritativeContract)
         ? 'bounded_router_evidence'
@@ -133,12 +152,16 @@ export const environmentTaskContractNode = defineNode({
       : null;
     const reconciled = !modelContract
       || modelContract.continuationPolicy !== authoritativeContract.continuationPolicy
-      || modelContract.requiredCompletionBasis !== authoritativeContract.requiredCompletionBasis;
+      || modelContract.requiredCompletionBasis !== authoritativeContract.requiredCompletionBasis
+      || modelContract.motionClass !== authoritativeContract.motionClass;
     return {
       taskDecision: {
         ...taskDecision,
         continuationPolicy: authoritativeContract.continuationPolicy,
         requiredCompletionBasis: authoritativeContract.requiredCompletionBasis,
+        ...(authoritativeContract.motionClass
+          ? { motionClass: authoritativeContract.motionClass }
+          : {}),
         taskContractSource: taskContractSource!,
         ...(taskContractConflict ? { taskContractConflict } : {}),
       },
