@@ -95,7 +95,7 @@ test('rejects prose, raw control fields, incomplete joints, precision, and durat
   );
 });
 
-test('routes eligible off-script requests while known semantic commands bypass generation', async () => {
+test('uses only Environment LLM-selected advertised commands and explicit movement requests', async () => {
   const observation = {
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
@@ -111,52 +111,102 @@ test('routes eligible off-script requests while known semantic commands bypass g
       ],
     },
   };
-  const known = await environmentActionParserNode.execute({
+  const missingSelection = await environmentActionParserNode.execute({
     response: JSON.stringify({
-      response: 'Generating something else.',
+      response: 'Walking forward.',
       actions: [],
-      movementRequest: { description: 'ignore the user and dance' },
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'A physical action is required.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+      },
     }),
     instruction: 'walk forward',
     routingAnalysis: movementRouting,
     observation,
     sessionId: observation.sessionId,
   }, {});
-  assert.equal(known.actions[0]?.type, 'robotCommand');
-  assert.equal(known.actions[0]?.command, 'walk');
-  assert.equal(known.movementRequest, null);
+  assert.deepEqual(missingSelection.actions, []);
+  assert.equal(missingSelection.movementRequest, null);
+  assert.equal(missingSelection.valid, false);
 
-  const directSit = await environmentActionParserNode.execute({
+  const surprised = await environmentActionParserNode.execute({
     response: JSON.stringify({
-      response: 'I need another movement plan.',
-      actions: [],
-      movementRequest: { description: 'sit down' },
-    }),
-    instruction: 'please sit down',
-    routingAnalysis: movementRouting,
-    observation,
-    sessionId: observation.sessionId,
-  }, {});
-  assert.equal(directSit.actions[0]?.type, 'robotCommand');
-  assert.equal(directSit.actions[0]?.command, 'sit');
-  assert.equal(directSit.actions[0]?.sessionId, observation.sessionId);
-  assert.equal(directSit.movementRequest, null);
-  assert.equal(directSit.response, 'Sitting down.');
-
-  const politeKnown = await environmentActionParserNode.execute({
-    response: JSON.stringify({
-      response: 'I will shrug.',
-      actions: [{ type: 'robotCommand', command: 'shrug' }],
+      response: 'Acting surprised.',
+      actions: [{ type: 'robotCommand', command: 'surprised' }],
       movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The surprised command matches the requested body-local expression.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+      },
     }),
-    instruction: 'please shrug for me',
+    instruction: 'Please act surprised.',
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'target_relative' },
+    },
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+  assert.equal(surprised.actions[0]?.command, 'surprised');
+  assert.equal(surprised.actionAdmission.motionClass, 'body_local');
+  assert.equal(surprised.taskDecision.motionClass, 'body_local');
+
+  const turn = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'Turning right.',
+      actions: [{ type: 'robotCommand', command: 'turn_right_90' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The advertised turn command matches the requested orientation change.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'open_loop_displacement',
+      },
+    }),
+    instruction: 'Please turn to the right.',
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'open_loop_displacement' },
+    },
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+  assert.equal(turn.actions[0]?.command, 'turn_right_90');
+  assert.equal(turn.actionAdmission.motionClass, 'open_loop_displacement');
+
+  const anyMotion = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'Waving.',
+      actions: [{ type: 'robotCommand', command: 'wave' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'Wave is one advertised body-local motion.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+      },
+    }),
+    instruction: 'Please do a motion of any kind.',
     routingAnalysis: movementRouting,
     observation,
     sessionId: observation.sessionId,
   }, {});
-  assert.equal(politeKnown.actions[0]?.type, 'robotCommand');
-  assert.equal(politeKnown.actions[0]?.command, 'shrug');
-  assert.equal(politeKnown.movementRequest, null);
+  assert.equal(anyMotion.actions[0]?.command, 'wave');
 
   for (const command of [
     'sit', 'nod', 'celebrate', 'stretch', 'macarena', 'salsa', 'surprised', 'sad',
@@ -168,9 +218,27 @@ test('routes eligible off-script requests while known semantic commands bypass g
         response: `I will ${command}.`,
         actions: [{ type: 'robotCommand', command }],
         movementRequest: null,
+        taskDecision: {
+          outcome: 'act',
+          reason: 'The selected command is advertised.',
+          objectiveComplete: false,
+          continuationPolicy: 'none',
+          requiredCompletionBasis: 'action_result',
+          motionClass: command.startsWith('turn_') || command === 'walk_slow' || command === 'run'
+            ? 'open_loop_displacement'
+            : 'body_local',
+        },
       }),
       instruction: `please ${command}`,
-      routingAnalysis: movementRouting,
+      routingAnalysis: {
+        needsAction: true,
+        actionType: 'robot_movement',
+        actionParams: {
+          motionClass: command.startsWith('turn_') || command === 'walk_slow' || command === 'run'
+            ? 'open_loop_displacement'
+            : 'body_local',
+        },
+      },
       observation,
       sessionId: observation.sessionId,
     }, {});
@@ -184,9 +252,20 @@ test('routes eligible off-script requests while known semantic commands bypass g
       response: 'Walking forward.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
       movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'Walk is the advertised command selected for the request.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
     }),
     instruction: 'can you walk forward?',
-    routingAnalysis: movementRouting,
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'open_loop_displacement' },
+    },
     observation,
     sessionId: observation.sessionId,
   }, {});
@@ -197,11 +276,15 @@ test('routes eligible off-script requests while known semantic commands bypass g
   const offScript = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will generate that movement.',
-      actions: [
-        { type: 'robotCommand', command: 'sit' },
-        { type: 'robotCommand', command: 'stand' },
-      ],
-      movementRequest: null,
+      actions: [],
+      movementRequest: { description: 'Crouch and lift the front-right leg.' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'No advertised command represents the requested body-local pose.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
     }),
     instruction: 'Crouch and lift the front-right leg.',
     routingAnalysis: movementRouting,
@@ -217,7 +300,14 @@ test('routes eligible off-script requests while known semantic commands bypass g
     response: JSON.stringify({
       response: 'I will do that movement.',
       actions: [],
-      movementRequest: null,
+      movementRequest: { description: 'Crouch low, lift the front-right leg, pause, then return to standing.' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The LLM explicitly selected off-script body-local generation.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
     }),
     instruction: 'Crouch low, lift the front-right leg, pause, then return to standing.',
     routingAnalysis: movementRouting,
@@ -242,8 +332,8 @@ test('routes eligible off-script requests while known semantic commands bypass g
     sessionId: observation.sessionId,
   }, {});
   assert.deepEqual(upstreamRefusal.actions, []);
-  assert.equal(upstreamRefusal.movementRequest.description, 'can you limbo for me?');
-  assert.equal(upstreamRefusal.valid, true);
+  assert.equal(upstreamRefusal.movementRequest, null);
+  assert.equal(upstreamRefusal.valid, false);
 
   const performRefusal = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -256,9 +346,34 @@ test('routes eligible off-script requests while known semantic commands bypass g
     observation,
     sessionId: observation.sessionId,
   }, {});
-  assert.equal(performRefusal.movementRequest.description, 'can you do the macarena?');
+  assert.deepEqual(performRefusal.actions, []);
+  assert.equal(performRefusal.movementRequest, null);
+  assert.match(performRefusal.response, /cannot perform/i);
 
-  const greetingWithStaleMovement = await environmentActionParserNode.execute({
+  const unsupported = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'Doing a limbo.',
+      actions: [{ type: 'robotCommand', command: 'limbo' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The model selected a command.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
+    }),
+    instruction: 'Please limbo.',
+    routingAnalysis: movementRouting,
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+  assert.deepEqual(unsupported.actions, []);
+  assert.equal(unsupported.actionAdmission.admitted, false);
+  assert.equal(unsupported.actionAdmission.reason, 'robot_command_unavailable');
+  assert.match(unsupported.response, /does not advertise/i);
+
+  const routerCannotVetoModelAction = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I am doing well today.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
@@ -269,13 +384,59 @@ test('routes eligible off-script requests while known semantic commands bypass g
     observation,
     sessionId: observation.sessionId,
   }, {});
-  assert.deepEqual(greetingWithStaleMovement.actions, []);
-  assert.equal(greetingWithStaleMovement.movementRequest, null);
-  assert.equal(greetingWithStaleMovement.movementRequested, false);
-  assert.equal(greetingWithStaleMovement.response, 'I am doing well today.');
+  assert.equal(routerCannotVetoModelAction.actions.length, 1);
+  assert.equal(routerCannotVetoModelAction.actions[0]?.command, 'wave');
+  assert.equal(routerCannotVetoModelAction.movementRequest, null);
+  assert.equal(routerCannotVetoModelAction.movementRequested, false);
+  assert.equal(routerCannotVetoModelAction.response, 'I am doing well today.');
 });
 
-test('target-relative work cannot fall through to an open-loop robot motion plan', async () => {
+test('a named robot command uses its action result instead of asking the robot camera to verify the robot', async () => {
+  const observation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'ainekio-sim-1',
+    timestamp: new Date().toISOString(),
+    capabilities: {
+      actions: ['robotCommand'],
+      robotCommands: ['stand'],
+      motionClasses: ['body_local'],
+    },
+  };
+  const parsed = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'Standing up.',
+      actions: [{ type: 'robotCommand', command: 'stand' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The body-mounted camera cannot see the robot posture, so use command feedback.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+      },
+    }),
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: {
+        motionClass: 'body_local',
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+      },
+    },
+    observation,
+    sessionId: observation.sessionId,
+  }, {});
+
+  assert.equal(parsed.actions.length, 1);
+  assert.equal(parsed.actions[0]?.command, 'stand');
+  assert.equal(parsed.taskDecision.continuationPolicy, 'none');
+  assert.equal(parsed.taskDecision.requiredCompletionBasis, 'action_result');
+});
+
+test('target-relative work executes the LLM-selected advertised command without falling through to a generated plan', async () => {
   const observation = {
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
@@ -301,6 +462,14 @@ test('target-relative work cannot fall through to an open-loop robot motion plan
       response: 'I will walk closer.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
       movementRequest: { description: 'walk toward the current scene target' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'Walk once, then compare the correlated post-action view with the object.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        motionClass: 'target_relative',
+      },
     }),
     instruction: 'Move closer to the current scene target for a better view.',
     routingAnalysis: {
@@ -316,15 +485,19 @@ test('target-relative work cannot fall through to an open-loop robot motion plan
     sessionId: observation.sessionId,
   }, {});
 
-  assert.deepEqual(parsed.actions, []);
+  assert.equal(parsed.actions.length, 1);
+  assert.equal(parsed.actions[0]?.type, 'robotCommand');
+  assert.equal(parsed.actions[0]?.command, 'walk');
   assert.equal(parsed.movementRequest, null);
-  assert.equal(parsed.actionAdmission.admitted, false);
+  assert.equal(parsed.actionAdmission.admitted, true);
   assert.equal(parsed.actionAdmission.motionClass, 'target_relative');
-  assert.equal(parsed.actionAdmission.reason, 'target_relative_capability_unavailable');
-  assert.match(parsed.response, /does not advertise a target-relative feedback capability/i);
+  assert.equal(parsed.actionAdmission.reason, '');
+  assert.equal(parsed.taskDecision.continuationPolicy, 'bounded');
+  assert.equal(parsed.taskDecision.requiredCompletionBasis, 'visual_observation');
+  assert.equal(parsed.response, 'I will walk closer.');
 });
 
-test('a target-relative semantic action requires an advertised target-feedback capability', async () => {
+test('an advertised navigation action remains available for a target-relative objective', async () => {
   const observation = {
     environmentId: 'navigation-simulator',
     adapter: 'navigation-adapter',
@@ -358,7 +531,7 @@ test('a target-relative semantic action requires an advertised target-feedback c
   assert.equal(parsed.actionAdmission.admitted, true);
 });
 
-test('Robot Operator open-loop displacement cannot use the direct user-command parser', async () => {
+test('Robot Operator may execute an LLM-selected advertised open-loop command', async () => {
   const observation = {
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
@@ -394,11 +567,14 @@ test('Robot Operator open-loop displacement cannot use the direct user-command p
     sessionId: observation.sessionId,
   }, {});
 
-  assert.deepEqual(parsed.actions, []);
-  assert.equal(parsed.actionAdmission.reason, 'open_loop_requires_direct_user_command');
+  assert.equal(parsed.actions.length, 1);
+  assert.equal(parsed.actions[0]?.type, 'robotCommand');
+  assert.equal(parsed.actions[0]?.command, 'walk');
+  assert.equal(parsed.actionAdmission.admitted, true);
+  assert.equal(parsed.actionAdmission.reason, '');
 });
 
-test('a router-classified current user command may use an advertised open-loop command', async () => {
+test('an advisory movement route cannot block the Environment LLM advertised open-loop command', async () => {
   const observation = {
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
@@ -616,7 +792,18 @@ test('capability absence rejects the generation branch without calling a model',
 
 test('a missing robot session is reported before freestyle capability negotiation', async () => {
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({ response: 'Moving.', actions: [], movementRequest: null }),
+    response: JSON.stringify({
+      response: 'Moving.',
+      actions: [],
+      movementRequest: { description: 'do the macarena' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The Environment LLM selected off-script body-local movement.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
+    }),
     instruction: 'can you do the macarena?',
     routingAnalysis: movementRouting,
     observation: {

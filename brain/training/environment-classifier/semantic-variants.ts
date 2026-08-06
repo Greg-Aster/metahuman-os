@@ -143,24 +143,36 @@ export const DEVELOPMENT_SEMANTIC_VARIANTS: Readonly<Record<string, readonly str
     'Give me a single wave.',
     'Could you wave once now?',
     'Perform one wave.',
+    'Rotate your body clockwise one time.',
+    'Make one visibly startled body pose.',
+    'Perform one cheerful body expression.',
   ],
   'movement-003': [
     'Please take a seated pose.',
     'Sit down now.',
     'Could you sit down?',
     'Move into the sitting position.',
+    'Rotate your body counterclockwise one time.',
+    'Make one curious body pose.',
+    'Perform one neutral body posture.',
   ],
   'movement-004': [
     'Please bow one time.',
     'Give me a single bow.',
     'Could you bow once now?',
     'Perform one bow.',
+    'Turn your body to face the opposite direction once.',
+    'Make one startled body expression.',
+    'Perform one celebratory pose.',
   ],
   'movement-006': [
     'Move forward by one step.',
     'Please advance a single step.',
     'Could you take exactly one step forward?',
     'Go one step straight ahead.',
+    'Move backward by one step.',
+    'Shift one step to your right.',
+    'Shift one step to your left.',
   ],
   'bounded-001': [
     'Keep waving until my hand becomes visible, and then stop.',
@@ -351,4 +363,4 @@ export const DEVELOPMENT_FOLD_BY_CASE: Readonly<Record<string, number>> = {
   'vision-acquisition-005': 3,
 }
 
-export const SEMANTIC_VARIANTS_PER_CASE = 5
+export const MINIMUM_SEMANTIC_VARIANTS_PER_CASE = 5

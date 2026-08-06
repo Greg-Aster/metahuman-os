@@ -365,6 +365,25 @@ try {
     'string',
     'a later observation must recover lifecycle timing from the existing Work Coordinator result',
   );
+  assert.equal(environmentObservationNeedsCognition({
+    ...contextualResult,
+    visual: {
+      id: 'post-action-frame-1',
+      timestamp: new Date().toISOString(),
+      mimeType: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=',
+      source: 'robot-camera',
+      metadata: {
+        actionId: resultAction.id,
+        correlationId: 'post-action-cycle-1',
+      },
+    },
+    metadata: {
+      ...contextualResult.metadata,
+      actionId: resultAction.id,
+      correlationId: 'post-action-cycle-1',
+    },
+  }), true, 'a correlated gateway action result and image must return to Environment cognition');
 
   const observerCapture = enqueueEnvironmentAction({
     type: 'captureImage',
@@ -524,6 +543,14 @@ try {
   const structured = parseEnvironmentModelOutput(JSON.stringify({
     response: 'Walking forward.',
     actions: [{ type: 'robotCommand', command: 'walk', simulatorCommand: 'run walk', units: 3 }],
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Walk once.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'open_loop_displacement',
+    },
   }), 'robot-1');
   assert.equal(structured.response, 'Walking forward.');
   assert.equal(structured.actions.length, 1);
@@ -532,6 +559,7 @@ try {
   assert.equal(structured.actions[0]?.command, 'walk');
   assert.equal(structured.actions[0]?.units, 3);
   assert.equal('simulatorCommand' in (structured.actions[0] ?? {}), false);
+  assert.equal(structured.taskDecision?.motionClass, 'open_loop_displacement');
   assert.deepEqual(parseEnvironmentModelOutput('walk forward', 'robot-1').actions, []);
 
   const conversationOnly = await environmentSendActionNode.execute({
@@ -545,6 +573,14 @@ try {
   assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
   assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
   assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
+
+  const emptyConversation = await environmentSendActionNode.execute({
+    actions: [],
+    response: '',
+    sessionId: 'robot-1',
+  }, { username: 'bridge-spec', sessionId: 'chat-empty' } as never, {});
+  assert.equal(emptyConversation.status, 'no_actions');
+  assert.match(emptyConversation.response, /no environment action was produced/i);
 
   const unavailableAction = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
@@ -752,7 +788,7 @@ try {
   unsubscribeContinuation();
   assert.equal(queuedContinuation.status, 'coordinated_for_adapter');
   assert.equal(queuedContinuation.count, 1);
-  assert.equal(queuedContinuation.response, '');
+  assert.equal(queuedContinuation.response, 'Continuing the remaining task.');
 
   const visual = {
     id: 'camera-1',
@@ -895,6 +931,8 @@ try {
   assert.deepEqual(contextOutput.images, []);
   assert.doesNotMatch(String(content), /Visual frame/);
   assert.match(String(content), /Supported robot commands: stand, wave, dance/);
+  assert.match(String(content), /never put a bare command string in actions/i);
+  assert.match(String(content), /"type":"robotCommand"/);
 
   const correlatedImageContext = await environmentContextBuilderNode.execute({
     observation: {

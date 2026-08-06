@@ -22,11 +22,6 @@ const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
   'sendText',
 ]);
 
-export interface DirectRobotInstruction {
-  action: Partial<EnvironmentAction>;
-  response: string;
-}
-
 export interface EnvironmentMovementRequest {
   description: string;
   sessionId?: string;
@@ -75,8 +70,6 @@ export interface EnvironmentTaskContract {
 export type EnvironmentTaskContractSource =
   | 'persisted'
   | 'environment_decision'
-  | 'robot_operator_router'
-  | 'bounded_router_evidence'
   | 'router_fallback';
 
 export interface EnvironmentTaskContractConflict {
@@ -91,9 +84,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Robot Operator is the authorization owner for its delegated intention. A
- * boolean is present only for the typed Robot Operator path; null leaves
- * ordinary user/environment routing under the Environment Context Router.
+ * Robot Operator may contribute a typed action preference to its delegated
+ * intention. The Environment LLM remains the semantic action owner.
  */
 export function robotOperatorActionRequirement(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
@@ -225,7 +217,7 @@ export interface EnvironmentTaskDecision {
   requiredCompletionBasis?: EnvironmentCompletionBasis;
   completionBasis?: EnvironmentCompletionBasis;
   completionEvidence?: string;
-  /** Internal router-owned motion reference; never accepted from model output. */
+  /** Environment LLM-owned semantic motion reference for the selected action. */
   motionClass?: EnvironmentMotionClass;
   /** Internal provenance added after model output parsing by Environment Task Contract. */
   taskContractSource?: EnvironmentTaskContractSource;
@@ -240,77 +232,6 @@ export interface EnvironmentPromptAdmission {
   includeVisionContext?: boolean;
   /** Include action, movement, and whole-objective lifecycle contracts. */
   includeActionContracts?: boolean;
-}
-
-export function parseDirectRobotInstruction(
-  value: unknown,
-  sessionId?: string,
-  supportedRobotCommands?: string[],
-): DirectRobotInstruction | null {
-  if (typeof value !== 'string') return null;
-
-  const instruction = value.trim().toLowerCase().replace(/[.!]+$/, '');
-  if (!instruction || instruction.length > 120) return null;
-  if (/\b(?:don't|do not|never|not)\b/.test(instruction)) return null;
-
-  if (/^(?:please\s+)?(?:stop|halt|stop moving)$/.test(instruction)) {
-    return {
-      action: { type: 'stop', sessionId },
-      response: 'Stopping.',
-    };
-  }
-
-  if (/^(?:please\s+)?(?:sit|sit down|take a seat|have a seat)$/.test(instruction)) {
-    if (!robotCommandIsSupported('sit', supportedRobotCommands)) return null;
-    return {
-      action: {
-        type: 'robotCommand',
-        command: 'sit',
-        sessionId,
-      },
-      response: 'Sitting down.',
-    };
-  }
-
-  const match = instruction.match(
-    /^(?:please\s+)?(?:(?:walk|move|go)\s+(forward|forwards|backward|backwards)|turn\s+(left|right))(?:\s+(?:for\s+)?(\d{1,2})\s+(?:steps?|units?))?$/,
-  );
-  if (!match) return null;
-
-  const direction = match[1] ?? match[2];
-  const units = match[3] ? Math.max(1, Math.min(10, Number.parseInt(match[3], 10))) : undefined;
-  const command = direction.startsWith('forward')
-    ? 'walk'
-    : direction.startsWith('backward')
-      ? 'backward'
-      : direction;
-  const response = command === 'walk'
-    ? 'Walking forward.'
-    : command === 'backward'
-      ? 'Walking backward.'
-      : `Turning ${command}.`;
-
-  if (!robotCommandIsSupported(command, supportedRobotCommands)) return null;
-
-  return {
-    action: {
-      type: 'robotCommand',
-      command,
-      units,
-      sessionId,
-    },
-    response,
-  };
-}
-
-function normalizedRobotCommand(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
-function robotCommandIsSupported(command: string, supportedRobotCommands?: string[]): boolean {
-  if (!supportedRobotCommands?.length) return true;
-  const normalized = normalizedRobotCommand(command);
-  return supportedRobotCommands.some(candidate => normalizedRobotCommand(candidate) === normalized);
 }
 
 export function stringifyEnvironmentObservation(
@@ -397,11 +318,16 @@ export function stringifyEnvironmentObservation(
       'Response contract:',
       '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
       '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
+      '- You are the semantic action selector. Interpret the user\'s natural language and choose the best advertised action or Supported robot command. Deterministic nodes validate your typed selection but never reinterpret the user\'s words.',
+      '- Context Router fields are advisory context hints. Its needsAction, actionType, and motionClass values never authorize or veto your current action selection.',
       '- taskDecision.outcome must be one of: complete, continue, observe, act, report, curiosity, background, request_user, wait.',
+      '- Every physical action must set taskDecision.motionClass to body_local, open_loop_displacement, or target_relative. Classify the selected action itself, not keywords in the request.',
       '- Set objectiveComplete=true only when the current objective is actually satisfied.',
       '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
       '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
       '- Every taskDecision must set continuationPolicy="none" or "bounded" and requiredCompletionBasis. Default to "none" only when one response or action result proves the entire objective. Use "bounded" when the objective requires later work or evidence beyond the completed step.',
+      '- Choose the completion basis from the objective, not merely the action type. action_result proves that a command executed; visual_observation can prove a requested change in the external scene.',
+      '- A robot-mounted camera observes the external scene, not the robot itself. Never use its image to judge the robot\'s own pose or body motion; use the correlated action result for that.',
       '- requiredCompletionBasis declares the evidence needed to prove the whole objective: response, action_result, visual_observation, environment_state, or user_input. A different basis may prove a step but cannot prove the whole objective.',
       '- A completed action with continuationPolicy="none" closes that one-shot objective using action_result evidence. Do not keep a simple completed action alive merely because the instruction was recorded as the objective.',
       '- When the objective remains incomplete after a completed step, use continuationPolicy="bounded". The existing validator and graph-owned refinement stage own any later attempt.',
@@ -413,19 +339,22 @@ export function stringifyEnvironmentObservation(
     sections.push([
       'Conversation response contract:',
       '- Return exactly one JSON object: {"response":"conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"response supplied","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested response is present"}}.',
-      '- This route does not authorize environment actions or movement. Keep actions empty and movementRequest null.',
+      '- Context routing is advisory. Decide from the current task whether to respond or select an advertised action.',
     ].join('\n'));
   }
   if (includeActionContracts && observation.capabilities.actions.includes('robotCommand')) {
     sections.push([
       'Robot command contract:',
       '- A robotCommand contains a named body command and optional units, never simulator commands or raw servo values.',
+      '- Every actions item is a typed object. A named command uses {"type":"robotCommand","command":"<one Supported robot command>"}; never put a bare command string in actions.',
       ...(robotCommands?.length
         ? ['- Use only a command named in Supported robot commands.']
         : []),
       '- Named body commands are open-loop unless Target-aware navigation is explicitly available.',
-      '- body_local changes pose or orientation without claiming an environmental destination. open_loop_displacement executes an explicit user-authorized direction without tracking a target. target_relative requires an advertised target-relative feedback capability.',
-      '- Do not treat an open-loop command as target tracking, path planning, obstacle avoidance, distance control, or arrival.',
+      '- body_local changes pose without environmental displacement. open_loop_displacement changes position or orientation without tracking a target. target_relative describes a spatial objective, not permission to reject an advertised command.',
+      '- motionClass records execution and completion semantics; it never vetoes an otherwise advertised action selected by this LLM.',
+      '- A robotCommand action result proves command execution. If the objective asks for an externally visible result, preserve that objective and evaluate the gateway\'s correlated post-action image before deciding whether the objective is complete.',
+      '- Do not claim target tracking, path planning, obstacle avoidance, distance control, or arrival from an open-loop command.',
       '- Command completion proves only that the named command ran. A claimed scene or spatial outcome requires matching current environment evidence.',
     ].join('\n'));
   }
@@ -642,7 +571,10 @@ function parseTaskDecision(
   if (completionEvidence.length > 500) {
     return { decision: null, error: 'taskDecision completionEvidence exceeds 500 characters' };
   }
-
+  const motionClass = normalizedEnvironmentMotionClass(record.motionClass);
+  if (record.motionClass !== undefined && !motionClass) {
+    return { decision: null, error: 'taskDecision motionClass is not supported' };
+  }
   return {
     decision: {
       outcome,
@@ -654,6 +586,7 @@ function parseTaskDecision(
       ...(requiredCompletionBasis ? { requiredCompletionBasis } : {}),
       ...(completionBasis ? { completionBasis } : {}),
       ...(completionEvidence ? { completionEvidence } : {}),
+      ...(motionClass ? { motionClass } : {}),
     },
     error: '',
   };

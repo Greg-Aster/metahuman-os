@@ -177,6 +177,7 @@ test('Environment graph routes the state-aware envelope into the existing contex
     && candidate.targetHandle === 'message'
   ));
   const router = graph.nodes.find((candidate: Record<string, any>) => candidate.id === 'context-router');
+  const environmentDecision = graph.nodes.find((candidate: Record<string, any>) => candidate.id === '4');
   const routerPrompt = [
     router?.data?.properties?.systemPrompt,
     router?.data?.properties?.userPromptTemplate,
@@ -194,4 +195,5 @@ test('Environment graph routes the state-aware envelope into the existing contex
   assert.match(routerPrompt, /needsVision/);
   assert.match(routerPrompt, /action_result proves only.*command ran/is);
   assert.match(routerPrompt, /changed scene, spatial relationship, visibility/is);
+  assert.equal(environmentDecision?.data?.properties?.format, 'json');
 });

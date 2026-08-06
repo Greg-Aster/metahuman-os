@@ -176,6 +176,8 @@ export const nodeSchemas: NodeSchema[] = [
     outputs: [
       { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
       { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
+      { name: 'routingRequest', type: 'string', description: 'Compact state-aware envelope for Environment context and task-contract routing' },
+      { name: 'persistedRoutingAnalysis', type: 'object', description: 'Strict deterministic route for a persisted continuation, or null for a new instruction' },
       { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
       { name: 'state', type: 'object', description: 'Environment state payload' },
       { name: 'location', type: 'object', description: 'Environment location payload' },
@@ -337,15 +339,18 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'environment',
     inputs: [
       { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
-      { name: 'instruction', type: 'string', optional: true, description: 'Original user instruction for narrow semantic command fallback' },
       { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
+      { name: 'routingAnalysis', type: 'object', optional: true, description: 'Current-turn broad action authorization from the Environment Context Router' },
     ],
     outputs: [
       { name: 'actions', type: 'array', description: 'Parsed environment actions' },
       { name: 'firstAction', type: 'object', description: 'First parsed action' },
       { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
       { name: 'movementRequested', type: 'boolean', description: 'Whether off-script generation was requested' },
+      { name: 'taskDecision', type: 'object', description: 'Environment LLM completion and continuation decision' },
+      { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
+      { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result' },
       { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
       { name: 'error', type: 'string', description: 'Parser error message' },
       { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
@@ -690,7 +695,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'options', type: 'object', optional: true },
     ],
     outputs: [{ name: 'response', type: 'object' }],
-    properties: { role: 'persona', temperature: 0.7 },
+    properties: { role: 'persona', temperature: 0.7, format: 'text' },
     description: 'Routes LLM call based on role',
   }),
 

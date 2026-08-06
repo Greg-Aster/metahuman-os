@@ -96,7 +96,7 @@ test('Boredom Movement queues exactly one correlated image after its movement co
   }
 })
 
-test('image-first observer actions do not acquire an automatic post-action image', () => {
+test('Robot Observer movement relies on the gateway post-action image instead of queueing a duplicate capture', () => {
   const manager = getQueueManager()
   const originalState = manager.exportState()
   try {

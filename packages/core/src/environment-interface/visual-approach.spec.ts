@@ -345,9 +345,11 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
     },
     sessionId: observation.sessionId,
   }, {});
-  assert.equal(openLoop.actions.length, 0);
-  assert.equal(openLoop.actionAdmission.admitted, false);
-  assert.equal(openLoop.actionAdmission.reason, 'target_relative_feedback_action_unavailable');
+  assert.equal(openLoop.actions.length, 1);
+  assert.equal(openLoop.actions[0]?.type, 'robotCommand');
+  assert.equal(openLoop.actions[0]?.command, 'walk');
+  assert.equal(openLoop.actionAdmission.admitted, true);
+  assert.equal(openLoop.actionAdmission.reason, '');
 
   const staleTarget = await environmentActionParserNode.execute({
     response: JSON.stringify({

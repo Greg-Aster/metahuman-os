@@ -3,7 +3,6 @@ import { defineNode } from '../types.js';
 import {
   environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
-  robotOperatorActionRequirement,
   type EnvironmentCompletionBasis,
   type EnvironmentContinuationPolicy,
   type EnvironmentTaskContract,
@@ -37,12 +36,7 @@ function contractsDiffer(
   right: EnvironmentTaskContract,
 ): boolean {
   return left.continuationPolicy !== right.continuationPolicy
-    || left.requiredCompletionBasis !== right.requiredCompletionBasis
-    || (
-      left.motionClass !== undefined
-      && right.motionClass !== undefined
-      && left.motionClass !== right.motionClass
-    );
+    || left.requiredCompletionBasis !== right.requiredCompletionBasis;
 }
 
 export const environmentTaskContractNode = defineNode({
@@ -51,17 +45,17 @@ export const environmentTaskContractNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'taskDecision', type: 'object', optional: true, description: 'Environment LLM task result and completion claim' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Typed route including any newly authorized action contract' },
+    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Advisory route containing fallback task-contract fields' },
     { name: 'observation', type: 'object', optional: true, description: 'Current observation carrying any validator-persisted whole-objective contract' },
   ],
   outputs: [
-    { name: 'taskDecision', type: 'object', description: 'Task decision carrying the independently classified whole-objective contract' },
+    { name: 'taskDecision', type: 'object', description: 'Environment LLM task decision carrying the selected whole-objective contract' },
     { name: 'contract', type: 'object', description: 'Selected continuation and completion-evidence contract' },
     { name: 'reconciled', type: 'boolean', description: 'Whether an authoritative persisted or fallback contract replaced missing or conflicting model fields' },
     { name: 'valid', type: 'boolean', description: 'Whether a structured task decision was available' },
     { name: 'error', type: 'string', description: 'Structured reconciliation error' },
   ],
-  description: 'Reconciles independent task-contract classification without changing actions, outcome, completion claims, or evidence.',
+  description: 'Preserves the Environment LLM task contract, using persisted lifecycle state or router fallback only when the model did not supply one.',
   async execute(inputs) {
     if (!isRecord(inputs.taskDecision)) {
       return {
@@ -80,17 +74,10 @@ export const environmentTaskContractNode = defineNode({
         ? inputs.observation as unknown as EnvironmentObservation
         : null,
     );
-    const delegatedActionRequirement = robotOperatorActionRequirement(
-      isRecord(inputs.observation)
-        ? inputs.observation as unknown as EnvironmentObservation
-        : null,
-    );
-    // For ordinary tasks the Environment decision owns whether a new objective
-    // is one-shot or bounded, with router evidence used when both agree it is
-    // bounded. Robot Operator delegation is different: the independent Context
-    // Router interprets the operator-owned intention, so the execution LLM may
-    // choose a step but may not weaken its evidence contract. Once persisted,
-    // the validator-owned contract is authoritative on every later pass.
+    // The Environment LLM is the semantic owner for a new task. The router
+    // supplies a fallback only when the LLM omitted a usable contract. Once
+    // persisted, validator-owned objective and evidence fields are authoritative
+    // on every later pass.
     const routedContract = routingAnalysis?.needsAction === true
       ? environmentTaskContractFromRouting(routingAnalysis)
       : null;
@@ -100,24 +87,6 @@ export const environmentTaskContractNode = defineNode({
     if (persistedContract) {
       authoritativeContract = persistedContract;
       taskContractSource = 'persisted';
-    } else if (delegatedActionRequirement !== null && routedContract) {
-      // Robot Operator owns the intention and its typed action requirement;
-      // the independent Context Router owns the evidence contract. The
-      // execution LLM may select a step but may not weaken that contract.
-      authoritativeContract = routedContract;
-      taskContractSource = 'robot_operator_router';
-    } else if (
-      modelContract?.continuationPolicy === 'bounded'
-      && routedContract?.continuationPolicy === 'bounded'
-    ) {
-      authoritativeContract = {
-        ...modelContract,
-        requiredCompletionBasis: routedContract.requiredCompletionBasis,
-        ...(routedContract.motionClass ? { motionClass: routedContract.motionClass } : {}),
-      };
-      taskContractSource = contractsDiffer(modelContract, authoritativeContract)
-        ? 'bounded_router_evidence'
-        : 'environment_decision';
     } else if (modelContract) {
       authoritativeContract = modelContract;
       taskContractSource = 'environment_decision';
@@ -150,22 +119,26 @@ export const environmentTaskContractNode = defineNode({
         },
       }
       : null;
+    const currentMotionClass = modelContract?.motionClass ?? authoritativeContract.motionClass;
+    const selectedContract = {
+      ...authoritativeContract,
+      ...(currentMotionClass ? { motionClass: currentMotionClass } : {}),
+    };
     const reconciled = !modelContract
       || modelContract.continuationPolicy !== authoritativeContract.continuationPolicy
-      || modelContract.requiredCompletionBasis !== authoritativeContract.requiredCompletionBasis
-      || modelContract.motionClass !== authoritativeContract.motionClass;
+      || modelContract.requiredCompletionBasis !== authoritativeContract.requiredCompletionBasis;
     return {
       taskDecision: {
         ...taskDecision,
         continuationPolicy: authoritativeContract.continuationPolicy,
         requiredCompletionBasis: authoritativeContract.requiredCompletionBasis,
-        ...(authoritativeContract.motionClass
-          ? { motionClass: authoritativeContract.motionClass }
+        ...(currentMotionClass
+          ? { motionClass: currentMotionClass }
           : {}),
         taskContractSource: taskContractSource!,
         ...(taskContractConflict ? { taskContractConflict } : {}),
       },
-      contract: authoritativeContract,
+      contract: selectedContract,
       reconciled,
       valid: true,
       error: '',

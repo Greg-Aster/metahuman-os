@@ -60,6 +60,8 @@ export * from './summary-state';
 export * from './function-memory';
 export * from './audit';
 export * from './llm';
+export * from './environment-classifier';
+export * from './environment-classifier-runtime';
 export * from './ollama';
 export * from './vllm';
 export * from './vllm-lora';

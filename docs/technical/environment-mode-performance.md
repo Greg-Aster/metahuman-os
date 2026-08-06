@@ -380,7 +380,7 @@ Status: contract reconciliation, exact-frame assessment, and terminal lifecycle 
 Live trace:
 
 - `Please wave until you see my hand, then stop.` ran under correlation `audio:ainekio-01:4:2845` from 21:28:48.028 through 21:30:38.906 UTC.
-- The initial Environment decision returned `bounded + action_result`; Context Router returned `bounded + visual_observation`. Environment Task Contract correctly selected `bounded_router_evidence`, persisted `visual_observation`, and retained the disagreement in lifecycle telemetry.
+- The initial Environment decision returned `bounded + action_result`; Context Router returned `bounded + visual_observation`. The then-current reconciler selected the router's visual-evidence basis and retained the disagreement in lifecycle telemetry. That independent semantic override has since been removed: the Environment LLM owns a new task's semantic contract, while validator-persisted lifecycle state remains authoritative on later passes.
 - The exact current terminal-action frames were assessed on every completed wave step. Verdicts were: `ainekio-camera-19` unsupported, `ainekio-camera-20` unsupported, `ainekio-camera-22` uncertain, `ainekio-camera-23` unsupported, and `ainekio-camera-24` supported.
 - On `ainekio-camera-24`, Task Validator completed at step 6 with `completionVerified=true`, `completionBasis=visual_observation`, no blocked reason, no admitted follow-up action, and no refinement. The user received one final `I see your hand, so I will stop waving.` response.
 - The four repeated blurry/dark updates were four distinct bounded refinement attempts following four non-supported frame assessments, not duplicate delivery of one response.
@@ -691,24 +691,124 @@ Interpretation:
 
 Decision: lock epoch 3 as the checkpoint policy and complete folds 1-3 without further corpus or prompt tuning. Aggregate the four development folds before selecting or training a final artifact. Do not use the 16 held-out cases until that development decision is complete.
 
-Cross-validation progress:
+Cross-validation completion:
 
 - Fold 1 trained 1,356 records and held back 466 records from 12 different source cases. Training completed 510 optimizer steps in 14.6 minutes; epoch losses were 0.08216, 0.09936, and 0.1038.
 - Epoch-3 checkpoint 510 produced 466/466 strict JSON and 466/466 Core-valid responses, but only 274/466 exact routes (58.8%). It made 13 unsafe decisions, admitted no excess vision, and missed 100 legitimate actions. This fold is below the revised 62.5% accuracy floor.
 - Failure concentration is explicit: `movement-003` missed 50 actions, `delegated-001` missed all 50 actions, and `bounded-003` matched only 12/50 routes. The 13 unsafe decisions were confined to fresh-vision and vision-acquisition source families. Conversation, two state cases, and ambiguity were perfect.
 - The original post-training generation path reused training compilation state and failed. It was removed from the training owner; retained checkpoints are now evaluated only by the separate checkpoint evaluator.
 - The evaluator then exposed an installed-Unsloth compiled-generation limit after 56 calls. The maintained evaluator now uses Unsloth's supported `UNSLOTH_COMPILE_DISABLE=1` eager mode, set before import. It completed all 466 records without retry chunks or an enlarged compiler cache and reduced batch median to approximately 400 ms. Stable fold-wide prompt padding is also retained.
-- Fold 1 shows that fold 0 was not representative enough to justify deployment. Continue the unchanged folds 2 and 3 so the four-fold aggregate, not one split, determines viability.
+- Fold 2 trained 1,366 records, held back 456 records from 12 source cases, and completed 513 optimizer steps in 15.2 minutes. Epoch-3 checkpoint 513 produced 455/456 strict JSON, 445/456 Core-valid responses, 407/456 exact routes (89.3%), zero unsafe actions, zero excess vision, and 13 missed actions. Eager batch median was approximately 436 ms.
+- Fold 3 trained 1,368 records, held back 454 records from the remaining 12 source cases, and completed 513 optimizer steps in 15.7 minutes. Epoch losses were 0.12875, 0.13856, and 0.13914. Epoch-3 checkpoint 513 produced 454/454 strict JSON, 433/454 Core-valid responses, 193/454 exact routes (42.5%), 71 unsafe actions, 19 excess-vision admissions, and one missed action. Eager batch median was approximately 473 ms.
+- Fold 3's unsafe errors are concentrated rather than random: capability questions were treated as capture commands, unavailable vision was treated as capture authority, terminal persisted-contract variants were treated as continuing actions, and some ambiguous object instructions were treated as executable. This is a material generalization weakness even though the aggregate accuracy clears the revised floor.
+
+Final-epoch cross-validation aggregate:
+
+| Fold | Records | JSON valid | Core valid | Exact route | Unsafe action | Excess vision | Missed action | Median latency |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 446 | 446/446 | 446/446 | 374/446 (83.9%) | 4 | 0 | 49 | 775 ms |
+| 1 | 466 | 466/466 | 466/466 | 274/466 (58.8%) | 13 | 0 | 100 | 400 ms |
+| 2 | 456 | 455/456 | 445/456 | 407/456 (89.3%) | 0 | 0 | 13 | 436 ms |
+| 3 | 454 | 454/454 | 433/454 | 193/454 (42.5%) | 71 | 19 | 1 | 473 ms |
+| **Aggregate** | **1,822** | **1,821/1,822** | **1,790/1,822** | **1,248/1,822 (68.5%)** | **88** | **19** | **163** | **462 ms** |
+
+- The authoritative report is `out/environment-classifier/training/qwen3.5-0.8b-cv-002/development-validation-final-epoch.json`, with the companion Markdown report beside it. The scorer's `final-epoch` policy reads the highest evaluated checkpoint file inside each fold and records every selected path; it does not copy outputs or define another contract.
+- The exact-route aggregate exceeds the user-approved 62.5% practical floor and median generation remains materially below the 9B Ollama reference. Strict JSON and Core validity are close to, but not at, 100%.
+- Aggregate accuracy does not erase the 88 unsafe action errors or 19 excess-vision admissions. The final adapter may be trained as the selected development candidate, but it is not deployment-approved. Its one-time locked evaluation must report these measures independently.
+- Final training now requires the selected cross-validation report as explicit evidence. The adapter provenance records the report digest, policy, accuracy, unsafe-action count, excess-vision count, current dataset digest, prompt digest, and held-out digest. It trains on all 1,822 records from the 48 development source cases with no synthetic validation split and no held-out model input.
+- A pre-held-out integration audit found that the provider-neutral benchmark still defaulted to the full graph prompt while the specialized adapter was trained on compact messages. Core now owns `buildEnvironmentClassifierMessages`; generated training input, live Environment Router inference, and specialized benchmarking all use that function. The benchmark retains an explicit graph format for historical baselines and uses `--message-format compact` for the adapter. Dataset regeneration preserved digest `7e115f3127b4e66eb374c843e868fc95ba4087c59d9d19517adde231308cf5d5`, proving the ownership repair did not change the final adapter's training messages.
+- The final evaluator uses the existing Core vLLM lifecycle and provider-neutral harness. It writes a one-shot receipt immediately before the first held-out request; both completed and failed receipts prevent accidental reuse of the 16 locked cases.
+
+Final adapter training:
+
+- Run root: `out/environment-classifier/training/qwen3.5-0.8b-final-001`.
+- The final adapter used all 1,822 development records from all 48 development source cases. It used the selected BF16 Qwen3.5-0.8B base, rank-16 adapter, response-only loss, and three epochs for 684 optimizer steps. No validation or held-out model input was supplied to the trainer.
+- Trainer time was 20.1 minutes and complete launch-to-artifact time was 20.6 minutes. Aggregate training loss was 0.09544. Training loss is optimization evidence only; the locked result remains the acceptance evidence.
+- The safetensors adapter and checkpoints 228, 456, and 684 are under `out/environment-classifier/training/qwen3.5-0.8b-final-001/final/adapter/`. The final provenance records the selected four-fold report and current dataset, prompt, and held-out fingerprints.
+- The evaluator dry run validated the final artifact and one-shot guard without sending a held-out model request. The live MetaHuman site subsequently restarted its selected Fold-2 vLLM classifier on port 8000. The final evaluator correctly refused to replace that active server implicitly.
+
+One-shot locked evaluation:
+
+| Model | Cases | JSON valid | Core valid | Exact route | Unsafe action | Excess vision | Missed action | Median latency | P95 latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Final Qwen3.5-0.8B LoRA | 16 | 16/16 | 15/16 | 12/16 (75.0%) | 0 | 0 | 1 | 3,890 ms | 4,866 ms |
+
+- MetaHuman OS was stopped for an isolated runtime window. The one-shot evaluator started the final adapter through the existing Core vLLM lifecycle, wrote its receipt immediately before the first held-out request, completed all 16 requests, and stopped vLLM. The receipt is `out/environment-classifier/training/qwen3.5-0.8b-final-001/final/locked-evaluation-receipt.json`.
+- The final adapter exceeds the user-approved 62.5% exact-route floor and improves the original 9B result from 10/16 to 12/16. It also removes the 9B baseline's one unsafe-action error and one excess-vision admission.
+- The candidate is not deployment-ready. One response was strict JSON but used stale non-contract fields (`complexityLevel` and `responseLength: balanced`), one memory request was missed, one legitimate frame-acquisition action was missed, and one bounded movement selected the wrong motion class. These locked errors are acceptance evidence only and must not be used for prompt tuning or training.
+- vLLM median latency was 3,890 ms, materially slower than the original 9B Ollama reference of 2,135 ms. The 0.8B adapter therefore proves that a small specialized model can beat 9B routing accuracy and safety, but this vLLM execution mode does not yet meet the speed objective.
+- The authoritative reports are `out/environment-classifier/training/qwen3.5-0.8b-final-001/final/locked-evaluation/benchmark-2026-08-05T19-30-14-255Z.json` and `.md`. The completed receipt prevents a second held-out run.
+
+Runtime simplification findings:
+
+- Ollama can remain installed as one inference owner without holding a model in memory. During the isolated check its `/api/ps` list was empty; the idle `ollama serve` daemon used approximately 54 MiB host RAM, 0 GPU VRAM, and 0.2% CPU.
+- The final 0.8B adapter's vLLM EngineCore used approximately 2,544 MiB compute VRAM during compiled-mode initialization. Total GPU use was 3,453 MiB including the desktop and unrelated display processes.
+- Removing `--enforce-eager` did not produce a benchmark. vLLM 0.18.1 failed during compiled LoRA initialization with an `IndexError` in `lora_model_runner_mixin` / `column_parallel_linear.set_lora`. The development-only run emitted no model responses and never touched the locked set.
+- The local Ollama artifacts are approximately 6.59 GB for `qwen3.5:9b` and 1.04 GB for `qwen3.5:0.8b` before runtime KV/cache overhead. A merged and quantized 0.8B classifier is therefore the simpler deployment experiment: one Ollama daemon, one 9B general model, and one approximately 1 GB specialist model rather than a second Python/vLLM service.
+- Merging the rank-16 LoRA removes the runtime adapter mechanism and allows the ordinary quantized model path. It does not change the 0.8B network's amount of inference computation, but it can remove LoRA-layer overhead and unlock runtime optimizations that the installed vLLM LoRA path cannot use.
+- A full 0.8B fine-tune is not a speed optimization. It would train more parameters, require more compute and stronger overfitting controls, and still execute the same 0.8B architecture after merging/quantization. Consider full fine-tuning only if future development-only evidence shows that LoRA capacity, rather than runtime, is the limiting factor.
+
+Merged Ollama development benchmark:
+
+| Runtime artifact | Cases | JSON valid | Core valid | Exact route | Unsafe action | Excess vision | Missed action | Median latency | P95 latency |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Merged Qwen3.5-0.8B Q4_K_M | 48 development | 47/48 | 47/48 | 47/48 (97.9%) | 0 | 0 | 1 | 461 ms | 550 ms |
+
+- The final rank-16 adapter was merged into its exact `unsloth/Qwen3.5-0.8B` base, converted with the installed Unsloth llama.cpp toolchain, stripped of the Qwen3.5 MTP speculative head through the converter's official `--no-mtp` option, and quantized to Q4_K_M. The deployable GGUF is 529,297,184 bytes and its SHA-256 is `817e1f1ba9ca14c65cdb990364ecbf90811ca96d160d353721c0836ebf61de8d`.
+- A generic conversion that retained the MTP head was not usable: Ollama rejected its extra block because it did not contain the ordinary Qwen3Next attention projections. The corrected artifact has 24 text layers and no MTP block; no model-weight surgery or duplicate routing contract was introduced.
+- The Ollama registration must preserve Qwen3.5's official `RENDERER qwen3.5` and `PARSER qwen3.5` metadata. Without them the model repeated partial objects to the output limit. With them, the same artifact returned the trained 14-field object and completed the 48-case development run normally. The maintained exporter now owns these directives.
+- One bounded target-relative task emitted malformed nested `actionParams`, producing the only invalid, Core-invalid, inexact, and missed-action result. Ollama's generic JSON mode reproduced the same failure and added latency, so it was tested but not adopted as a substitute for the Core validator.
+- The authoritative development report is `out/environment-classifier/training/qwen3.5-0.8b-final-001/final/runtime-benchmarks/ollama-merged-development/benchmark-2026-08-05T23-00-56-297Z.json`, with its companion Markdown report beside it. The locked 16 cases were not reopened.
+- During the benchmark the merged model used 1,420 MiB of compute VRAM according to `nvidia-smi`; Ollama reported 1,395,640,832 resident bytes at a 2,048-token context. The runner used approximately 929 MiB host RSS and the daemon approximately 177 MiB while active. No vLLM process existed. This is approximately 1.12 GiB less compute VRAM than the final adapter's failed compiled-vLLM initialization.
+- A later live-system snapshot found `start.sh` active and Ollama serving both `qwen3.5:9b` and `qwen3.5:2b`; vLLM was not running. Their compute allocations were 8,102 MiB and 3,828 MiB respectively, or 11,930 MiB combined. Replacing the generic 2B resident role with the merged classifier would reduce that second allocation to approximately 1,420 MiB, saving roughly 2.4 GiB of measured compute VRAM while leaving the 9B general model unchanged. The live 9B/2B models were not unloaded because MetaHuman had been restarted and was actively processing user turns.
+- The 461 ms median is approximately 4.6 times faster than the original 9B Ollama held-out reference of 2,135 ms. Split differences prevent treating that ratio as a model-quality comparison, but it clears the intended latency objective by a large margin while preserving zero unsafe action errors and zero excess-vision admissions on development data.
+- Under the user-approved practical floor, the merged Ollama artifact qualified for a controlled Environment Router canary: 97.9% development exact routing exceeds 62.5%, safety remained clean, and latency was materially below 9B. It did not satisfy the earlier absolute 100% gate, and the completed 75% held-out result remains the only locked generalization evidence.
+- Runtime decision: use one Ollama inference owner for the 9B general model and the merged 0.8B classifier, with residency controlled by role and demand. Do not run a second persistent vLLM service for this adapter. Keep the BF16 merge and LoRA artifacts as reproducibility/training evidence, not live runtime choices.
+
+Live Environment Router canary:
+
+- The live profile maps Environment Mode's `environmentRouter` role to `ollama.environment-classifier-0.8b:final` and its orchestrator, persona, and fallback roles to the 9B `default.orchestrator`. The generic 2B model is not part of this Environment Mode route even when it is resident in Ollama.
+- From the live assignment through the first stand trial, the merged classifier produced two accepted Core decisions and three strict-JSON failures. The resulting 40% live acceptance rate is materially below the 97.9% sanitized development result and blocks treating the merged model as a successful default deployment.
+- For the `please stand up` cycle at `2026-08-05T23:08:50Z`, the 0.8B classifier ran first in 624 ms with 1,075 prompt tokens and 94 completion tokens. Its response was not strict JSON, so the Core validator rejected it and emitted `environment_classifier_fallback` rather than admitting an unsafe or malformed route.
+- The 9B fallback then completed the routing call in 2,738 ms. Subsequent 9B persona/visual calls built the response and evidence handling. The task validator admitted a `body_local` stand action, the Environment Bridge coordinated one command, and the robot physically stood. The successful movement therefore proves the fallback/action/bridge path, not successful 0.8B classification.
+- Safety behavior was correct: invalid specialist output never reached action authority. Performance behavior was not yet correct because the failed specialist call added 624 ms before the full 9B routing path. The canary is now evidence of a live input/output distribution gap that must be repaired with sanitized development data; the locked 16 cases remain closed.
+
+Stand-turn critical-path breakdown:
+
+| Serialized call | Model | Latency | Share of 14,057 ms graph turn |
+| --- | --- | ---: | ---: |
+| Specialist route attempt | merged 0.8B | 624 ms | 4.4% |
+| Main route fallback | 9B | 2,738 ms | 19.5% |
+| Persona/environment response with image | 9B | 3,489 ms | 24.8% |
+| Body-local Movement Generator | 9B | 7,151 ms | 50.9% |
+| **Total LLM critical path** |  | **14,002 ms** | **99.6%** |
+
+- The fallback mechanism has a measurable cost, but removing its failed 624 ms attempt would leave an approximately 13.4-second turn. It is not the primary cause of the unacceptable latency.
+- The largest regression is incorrect semantic selection. The robot advertised the named `stand` command, but the Environment LLM did not select it for the natural instruction `stand up`; it instead requested off-script body-local generation. That unnecessary Movement Generator call consumed 7,151 ms.
+- The Environment LLM owns natural-language interpretation and selects one advertised typed action or an explicit off-script body-local movement request. The parser owns only schema, capability, motion-class, and safety admission. It must not resolve phrases, maintain aliases, or synthesize a command that the model did not select.
+- Because semantic selection requires the LLM, physical dispatch currently waits for that structured decision. Latency work should optimize that owned decision path without introducing a second natural-language resolver; the existing route authority, capability admission, task contract, result correlation, and safety checks remain deterministic.
+
+Context-admission and semantic-selection repair:
+
+- The live classifier mismatch was reproduced with sanitized large runtime envelopes. The generic state serializer admitted too much nested telemetry: realistic routing prompts measured 1,330 to 2,417 bytes, and only 2/5 representative outputs passed the Core contract.
+- Core now applies a generic bounded projection only when state is oversized: maximum depth 3, 12 object keys, 8 array items, 160 characters per string, 480 serialized state characters, and 8 admitted state leaves. Ordinary compact state is unchanged. The same realistic prompts now measure 623 to 646 bytes.
+- Five post-projection canaries all returned strict JSON and passed the existing Core routing contract. Latencies were 1,355, 930, 588, 595, and 485 ms. The covered routes were conversation, a body-local stand request, a current-state query, fresh visual acquisition, and a negated wave request.
+- Generic Ollama JSON mode is now used for the classifier request. A stricter JSON Schema experiment was not adopted because the current Ollama/Qwen renderer ignored it; unused schema plumbing would not improve enforcement.
+- The 9B Environment decision correctly understood a sanitized stand request but initially returned the bare string `"stand"` inside `actions`. Core correctly rejected that malformed shape, after which the graph entered the unnecessary Movement Generator path. The root cause was the output contract, not missing phrase coverage.
+- The grounded Environment prompt now requires every action to be a typed object and shows the canonical named-command shape: `{"type":"robotCommand","command":"<one Supported robot command>"}`. The model remains the sole natural-language interpreter and semantic selector.
+- A sanitized, non-dispatching 9B probe after the contract repair returned the typed advertised stand action in 1,619 ms. Core admitted it with `movementRequest=null`, so the 7,151 ms Movement Generator branch was not entered.
+- The legacy phrase-level helper, its command synthesis, its task-completion reparsing, and the graph edge that fed raw instruction text into the parser have been removed. The action parser now accepts only structured model output plus advertised capabilities, session, and routing authority. It does not contain aliases or infer commands from wording.
+- Motion semantics remain model-selected within the authorized movement route. Core validates the selected class and command against current capability, direct-user displacement authority, target-relative feedback requirements, persisted lifecycle state, and the existing bridge contract.
+- This repair is source- and test-validated but not yet a physical end-to-end latency result. MetaHuman OS was stopped during the repair; the rebuilt bundle must be restarted before a live canary can prove the new critical path on the robot.
 
 ## Current Priorities
 
-1. Train repaired Qwen3.5-0.8B folds 1-3 with the unchanged dataset, prompt, and three-epoch recipe. Evaluate each final epoch through the Core scorer.
-2. Aggregate all four development folds. Require at least 62.5% exact routing, preserve strict JSON/Core validity, and report unsafe actions, missed actions, excess vision, and per-suite failure clusters independently.
-3. If the cross-fold result is credible, train the final system-owned adapter on all 48 development cases using the locked three-epoch policy. Do not add examples or tune prompts after this point.
-4. Run the final artifact against the 16 locked cases exactly once. Keep the result even if it fails; do not tune on the held-out errors.
-5. Benchmark the selected safetensors adapter and merged/quantized artifact through vLLM and llama.cpp before choosing the live runtime.
-6. Evaluate `Qwen3-Reranker-0.6B` against the current Memory Relevance Interpreter using relevance quality and end-to-end latency.
-7. Measure whether explicit model-role resource lanes improve user latency without allowing background work to contend with the primary model.
+1. Restart the rebuilt MetaHuman OS and run a bounded live canary covering natural named-command wording, including stand, turn, and one body-local expression. Confirm the typed advertised command reaches the bridge and Movement Generator is not invoked.
+2. Record classifier accepted/fallback counts, Environment decision latency, total graph latency, action selected, movement-generation calls, and terminal completion behavior. Roll back the 0.8B role assignment if malformed live output remains frequent.
+3. If the classifier still fails on live envelopes, add only sanitized system-owned development cases matching the compact Core serializer. Do not use profile-owned turns, reopen the locked set, or normalize malformed model output into a route.
+4. Reduce the structured Environment decision latency without creating another semantic owner. A smaller specialist may replace that role only if it emits the same typed action/task contract and passes the existing admission and lifecycle tests.
+5. Preserve Ollama as the single inference owner and remove unnecessary generic-model residency from the normal Environment path after the live canary identifies the required roles.
+6. Evaluate `Qwen3-Reranker-0.6B` only after the user-facing Environment critical path is within budget.
 
 Deferred, accepted for now:
 
@@ -732,6 +832,20 @@ Deferred, accepted for now:
 
 Passed:
 
+- Model-owned command-selection regression suite - classifier projection, typed Environment actions, capability admission, motion generation, task contracts, lifecycle completion, vLLM JSON transport, and compatibility passed across the focused test files
+- `pnpm build` - architecture guard zero violations, user-agnostic guard 798 maintained runtime files, all 27 cognitive graphs, TTS/voice ownership, delivery queue 6/6, and Astro production build passed after rerunning outside the sandbox-only `tsx` IPC restriction
+- Live stand safety/fallback canary - the 0.8B response failed strict JSON and was rejected by Core; 9B fallback produced the admitted `body_local` stand command and the bridge delivered one command without malformed specialist output receiving action authority
+- Merged Qwen3.5-0.8B Ollama development benchmark - 47/48 strict JSON, 47/48 Core valid, 47/48 exact routes (97.9%), zero unsafe actions, zero excess vision, one missed action, 461 ms median, 550 ms p95, and no locked-case reuse
+- Merged Q4_K_M runtime artifact - 529,297,184-byte text-only GGUF, official no-MTP conversion, Qwen3.5 renderer/parser ownership, SHA-256 provenance, and 1,420 MiB measured compute VRAM
+- Final Qwen3.5-0.8B one-shot locked evaluation - 16/16 strict JSON, 15/16 Core valid, 12/16 exact routes (75.0%), zero unsafe actions, zero excess vision, one missed action, 3,890 ms median vLLM latency; completed receipt prevents rerun
+- Final Qwen3.5-0.8B adapter - 1,822 development-only records, 48 source cases, 684 optimizer steps, three epochs, 20.1-minute trainer runtime, and 20.6-minute complete pipeline
+- `pnpm evaluate:environment-classifier:final -- --dry-run --root out/environment-classifier/training/qwen3.5-0.8b-final-001` - final provenance, adapter shape, selected development report, dataset digest, and held-out one-shot preconditions validated without model exposure
+- Four-fold Qwen3.5-0.8B development cross-validation - 1,821/1,822 strict JSON, 1,790/1,822 Core valid, 1,248/1,822 exact routes (68.5%), 88 unsafe actions, 19 excess-vision admissions, 163 missed actions, and 462 ms aggregate median batch latency
+- `pnpm score:environment-classifier:development -- --root out/environment-classifier/training/qwen3.5-0.8b-cv-002 --checkpoint-policy final-epoch` - selected and recorded each final evaluated checkpoint without duplicating predictions
+- Qwen3.5-0.8B folds 1-3 - unchanged BF16 rank-16 response-only recipe, source-case isolation, final-epoch evaluation through the Core contract, and no held-out model input
+- Final-adapter dry run - 1,822 records from all 48 development cases, zero validation or held-out model inputs, and the selected cross-validation report accepted as provenance evidence
+- Compact classifier message ownership - one Core formatter used by training, runtime, and specialized benchmark requests; regenerated dataset digest unchanged
+- `node --import tsx --test packages/core/src/nodes/llm/orchestrator-llm.node.spec.ts packages/core/src/environment-classifier-runtime.spec.ts` - compact runtime handoff and artifact discovery owner passed
 - Repaired Qwen3.5-0.8B fold-0 pilot - 1,376 training records, 446 isolated development records, 516 optimizer steps, 14.9-minute training runtime, and 21.5-minute end-to-end artifact generation
 - Repaired epoch-3 checkpoint - 446/446 strict JSON, 446/446 Core valid, 374/446 exact routes, 4 unsafe actions, 0 excess vision, 49 missed actions, and 775 ms median batch latency
 - Route-stratum generation guard - all validation route views are represented on every fold's training side; 13 controlled surfaces and 102 records remain source-fold attached

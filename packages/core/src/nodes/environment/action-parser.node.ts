@@ -1,7 +1,6 @@
 import { defineNode } from '../types.js';
 import type {
   EnvironmentAction,
-  EnvironmentMotionClass,
   EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import { validEnvironmentJpegDataUrl } from '../../environment-interface/index.js';
@@ -10,9 +9,7 @@ import {
   environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
   normalizedEnvironmentMotionClass,
-  parseDirectRobotInstruction,
   parseEnvironmentModelOutput,
-  robotOperatorActionRequirement,
 } from './helpers.js';
 
 const PHYSICAL_MOTION_ACTIONS = new Set([
@@ -69,18 +66,10 @@ function isPhysicalMotionAction(action: Partial<EnvironmentAction>): boolean {
   return PHYSICAL_MOTION_ACTIONS.has(action.type ?? '');
 }
 
-function targetRelativeCapabilityAvailable(
-  observation: EnvironmentObservation | undefined,
-): boolean {
-  return observation?.capabilities?.motionClasses?.includes('target_relative') === true
-    || observation?.capabilities?.navigation === true;
-}
-
 function visualFeedbackCapabilityAvailable(
   action: Partial<EnvironmentAction>,
   observation: EnvironmentObservation | undefined,
 ): boolean {
-  if (observation?.capabilities.motionClasses?.includes('target_relative') !== true) return false;
   if (action.type === 'inspect') {
     return observation.capabilities.actions.includes('inspect')
       && Boolean(observation.capabilities.activeView);
@@ -123,56 +112,21 @@ function activeViewTargetIsCurrent(
   });
 }
 
-function motionActionAllowed(
-  action: Partial<EnvironmentAction>,
-  motionClass: EnvironmentMotionClass | null,
-  observation: EnvironmentObservation | undefined,
-): boolean {
-  if (!isPhysicalMotionAction(action)) return true;
-  if (motionClass === 'body_local') return action.type !== 'move';
-  if (motionClass === 'target_relative') {
-    return targetRelativeCapabilityAvailable(observation) && (
-      ((action.type === 'inspect' || action.type === 'visualApproach')
-        && visualFeedbackCapabilityAvailable(action, observation))
-      || (action.type === 'move' && observation?.capabilities?.navigation === true)
-    );
-  }
-  if (motionClass === 'open_loop_displacement') {
-    return action.type === 'robotCommand' || action.type === 'move';
-  }
-  return false;
-}
-
-function autonomousObservation(observation: EnvironmentObservation | undefined): boolean {
-  const cycle = isRecord(observation?.metadata?.robotObserver)
-    ? observation.metadata.robotObserver
-    : null;
-  const command = isRecord(observation?.metadata?.taskValidatorCommand)
-    ? observation.metadata.taskValidatorCommand
-    : null;
-  return observation?.metadata?.boredomMovement !== undefined
-    || cycle?.triggerSource === 'autonomy'
-    || command?.source === 'autonomy';
-}
-
 function motionAdmissionMessage(reason: string): string {
-  if (reason === 'motion_class_missing') {
-    return 'Movement was not admitted because the Environment route did not provide a typed motion class.';
-  }
-  if (reason === 'target_relative_capability_unavailable') {
-    return 'Target-relative movement is unavailable because this robot does not advertise a target-relative feedback capability.';
-  }
   if (reason === 'target_relative_feedback_action_unavailable') {
-    return 'Target-relative movement was not admitted because the requested action is open loop rather than a target-feedback action.';
+    return 'The selected visual feedback action is not configured on the connected robot.';
   }
   if (reason === 'target_relative_frame_unavailable') {
-    return 'Target-relative movement was not admitted because its target is not bound to the exact current visual frame.';
+    return 'The selected visual feedback action requires a target from the current camera frame.';
   }
-  if (reason === 'open_loop_requires_direct_user_command') {
-    return 'Open-loop displacement requires an explicit direct user movement command.';
+  if (reason === 'robot_command_unavailable') {
+    return 'The Environment LLM selected a robot command that this robot does not advertise.';
   }
-  if (reason === 'motion_route_not_authorized') {
-    return 'Physical movement was not admitted because the current Environment route did not authorize robot movement.';
+  if (reason === 'action_capability_unavailable') {
+    return 'The Environment LLM selected an action that the connected robot does not advertise.';
+  }
+  if (reason === 'camera_unavailable') {
+    return 'The robot camera is not currently available.';
   }
   return '';
 }
@@ -183,10 +137,9 @@ export const environmentActionParserNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
-    { name: 'instruction', type: 'string', optional: true, description: 'Original current-turn instruction for authorized movement generation' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Current-turn action authorization from the Environment Context Router' },
+    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Advisory context selection and fallback task-contract fields' },
   ],
   outputs: [
     { name: 'actions', type: 'array', description: 'Parsed environment actions' },
@@ -207,25 +160,16 @@ export const environmentActionParserNode = defineNode({
       const observation = inputs.observation && typeof inputs.observation === 'object'
         ? inputs.observation as EnvironmentObservation
         : undefined;
-      const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
       const terminalFeedback = hasTerminalFeedback(observation);
       const parsed = parseEnvironmentModelOutput(inputs.response, sessionId);
-      const hasRoutingDecision = typeof routingAnalysis?.needsAction === 'boolean';
-      const delegatedActionRequirement = robotOperatorActionRequirement(observation);
-      const currentActionAuthorized = !terminalFeedback
-        && (delegatedActionRequirement !== null
-          ? delegatedActionRequirement
-          : !hasRoutingDecision || routingAnalysis?.needsAction === true);
-      const routerRequestedMovement = currentActionAuthorized
-        && (delegatedActionRequirement === true || routingAnalysis?.needsAction === true)
-        && routingAnalysis?.actionType === 'robot_movement';
       const routedContract = environmentTaskContractFromRouting(routingAnalysis);
       const persistedContract = environmentTaskContractFromObservation(observation);
       const routedMotionClass = isRecord(routingAnalysis?.actionParams)
         ? normalizedEnvironmentMotionClass(routingAnalysis.actionParams.motionClass)
         : null;
-      const motionClass = persistedContract?.motionClass
+      const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
+        ?? persistedContract?.motionClass
         ?? routedContract?.motionClass
         ?? routedMotionClass;
       const connectedSession = Boolean(sessionId || observation?.sessionId);
@@ -235,115 +179,60 @@ export const environmentActionParserNode = defineNode({
       );
       const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
       const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
-      const direct = terminalFeedback
-        ? null
-        : delegatedActionRequirement === null
-          ? parseDirectRobotInstruction(
-            instruction,
-            sessionId,
-            observation?.capabilities?.robotCommands,
-          )
-          : null;
-      const openLoopUserAuthorized = delegatedActionRequirement === null
-        && !autonomousObservation(observation);
       const supportedParsedActions = parsed.actions.filter(action => (
         actionIsAdvertised(action, observation)
         && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
       ));
       const hasNonMotionAlternative = supportedParsedActions.some(action => !isPhysicalMotionAction(action));
-      const targetCapabilityAvailable = targetRelativeCapabilityAvailable(observation);
+      const targetFeedbackActionSelected = supportedParsedActions.some(action => (
+        action.type === 'inspect' || action.type === 'visualApproach'
+      ));
       const targetFeedbackActionAvailable = supportedParsedActions.some(action => (
-        targetCapabilityAvailable && (
-          ((action.type === 'inspect' || action.type === 'visualApproach')
-            && visualFeedbackCapabilityAvailable(action, observation))
-          || (action.type === 'move' && observation?.capabilities?.navigation === true)
-        )
+        (action.type === 'inspect' || action.type === 'visualApproach')
+          && visualFeedbackCapabilityAvailable(action, observation)
       ));
       const targetFrameAvailable = supportedParsedActions.some(action => (
         (action.type === 'inspect' || action.type === 'visualApproach')
           && activeViewTargetIsCurrent(action, observation)
       ));
       let admissionBlockedReason = '';
-      if (routerRequestedMovement && !direct && !hasNonMotionAlternative) {
-        if (!motionClass) admissionBlockedReason = 'motion_class_missing';
-        else if (motionClass === 'target_relative' && !targetCapabilityAvailable) {
-          admissionBlockedReason = 'target_relative_capability_unavailable';
-        } else if (motionClass === 'target_relative' && !targetFeedbackActionAvailable) {
+      if (targetFeedbackActionSelected && !hasNonMotionAlternative) {
+        if (!targetFeedbackActionAvailable) {
           admissionBlockedReason = 'target_relative_feedback_action_unavailable';
         } else if (
-          motionClass === 'target_relative'
-          && supportedParsedActions.some(action => (
-            action.type === 'inspect' || action.type === 'visualApproach'
-          ))
-          && !targetFrameAvailable
+          !targetFrameAvailable
         ) {
           admissionBlockedReason = 'target_relative_frame_unavailable';
-        } else if (motionClass === 'open_loop_displacement' && !openLoopUserAuthorized) {
-          admissionBlockedReason = 'open_loop_requires_direct_user_command';
         }
-      } else if (
-        hasRoutingDecision
-        && currentActionAuthorized
-        && !routerRequestedMovement
-        && !hasNonMotionAlternative
-        && supportedParsedActions.some(isPhysicalMotionAction)
-      ) {
-        admissionBlockedReason = 'motion_route_not_authorized';
+      }
+      if (!admissionBlockedReason && unsupportedCommand) {
+        admissionBlockedReason = 'robot_command_unavailable';
+      } else if (!admissionBlockedReason && unavailableAction?.type === 'captureImage') {
+        admissionBlockedReason = 'camera_unavailable';
+      } else if (!admissionBlockedReason && unavailableAction) {
+        admissionBlockedReason = 'action_capability_unavailable';
       }
       const admissionBlocked = Boolean(admissionBlockedReason);
-      const modelRobotCommand = !direct
-        ? parsed.actions.find(
-            action => action.type === 'robotCommand' && typeof action.command === 'string',
-          )?.command
-        : undefined;
-      const hasSupportedModelRobotCommand = Boolean(modelRobotCommand && !unsupportedCommand);
-      const requiresGeneratedMovement = currentActionAuthorized
-        && !direct
+      const requiresGeneratedMovement = !terminalFeedback
         && !admissionBlocked
         && motionClass === 'body_local'
-        && Boolean(
-        hasRoutingDecision && delegatedActionRequirement === null
-          ? routerRequestedMovement && (
-              parsed.movementRequest
-                || unsupportedCommand
-                || !hasSupportedModelRobotCommand
-            )
-          : parsed.movementRequest || unsupportedCommand,
-      );
-      const movementRequestError = terminalFeedback
-        || (hasRoutingDecision && delegatedActionRequirement === null && !routerRequestedMovement)
-        ? ''
-        : parsed.movementRequestError;
+        && Boolean(parsed.movementRequest);
+      const movementRequestError = terminalFeedback ? '' : parsed.movementRequestError;
       const movementRequested = Boolean(movementRequestError || requiresGeneratedMovement);
-      const movementRequest = !direct && requiresGeneratedMovement && movementSupported
+      const movementRequest = requiresGeneratedMovement && movementSupported
         ? {
-            ...(parsed.movementRequest ?? { sessionId }),
+            ...parsed.movementRequest!,
             motionClass: 'body_local' as const,
-            // The first LLM may choose this branch, but may not rewrite the
-            // user-authorized movement that the dedicated generator receives.
-            description: instruction
-              || parsed.movementRequest?.description
-              || `perform the requested ${unsupportedCommand || modelRobotCommand || 'off-script'} movement`,
           }
         : null;
-      const actions = direct
-        ? [direct.action]
-        : movementRequest
-          ? []
-          : currentActionAuthorized
-            ? supportedParsedActions.filter(action => (
-                !isPhysicalMotionAction(action)
-                || (!hasRoutingDecision && delegatedActionRequirement === null)
-                || (
-                  !admissionBlocked
-                  && routerRequestedMovement
-                  && motionActionAllowed(action, motionClass, observation)
-                )
-              ))
-            : [];
+      const actions = movementRequest
+        ? []
+        : !terminalFeedback && !admissionBlocked
+          ? supportedParsedActions
+          : [];
       const stopActions = parsed.actions.filter(action => action.type === 'stop');
-      if (!currentActionAuthorized && stopActions.length > 0) actions.push(...stopActions);
-      const movementError = direct ? '' : motionAdmissionMessage(admissionBlockedReason)
+      if (terminalFeedback && stopActions.length > 0) actions.push(...stopActions);
+      const movementError = motionAdmissionMessage(admissionBlockedReason)
         || movementRequestError
         || (requiresGeneratedMovement && !connectedSession
           ? 'The requested robot movement cannot run because no robot session is connected.'
@@ -352,27 +241,43 @@ export const environmentActionParserNode = defineNode({
             : '');
       const capabilityError = unavailableAction?.type === 'captureImage'
         ? 'The robot camera is not currently available.'
-        : unavailableAction
-          ? 'The physical robot is not currently available for that action.'
-          : '';
-      const response = movementError || direct?.response || capabilityError || parsed.response || '';
+        : unsupportedCommand
+          ? `The Environment LLM selected robot command "${unsupportedCommand}", but the robot does not advertise it.`
+          : unavailableAction
+            ? 'The physical robot is not currently available for that action.'
+            : '';
+      const response = movementError || capabilityError || parsed.response || '';
       const valid = actions.length > 0 || movementRequest !== null;
-      const actionAdmission = routerRequestedMovement || admissionBlocked
+      const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
         ? {
             kind: 'environment_action_admission',
             admitted: !admissionBlocked,
             motionClass,
             reason: admissionBlockedReason,
-            requiredCapability: motionClass === 'target_relative' ? 'target_relative' : null,
+            requiredCapability: null,
           }
         : null;
+      const selectedAdvertisedRobotCommand = actions.length === 1
+        && actions[0]?.type === 'robotCommand';
+      const taskDecision = selectedAdvertisedRobotCommand
+        ? {
+            outcome: 'act' as const,
+            reason: parsed.taskDecision?.reason
+              || 'Execute the Environment LLM-selected advertised robot command.',
+            objectiveComplete: false,
+            continuationPolicy: parsed.taskDecision?.continuationPolicy ?? 'none' as const,
+            requiredCompletionBasis: parsed.taskDecision?.requiredCompletionBasis
+              ?? 'action_result' as const,
+            ...(motionClass ? { motionClass } : {}),
+          }
+        : parsed.taskDecision;
 
       return {
         actions,
         firstAction: actions[0] ?? null,
         movementRequest,
         movementRequested,
-        taskDecision: parsed.taskDecision,
+        taskDecision,
         taskDecisionError: parsed.taskDecisionError,
         actionAdmission,
         valid,

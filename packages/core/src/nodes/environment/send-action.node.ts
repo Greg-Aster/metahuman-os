@@ -283,15 +283,10 @@ export const environmentSendActionNode = defineNode({
       source: actionCycle?.triggerSource ?? 'user',
       correlationId: actionCycle?.cycleId ?? context.sessionId ?? null,
     };
+    const visibleResponse = conversationalResponse || message;
     const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
       ? 'Camera request queued; waiting for a fresh image.'
-      : bodyActions.length > 0
-        // The initial user turn needs its non-terminal acknowledgement so chat
-        // work completes instead of retrying and admitting the action again.
-        // Coordinator continuations have no current user message and stay
-        // silent; terminal feedback still owns the completion report.
-        ? currentUserInstruction ? conversationalResponse : ''
-        : conversationalResponse;
+      : visibleResponse;
     return {
       commands,
       rejectedActions,
@@ -304,7 +299,7 @@ export const environmentSendActionNode = defineNode({
       message,
       response: ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
         ? message
-        : status === 'coordinated_for_adapter' ? queuedResponse : conversationalResponse,
+        : status === 'coordinated_for_adapter' ? queuedResponse : visibleResponse,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,
       adapterReady,

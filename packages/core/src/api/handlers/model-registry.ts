@@ -11,11 +11,29 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { getProfilePaths, systemPaths, audit, loadBackendConfig, storageClient, getBackendStatus, discoverVllmLoraAdapters, getVllmLoraConfig, enableVllmLoraAdapter, getVLLMLoadedLoras, listLocalModelArtifacts, ollama } from '../../index.js';
+import {
+  getProfilePaths,
+  systemPaths,
+  audit,
+  loadBackendConfig,
+  storageClient,
+  getBackendStatus,
+  detectAvailableBackends,
+  discoverVllmLoraAdapters,
+  getVllmLoraConfig,
+  enableVllmLoraAdapter,
+  getVLLMLoadedLoras,
+  listLocalModelArtifacts,
+  ollama,
+  getEnvironmentClassifierRuntimeStatus,
+  ENVIRONMENT_ROUTER_MODEL_ROLE,
+} from '../../index.js';
 import { invalidateModelCache } from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
+
+const RETIRED_ENVIRONMENT_FOLD_PREFIX = 'environment-classifier.';
 
 interface AvailableRegistryModel {
   id: string
@@ -177,6 +195,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
 
     // Process user registry models - this is the ONLY source of truth
     const availableModels: AvailableRegistryModel[] = Object.entries(registry.models || {})
+      .filter(([id]) => !id.startsWith(RETIRED_ENVIRONMENT_FOLD_PREFIX))
       .map(([id, config]: [string, any]) => ({
         id,
         provider: config.provider,
@@ -210,8 +229,9 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     // Use RESOLVED backend (what's actually running), not just configured
     const activeBackend = backendStatus.backend;
     const resolvedBackend = backendStatus.resolvedBackend;
-    const isVLLMRunning = resolvedBackend === 'vllm';
-    const isOllamaRunning = resolvedBackend === 'ollama';
+    const availableBackends = await detectAvailableBackends();
+    const isVLLMRunning = availableBackends.vllm.running;
+    const isOllamaRunning = availableBackends.ollama.running;
 
     // vllm.active represents the backend's one loaded/configured model. Overlay
     // its runtime identity for display without replacing the user's persisted
@@ -273,7 +293,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       locked: boolean;
     } | null = null;
 
-    if (isVLLMRunning && backendStatus.model) {
+    if (activeBackend === 'vllm' && isVLLMRunning && backendStatus.model) {
       localModel = {
         id: 'vllm.active',
         name: backendStatus.model,
@@ -296,7 +316,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       valid: boolean;
     }> = [];
 
-    if (isVLLMRunning) {
+    if (activeBackend === 'vllm' && isVLLMRunning) {
       try {
         const profilePaths = getProfilePaths(user.username);
         const adapters = await discoverVllmLoraAdapters(profilePaths.out);
@@ -320,13 +340,15 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       }
     }
 
+    const environmentClassifierStatus = await getEnvironmentClassifierRuntimeStatus(user.username);
     const modelCategories = {
-      // Local models: vLLM shows the locked model, Ollama shows all ollama models IF running
-      local: isVLLMRunning
+      // The default chat backend and a dedicated classifier may coexist. Keep
+      // the ordinary local model list tied to the selected chat backend.
+      local: activeBackend === 'vllm' && isVLLMRunning
         ? [{ id: 'vllm.active', model: backendStatus.model || 'unknown', provider: 'vllm', locked: true }]
         : isOllamaRunning
           ? availableModels.filter(m => m.provider === 'ollama')
-          : [], // No local models if no local server running
+          : [],
       lora: vllmLoras,  // vLLM LoRA adapters
       remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
       bigBrother: availableModels.filter(m => bigBrotherProviders.has(m.provider))
@@ -353,6 +375,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       activeBackend,
       resolvedBackend,
       localModel,
+      environmentClassifier: environmentClassifierStatus,
       sharedArtifacts: listLocalModelArtifacts(),
       modelCategories
     });
@@ -380,6 +403,12 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
 
     if (!role || !modelId) {
       return { status: 400, error: 'role and modelId are required' };
+    }
+    if (modelId.startsWith(RETIRED_ENVIRONMENT_FOLD_PREFIX)) {
+      return {
+        status: 400,
+        error: 'Development-fold Environment Router checkpoints are retired from production selection',
+      };
     }
 
     // CRITICAL: User's registry is the ONLY source of truth (initialized from system on first access)
@@ -497,6 +526,23 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     } else {
       registry.defaults = registry.defaults || {};
       registry.defaults[role] = modelId;
+    }
+
+    // The Environment Router is one profile-owned selection surfaced under the
+    // environment mode. Keep its default and mode mapping aligned so callers
+    // that warm or resolve the role without a cognitive mode cannot revive a
+    // stale provider assignment.
+    if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
+      registry.defaults = registry.defaults || {};
+      registry.defaults[role] = modelId;
+      registry.cognitiveModeMappings = registry.cognitiveModeMappings || {};
+      registry.cognitiveModeMappings.environment = registry.cognitiveModeMappings.environment || {};
+      registry.cognitiveModeMappings.environment[role] = modelId;
+    }
+
+    if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
+      registry.globalSettings = registry.globalSettings || {};
+      registry.globalSettings.environmentClassifierEnabled = true;
     }
 
     await writeModelRegistry(user.username, registry);

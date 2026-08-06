@@ -20,6 +20,10 @@ pnpm train:environment-classifier:0.8b -- --dry-run --fold 0
 pnpm train:environment-classifier:0.8b -- --fold 0 --output out/environment-classifier/training/qwen3.5-0.8b-cv-001
 pnpm evaluate:environment-classifier:checkpoint -- --root out/environment-classifier/training/qwen3.5-0.8b-cv-001 --fold 0 --checkpoint checkpoint-326
 pnpm score:environment-classifier:development -- --root out/environment-classifier/training/qwen3.5-0.8b-cv-001 --fold 0 --predictions out/environment-classifier/training/qwen3.5-0.8b-cv-001/fold-0/checkpoint-326-validation-predictions.jsonl
+pnpm score:environment-classifier:development -- --root out/environment-classifier/training/qwen3.5-0.8b-cv-002 --checkpoint-policy final-epoch
+pnpm train:environment-classifier:0.8b -- --final --selection-report out/environment-classifier/training/qwen3.5-0.8b-cv-002/development-validation-final-epoch.json --output out/environment-classifier/training/qwen3.5-0.8b-final-001
+pnpm evaluate:environment-classifier:final -- --dry-run --root out/environment-classifier/training/qwen3.5-0.8b-final-001
+pnpm evaluate:environment-classifier:final -- --root out/environment-classifier/training/qwen3.5-0.8b-final-001
 pnpm benchmark:environment-classifier -- --split held_out
 pnpm benchmark:environment-classifier -- --split all
 ```
@@ -32,13 +36,34 @@ existing Unsloth LoRA owner. Training targets the complete 14-field JSON
 decision; `@metahuman/core/environment-classifier` remains the only runtime
 contract and scoring authority.
 
+`buildEnvironmentClassifierMessages` in that same Core owner is the single
+compact input formatter for generated training rows, live Environment Router
+inference, and compact benchmark requests. The provider-neutral benchmark keeps
+its ordinary graph format for historical baselines and uses
+`--message-format compact` for specialized adapters.
+
 The 48 development cases may be used for training and checkpoint selection.
 Never run the locked 16-case held-out split until one model and checkpoint have
 been selected from development validation.
 
 Use `--fold 0` to inspect the pilot without requiring unfinished fold outputs.
 After all four folds finish, omit `--fold` to produce the aggregate
-cross-validation report.
+cross-validation report. When the selection rule is the last retained epoch,
+use `--checkpoint-policy final-epoch`; the scorer selects the highest evaluated
+checkpoint inside each fold and records every selected prediction filename in
+the report. It does not copy predictions or change the routing contract.
+
+Final training requires `--final` and the selected four-fold development report.
+It trains one adapter on all 48 development source cases, writes no synthetic
+validation split, and records the report digest plus its safety metrics in final
+artifact provenance. The held-out lock is verified but no held-out model input
+is read during training.
+
+The final evaluator validates that provenance and adapter shape, starts the
+adapter through the existing Core vLLM owner, and calls the provider-neutral
+benchmark on the locked split. Immediately before the first held-out request it
+writes `locked-evaluation-receipt.json`; completed and failed receipts both
+prevent reruns, so a disappointing final result cannot become tuning data.
 
 Training uses the fold's validation records for epoch loss and checkpoint
 retention, but does not generate route responses inside the long-lived training

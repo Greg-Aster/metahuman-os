@@ -21,6 +21,7 @@
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
 import { validateEnvironmentRouterDecision } from '../../environment-classifier.js';
+import { callEnvironmentClassifierRuntime } from '../../environment-classifier-runtime.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 // Action types that can trigger Big Brother
@@ -256,7 +257,16 @@ Adjust your routing based on this feedback. If memory search already failed, con
         { role: 'user' as const, content: userPrompt },
       ];
 
-      const response = await callLLM({
+      // Environment Mode may assign a compact classifier for context selection
+      // in the current user's model registry. Its result is advisory downstream;
+      // null deliberately falls back to the normal context orchestrator.
+      const classifierResponse = context.cognitiveMode === 'environment'
+        ? await callEnvironmentClassifierRuntime({
+            routingRequest: userMessage,
+            recentConversation: conversationHistory,
+          })
+        : null;
+      const response = classifierResponse ?? await callLLM({
         role: 'orchestrator',
         messages,
         cognitiveMode: context.cognitiveMode,
@@ -298,9 +308,8 @@ Adjust your routing based on this feedback. If memory search already failed, con
           ? Math.max(0, Math.min(1, parsed.complexity))
           : 0.3;
         const actionType = parsed.actionType || 'none';
-        // Environment Mode consumes needsAction as physical-action authority.
-        // Complexity may request escalation in other modes, but it must never
-        // silently authorize robot or sensor work.
+        // In Environment Mode these fields select context only. The Environment
+        // LLM independently owns the semantic action decision.
         const triggersBigBrother = resolveOrchestratorActionRequirement({
           declaredNeedsAction: needsAction,
           actionType,

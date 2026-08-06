@@ -244,12 +244,12 @@ export const environmentTaskRefinerNode = defineNode({
       : 8;
     const history = boundedHistory(inputs.conversationHistory, historyLimit);
     const personaText = cleanText(inputs.personaText, 12_000);
-    const immutableTaskBoundary = [
-      'Immutable task contract for this refinement:',
+    const taskBoundary = [
+      'Objective and evidence contract for this refinement:',
       `- Original objective: ${request.objective}`,
       `- Required whole-objective evidence basis: ${request.requiredCompletionBasis}.`,
       ...(request.motionClass
-        ? [`- Motion class: ${request.motionClass}. This classification is immutable.`]
+        ? [`- Previous attempt motion class: ${request.motionClass}. This is evidence about the prior attempt, not a constraint on the next approach.`]
         : []),
       '- Preserve who performs each action, who senses each condition, and who owns every referenced object or body part.',
       '- Preserve the original stopping condition exactly; do not substitute a new signal, actor, sensor, or completion criterion.',
@@ -283,7 +283,7 @@ export const environmentTaskRefinerNode = defineNode({
     const messages: RouterMessage[] = [
       {
         role: 'system',
-        content: [systemPrompt, personaText, immutableTaskBoundary].filter(Boolean).join('\n\n'),
+        content: [systemPrompt, personaText, taskBoundary].filter(Boolean).join('\n\n'),
       },
       { role: 'user', content: userContent },
     ];
@@ -320,7 +320,6 @@ export const environmentTaskRefinerNode = defineNode({
         advanceCycle: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: request.requiredCompletionBasis,
-        ...(request.motionClass ? { motionClass: request.motionClass } : {}),
         ...(request.motionControl ? { motionControl: request.motionControl } : {}),
         requireExternalCompletionEvidence: request.requireExternalCompletionEvidence,
       };

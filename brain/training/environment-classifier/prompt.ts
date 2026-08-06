@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { buildEnvironmentClassifierMessages } from '@metahuman/core/environment-classifier'
 import {
   REPOSITORY_ROOT,
   type ClassifierConversationMessage,
@@ -60,11 +61,10 @@ export function renderContextRouterMessages(
 export function renderCompactClassifierInput(
   testCase: Pick<EnvironmentClassifierCase, 'input'>,
 ): string {
-  return JSON.stringify({
-    currentInstruction: testCase.input.envelope.currentInstruction,
-    currentEnvironment: testCase.input.envelope.currentEnvironment,
-    recentConversation: testCase.input.recentConversation.slice(-4),
-  })
+  return buildEnvironmentClassifierMessages({
+    routingRequest: testCase.input.envelope,
+    recentConversation: testCase.input.recentConversation,
+  })[1].content
 }
 
 export async function loadContextRouterPrompt(): Promise<ContextRouterPrompt> {

@@ -14,6 +14,7 @@ import { successResponse } from '../types.js';
 let getBackendStatus: any;
 let detectAvailableBackends: any;
 let loadBackendConfig: any;
+let getEnvironmentClassifierRuntimeStatus: any;
 
 async function ensureBackendFunctions(): Promise<boolean> {
   try {
@@ -21,7 +22,8 @@ async function ensureBackendFunctions(): Promise<boolean> {
     getBackendStatus = core.getBackendStatus;
     detectAvailableBackends = core.detectAvailableBackends;
     loadBackendConfig = core.loadBackendConfig;
-    return !!(getBackendStatus && detectAvailableBackends && loadBackendConfig);
+    getEnvironmentClassifierRuntimeStatus = core.getEnvironmentClassifierRuntimeStatus;
+    return !!(getBackendStatus && detectAvailableBackends && loadBackendConfig && getEnvironmentClassifierRuntimeStatus);
   } catch {
     return false;
   }
@@ -30,17 +32,20 @@ async function ensureBackendFunctions(): Promise<boolean> {
 /**
  * GET /api/llm-backend/status - Get LLM backend status
  */
-export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<UnifiedResponse> {
+export async function handleGetLlmBackendStatus(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const available = await ensureBackendFunctions();
     if (!available) {
       return { status: 501, error: 'Backend functions not available' };
     }
 
-    const [status, availableBackends, config] = await Promise.all([
+    const [status, availableBackends, config, environmentClassifier] = await Promise.all([
       getBackendStatus(),
       detectAvailableBackends(),
       Promise.resolve(loadBackendConfig()),
+      req.user.isAuthenticated
+        ? getEnvironmentClassifierRuntimeStatus(req.user.username)
+        : Promise.resolve(null),
     ]);
 
     return successResponse({
@@ -97,6 +102,7 @@ export async function handleGetLlmBackendStatus(_req: UnifiedRequest): Promise<U
         } : null,
       },
       sharedArtifacts: availableBackends.sharedArtifacts || [],
+      environmentClassifier,
     });
   } catch (error) {
     console.error('[llm-backend-status] GET failed:', error);

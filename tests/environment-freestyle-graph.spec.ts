@@ -24,12 +24,14 @@ test('Environment Mode has one explicit off-script generation branch that rejoin
   assert.equal(generators.length, 1);
   const generator = generators[0]!;
   const parser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
+  const validator = graph.nodes.find(node => node.data.nodeType === 'environment_task_validator')!;
   const bridge = graph.nodes.find(node => node.data.nodeType === 'environment_send_action')!;
 
-  assert.equal(hasEdge(parser.id, 'actions', bridge.id, 'actions'), true, 'semantic actions keep their direct path');
+  assert.equal(hasEdge(parser.id, 'actions', validator.id, 'actions'), true);
   assert.equal(hasEdge(parser.id, 'movementRequest', generator.id, 'movementRequest'), true);
-  assert.equal(hasEdge(generator.id, 'actions', bridge.id, 'generatedActions'), true);
-  assert.equal(hasEdge(generator.id, 'response', bridge.id, 'generatedResponse'), true);
+  assert.equal(hasEdge(generator.id, 'actions', validator.id, 'generatedActions'), true);
+  assert.equal(hasEdge(generator.id, 'response', validator.id, 'generatedResponse'), true);
+  assert.equal(hasEdge(validator.id, 'actions', bridge.id, 'actions'), true);
   assert.equal(
     (bridge.data.properties?.allowedActions as string[]).includes('robotMotionPlan'),
     true,
@@ -51,10 +53,13 @@ test('Environment Mode reuses the existing LLM and semantic context-routing node
   assert.ok(memoryRouter);
   assert.ok(memoryInterpreter);
   assert.match(String(contextRouter.data.properties?.systemPrompt), /current message requires/i);
-  assert.match(String(contextRouter.data.properties?.systemPrompt), /history is reference material only/i);
+  assert.match(String(contextRouter.data.properties?.systemPrompt), /never authorizes or vetoes an Environment LLM action/i);
+  assert.match(String(contextRouter.data.properties?.systemPrompt), /conversation history are evidence only/i);
   assert.equal(contextBuilder.data.properties?.recentHistoryLimit, 4);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /robot-mounted camera observes the external scene/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /correlated post-action image/i);
 
-  assert.equal(hasEdge(instruction.id, 'instruction', contextRouter.id, 'message'), true);
+  assert.equal(hasEdge(instruction.id, 'routingRequest', contextRouter.id, 'message'), true);
   assert.equal(hasEdge(history.id, 'history', contextRouter.id, 'conversationHistory'), true);
   assert.equal(hasEdge(contextRouter.id, 'analysis', memoryDecision.id, 'orchestratorAnalysis'), true);
   assert.equal(hasEdge(memoryDecision.id, 'memoryHints', memoryRouter.id, 'orchestratorHints'), true);

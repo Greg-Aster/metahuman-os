@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OrchestratorLLMNode, resolveOrchestratorActionRequirement } from './orchestrator-llm.node.js';
 
-test('Environment complexity never becomes physical-action authority', () => {
+test('Environment complexity never changes the advisory action hint', () => {
   assert.equal(resolveOrchestratorActionRequirement({
     declaredNeedsAction: false,
     actionType: 'none',
@@ -20,7 +20,7 @@ test('non-Environment orchestrators retain complexity escalation', () => {
   }), true);
 });
 
-test('explicit Environment action decisions remain authorized', () => {
+test('explicit Environment action decisions remain available as advisory hints', () => {
   assert.equal(resolveOrchestratorActionRequirement({
     declaredNeedsAction: true,
     actionType: 'robot_movement',

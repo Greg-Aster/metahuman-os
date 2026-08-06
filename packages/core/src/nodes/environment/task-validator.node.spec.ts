@@ -361,7 +361,7 @@ test('Environment context admits execution contracts from the Robot Operator typ
   assert.match(context.message, /Available actions:/);
 });
 
-test('validator suppresses an action narration when required work has no admitted action', async () => {
+test('validator replaces a false action promise when required work has no admitted action', async () => {
   const result = await environmentTaskValidatorNode.execute({
     response: 'I am moving closer to the shelving unit now.',
     taskDecision: {
@@ -386,14 +386,71 @@ test('validator suppresses an action narration when required work has no admitte
 
   assert.deepEqual(result.actions, []);
   assert.equal(result.movementRequest, null);
-  assert.equal(result.response, '');
+  assert.equal(result.response, 'I understood this as an action, but no executable robot command was produced.');
   assert.equal(result.shouldRefine, false);
   assert.equal(result.decision.actionRequired, true);
-  assert.equal(result.decision.responseSuppressed, true);
+  assert.equal(result.decision.responseSuppressed, false);
   assert.equal(result.decision.blockedReason, 'required_action_missing');
 });
 
-test('Robot Operator action authorization cannot bypass a missing typed motion route', async () => {
+test('validator returns an explicit diagnostic when a user action produces no command or response', async () => {
+  const result = await environmentTaskValidatorNode.execute({
+    response: '',
+    taskDecision: {
+      outcome: 'act',
+      reason: 'The request requires a robot action.',
+      objectiveComplete: false,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+    },
+    instruction: 'Turn right 90 degrees.',
+    observation: observation({
+      source: 'user',
+      step: 1,
+      maxSteps: 8,
+      objective: 'Turn right 90 degrees.',
+    }),
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+    },
+  }, { operatorMode: 'semi' });
+
+  assert.deepEqual(result.actions, []);
+  assert.equal(
+    result.response,
+    'I understood this as an action, but no executable robot command was produced.',
+  );
+  assert.equal(result.decision.responseSuppressed, false);
+  assert.equal(result.decision.blockedReason, 'required_action_missing');
+});
+
+test('an advisory action route cannot replace a missing Environment LLM action decision', async () => {
+  const result = await environmentTaskValidatorNode.execute({
+    response: 'I will perform a motion now.',
+    actions: [],
+    movementRequest: null,
+    instruction: 'Please do a motion of any kind.',
+    observation: observation({
+      source: 'user',
+      step: 1,
+      maxSteps: 8,
+      objective: 'Please do a motion of any kind.',
+    }),
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: { motionClass: 'body_local' },
+    },
+  }, { operatorMode: 'semi' });
+
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.response, 'I will perform a motion now.');
+  assert.equal(result.decision.actionRequired, false);
+  assert.equal(result.decision.blockedReason, '');
+});
+
+test('an advisory no-action route cannot veto an Environment LLM-selected advertised command', async () => {
   const instruction = 'I want Environment Mode to carry out this physical intention.';
   const delegatedObservation = observation({
     source: 'autonomy',
@@ -433,9 +490,10 @@ test('Robot Operator action authorization cannot bypass a missing typed motion r
     },
   }, {});
 
-  assert.equal(parsed.actions.length, 0);
-  assert.equal(parsed.actionAdmission.admitted, false);
-  assert.equal(parsed.actionAdmission.reason, 'motion_route_not_authorized');
+  assert.equal(parsed.actions.length, 1);
+  assert.equal(parsed.actions[0]?.command, 'walk');
+  assert.equal(parsed.actionAdmission.admitted, true);
+  assert.equal(parsed.actionAdmission.reason, '');
 
   const validated = await environmentTaskValidatorNode.execute({
     ...parsed,
@@ -447,15 +505,15 @@ test('Robot Operator action authorization cannot bypass a missing typed motion r
     },
   }, { operatorMode: 'semi' });
 
-  assert.equal(validated.actions.length, 0);
+  assert.equal(validated.actions.length, 1);
   assert.equal(validated.decision.actionRequired, true);
-  assert.equal(validated.decision.admittedActionCount, 0);
-  assert.equal(validated.decision.blockedReason, 'motion_route_not_authorized');
-  assert.equal(validated.outcome, 'request_user');
-  assert.match(validated.response, /did not authorize robot movement/i);
+  assert.equal(validated.decision.admittedActionCount, 1);
+  assert.equal(validated.decision.blockedReason, '');
+  assert.equal(validated.outcome, 'act');
+  assert.equal(validated.response, 'I am moving closer now.');
 });
 
-test('target-relative capability rejection is visible and cannot enter bounded refinement', async () => {
+test('target-relative objective dispatches the LLM-selected advertised command and preserves its visual completion contract', async () => {
   const instruction = 'Move closer to the current scene target for a better view.';
   const delegatedObservation = observation({
     source: 'autonomy',
@@ -495,6 +553,7 @@ test('target-relative capability rejection is visible and cannot enter bounded r
         objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
+        motionClass: 'target_relative',
       },
     }),
     instruction,
@@ -507,6 +566,8 @@ test('target-relative capability rejection is visible and cannot enter bounded r
     routingAnalysis,
     observation: delegatedObservation,
   }, {});
+  assert.equal(contracted.taskDecision.continuationPolicy, 'bounded');
+  assert.equal(contracted.taskDecision.requiredCompletionBasis, 'visual_observation');
   const validated = await environmentTaskValidatorNode.execute({
     ...parsed,
     taskDecision: contracted.taskDecision,
@@ -515,14 +576,18 @@ test('target-relative capability rejection is visible and cannot enter bounded r
     routingAnalysis,
   }, { operatorMode: 'full' });
 
-  assert.equal(validated.actions.length, 0);
+  assert.equal(validated.actions.length, 1);
+  assert.equal(validated.actions[0]?.type, 'robotCommand');
+  assert.equal(validated.actions[0]?.command, 'walk');
   assert.equal(validated.movementRequest, null);
-  assert.equal(validated.outcome, 'request_user');
+  assert.equal(validated.outcome, 'act');
   assert.equal(validated.shouldRefine, false);
   assert.equal(validated.refinementRequest, null);
+  assert.equal(validated.decision.continuationPolicy, 'bounded');
+  assert.equal(validated.decision.requiredCompletionBasis, 'visual_observation');
   assert.equal(validated.decision.motionClass, 'target_relative');
-  assert.equal(validated.decision.blockedReason, 'target_relative_capability_unavailable');
-  assert.match(validated.response, /target-relative feedback capability/i);
+  assert.equal(validated.decision.blockedReason, '');
+  assert.equal(validated.response, 'I will move closer for a better view.');
 });
 
 test('a duplicate generated motion plan becomes a terminal stuck lifecycle result', async () => {
@@ -613,7 +678,7 @@ test('adapter-owned visual no-progress is terminal and cannot reopen locomotion 
   assert.match(result.response, /did not make measurable progress/i);
 });
 
-test('Robot Operator conversational decision cannot be upgraded into an environment action', async () => {
+test('an earlier Robot Operator response preference cannot veto the Environment LLM current action', async () => {
   const instruction = 'I want to respond conversationally to the current stimulus.';
   const delegatedObservation = observation({
     source: 'autonomy',
@@ -655,7 +720,8 @@ test('Robot Operator conversational decision cannot be upgraded into an environm
     },
   }, {});
 
-  assert.deepEqual(parsed.actions, []);
+  assert.equal(parsed.actions.length, 1);
+  assert.equal(parsed.actions[0]?.command, 'walk');
   assert.equal(parsed.response, 'I have a conversational response to the current stimulus.');
 });
 
@@ -697,7 +763,7 @@ test('a response-only state answer is not suppressed by an advisory routing fals
   assert.equal(result.decision.blockedReason, '');
 });
 
-test('validator suppresses an unsupported completion claim even when routing missed the action', async () => {
+test('validator reports an unsupported completion claim instead of failing silently', async () => {
   const result = await environmentTaskValidatorNode.execute({
     response: 'I have moved closer to the shelving unit.',
     taskDecision: {
@@ -723,12 +789,12 @@ test('validator suppresses an unsupported completion claim even when routing mis
   }, { operatorMode: 'semi' });
 
   assert.equal(result.complete, false);
-  assert.equal(result.response, '');
-  assert.equal(result.decision.responseSuppressed, true);
+  assert.equal(result.response, 'I have moved closer to the shelving unit.');
+  assert.equal(result.decision.responseSuppressed, false);
   assert.equal(result.decision.blockedReason, 'objective_completion_unverified');
 });
 
-test('validator admits an action without repeating the Robot Operator intention as conversation', async () => {
+test('validator keeps an admitted Robot Operator response visible for observability', async () => {
   const instruction = 'I want to move closer to inspect the shelving unit.';
   const delegatedObservation = observation({
     source: 'user',
@@ -766,9 +832,9 @@ test('validator admits an action without repeating the Robot Operator intention 
 
   assert.equal(result.actions.length, 1);
   assert.equal(result.actions[0].command, 'walk');
-  assert.equal(result.response, '');
+  assert.equal(result.response, instruction);
   assert.equal(result.decision.operatorIntentionEcho, true);
-  assert.equal(result.decision.responseSuppressed, true);
+  assert.equal(result.decision.responseSuppressed, false);
   assert.equal(result.decision.blockedReason, 'operator_intention_echo');
 });
 
@@ -908,7 +974,7 @@ test('the required visual basis invokes assessment even when the completion clai
   assert.equal(validated.decision.completionEvidence, assessed.assessment.reason);
 });
 
-test('a completed bounded step closes from exact visual evidence even when the Environment decision missed it', async () => {
+test('a completed bounded step closes from the Environment LLM-selected exact visual evidence', async () => {
   const objective = 'Perform the requested motion until the robot sees the user-owned stopping signal, then stop.';
   const routingAnalysis = {
     needsAction: true,
@@ -924,11 +990,11 @@ test('a completed bounded step closes from exact visual evidence even when the E
       reason: 'Start the current physical step.',
       objectiveComplete: false,
       continuationPolicy: 'bounded',
-      requiredCompletionBasis: 'action_result',
+      requiredCompletionBasis: 'visual_observation',
     },
     routingAnalysis,
   }, {});
-  assert.equal(contracted.taskDecision.taskContractSource, 'bounded_router_evidence');
+  assert.equal(contracted.taskDecision.taskContractSource, 'environment_decision');
   assert.equal(contracted.taskDecision.requiredCompletionBasis, 'visual_observation');
 
   const initial = await environmentTaskValidatorNode.execute({
@@ -1047,6 +1113,15 @@ test('an unsupported exact frame after a bounded completed step continues throug
 
 test('a premature action-result claim cannot suppress an authorized one-shot command', async () => {
   const currentObservation = observation({ source: 'user', step: 1, maxSteps: 8, objective: 'Please rest.' });
+  const routingAnalysis = {
+    needsAction: true,
+    actionType: 'robot_movement',
+    actionParams: {
+      continuationPolicy: 'bounded' as const,
+      requiredCompletionBasis: 'visual_observation' as const,
+      motionClass: 'body_local' as const,
+    },
+  };
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will rest now.',
@@ -1056,24 +1131,35 @@ test('a premature action-result claim cannot suppress an authorized one-shot com
         outcome: 'complete',
         reason: 'The rest command has been executed.',
         objectiveComplete: true,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
         completionBasis: 'action_result',
         completionEvidence: 'The rest command has been executed.',
+        motionClass: 'body_local',
       },
     }),
     instruction: 'Please rest.',
     observation: currentObservation,
     sessionId: currentObservation.sessionId,
-    routingAnalysis: {
-      needsAction: true,
-      actionType: 'robot_movement',
-      actionParams: { motionClass: 'body_local' },
-    },
+    routingAnalysis,
   }, {});
   assert.equal(parsed.actions.length, 1);
   assert.equal(parsed.actions[0].command, 'rest');
+  assert.equal(parsed.taskDecision.objectiveComplete, false);
+  assert.equal(parsed.taskDecision.continuationPolicy, 'none');
+  assert.equal(parsed.taskDecision.requiredCompletionBasis, 'action_result');
+
+  const contracted = await environmentTaskContractNode.execute({
+    taskDecision: parsed.taskDecision,
+    routingAnalysis,
+    observation: currentObservation,
+  }, {});
+  assert.equal(contracted.taskDecision.requiredCompletionBasis, 'action_result');
+  assert.equal(contracted.taskDecision.motionClass, 'body_local');
 
   const validated = await environmentTaskValidatorNode.execute({
     ...parsed,
+    taskDecision: contracted.taskDecision,
     instruction: 'Please rest.',
     observation: currentObservation,
   }, { operatorMode: 'semi' });
@@ -1083,7 +1169,55 @@ test('a premature action-result claim cannot suppress an authorized one-shot com
   assert.equal(validated.outcome, 'act');
   assert.equal(validated.shouldRefine, false);
   assert.equal(validated.decision.stepComplete, false);
-  assert.equal(validated.decision.blockedReason, 'objective_completion_unverified');
+  assert.equal(validated.decision.blockedReason, '');
+
+  const completed = await environmentTaskValidatorNode.execute({
+    response: 'The action completed, but I do not recognize that the objective is done.',
+    taskDecision: {
+      outcome: 'continue',
+      reason: 'The objective still appears incomplete.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+    },
+    observation: observation({
+      source: 'user',
+      step: 2,
+      maxSteps: 8,
+      terminalCommand: 'rest',
+      objective: validated.taskInstruction,
+    }),
+  }, { operatorMode: 'semi' });
+  assert.equal(completed.complete, true);
+  assert.equal(completed.outcome, 'complete');
+  assert.equal(completed.shouldRefine, false);
+  assert.equal(completed.decision.completionBasis, 'action_result');
+  assert.equal(completed.decision.completionEvidence, 'done');
+
+  const failedObservation = observation({
+    source: 'user',
+    step: 2,
+    maxSteps: 8,
+    terminalCommand: 'rest',
+    objective: validated.taskInstruction,
+  });
+  failedObservation.feedback![0]!.type = 'failed';
+  failedObservation.feedback![0]!.message = 'controller reported failure';
+  const failed = await environmentTaskValidatorNode.execute({
+    response: 'The robot did not complete the action.',
+    taskDecision: {
+      outcome: 'continue',
+      reason: 'The controller reported a failed action result.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+    },
+    observation: failedObservation,
+  }, { operatorMode: 'semi' });
+  assert.equal(failed.complete, false);
+  assert.equal(failed.shouldRefine, true);
+  assert.equal(failed.decision.terminalFeedback, 'failed');
+  assert.equal(failed.refinementRequest.result.terminalFeedback.type, 'failed');
 });
 
 test('fresh external completion evidence suppresses a contradictory candidate action', async () => {
@@ -1179,7 +1313,7 @@ test('validator verifies generic completion evidence without inspecting objectiv
   assert.equal(supported.shouldRefine, false);
 });
 
-test('an independently rejected visual completion claim opens refinement and suppresses the false report', async () => {
+test('an independently rejected visual completion claim opens refinement with a visible correction', async () => {
   const objective = 'Maintain the requested activity until its visual completion condition is satisfied.';
   const result = await environmentTaskValidatorNode.execute({
     response: 'The visual completion condition is satisfied.',
@@ -1214,7 +1348,7 @@ test('an independently rejected visual completion claim opens refinement and sup
 
   assert.equal(result.complete, false);
   assert.equal(result.shouldRefine, true);
-  assert.equal(result.response, '');
+  assert.equal(result.response, 'The completion condition is not visible yet.');
   assert.equal(result.refinementRequest.continuationPolicy, 'bounded');
   assert.equal(result.refinementRequest.result.visualEvidence.verdict, 'unsupported');
   assert.equal(result.decision.blockedReason, 'visual_completion_unverified');
@@ -1271,13 +1405,13 @@ test('a completed action defaults to one-shot completion and never replays its o
   assert.equal(result.decision.maxSteps, 3);
 });
 
-test('a persisted visual completion contract rejects action-result-only objective completion', async () => {
-  const objective = 'Maintain the current activity subject to a later visual completion condition.';
+test('a post-movement image, not command execution alone, decides an external spatial objective', async () => {
+  const objective = 'Move closer to the object until it appears closer in the robot camera.';
   const initial = await environmentTaskValidatorNode.execute({
-    actions: [{ type: 'robotCommand', command: 'stand' }],
+    actions: [{ type: 'robotCommand', command: 'walk' }],
     taskDecision: {
       outcome: 'act',
-      reason: 'Start the first physical step.',
+      reason: 'Walk once, then evaluate the external object in the returned image.',
       objectiveComplete: false,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
@@ -1290,9 +1424,9 @@ test('a persisted visual completion contract rejects action-result-only objectiv
   assert.equal(initial.decision.requiredCompletionBasis, 'visual_observation');
 
   const terminalObservation = {
-    ...observation({ source: 'user', step: 2, maxSteps: 4, terminalCommand: 'stand', objective }),
+    ...observation({ source: 'user', step: 2, maxSteps: 4, terminalCommand: 'walk', objective, visual: true }),
     metadata: {
-      ...observation({ source: 'user', step: 2, maxSteps: 4, terminalCommand: 'stand', objective }).metadata,
+      ...observation({ source: 'user', step: 2, maxSteps: 4, terminalCommand: 'walk', objective, visual: true }).metadata,
       originatingInstruction: initial.taskInstruction,
     },
   };
@@ -1303,20 +1437,43 @@ test('a persisted visual completion contract rejects action-result-only objectiv
   assert.match(interpreted.instruction, new RegExp(objective.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(interpreted.instruction, /EnvironmentTaskContract:/);
 
+  const terminalClaim = {
+    outcome: 'complete' as const,
+    reason: 'The physical action returned done.',
+    objectiveComplete: true,
+    continuationPolicy: 'none' as const,
+    requiredCompletionBasis: 'action_result' as const,
+    completionBasis: 'action_result' as const,
+    completionEvidence: 'done',
+  };
+  const terminalContract = await environmentTaskContractNode.execute({
+    taskDecision: terminalClaim,
+    observation: terminalObservation,
+  }, {});
+
+  assert.equal(terminalContract.taskDecision.requiredCompletionBasis, 'visual_observation');
+
+  const visualAssessment = await environmentVisualEvidenceAssessorNode.execute({
+    taskDecision: terminalContract.taskDecision,
+    instruction: objective,
+    observation: terminalObservation,
+    images: [{ type: 'image_url', image_url: { url: TEST_JPEG } }],
+    frames: [terminalObservation.visual],
+  }, {
+    evaluateEnvironmentVisualEvidence: async () => ({
+      verdict: 'unsupported',
+      reason: 'The object does not appear closer in the exact correlated post-action frame.',
+    }),
+  }, { systemPrompt: 'Assess the external objective in the exact correlated post-action image.' });
   const unsupported = await environmentTaskValidatorNode.execute({
     response: 'The physical step finished and the whole objective is complete.',
-    taskDecision: {
-      outcome: 'complete',
-      reason: 'The physical action returned done.',
-      objectiveComplete: true,
-      continuationPolicy: 'none',
-      requiredCompletionBasis: 'action_result',
-      completionBasis: 'action_result',
-      completionEvidence: 'done',
-    },
+    taskDecision: terminalContract.taskDecision,
+    evidenceAssessment: visualAssessment.assessment,
     observation: terminalObservation,
   }, { operatorMode: 'semi' });
 
+  assert.equal(visualAssessment.assessed, true);
+  assert.equal(visualAssessment.assessment.verdict, 'unsupported');
   assert.equal(unsupported.complete, false);
   assert.equal(unsupported.shouldRefine, true);
   assert.equal(unsupported.decision.continuationPolicy, 'bounded');
@@ -1504,6 +1661,7 @@ test('Environment Task Refiner authors the next prompt only after the existing v
       objectiveComplete: false,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
+      motionClass: 'target_relative',
     },
     observation: currentObservation,
   }, { operatorMode: 'semi' });
@@ -1527,8 +1685,10 @@ test('Environment Task Refiner authors the next prompt only after the existing v
       calls += 1;
       assert.match(JSON.stringify(messages), /current view is too distant/i);
       assert.match(JSON.stringify(messages), /careful and pragmatic/i);
-      assert.match(JSON.stringify(messages), /Immutable task contract/i);
+      assert.match(JSON.stringify(messages), /Objective and evidence contract/i);
       assert.match(JSON.stringify(messages), /Original objective: Inspect the area until the target can be identified/i);
+      assert.match(JSON.stringify(messages), /Previous attempt motion class: target_relative/i);
+      assert.match(JSON.stringify(messages), /not a constraint on the next approach/i);
       assert.match(JSON.stringify(messages), /Never rewrite it as an explicit user instruction or user_input requirement/i);
       return {
         instruction: 'Obtain a closer, well-lit view of the target and inspect identifying details.',
@@ -1556,6 +1716,7 @@ test('Environment Task Refiner authors the next prompt only after the existing v
   assert.equal(refined.workflowCommand.advanceCycle, false);
   assert.equal(refined.workflowCommand.objective, validated.refinementRequest.objective);
   assert.equal(refined.workflowCommand.requiredCompletionBasis, 'visual_observation');
+  assert.equal(refined.workflowCommand.motionClass, undefined);
 
   let invalidRefinementCalls = 0;
   const protectedRequest = {

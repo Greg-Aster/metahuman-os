@@ -12,7 +12,7 @@ import { loadBackendConfig, type BackendType } from './llm-backend.js';
 
 const LOG_PREFIX = '[model-resolver]';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
+export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder' | 'environmentRouter';
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
@@ -52,6 +52,7 @@ export interface ModelRegistry {
     includePersonaSummary?: boolean;
     useAdapter?: boolean;
     activeAdapter?: unknown; // Can be various adapter configuration formats
+    environmentClassifierEnabled?: boolean;
   };
   defaults: Record<ModelRole, string>;
   models: Record<string, ModelDefinition>;

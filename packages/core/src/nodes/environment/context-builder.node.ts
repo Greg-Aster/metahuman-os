@@ -8,7 +8,6 @@ import type {
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
   environmentTaskContractFromObservation,
-  robotOperatorActionRequirement,
   stringifyEnvironmentObservation,
 } from './helpers.js';
 
@@ -175,21 +174,14 @@ export const environmentContextBuilderNode = defineNode({
       ? observation.metadata.taskValidatorCommand
       : null;
     const queuedContinuation = Boolean(validatorCommand);
-    // The context router sees the utterance and recent conversation, but not the
-    // current environment state. It may authorize current work, but it cannot own
-    // the task's completion contract. Only a contract persisted by the validator
-    // from an admitted action/continuation is authoritative on a later pass.
+    // Context routing may select history, memory, and vision, but it never owns
+    // semantic action authority. The Environment LLM must always see the
+    // adapter-advertised action contract so it can decide whether and how to act.
     const taskContract = environmentTaskContractFromObservation(effectiveObservation);
-    const delegatedActionRequirement = robotOperatorActionRequirement(effectiveObservation);
     const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
       && typeof routingAnalysis.needsEnvironment === 'boolean'
       && typeof routingAnalysis.needsVision === 'boolean';
-    const includeActionContracts = delegatedActionRequirement !== null
-      ? delegatedActionRequirement
-      : !hasTypedContextAdmission
-        || routingAnalysis.needsAction === true
-        || queuedContinuation
-        || Boolean(taskContract);
+    const includeActionContracts = true;
     const includeEnvironmentContext = !hasTypedContextAdmission
       || routingAnalysis.needsEnvironment === true
       || routingAnalysis.needsVision === true

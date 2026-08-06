@@ -932,9 +932,9 @@ physical movement is authorized.
 | --- | --- | --- |
 | MetaHuman Environment Interface | Has strict `visualApproach` contracts and exact-frame `inspect` admission, target, and active-progress types. It does not yet have a general multi-object inventory or durable object identity. | Preserve the narrow inspection seam while `ROM-12` separately defines truthful multi-object observations; do not redefine approach as inspection. |
 | Environment action admission | Correctly rejects target-relative work when the adapter does not advertise a feedback skill. | Admit the new skill only after the Ainekio adapter truthfully advertises it; do not reopen open-loop LLM locomotion. |
-| Ainekio Environment Adapter | The live adapter still handles snapshot, text, stop, coarse move/command, and generated body-local plans only. An unregistered, removable active-view experiment now exists with contracts, mailbox, controller, isolated worker, lifecycle tests, and both calibration and identity-validation gates. | Validate replay first, then propose one composition-point registration owning the correlated skill, milestones, cancellation, and terminal result. |
-| Gateway camera path | Receives preview frames, but the Environment Adapter discards uncorrelated preview. | Register a bounded skill consumer of the existing local frame callbacks under one camera lease/ownership policy. |
-| Perception | Grounding DINO Tiny is cached and screened; an isolated worker combines it with OpenCV MIL, but its project-authored HSV identity check is experimental and runtime-gated. Nothing is integrated or advertised. | Compare acquisition, tracking, identity retention, and reacquisition on action-indexed OV3660 replay before selecting or enabling the worker. |
+| Ainekio Environment Adapter | The live adapter still handles snapshot, text, stop, coarse move/command, and generated body-local plans only. It now has an optional typed camera-frame bridge seam, but the launcher supplies no bridge or active-view controller and advertises no inspection skill. | Compose the validated controller only after identity and fine-turn gates pass; one composition point must own frames, milestones, cancellation, and the terminal result. |
+| Gateway camera path | One Gateway-owned lease manager coordinates dashboard and isolated active-view consumers. An optional synchronous adapter bridge now correlates selected-robot frames into the existing bounded mailbox without exposing continuous preview to the LLM. | Keep the bridge inert by default until the controller's identity and calibrated-control prerequisites pass, then validate one composition point before registration. |
+| Perception | Grounding DINO Tiny has perfect labeled-positive recall on the current three-query OV3660 replay, but one absent query produced 12 accepted false candidates. OpenCV MIL/HSV also failed full loss. The identity gate remains false and nothing is advertised. | Select and replay-test an established instance-association or video-object component; semantic query score alone cannot authorize arbitrary target identity. |
 | Body control | Smallest named orientation is a 6.24-second estimated 45-degree turn. | Add calibrated fine/coarse body-owned semantic orientation profiles and learn their observed image response. |
 | Simulator | The visual renderer and host webcam still do not share a scene or pose. A remote-safe action-indexed replay source now couples the existing BodySession motion backend and camera-source seams for deterministic post-action frames. | Replace synthetic JPEG bytes with ignored labeled OV3660 sequences and score the same public controller lifecycle before considering a richer shared-scene renderer. |
 | Companion host | Suitable CPU/RAM/GPU hardware is healthy and the owner freed storage. On 2026-08-05 the home filesystem had 16 GiB available; Grounding DINO Tiny was cached, but no locked production perception runtime is installed. | Keep replay/model growth bounded, create a locked runtime only after replay selection, and preserve a CPU diagnostic fallback. |
@@ -1172,10 +1172,10 @@ evidence.
 | `ROM-05` | `implemented` | Remove routine locomotion from the LLM Movement Generator. | Target-relative and open-loop displacement cannot enter Movement Generator; known locomotion remains an advertised body primitive and the generator is body-local only. |
 | `ROM-06` | `in_progress` | Add stage-level action and camera timing. | MetaHuman records queue, lease, Bridge send/receipt, frame, and Core receipt stages. Adapter-owned receipt/capture timestamps still require the Ainekio adapter integration. |
 | `ROM-07` | `implemented` | Define generic camera-only acquisition/target specifications and structured progress results. | `inspect` carries an exact-frame semantic acquisition query with optional detector evidence; `visualApproach` carries an already-localized exact-frame box. Both share active acquisition/tracking/view-improvement/reacquisition/verification phases and terminal results without scene-specific concepts. Adapter integration remains under `ROM-08`. |
-| `ROM-08` | `in_progress` | Establish the adapter-owned Embodied Skill Runtime seam and implement an active-view skill within it. | One admitted request owns acquisition, tracking, view improvement, bounded correction, reacquisition, verification, correlated milestones, and one terminal result. A stop-only staged experiment was rejected and was not integrated. |
+| `ROM-08` | `in_progress` | Establish the adapter-owned Embodied Skill Runtime seam and implement an active-view skill within it. | One admitted request owns acquisition, view improvement, semantic verification, bounded reacquisition, milestones, cancellation, and one terminal result. Camera leases and optional bounded frame routing are validated; live controller composition and capability registration remain gated. |
 | `ROM-09` | `in_progress` | Keep the independent interruption and body-safety monitor subordinate to the goal controller. | Cancellation, stale evidence, and body faults can interrupt immediately, while ordinary uncertainty enters bounded active reacquisition instead of becoming the controller's default result. |
 | `ROM-10` | `not_started` | Validate simulator, controlled physical tests, interruption, and recovery. | Automated contracts pass and physical evidence demonstrates stop, target loss, no-progress, interruption, and bounded success/failure behavior. |
-| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | Source/host inventory and initial candidate screening are recorded. Recorded OV3660 benchmarks, GPU runtime repair, control-primitive calibration, and the final architecture decision remain. |
+| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | OV3660 replay now rejects both MIL/HSV continuity and uncalibrated text-query confidence as identity authorities. Camera ownership is validated; maintained instance association, control calibration, and the final component decision remain. |
 | `ROM-12` | `not_started` | Add typed multi-object observations and capability discovery without changing the current action queue. | Contracts distinguish class hypothesis, short-lived track identity, durable object identity, frame binding, and optional calibrated pose. |
 | `ROM-13` | `not_started` | Integrate the selected detector and tracker behind the adapter-owned perception interface. | A replayable camera sequence demonstrates measured detection latency, stable target association, confidence decay, occlusion/loss, and bounded reacquisition without per-frame LLM calls. |
 | `ROM-14` | `in_progress` | Add a bounded `inspect` object skill using the new perception contract. | MetaHuman now has exact-frame `inspect` admission behind a truthful `activeView` capability and its Bridge Out allowlist. The adapter-owned acquisition/tracking/control implementation and end-to-end evidence remain. |
@@ -1183,7 +1183,7 @@ evidence.
 | `ROM-16` | `not_started` | Replace generic physical `interact` claims with advertised object-interaction verbs, prerequisites, limits, and results. | Unsupported verbs are rejected at admission; supported verbs reference a current object identity and define how success is physically verified. |
 | `ROM-17` | `not_started` | Integrate the first hardware-supported bounded contact or manipulation skill. | Simulator and controlled physical evidence cover reachability, collision/workspace checks, interruption, controller feedback, fresh visual/contact verification, and terminal failure. |
 | `ROM-18` | `deferred` | Add full localization, mapped navigation, and manipulation-planner bridges when sensors and body hardware justify them. | Navigation or manipulation is advertised only after the required state estimate, world model, planner, controller feedback, and safety layer pass their own acceptance. |
-| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | A bounded Gateway snapshot wake produced a fresh OV3660 baseline; Grounding DINO acquisition and corrected OpenCV tracking now have static low-light measurements. Action-indexed, distractor, loss/reacquisition, localization-accuracy, and control thresholds remain. |
+| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | A generic presence/loss scorer now records recall, false acceptance, and p95 latency. Three queries across 345 OV3660 inferences produced 258/258 accepted positives but 12/87 false-accepted negatives, so the identity gate correctly remains failed. |
 | `ROM-20` | `in_progress` | Retire the robot-skill evaluator/refiner/requeue pipeline after the local skill cutover. | Robot investigations use no Visual Evidence Assessor, Task Refiner, Workflow Command retry, or Movement Generator locomotion; retained admission, correlation, cancellation, stable objective, and terminal-result contracts pass focused tests and the same objective records materially lower model calls, tokens, and wall time. |
 | `ROM-21` | `not_started` | Preserve the current V1 robot behind a replaceable locomotion-backend and learned-policy seam. | V1 named motions, the deterministic feedback controller, and a future trained backend share versioned `BodyMotionCommand`, truthful `RobotStateSnapshot`, bounded output, policy-manifest, logging, fallback, and independent-safety contracts. Learned control remains disabled until its declared sensors, digital twin, replay/simulator results, shadow comparison, and authorized physical acceptance are complete. |
 | `ROM-22` | `validated` | Establish the isolated active-view hygiene gate before integration. | Existing Ainekio runtime owners remain unchanged; valid timestamp, cancellation, subprocess shutdown, feature-absence, calibration-gate, and identity-gate tests pass with a complete removal manifest. |
@@ -2597,6 +2597,1264 @@ Remaining:
   progress threshold or claiming that visual correction improves an objective.
 - Keep adapter integration and capability advertisement outside this evidence
   batch.
+
+### 2026-08-05 - ROM-19 evidence G - Static optical-flow control baseline
+
+Status: forward-backward optical flow selected as the current static
+view-displacement baseline; identity and reacquisition selection remain open.
+
+Changes:
+
+- Reused OpenCV 4.13 from the existing perception environment. The installed
+  build exposes MIL but not KCF, CSRT, or the legacy tracker module, so no second
+  OpenCV package was installed merely to widen the comparison.
+- Compared OpenCV MIL with established pyramidal Lucas-Kanade optical flow on
+  the same 145-frame QVGA sequence and fixed Grounding DINO reference box.
+- The optical-flow screen used forward-backward consistency and a minimum of
+  four retained features to reject unsupported displacement. That surrounding
+  propagation logic is benchmark glue, not selected production identity code.
+- Ran three repeats of each method. No detector, model, live Gateway, camera, or
+  physical robot was used in this comparison.
+
+Evidence:
+
+- Both methods retained all 144 attempted updates in all three repeats: 432 of
+  432 MIL updates and 432 of 432 optical-flow updates.
+- MIL mean latency ranged from 18.273 to 19.259 ms per frame, with per-run p95
+  from 20.163 to 23.421 ms and an observed maximum of 28.548 ms.
+- MIL's median horizontal offset from the fixed detector reference ranged from
+  1.116 to 6.116 pixels; its observed maximum was 8.116 pixels. Reference IoU
+  fell as low as 0.503 in the three direct OpenCV repeats.
+- Forward-backward Lucas-Kanade mean latency ranged from 0.414 to 0.568 ms,
+  per-run p95 from 0.776 to 0.845 ms, and the observed maximum was 1.668 ms.
+- Optical flow was deterministic across the three repeats on this recording.
+  Median horizontal offset was approximately 0.010 pixels, observed maximum
+  was 0.038 pixels, and reference IoU remained at least 0.9965.
+
+Decision:
+
+- Use forward-backward optical flow as the lightweight V1 baseline for
+  short-horizon image displacement and control-progress measurement when the
+  acquired target contains sufficient retained features.
+- Do not treat optical flow as object identity. Grounding DINO remains the
+  semantic acquisition/reacquisition candidate, while durable association,
+  occlusion handling, and full-loss recovery still require labeled evidence and
+  comparison with a supported video tracker such as EdgeTAM.
+- Do not replace the isolated MIL worker from one static scene. The comparison
+  narrows the next experiment; it does not establish production adoption.
+
+Local data and rollback:
+
+- One ignored owner-local `opencv-tracker-comparison` JSON records per-frame and
+  aggregate measurements beside the existing capture. It adds no duplicate
+  image data.
+- Maintained source, dependencies, configuration, model artifacts, services,
+  ports, runtime registration, and physical state changed by this comparison:
+  none.
+- Removing that ignored JSON removes all persistent data from this screen.
+
+Remaining:
+
+- Repeat the comparison on targets with low texture, moving distractors,
+  partial occlusion, full loss, and reappearance. Measure feature exhaustion,
+  false displacement, identity switches, and bounded detector reacquisition.
+- Add human-labeled target boxes before converting reference overlap into an
+  accuracy threshold.
+- Use action-correlated before/after frames to test whether optical-flow
+  displacement agrees with the robot's commanded view correction and improves
+  the same target.
+- Keep the identity gate false and the active-view worker unregistered.
+
+### 2026-08-05 - ROM-19 evidence H - Rejected dark identity phase
+
+Status: camera lifecycle validated; phase rejected as identity evidence because
+no semantic target remained consistent across XGA and QVGA.
+
+Changes:
+
+- Captured one owner-authorized six-second camera-only baseline after the owner
+  asked work to continue. The existing Gateway snapshot-wake path produced one
+  XGA snapshot and 25 fresh QVGA preview frames, then acknowledged preview off
+  as sequence 12. No motion, servo, intent, or power-state command was issued.
+- Screened three descriptions grounded in the actual dark scene. A separate
+  raw-detector diagnostic was used after the combined worker exposed an
+  acquisition-to-tracker failure; it did not initialize or score tracking.
+- Made the acquisition handoff fail closed. If OpenCV rejects otherwise valid
+  detector geometry, the worker now resets tracking state and returns a bounded
+  missing-target reason instead of failing the correlated worker request.
+- Added a dependency-free contract test for this untrackable-geometry result.
+
+Evidence:
+
+- The new scene was substantially darker and closer than evidence E. A vertical
+  black object dominated the center, with a lighter perforated strip to its
+  left, but visual appearance alone did not establish a movable target identity.
+- `black electronic device in the center` was not detected on XGA and measured
+  only 0.338 confidence on QVGA.
+- `dark vertical object in the center` measured 0.301 on XGA and 0.323 on QVGA,
+  but its boxes moved from approximately normalized x=0.523 on XGA to x=0.318
+  on QVGA. Those detections do not support same-object continuity.
+- `light perforated strip left of center` measured 0.340 on XGA. On QVGA the raw
+  detector returned an approximately full-width bottom-of-frame box, visually
+  corresponding to the carpet rather than the strip. MIL rejected that geometry
+  because it could not generate positive target samples.
+- After the correction, the same six combined acquisition cases completed and
+  the unsuitable QVGA geometry returned `semantic target geometry could not
+  initialize online tracking`. The worker remained correlated and shut down
+  normally.
+
+Rollback manifest extension:
+
+- Feature-owned source changed:
+  `Ainekio/Master/gateway/environment_adapter/active_view/worker.py`.
+- Existing feature-owned validation changed:
+  `Ainekio/Emulator/tests/test_active_view.py`.
+- The correction adds no shared owner, registration, configuration, dependency,
+  service, port, model, firmware, or physical asset.
+- To remove only this correction, remove `_initialize_tracker_safely()`, restore
+  the two direct tracker-initialization calls, and remove its fail-closed test.
+  The broader active-view removal manifest remains unchanged.
+
+Validation:
+
+- The focused active-view suite passed 14 of 14 tests.
+- The final active-view, replay, BodySession media/session, Environment Adapter,
+  and command-catalog regression passed 99 of 99 tests with localhost fixtures
+  enabled.
+- Phase metadata, raw detector evidence, and the completed acquisition screen
+  remain ignored owner-local JSON. Maintained adapter, translation, launcher,
+  firmware, and MetaHuman runtime owners remain unchanged.
+
+Decision and remaining:
+
+- Do not label this phase as target-visible or use it to score identity. It is
+  retained only as a low-light rejection and camera-lifecycle diagnostic.
+- The next phase needs adequate light and one recognizable, movable ordinary
+  object clearly separated from the background. The owner must identify the
+  target before distractor, partial-occlusion, full-loss, and return phases are
+  recorded.
+- Keep the identity gate false and make no adapter integration from rejected
+  evidence.
+
+### 2026-08-05 - ROM-19 evidence I - Visible target with distinct distractor
+
+Status: target acquisition and static short-sequence continuity validated for
+this phase; identity under occlusion, loss, and return remains unvalidated.
+
+Scene and capture:
+
+- The owner identified a blue teardrop-shaped creature as the target and a
+  coffee cup as the distractor in the live robot-camera scene.
+- Captured one owner-authorized six-second camera-only phase through the
+  existing Gateway dashboard path: one XGA snapshot plus 29 fresh QVGA preview
+  frames at five frames per second. Preview-off received terminal acknowledgement
+  sequence 17. No motion, servo, intent, or power-state command was issued.
+- Visual inspection accepted the phase. Both objects were well lit, spatially
+  separated, and continuously visible; the cup was in the left foreground and
+  the blue creature was in the right foreground.
+
+Acquisition evidence:
+
+- The owner's exact description, `blue teardrop-shaped creature`, acquired the
+  target at confidence 0.772 on XGA and 0.831 on QVGA. Its normalized center x
+  was 0.734 in both resolutions, and the returned boxes covered approximately
+  x=0.679, y=0.538, width=0.111, height=0.241 on XGA and x=0.679, y=0.529,
+  width=0.112, height=0.251 on QVGA.
+- Two descriptive sensitivity checks resolved to the same target and nearly the
+  same box: `small blue teardrop-shaped creature` measured 0.808/0.824 on
+  XGA/QVGA, and `blue spiky teardrop-shaped figurine` measured 0.719/0.756.
+  These are benchmark probes, not prompt special cases or runtime aliases.
+- A separate `coffee cup` acquisition resolved the distractor at normalized
+  center x=0.318 on XGA and x=0.317 on QVGA, with confidence 0.965/0.953.
+  This confirms that the two semantic queries were spatially separable in this
+  phase rather than both attaching to one object.
+- Worker startup measured 4,419 milliseconds. After the first warmed request,
+  semantic acquisition generally measured 150 to 176 milliseconds; the first
+  exact-query acquisition measured 599 milliseconds.
+
+Tracking evidence:
+
+- Exact-query XGA acquisition followed by the resolution rebase and all 29
+  QVGA frames retained the target for 30 of 30 estimates. The rebase itself
+  measured 7.9 milliseconds; subsequent MIL updates measured approximately
+  26.7 to 38.6 milliseconds.
+- Independent QVGA acquisition followed by the remaining 28 previews retained
+  the target for 29 of 29 estimates. MIL updates measured approximately 24.9
+  to 31.0 milliseconds.
+- The target remained static and continuously visible. These results prove only
+  acquisition consistency and short static continuity beside the cup. They do
+  not prove durable identity, occlusion handling, full-loss rejection,
+  distractor resistance after target loss, or semantic reacquisition.
+
+Architecture, data, and rollback:
+
+- This phase used the isolated, unregistered active-view worker and the existing
+  camera transport. It did not enter the Environment Adapter runtime, MetaHuman
+  graph, capability advertisement, or physical motion path.
+- Capture files and phase metadata remain ignored owner-local data under
+  `Ainekio/recordings/active-view/20260805-identity-sequence-01/`.
+- The benchmark harness is temporary `/tmp` tooling. Maintained MetaHuman and
+  Ainekio source, dependencies, configuration, services, ports, model files,
+  firmware, and robot state were not changed by this phase.
+- Removing the ignored phase directory removes the persistent capture. Removing
+  the temporary benchmark harness removes the local test driver. There is no
+  runtime rollback because nothing was registered or integrated.
+
+Decision and remaining:
+
+- Accept this as the target-with-distractor baseline for the current identity
+  sequence. Do not set `identity_gate_validated` from one continuously visible
+  phase.
+- Next record the same scene with only the blue creature partially occluded
+  while the cup remains visible. Then record full target loss with the cup still
+  present, followed by the target returning at a different position.
+- Score target retention during partial occlusion, prompt loss without an
+  identity switch to the cup, and bounded semantic reacquisition after return.
+  Keep the identity gate false and the worker unregistered until those phases
+  and their regression expectations pass.
+
+### 2026-08-05 - ROM-19 evidence J - Partial target occlusion
+
+Status: partial-occlusion acquisition and short-sequence continuity validated
+for this scene; full-loss rejection and return/reacquisition remain unvalidated.
+
+Scene and capture:
+
+- At the owner's confirmation, captured one camera-only phase with a separate
+  dark object covering approximately the right half of the blue creature. The
+  coffee cup remained unobstructed and spatially separate on the left.
+- The existing Gateway path produced one XGA snapshot plus 29 fresh QVGA
+  previews over six seconds. Preview-off received terminal acknowledgement
+  sequence 23. No motion, servo, intent, or power-state command was issued.
+- Visual inspection accepted the phase as partial rather than full occlusion:
+  the creature's left outline and color remained visible beside the occluder.
+
+Fresh acquisition evidence:
+
+- `blue teardrop-shaped creature` still acquired the visible target fragment at
+  confidence 0.693 on XGA and 0.784 on QVGA. Its normalized center x measured
+  0.729/0.733, close to the unobstructed phase's approximately 0.734 center.
+- The detected width contracted from approximately 0.111/0.112 in the visible
+  phase to 0.086/0.093 under occlusion while height remained approximately
+  0.242/0.248. This is consistent with the visible portion becoming narrower;
+  it is not by itself proof of stable identity.
+- Independent `coffee cup` acquisition remained at normalized center x
+  0.321/0.323 with confidence 0.967/0.936. The semantic target and distractor
+  remained separated by approximately 0.41 normalized image width.
+
+Continuity evidence:
+
+- Unobstructed XGA acquisition followed by partial-occlusion XGA and all 29
+  partial QVGA frames retained a target for 31 of 31 estimates. Center x stayed
+  between 0.733 and 0.740; confidence ranged from 0.586 to 0.772. Updates
+  averaged 28.1 milliseconds and reached 35.0 milliseconds maximum.
+- Unobstructed final-QVGA acquisition followed by all 29 partial QVGA frames
+  retained a target for 30 of 30 estimates. Center x stayed between 0.735 and
+  0.741; confidence ranged from 0.717 to 0.858. Updates averaged 29.2
+  milliseconds and reached 38.8 milliseconds maximum.
+- Fresh partial-XGA acquisition followed by all 29 partial QVGA frames retained
+  a target for 30 of 30 estimates. Center x stayed between 0.727 and 0.730;
+  confidence ranged from 0.687 to 0.693. Updates averaged 28.5 milliseconds and
+  reached 41.8 milliseconds maximum.
+- In all three sequences, every retained box remained closer to the independently
+  acquired creature center than to the independently acquired cup center. No
+  measured identity switch to the cup occurred.
+
+Interpretation and limits:
+
+- This phase supports short-horizon continuity under one moderate, static
+  occlusion pattern. It does not establish general occlusion robustness; the
+  target did not move, the occluder did not move during capture, and the
+  creature retained visible color and outline.
+- The experimental HSV score did not cause target loss in this case, but these
+  results do not validate its thresholds. A full target-loss phase is required
+  to test whether it fails closed instead of tracking the occluder, background,
+  or cup.
+- The temporary benchmark's target-versus-distractor distance comparison is an
+  offline measurement derived from this scene's independent acquisitions. It
+  is not a hard-coded runtime object location or special-case prompt rule.
+
+Architecture, data, and rollback:
+
+- The phase used only the isolated worker and existing camera transport. No
+  source, dependency, model, configuration, service, port, firmware, runtime
+  registration, capability advertisement, graph, or robot behavior changed.
+- Capture and phase metadata remain ignored owner-local data beside evidence I.
+  The transition benchmark remains temporary `/tmp` tooling.
+- Removing the ignored phase directory and temporary harness removes all data
+  introduced by this phase; no runtime rollback is required.
+
+Decision and remaining:
+
+- Accept this phase as partial-occlusion evidence, but keep
+  `identity_gate_validated` false and the worker unregistered.
+- Next fully cover or remove only the blue creature while leaving the coffee cup
+  visible and the camera fixed. Measure where continuity declares loss, whether
+  any box transfers to the cup, and whether semantic acquisition correctly
+  reports the target absent.
+- After full-loss evidence, return the same creature at a different position to
+  measure bounded semantic reacquisition and distractor resistance.
+
+### 2026-08-05 - ROM-19 evidence K - Full target loss exposes false retention
+
+Status: semantic absence validated for this phase; current online identity gate
+failed the full-loss acceptance case and must not be enabled.
+
+Scene and capture:
+
+- At the owner's confirmation, captured one camera-only phase with a large white
+  bottle covering the blue creature's prior image region. The coffee cup
+  remained visible and unobstructed on the left, and the camera stayed fixed.
+- The existing Gateway path produced one XGA snapshot plus 29 fresh QVGA
+  previews over six seconds. Preview-off received terminal acknowledgement
+  sequence 26. No motion, servo, intent, or power-state command was issued.
+- A tiny blue fringe remained visible at the bottle's lower-left edge, but the
+  creature's distinguishing outline and appearance were absent. The operational
+  acceptance condition therefore remained strict: semantic creature acquisition
+  must report absent, and continuity must not claim the occluder as the target.
+
+Fresh acquisition evidence:
+
+- `blue teardrop-shaped creature` returned no target at either resolution. XGA
+  rejected multiple weak, spatially separate candidates as ambiguous; QVGA
+  reported `semantic target was not detected`.
+- Independent `coffee cup` acquisition remained stable at normalized center x
+  0.322 in both resolutions with confidence 0.957/0.942.
+- Independent `white bottle` acquisition measured normalized center x
+  0.804/0.802 with confidence 0.954/0.945. Its large box occupied and extended
+  beyond the creature's former region.
+- These results establish that Grounding DINO did not semantically relabel the
+  cup or bottle as the creature in this phase. They do not rescue the online
+  tracker result below.
+
+Continuity failure:
+
+- Unobstructed XGA acquisition followed by loss XGA and all 29 loss QVGA frames
+  falsely retained a target for 31 of 31 estimates. Confidence fell only from
+  0.772 to a minimum of 0.514, and the reported center stayed near the former
+  target region at x=0.727 to 0.736.
+- Unobstructed final-QVGA acquisition followed by all 29 loss QVGA frames
+  falsely retained a target for 30 of 30 estimates. The first loss-frame update
+  moved to center x=0.778, toward the independently detected bottle center, then
+  drifted back to x=0.731. Confidence remained 0.510 to 0.858.
+- Partial-occlusion final-QVGA acquisition followed by all 29 loss QVGA frames
+  also falsely retained a target for 30 of 30 estimates. Its center stayed at
+  x=0.714 to 0.733 and confidence remained 0.521 to 0.612.
+- All updates remained computationally normal at approximately 27.6 to 29.6
+  milliseconds mean. This is a correctness failure, not a timeout, worker
+  lifecycle failure, or insufficient processing budget.
+
+Diagnosis:
+
+- OpenCV MIL is a location/appearance tracker, not an identity authority. It
+  continued producing boxes after the tracked creature was replaced by an
+  occluder.
+- The project-authored HSV-histogram correlation transformed those replacement
+  crops into confidence above the current 0.2 cutoff. It therefore failed to
+  distinguish partial target support from complete semantic loss.
+- Because the tracker never declared loss, the controller's bounded semantic
+  reacquisition path would not be entered. The current implementation can thus
+  report progress toward the wrong visual region even though the semantic model
+  correctly reports the requested target absent when queried directly.
+- Raising one HSV threshold from this single scene would be an overfit patch.
+  The evidence instead requires a designed identity-verification policy that
+  periodically or conditionally consults semantic evidence, separates tracking
+  confidence from identity confidence, and has replay-backed transition rules.
+
+Architecture, safety, and rollback:
+
+- The failure occurred entirely in offline replay through the isolated,
+  unregistered worker. It did not enter the Environment Adapter, MetaHuman
+  workflows, capability advertisement, or physical motion path.
+- No source, dependency, configuration, service, port, model, firmware, runtime
+  registration, graph, or robot state changed. Capture files remain ignored
+  owner-local data and the benchmark is temporary `/tmp` tooling.
+- Removing the ignored phase directory and temporary harness removes all data
+  introduced by this phase; there is no runtime rollback.
+
+Decision and remaining:
+
+- Record this as a failed full-loss acceptance case. Keep
+  `identity_gate_validated` false, keep fine-turn control unavailable, and keep
+  the active-view feature unregistered.
+- Capture the creature returning at a clearly different image position. Measure
+  direct semantic reacquisition separately, while explicitly recording that the
+  current controller would not request it because false retention suppresses
+  the loss transition.
+- Use the completed visible, partial, loss, and return sequence to specify and
+  test a non-special-cased identity-verification policy before changing the
+  worker or controller. The policy must fail closed on this loss phase without
+  destroying the proven partial-occlusion continuity.
+
+### 2026-08-05 - ROM-19 evidence L - Return and suppressed reacquisition
+
+Status: direct semantic return/reacquisition validated for this scene; current
+continuous tracker path failed to discover the returned target.
+
+Scene and capture:
+
+- At the owner's confirmation, captured the blue creature fully visible between
+  the coffee cup and white bottle. The creature moved from its original
+  normalized center near x=0.734 to a clearly different center near x=0.529;
+  the cup, bottle, and camera remained fixed.
+- The Gateway produced one XGA snapshot plus 28 fresh QVGA previews over the
+  bounded camera-only phase. Preview-off received terminal acknowledgement
+  sequence 29. No motion, servo, intent, or power-state command was issued.
+- Visual inspection accepted the scene: all three objects were fully visible,
+  separated, and stable throughout capture.
+
+Direct semantic reacquisition:
+
+- `blue teardrop-shaped creature` acquired the returned target at confidence
+  0.765 on XGA and 0.760 on QVGA. Its normalized center x measured 0.528/0.529,
+  and its XGA/QVGA boxes agreed closely.
+- Independent `coffee cup` acquisition remained at center x=0.320/0.322 with
+  confidence 0.959/0.917. Independent `white bottle` acquisition measured
+  center x=0.721/0.722 with confidence 0.955/0.942.
+- After an explicit worker reset, semantic target acquisition followed by all
+  28 return QVGA frames retained the creature for 29 of 29 estimates. Center x
+  remained 0.528 throughout and no frame was closer to the bottle center than
+  to the returned target center.
+- Reacquisition measured approximately 201 milliseconds in the combined run;
+  later MIL updates remained near the prior approximately 27 to 30 millisecond
+  range. This demonstrates that the existing semantic model can recover the
+  useful target quickly enough for the low-frequency action/image loop when it
+  is actually invoked.
+
+Current-path failure:
+
+- The uninterrupted baseline-to-loss-to-return sequence acquired the original
+  creature once, then falsely retained a box through all 29 loss previews at
+  center x=0.725 to 0.731.
+- On the 28 return previews, it continued returning a box at center x=0.684 to
+  0.688. Every one of those boxes was closer to the independently detected
+  bottle center than to the returned creature center.
+- Confidence remained 0.507 to 0.533 and every update reported
+  `target tracked online`. No loss transition occurred, so semantic
+  reacquisition was never requested even though it would have succeeded on the
+  first return frame.
+- The failure is therefore architectural: the control loop treats online
+  location tracking as sufficient identity evidence. It is not a detector
+  capability, latency, camera transport, memory, or physical-motion limitation.
+
+Generic correction boundary:
+
+- Do not add prompt aliases, object names, scene coordinates, cup/bottle rules,
+  or a tuned HSV cutoff. Those would encode this replay rather than correct the
+  system contract.
+- The low-frequency action/image loop must base every subsequent action and any
+  `reached` result on fresh semantic evidence for the requested query. Online
+  tracking can remain a non-authoritative, high-frequency displacement hint,
+  but it cannot independently authorize motion, success, or continued identity.
+- Reuse the existing perception `acquire(frame, query, ...)` operation for
+  semantic verification after each action and on final centering. This avoids a
+  parallel detector, duplicate model, second workflow, or special-case path.
+- If semantic evidence is absent, wait for a bounded fresh frame and retry up to
+  the existing reacquisition limit. If the target returns elsewhere, the same
+  semantic acquisition should reinitialize at that location and continue
+  correcting the view. If it remains absent, terminate as lost without another
+  orientation action.
+
+Architecture, safety, and rollback:
+
+- The measurements used only ignored owner-local captures, temporary `/tmp`
+  harnesses, and the isolated unregistered worker. No runtime source or physical
+  behavior changed during this evidence phase.
+- The correction belongs inside the existing active-view controller/perception
+  contract, not the MetaHuman graph, conversation buffer, Environment Bridge,
+  or firmware. Fine-turn calibration and identity validation gates remain
+  false, so no physical movement can be dispatched from this experiment.
+- Capture removal remains deletion of the ignored identity-sequence directory.
+  Temporary harnesses can be removed after remote-safe replay expectations are
+  extracted. Any controller correction must receive its own feature-owned test
+  and rollback entry before integration is considered.
+
+### 2026-08-05 - ROM-19 evidence M - Semantic action authorization
+
+Status: isolated controller correction implemented and validated against the
+first controlled sequence; still unavailable and unregistered.
+
+Measured threshold evidence:
+
+- Screened the exact query independently on every QVGA frame in the visible,
+  partial-occlusion, full-loss, and return phases: 115 frames total.
+- Visible target with cup distractor acquired on 29 of 29 frames at confidence
+  0.797 to 0.879. Partial occlusion acquired on 29 of 29 frames at 0.552 to
+  0.832. Return at the new position acquired on 28 of 28 frames at 0.744 to
+  0.832.
+- Full loss produced 17 weak false candidates across 29 frames, including a
+  six-frame consecutive run. Their confidence was only 0.302 to 0.344; boxes
+  alternated between the cup and bottle regions. Ten frames reported no target
+  and two rejected multiple similarly supported candidates.
+- A two-hit confirmation rule alone would therefore fail this replay. A
+  configurable 0.50 controller confidence floor separates every genuine frame
+  from every full-loss candidate in this dataset: 86 of 86 genuine frames pass
+  and 0 of 29 loss frames pass.
+- The 0.50 value is a provisional replay-derived default, not a universal
+  calibrated probability or object-specific constant. The identity gate stays
+  false until broader targets, lighting, viewpoints, and same-class distractors
+  establish a final operating characteristic.
+
+Controller correction:
+
+- Reused the existing perception `acquire(frame, query, ...)` operation after
+  every orientation action and on final centering. Those low-frequency control
+  decisions no longer call or trust the MIL `track()` output.
+- A semantic miss now waits for a fresh mailbox frame before each retry, bounded
+  by the existing reacquisition limit. Repeating inference on the same stale
+  image was removed from that path.
+- When the query returns at a different position, semantic acquisition
+  reinitializes there. A centered reacquisition advances to a fresh semantic
+  verification frame without issuing an unnecessary orientation action.
+- OpenCV MIL and the HSV experiment remain available only behind the isolated
+  perception interface for non-authoritative displacement research. They can no
+  longer independently authorize an action or a `reached` result in this
+  controller.
+- Changed the isolated `ActiveViewConfig.minimum_confidence` default from 0.30
+  to 0.50. No worker detector threshold, query wording, object alias, scene
+  coordinate, cup/bottle rule, MetaHuman workflow, or firmware behavior changed.
+
+Remote-safe test contract:
+
+- Updated the controller fakes so post-action and final verification estimates
+  come through semantic acquisition. Existing injected-assets, centered-success,
+  no-progress, cancellation, shutdown, and feature-absence coverage remains.
+- Added a weak 0.34 semantic-candidate case proving that no action is queued.
+- Added a full-loss case proving that one initial correction is followed only by
+  two fresh semantic retries and `lost`, with no additional action.
+- Added a return-at-the-opposite-side case proving that bounded semantic
+  reacquisition resumes useful correction in the new direction and reaches the
+  verified center. The controller makes zero tracker calls in these cases.
+- Updated the existing action-indexed BodySession replay so the initial,
+  post-action, and final frames all require semantic acquisition. The fixture
+  now raises if tracker output is used to authorize replay actions.
+
+Validation:
+
+- Focused controller and action-indexed replay suites passed 19 of 19 tests.
+- Active-view, replay-manifest, BodySession media/session, Environment Adapter,
+  and command-catalog regression passed 102 of 102 tests. The expected fixture
+  log `motion backend failed for sequence 1: renderer unavailable` remained part
+  of an intentional failure-path test; the suite passed.
+- Real Grounding DINO frames were then driven through the corrected controller
+  with a fake Gateway that only records intents. In the loss case, the controller
+  recorded one initial `offline-right` intent, rejected the next three loss
+  frames below 0.50, exhausted two fresh retries, and returned `lost`.
+- In the return case, the controller recorded the same one initial simulated
+  correction, rejected the loss frame, reacquired the creature on the first
+  return frame near center x=0.529 at confidence 0.760, semantically verified a
+  second fresh return frame, and returned `reached`. No simulated second motion
+  was required and zero physical commands were sent.
+- All feature Python files and related tests pass the 100-column and trailing-
+  whitespace screens. Existing adapter translation, server registration,
+  capability advertisement, launcher, firmware, and physical robot state remain
+  untouched. Feature-absence coverage still passes.
+
+Rollback manifest extension:
+
+- Feature-owned source changed:
+  `Ainekio/Master/gateway/environment_adapter/active_view/controller.py` and
+  `Ainekio/Master/gateway/environment_adapter/active_view/contracts.py`.
+- Feature-owned tests changed: `Ainekio/Emulator/tests/test_active_view.py` and
+  `Ainekio/Emulator/tests/test_active_view_replay.py`.
+- To remove only this correction, restore the two controller decision sites to
+  tracker calls, remove fresh-frame reacquisition state, restore the 0.30
+  default, and remove the semantic authorization/loss/return assertions. The
+  broader active-view package removal manifest remains unchanged.
+- No shared runtime owner, dependency, model artifact, service, port,
+  configuration, firmware, graph, registration, capability, or physical asset
+  was added. All Ainekio feature files remain untracked and removable as one
+  isolated experiment.
+
+Decision and remaining:
+
+- Keep `identity_gate_validated` false, keep fine-turn control unavailable, and
+  keep the feature absent from live adapter capabilities and dispatch.
+- Repeat semantic distributions with other ordinary object classes, low-texture
+  targets, same-class distractors, lighting changes, movement, and longer loss.
+  The current semantic query identifies a class/description, not durable
+  instance identity; instance-level re-identification remains `ROM-12/ROM-13`.
+- Preserve the 0.50 weak-candidate rejection and semantic-per-action policy as
+  remote-safe regression expectations. Replace or augment MIL/HSV only after a
+  maintained tracker/re-identification component passes the same sequence.
+- The next architecture work is the typed Gateway camera-consumer lease proposal
+  and more remote-safe replay metadata. Physical action-correlated view
+  correction remains gated on fine-turn calibration and the owner's exact
+  authorization for that later test.
+
+### 2026-08-05 - ROM-08/ROM-11 - Typed Gateway camera-consumer lease proposal
+
+Status: proposal validated against current owners; not implemented or
+registered.
+
+Current ownership findings:
+
+- `GatewayService` owns the authenticated body connection, validates QVGA/VGA
+  preview requests and profile frame-rate limits, sends the protocol `cam`
+  command, correlates terminal results, and fans received binary frames to
+  subscribers. It is the only correct authority for shared camera lifetime.
+- The maintained dashboard and isolated active-view controller are the only two
+  non-test callers of raw `GatewayService.set_camera()`. Both can currently send
+  `on` or `off` without knowing whether the other consumer still needs preview.
+  The resulting last-writer-wins lifetime is not safe for integration.
+- The Environment Adapter already subscribes once to all Gateway frames, but its
+  maintained camera path intentionally discards JPEG frames unless they match a
+  snapshot/action correlation. That behavior is correct for Environment
+  observations and must remain separate from a skill's private preview mailbox.
+- Gateway frame subscribers are invoked from a tuple snapshot in registration
+  order, and awaitable callbacks are awaited serially. Inline detection or
+  tracking in a subscriber would delay the dashboard, audio plugins, adapter,
+  and robot receive loop. Active view must copy validated frame metadata into a
+  bounded latest-frame mailbox and return immediately.
+- Camera binary frames contain robot id, connection epoch, counter, payload, and
+  Gateway receipt timing context. They do not carry calibrated capture time.
+  Skill freshness must therefore use monotonic Gateway/Adapter receipt time,
+  while UTC receipt time remains the typed external timestamp.
+
+Proposed owner and contract:
+
+- Add one Gateway-owned `CameraLeaseManager` behind `GatewayService`; do not add
+  a MetaHuman camera service, controller-local reference count, second frame
+  socket, or dashboard-specific bypass.
+- `acquire_camera_lease()` accepts a bounded consumer id, robot id, purpose,
+  requested frames per second, resolution, and lease lifetime. It returns a
+  typed lease id, robot epoch, effective configuration, activation sequence when
+  one was needed, and whether the caller joined an already-active compatible
+  preview.
+- `release_camera_lease()` is idempotent and epoch-bound. Releasing one consumer
+  leaves preview active while any compatible lease remains; only releasing the
+  final lease sends `cam on=false`. Disconnect or epoch replacement invalidates
+  all leases for that body.
+- The first V1 policy should share only an exactly compatible active
+  configuration. An incompatible request is rejected with the current effective
+  settings and owners summarized, rather than silently raising resolution or
+  frame rate and increasing battery/data use. Explicit future negotiation can
+  be added after measurements justify it.
+- Requests remain bounded by existing body profile limits. Active view requests
+  QVGA at five frames per second and a short operation lifetime; dashboard
+  choices remain explicit. Snapshot/XGA action correlation is not a lease and
+  continues through its existing `snap` and post-action ownership paths.
+- Lease acquisition and release must be usable as an async context manager so
+  controller cancellation, timeout, failure, and `close()` all release in one
+  `finally`-owned lifecycle. Gateway shutdown and robot disconnect also close
+  outstanding leases without relying on a consumer callback.
+
+Adapter and frame routing:
+
+- During later integration, the Environment Adapter may construct one
+  active-view controller and offer camera frames to its latest-frame mailbox
+  from the existing `_handle_gateway_frame()` subscriber before the maintained
+  snapshot-correlation branch. The offer is synchronous, bounded, and performs
+  no model work.
+- Preview frames admitted to the skill carry robot id, epoch, counter, payload,
+  receipt timestamp, monotonic receipt time, and mailbox generation. The
+  controller rejects mismatched robot/epoch, stale source frames, and
+  superseded generations using its existing typed checks.
+- The current snapshot delivery queue, action visual futures, Environment
+  observation encoding, and MetaHuman Bridge transport remain unchanged. A
+  skill-private preview is not published into conversation or Environment
+  observations unless the existing skill result contract explicitly references
+  its final evidence.
+- OpenCV/Grounding DINO processing remains in the isolated subprocess. The
+  Gateway callback only feeds the mailbox, and the controller awaits perception
+  from its own task so slow inference cannot backpressure frame publication.
+
+Required migration order:
+
+1. Add and test the Gateway lease manager without changing current callers or
+   capability advertisement.
+2. Migrate the dashboard `on/off` endpoint to a dashboard-session/robot lease and
+   release it on explicit off, session expiry, or server shutdown. Remove its
+   raw `set_camera()` lifetime ownership in the same coherent change.
+3. Change the isolated controller's camera lifecycle dependency from raw
+   `set_camera()` plus a boolean callback to the typed lease context. Keep the
+   feature unregistered and its availability gates false.
+4. Feed the controller mailbox from the adapter's existing frame subscriber and
+   prove that snapshot observations, dashboard preview, microphone frames, and
+   frame counters remain unaffected.
+5. Only after identity, fine-turn, lease, replay, cancellation, and authorized
+   physical acceptance pass may the adapter advertise `activeView` and admit the
+   existing MetaHuman `inspect` contract.
+
+Acceptance tests before integration:
+
+- One compatible lease sends one camera-on command; a second compatible lease
+  shares it; releasing the first sends no camera-off; releasing the last sends
+  exactly one camera-off.
+- Incompatible resolution/frame-rate requests fail explicitly without mutating
+  the active configuration. Profile limits and tether snapshot-only behavior
+  remain enforced by `GatewayService`.
+- Cancellation, timeout, consumer exception, dashboard-session expiry, Gateway
+  shutdown, robot disconnect, and epoch replacement each release or invalidate
+  the correct leases without affecting another robot.
+- A dashboard lease and skill lease can overlap while both continue receiving
+  frames. Skill inference delay cannot delay dashboard delivery or later frame
+  subscribers; mailbox supersession remains bounded and observable.
+- Existing snapshot/action correlation delivers exactly one visual through the
+  maintained Environment path while preview frames remain private. Preview
+  release cannot consume, relabel, or discard a pending snapshot.
+- Lease state exposes bounded diagnostic fields—consumer count, effective
+  configuration, epoch, activation sequence, and age—without tokens or image
+  payloads. Tests cover stale release ids and double release.
+- Active-view feature-absence, calibration-gate, identity-gate, subprocess
+  shutdown, semantic loss/reacquisition, and 102-test boundary regressions stay
+  green before any live caller migration.
+
+Decision and rollback boundary:
+
+- The camera proved usable through the Gateway, so firmware video changes are
+  not required for this V1 path. Battery and data constraints are addressed by
+  the bounded QVGA/five-fps lease and last-consumer shutdown, not a second
+  transport.
+- No source changed for this proposal. When implementation begins, the lease
+  manager, dashboard migration, and isolated controller migration must each
+  receive a rollback manifest and feature-absent validation before proceeding
+  to adapter registration.
+- The next evidence-bearing step is additional remote-safe perception replay or
+  fine-turn calibration. Any physical orientation command still requires the
+  owner's exact test authorization at that time.
+
+### 2026-08-05 - ROM-08/ROM-11 - Standalone Gateway camera lease manager
+
+Status: step one implemented and validated; no caller migration or live runtime
+behavior.
+
+Authorization and scope:
+
+- The owner explicitly authorized camera-lease step one: the manager and unit
+  tests only, with no caller migration, capability registration, firmware
+  change, or robot movement.
+- Added `Ainekio/Master/gateway/server/camera_leases.py` as a standalone module
+  inside the existing Gateway server owner. It is not imported by
+  `GatewayService`, `gateway.server.__init__`, the dashboard, the Environment
+  Adapter, or active-view runtime code.
+- Added `Ainekio/Emulator/tests/test_gateway_camera_leases.py`. No existing
+  Ainekio source or test file changed in this step.
+
+Implemented contract:
+
+- Typed request, preview configuration, active lease, release result, conflict,
+  and camera-command protocol records keep consumer, robot, epoch, purpose,
+  frame rate, resolution, lifetime, activation sequence, and join state
+  explicit.
+- The manager shares one preview only among exact-compatible frame-rate and
+  resolution requests for the same robot epoch. An incompatible request reports
+  the requested/effective configuration and current consumer ids without
+  mutating camera state.
+- The first lease invokes one injected camera-on command. Intermediate release
+  does not stop preview; final release invokes one camera-off command.
+  Release is idempotent for stale lease ids.
+- Consumer/robot/purpose text, positive epoch, QVGA/VGA resolution, one-to-ten
+  frames per second, 0.1-to-300-second lifetime, and returned command sequence
+  are bounded before state is admitted. Text identifiers are normalized once at
+  the contract boundary.
+- An async context manager releases on normal exit or consumer exception.
+  Explicit expiry collection preserves preview while another consumer remains;
+  final expiry stops it. Epoch invalidation removes disconnected-body lease ids
+  without sending a command to an unavailable epoch.
+- Concurrent compatible acquisition is serialized by one manager lock, so it
+  produces one activation command. Final camera-off failure retains the lease
+  for a later retry, while activation failure or an invalid command sequence
+  leaves no phantom lease.
+- Bounded status exposes robot id, epoch, effective preview configuration,
+  consumer count and ids, purposes, oldest age, and next expiry. It includes no
+  image data, tokens, or transport payloads.
+- The injected command contract is the future seam through which
+  `GatewayService.set_camera()` plus terminal acknowledgement will be owned.
+  This step uses only a fake command and does not bind that seam to the live
+  service yet.
+
+Validation:
+
+- The standalone lease suite passed 11 of 11 tests. Coverage includes compatible
+  sharing, last-consumer shutdown, idempotent release, explicit conflict,
+  duplicate consumer rejection, async-context exception cleanup, staggered
+  expiry, epoch invalidation, concurrent acquisition, failed final shutdown,
+  failed/invalid activation, status shape, normalization, and request bounds.
+- Gateway service, dashboard, security, active-view isolation, action-indexed
+  replay, replay manifest, Environment Adapter, and command-catalog regression
+  passed 104 of 104 tests with localhost and fake fixtures.
+- Both new files pass the 100-column and trailing-whitespace screens. Existing
+  tracked Gateway service, dashboard, adapter, firmware, capability, launcher,
+  protocol, and MetaHuman files remain unchanged.
+- Repository search confirms the manager has no runtime importer or caller.
+  The running Gateway was not restarted and the physical robot received no
+  camera, intent, servo, state, or motion command from this implementation.
+
+Rollback manifest:
+
+- Feature-owned source added:
+  `Ainekio/Master/gateway/server/camera_leases.py`.
+- Feature-owned test added:
+  `Ainekio/Emulator/tests/test_gateway_camera_leases.py`.
+- Removing those two untracked files removes the entire step-one implementation.
+  No import, registration, configuration, dependency, service, port, firmware,
+  model, graph, dashboard, adapter, or physical rollback is required.
+- Owner-local capture data and the unrelated untracked Frame8 hardware assets
+  were preserved and not modified.
+
+Decision and next gate:
+
+- Step one is ready for review but does not yet solve last-writer-wins camera
+  ownership in the running system because no caller uses it. Do not represent
+  the live Gateway as lease-aware.
+- A later step-two migration would first bind this manager inside
+  `GatewayService` and migrate the dashboard session lifecycle. That changes
+  maintained shared runtime owners and requires separate owner authorization,
+  terminal-acknowledgement tests, shutdown/error review, and its own rollback
+  manifest before the active-view controller is migrated.
+
+### 2026-08-05 - ROM-08/ROM-11 - Gateway binding and dashboard lease migration
+
+Status: step two implemented and validated in software; active-view runtime
+integration remains unregistered.
+
+Authorization and scope:
+
+- The owner asked work to continue after the standalone lease checkpoint. This
+  batch was explicitly kept to `GatewayService`, dashboard camera/session
+  lifecycle, shutdown, and focused tests.
+- The active-view controller was not migrated, the Environment Adapter was not
+  changed, and no capability, command catalog, firmware, model, or physical
+  motion path was enabled.
+- The Ainekio tracked worktree was clean before this batch. The unrelated
+  untracked Frame8 hardware assets and owner-local active-view recordings were
+  preserved and not modified.
+
+Implemented owner flow:
+
+- `GatewayService` now constructs the one `CameraLeaseManager` and resolves a
+  lease request against the currently authenticated robot connection and epoch.
+  Callers cannot supply or forge the epoch.
+- The manager's camera-command seam is now epoch-aware. The service sends the
+  existing protocol `cam` command through the captured connection and admits or
+  releases lease state only after the body returns terminal `ack`. A `nak`,
+  cancellation, stale epoch, invalid sequence, or timeout cannot be reported as
+  a successful lease transition. An uncertain camera-on timeout sends a bounded
+  compensating camera-off on the same epoch so a delayed activation is not left
+  without an owner; a final camera-off timeout retains the lease for retry.
+- Connection replacement and disconnect invalidate only the affected robot
+  epoch without sending a command to an unavailable body. The raw
+  `GatewayService.set_camera()` primitive remains for lower-level tests and the
+  still-isolated active-view experiment, but the dashboard no longer calls it.
+- The manager now supports bounded renewal without another camera command and
+  reports each group's activation sequence. A Gateway-owned sweeper expires
+  abandoned leases; final expiry sends camera-off and cleanup errors remain
+  observable through the existing Gateway event path. Gateway shutdown cancels
+  the sweeper and closes remaining groups through the same terminal-acknowledged
+  command seam.
+- `GatewayService.status_snapshot()` includes bounded `camera_leases`
+  diagnostics: robot, epoch, effective preview settings, activation sequence,
+  consumer count and ids, purposes, age, and next expiry. It includes no image,
+  authentication token, CSRF token, or transport payload.
+
+Dashboard lifecycle:
+
+- Added a small `DashboardCameraLeases` interface adapter. It stores only the
+  mapping from a non-credential dashboard session id and robot id to the typed
+  Gateway lease. Preview sharing, compatibility, command dispatch, expiry, and
+  camera lifetime remain owned by the Gateway manager; the adapter is not a
+  second camera service or reference counter.
+- Camera-on acquires one 30-second session/robot lease. Reapplying identical
+  settings renews it without another camera command; changing settings while it
+  is active is rejected explicitly rather than silently increasing battery or
+  data use.
+- The existing authenticated camera-frame long poll renews an active lease.
+  Its ten-second maximum wait remains below the lease lifetime. Polling without
+  first turning the camera on does not acquire a lease or start preview.
+- Explicit camera-off, logout, actual dashboard-session expiry, and dashboard
+  shutdown release the mapped lease. If a browser disappears without logout,
+  renewal stops and the Gateway sweeper owns the bounded final camera-off.
+- Dashboard shutdown first stops accepting HTTP work, then releases dashboard
+  leases and finally closes any remaining Gateway lease groups. A failed
+  dashboard release therefore receives one Gateway-owned final cleanup attempt.
+
+Validation evidence:
+
+- The focused manager plus new service-binding tests passed 16 of 16. They
+  verify exact-compatible sharing, last-consumer shutdown, renewal without a
+  command, terminal acknowledgement, `nak` rejection without phantom state,
+  stale-epoch rejection, activation-timeout compensation, bounded diagnostics,
+  and automatic final expiry.
+- The full non-physical Gateway, dashboard, security, active-view, replay,
+  replay-manifest, Environment Adapter, and command-catalog regression set
+  passed 113 of 113 tests with localhost and fake/replay fixtures.
+- Dashboard acceptance covers identical renewal, incompatible-setting
+  rejection, authenticated frame-poll renewal, explicit off, logout, session
+  expiry, and server shutdown. Repository search finds no maintained dashboard
+  call to raw `set_camera()`.
+- Active-view isolation, feature absence, semantic loss/reacquisition, worker
+  shutdown, snapshot/action correlation, preview privacy, microphone handling,
+  and command-catalog boundaries remained green in the same regression run.
+- All changed Python files pass the 100-column screen, `git diff --check`, and
+  module import validation. Tests required a permitted localhost namespace;
+  the earlier restricted-sandbox socket failures were environmental and were
+  rerun successfully outside that restriction.
+- No running Gateway was restarted. No attached robot received a camera,
+  intent, state, servo, motion-plan, speaker, microphone, or firmware command
+  from this batch.
+
+Rollback manifest:
+
+- New step-two dashboard adapter:
+  `Ainekio/Master/gateway/dashboard/camera_sessions.py`.
+- Step-two tracked integration points:
+  `Ainekio/Master/gateway/server/service.py`,
+  `Ainekio/Master/gateway/dashboard/auth.py`,
+  `Ainekio/Master/gateway/dashboard/server.py`,
+  `Ainekio/Master/gateway/server/__main__.py`,
+  `Ainekio/Emulator/tests/test_gateway_service.py`, and
+  `Ainekio/Emulator/tests/test_gateway_dashboard.py`.
+- The step also extended the untracked step-one files
+  `Ainekio/Master/gateway/server/camera_leases.py` and
+  `Ainekio/Emulator/tests/test_gateway_camera_leases.py` with epoch-aware
+  commands, renewal, activation diagnostics, and their tests.
+- The exact full-feature rollback is to restore the six tracked integration
+  points above to `HEAD` and delete the three lease-owned untracked files:
+  `camera_sessions.py`, `camera_leases.py`, and
+  `test_gateway_camera_leases.py`. Because the tracked Ainekio tree was clean
+  before this batch, that removes the complete camera-lease program without
+  touching active-view files, firmware, recordings, configuration, dependencies,
+  services, ports, or unrelated hardware assets.
+- A step-two-only rollback that preserves the standalone experiment must also
+  restore the pre-binding forms of the two step-one files; deleting only the
+  dashboard adapter is insufficient because `GatewayService` now imports the
+  manager.
+
+Decision and next gate:
+
+- Step two removes the dashboard's last-writer-wins preview ownership and is a
+  validated runtime integration, but it does not yet make active view available
+  to MetaHuman. The feature remains unavailable and unadvertised.
+- The next planned batch is migration-order step three: replace the isolated
+  controller's raw camera on/off callback with the typed lease context while
+  keeping the controller unregistered and both calibration/identity gates
+  false. Adapter frame-mailbox routing and capability advertisement remain
+  later, separately validated gates.
+
+### 2026-08-05 - ROM-08/ROM-11 - Isolated active-view lease migration
+
+Status: step three implemented and validated in software; the active-view skill
+remains unavailable to the live Environment Adapter.
+
+Authorization and scope:
+
+- The owner asked work to continue from the reviewed camera-ownership sequence.
+  This batch was restricted to the Gateway lease context, the isolated
+  active-view controller contract, its fake/replay facades, tests, and this
+  progress record.
+- No Environment Adapter composition point, frame subscription, capability,
+  command catalog, launcher, firmware, model download, configuration, or
+  physical control path was added or enabled.
+- Calibration and target-identity validation remain mandatory controller gates.
+  Their production defaults remain false, and the adapter still has no importer
+  or advertised `inspect` action.
+
+Implemented owner flow:
+
+- `GatewayService.camera_lease()` now exposes the existing acquire/release
+  lifecycle as one typed async context. A consumer exception still exits
+  through the Gateway-owned final-release path instead of leaving camera
+  shutdown to the caller.
+- `ActiveViewGateway` now requires that context plus bounded renewal. The
+  controller enters one 60-second, 5-fps QVGA lease for an inspection, renews it
+  before every bounded control step, and releases it on success, loss,
+  cancellation, timeout, command failure, or perception failure.
+- The controller's raw `set_camera()`, `preview_active`, and
+  `set_preview_active` paths were deleted. It cannot independently infer camera
+  state or switch preview off while another consumer still owns it.
+- Lease duration is a validated numeric configuration value bounded from one to
+  300 seconds. It contains no scene names, object examples, conversation text,
+  persona policy, or action preference.
+- The Body Emulator replay facade now uses the real `CameraLeaseManager` and
+  the existing `BodySession` camera command/terminal lifecycle. It is no longer
+  a second raw camera fake.
+
+Validation evidence:
+
+- The focused active-view, action-indexed replay, and Gateway context set passed
+  22 of 22 tests. It covers typed acquisition, renewal, release on cancellation
+  and consumer exception, acquisition failure before perception, expired lease
+  failure before an orientation action, and the existing semantic
+  loss/reacquisition and worker-shutdown boundaries.
+- The replay keeps a compatible dashboard lease open while the controller runs.
+  The real manager reports both consumers during verification; controller exit
+  removes only `active-view`, preview remains on for `dashboard:replay`, and
+  camera-off occurs only when the dashboard lease exits.
+- The full non-physical Gateway, dashboard, security, active-view, replay,
+  replay-manifest, Environment Adapter, and command-catalog regression set
+  passed 116 of 116 tests with localhost and fake/replay fixtures.
+- The changed active-view, lease, dashboard-session, service, and focused test
+  files pass the 100-column and trailing-whitespace screens. `git diff --check`
+  is clean.
+- Repository search finds no remaining raw camera callback in the active-view
+  package and no active-view importer outside that isolated package. The live
+  adapter contract still omits `inspect`; its feature-absence test passed in the
+  broad run.
+- No Gateway or MetaHuman process was restarted. No attached robot received a
+  camera, intent, state, servo, motion-plan, audio, or firmware command from
+  this batch.
+
+Rollback manifest:
+
+- Step-three tracked integration points are
+  `Ainekio/Master/gateway/server/service.py` and
+  `Ainekio/Emulator/tests/test_gateway_service.py`; the step-three additions are
+  the `camera_lease()` context and its consumer-exception test.
+- Step-three isolated experiment points are
+  `Ainekio/Master/gateway/environment_adapter/active_view/contracts.py`,
+  `Ainekio/Master/gateway/environment_adapter/active_view/controller.py`,
+  `Ainekio/Emulator/tests/test_active_view.py`, and
+  `Ainekio/Emulator/tests/test_active_view_replay.py`. They remain untracked as
+  part of the removable active-view experiment.
+- A step-three-only rollback that retains the experiment restores those four
+  files to the preceding raw-callback checkpoint and removes the service
+  context plus its test. A full active-view rollback still deletes the isolated
+  active-view package, its tests, and its replay fixtures using the earlier
+  ROM-22 removal manifest.
+- Full camera-lease-program rollback remains the step-two manifest: restore its
+  six tracked integration points and delete `camera_sessions.py`,
+  `camera_leases.py`, and `test_gateway_camera_leases.py`. The unrelated Frame8
+  hardware assets and owner-local recordings remain outside every rollback.
+
+Decision and next gate:
+
+- Step three removes the last isolated Active View camera-ownership bypass. It
+  does not make the robot autonomous, improve target perception, or authorize
+  movement by itself; it only gives the later skill one safe existing camera
+  owner.
+- The next migration-order gate is a bounded adapter-owned frame bridge from the
+  existing Gateway frame callback to the active-view mailbox. That bridge must
+  preserve robot id, epoch, counter, frame id, valid timestamp, generation, and
+  latest-frame bounds, and it must be tested with the skill still unregistered.
+- Capability advertisement and live dispatch remain later gates after frame
+  correlation, cancellation, clean shutdown, identity replay, and calibrated
+  fine-turn assets are all validated together.
+
+### 2026-08-05 - ROM-08/ROM-11 - Optional adapter frame-mailbox bridge
+
+Status: migration-order step four implemented and validated in software; no live
+active-view instance, action, capability, or physical path is enabled.
+
+Authorization and scope:
+
+- The owner asked work to continue from the isolated lease migration. This batch
+  was restricted to the existing Gateway frame callback, one optional adapter
+  seam, the existing active-view mailbox/controller boundary, tests, and this
+  record.
+- The maintained launcher was not changed and supplies no frame bridge. The
+  adapter imports no active-view implementation, translates no `inspect`
+  action, advertises no `activeView` capability, and constructs no perception
+  subprocess or controller.
+- No model, dependency, firmware, camera setting, motion asset, service,
+  configuration, graph, or MetaHuman source changed. No physical test or command
+  was authorized or attempted.
+
+Implemented owner flow:
+
+- Added a 131-line `ActiveViewFrameBridge` inside the isolated active-view
+  package. It accepts only bounded JPEG camera frames for one explicit robot id
+  and creates `ActiveViewFrame` records with robot id, epoch, binary counter,
+  one opaque frame id, one timezone-aware host-arrival timestamp, monotonic
+  receipt time, JPEG bytes, and mailbox generation.
+- Same-epoch duplicate or decreasing counters, older epochs, other robots,
+  malformed JPEGs, invalid identifiers, invalid counters, and invalid timing
+  fail closed without entering the mailbox. A newer connection epoch clears
+  exact-frame history; a stale disconnect cannot clear a newer session, while
+  the matching disconnect does.
+- The bridge writes to the existing `LatestFrameMailbox`; it does not own a
+  queue, camera, detector, tracker, worker, or second copy of frame-lifecycle
+  state. `ActiveViewController` can now receive that same mailbox through its
+  constructor instead of creating a parallel store.
+- `EnvironmentAdapter` now defines a structural `CameraFrameBridge` protocol and
+  accepts it as an optional injected dependency. Its existing authenticated
+  Gateway frame callback invokes the bridge synchronously before the existing
+  snapshot-delivery filter. No inference or model work occurs in the callback.
+- Continuous preview still stays out of environment observations. When an
+  already-correlated snapshot is delivered, the queued delivery path reuses the
+  exact bridge frame id and timestamp and includes the existing robot id,
+  epoch, and counter metadata. MetaHuman and the controller can therefore refer
+  to the same immutable frame identity instead of independently generating
+  timestamps.
+
+Validation evidence:
+
+- The focused active-view, action-indexed replay, and complete Environment
+  Adapter suite passed 56 of 56 tests with permitted localhost fixtures.
+- New coverage proves shared controller/mailbox ownership, selected-robot
+  filtering, valid timestamp and monotonic receipt, duplicate and stale-epoch
+  rejection, matching-epoch cleanup, bounded exact-frame eviction, and invalid
+  JPEG/timing rejection.
+- Adapter coverage proves three continuous preview frames populate only the
+  injected bounded mailbox and emit no LLM observation. A correlated snapshot
+  then preserves the bridge id and timestamp through the same size-one queued
+  delivery path used by a connected adapter.
+- The full non-physical Gateway, dashboard, security, active-view, replay,
+  replay-manifest, Environment Adapter, and command-catalog regression set
+  passed 120 of 120 tests.
+- `git diff --check`, source trailing-whitespace checks, the 100-column screen
+  for active-view source/tests, and added-line checks for the maintained adapter
+  and test are clean. Repository search finds no active-view implementation
+  import, `inspect` route, or `activeView` capability outside the isolated
+  package.
+- No Gateway or MetaHuman process was restarted. No attached robot received a
+  camera, intent, state, servo, motion-plan, audio, or firmware command.
+
+Rollback manifest:
+
+- New step-four feature-owned source:
+  `Ainekio/Master/gateway/environment_adapter/active_view/frame_bridge.py`.
+- Step-four tracked integration points:
+  `Ainekio/Master/gateway/environment_adapter/server.py` and
+  `Ainekio/Emulator/tests/test_environment_adapter.py`.
+- Step-four changes within the still-untracked experiment:
+  `Ainekio/Master/gateway/environment_adapter/active_view/__init__.py`,
+  `Ainekio/Master/gateway/environment_adapter/active_view/controller.py`, and
+  `Ainekio/Emulator/tests/test_active_view.py`.
+- A step-four-only rollback deletes `frame_bridge.py`, removes its export and
+  tests, restores controller-owned mailbox construction, and removes the
+  optional adapter protocol, constructor argument, event/frame calls,
+  correlation fields, epoch metadata addition, and adapter test. Camera leases
+  and the preceding active-view experiment then remain at the validated
+  step-three checkpoint.
+- A full active-view rollback must also restore the two tracked step-four
+  integration points before deleting the isolated package, tests, and fixtures.
+  The earlier camera-lease rollback and unrelated Frame8/recording exclusions
+  remain unchanged.
+
+Decision and next gate:
+
+- Step four supplies real frame feedback plumbing, not a stop-only controller:
+  later perception can consume every fresh bounded frame and compare measured
+  image change after each body-owned correction. It does not itself choose an
+  action or improve perception.
+- Live composition remains correctly unavailable because the production
+  fine-turn assets named by the controller do not exist and the experimental
+  target-identity gate remains false. Enabling the optional bridge before those
+  prerequisites would consume memory without providing a truthful skill.
+- The next useful evidence gate is to close one of those two blockers without
+  registration: validate target identity through recorded OV3660
+  distractor/occlusion/loss-return replay, or define and calibrate body-owned
+  fine-turn primitives under a separately authorized physical test. Capability
+  advertisement and live dispatch remain later decisions.
+
+### 2026-08-05 - ROM-19 evidence N - Cross-query semantic identity gate
+
+Status: multi-query replay completed; the semantic identity gate failed and
+remains false.
+
+Scope and acceptance fixed before inference:
+
+- Reused the ignored owner-local OV3660 sequence already captured for visible
+  target/distractor, partial occlusion, full target loss, and return at a new
+  position. No new camera phase or physical command was requested.
+- Replayed three independently visible descriptions over all 115 QVGA preview
+  frames: the described creature, coffee cup, and white bottle. These names
+  exist only in the temporary evidence harness and capture metadata; none was
+  added to runtime source, prompts, aliases, or controller policy.
+- Visual labels required the creature in target/distractor, partial, and return
+  phases but absent under full loss; the cup in all four phases; and the bottle
+  only in full-loss and return phases. Four representative end frames were
+  inspected before inference to confirm those phase labels.
+- The predeclared strict gate required every labeled-present frame to produce a
+  non-ambiguous semantic result at or above the existing 0.50 controller floor,
+  zero labeled-absent frames at or above that floor, and p95 inference below the
+  controller's existing two-second fresh-frame wait.
+- Grounding DINO Tiny loaded only from the existing Hugging Face cache with
+  `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and downloads disabled. The
+  ComfyUI CUDA 13 library directory was supplied through `LD_LIBRARY_PATH` after
+  the first attempt reproduced the machine's known missing-NVRTC-builtins loader
+  error. No package, model, cache, or startup script changed.
+
+Measured result:
+
+- The run performed 345 independent semantic acquisitions: 258 labeled-present
+  cases and 87 labeled-absent cases. All 258 positives were accepted, but 12 of
+  87 negatives were also accepted, so the strict gate failed.
+- The described creature passed 86 of 86 present frames. During its 29-frame
+  full-loss phase, none cleared 0.50; 17 weak candidates measured at most 0.344
+  and two frames were ambiguous. Its median center moved from approximately
+  0.735 before occlusion to 0.529 after return, confirming useful semantic
+  reacquisition for this query.
+- The cup passed 115 of 115 frames across every phase at confidence 0.794 to
+  0.961, with median center x remaining approximately 0.317 to 0.323.
+- The bottle passed all 57 frames where it was present at confidence 0.925 to
+  0.954. Before the bottle existed, however, 11 of 29 target/distractor frames
+  and one of 29 partial-occlusion frames still cleared 0.50. The false candidates
+  reached 0.705; most target/distractor boxes landed near the creature region,
+  while the partial-phase acceptance landed near the cup.
+- A global confidence increase cannot correct this evidence without harming
+  valid targets: rejecting the bottle false candidates would require a floor
+  above 0.705, while genuine partially occluded creature detections fell as low
+  as 0.552. This is cross-query score calibration failure, not a defensible
+  threshold adjustment.
+- Cached-model startup measured 5,254 milliseconds. Aggregate p95 inference was
+  222 milliseconds; per-row p95 remained 187 to 234 milliseconds. Latency passed
+  comfortably and is not the blocker.
+
+Reusable evaluation contract:
+
+- Extended the existing isolated `replay_manifest.py` with bounded
+  `SemanticReplayOutcome`, `SemanticReplayScore`, and
+  `score_semantic_replay()`. It joins outcomes to exact recorded frame ids,
+  treats `visible` and `occluded` labels as required presence, treats `lost` as
+  required absence, and reports recall, false-accept rate, p95 latency, and one
+  terminal pass/fail result.
+- The scorer requires both presence and loss evidence, rejects missing,
+  duplicate, invalid-confidence, invalid-latency, and mismatched outcomes, and
+  keeps confidence, recall, false-accept, and latency thresholds explicit. It
+  contains no object classes, query strings, scene coordinates, model names, or
+  runtime registration.
+- Added tests for strict success with weak lost candidates, accepted-negative
+  failure, one-sided/mismatched evidence rejection, and latency failure. This is
+  an offline evidence gate only; controller inference and its 0.50 provisional
+  floor were not changed.
+
+Validation and isolation:
+
+- Focused Active View controller, BodySession replay, and replay-manifest tests
+  passed 31 of 31.
+- The full non-physical Gateway, dashboard, security, active-view, replay,
+  replay-manifest, Environment Adapter, and command-catalog boundary passed 124
+  of 124 tests with localhost and emulator fixtures.
+- The feature source/tests pass the 100-column and trailing-whitespace screens;
+  `git diff --check` is clean. The live adapter still has no active-view
+  implementation import, `inspect` route, `activeView` capability, worker, or
+  controller instance.
+- No process was restarted. No attached robot received a camera, intent, state,
+  servo, motion-plan, audio, or firmware command. Recorded JPEGs and phase JSON
+  remain ignored owner-local data.
+
+Rollback manifest extension:
+
+- Feature-owned source changed:
+  `Ainekio/Master/gateway/environment_adapter/active_view/replay_manifest.py`
+  and its export list in `active_view/__init__.py`.
+- Feature-owned validation changed:
+  `Ainekio/Emulator/tests/test_active_view_replay_manifest.py`.
+- To remove only this evidence contract, remove the two semantic result records,
+  scorer and private numeric helpers, remove their exports, and remove the four
+  scorer tests. The earlier action-indexed manifest, controller correction,
+  frame bridge, camera leases, and their rollback boundaries remain unchanged.
+- The temporary `/tmp` inference harness is not maintained source and is removed
+  after this record. Removing the ignored identity-sequence directory remains
+  the complete local-media rollback; no tracked media was added.
+
+Decision and next gate:
+
+- Keep `identity_gate_validated` false. Perfect recall on the current positives
+  does not compensate for accepted detections of an object before that object
+  existed. Grounding DINO text-query confidence can support semantic evidence,
+  but it cannot alone authorize arbitrary instance identity or physical action.
+- Do not add query-specific thresholds, cup/bottle/creature rules, prompt aliases,
+  scene coordinates, or a higher global confidence floor. Each would either
+  encode this room or discard proven partial-occlusion evidence.
+- The next non-physical architecture step is to compare maintained
+  instance-association or video-object components behind the existing perception
+  interface. The same replay gate must then include same-class distractors and
+  additional ordinary targets before identity can become available.
+- Fine-turn asset calibration remains the separate physical-control blocker and
+  still requires the owner's exact authorization for a later movement test.
 
 ## Future Progress Entry Template
 

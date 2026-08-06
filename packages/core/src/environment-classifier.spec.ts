@@ -1,11 +1,87 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  buildEnvironmentClassifierMessages,
+  ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT,
   environmentRouterRouteView,
   parseEnvironmentRouterDecision,
+  projectEnvironmentClassifierEvidence,
   validateEnvironmentRouterDecision,
   type EnvironmentRouterDecision,
 } from './environment-classifier.js'
+
+test('builds one compact classifier message format for training and runtime', () => {
+  const messages = buildEnvironmentClassifierMessages({
+    routingRequest: JSON.stringify({
+      currentInstruction: 'Can the camera capture an image?',
+      currentEnvironment: { capabilities: { visual: true } },
+    }),
+    recentConversation: [
+      { role: 'user', content: 'discarded oldest' },
+      { role: 'assistant', content: 'one', ignored: true },
+      { role: 'user', content: 'two' },
+      { role: 'assistant', content: 'three' },
+      { role: 'user', content: 'four' },
+    ],
+  })
+
+  assert.equal(messages[0].content, ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT)
+  assert.deepEqual(JSON.parse(messages[1].content), {
+    currentInstruction: 'Can the camera capture an image?',
+    currentEnvironment: { capabilities: { visual: true } },
+    recentConversation: [
+      { role: 'assistant', content: 'one' },
+      { role: 'user', content: 'two' },
+      { role: 'assistant', content: 'three' },
+      { role: 'user', content: 'four' },
+    ],
+  })
+})
+
+test('bounds large runtime telemetry without changing ordinary routing evidence', () => {
+  const ordinary = {
+    connection: 'online',
+    device: { status: { currentValue: 12.4 } },
+  }
+  assert.deepEqual(projectEnvironmentClassifierEvidence(ordinary), ordinary)
+
+  const projected = projectEnvironmentClassifierEvidence({
+    commands: Array.from({ length: 20 }, (_value, index) => `command-${index}`),
+    deep: { one: { two: { three: { secretTelemetry: 'not routing evidence' } } } },
+  }) as Record<string, any>
+  assert.equal(projected.commands.length, 8)
+  assert.deepEqual(projected.deep.one.two, { available: true })
+})
+
+test('keeps oversized adapter state within the trained compact envelope', () => {
+  const messages = buildEnvironmentClassifierMessages({
+    routingRequest: {
+      currentInstruction: 'Report current motion availability.',
+      currentEnvironment: {
+        state: {
+          transport: 'protocol-v1',
+          safety: 'body-owned',
+          adapterConnected: true,
+          body: {
+            authenticated: true,
+            motionAvailable: true,
+            cameraReady: true,
+            speakerReady: true,
+          },
+          gateway: Object.fromEntries(
+            Array.from({ length: 20 }, (_value, index) => [`telemetry${index}`, index]),
+          ),
+        },
+        capabilities: { actions: ['robotCommand'], movement: true },
+      },
+    },
+  })
+  const input = JSON.parse(messages[1].content)
+
+  assert.equal(input.currentEnvironment.state.body.motionAvailable, true)
+  assert.ok(JSON.stringify(input.currentEnvironment.state).length <= 480)
+  assert.doesNotMatch(messages[1].content, /telemetry19/)
+})
 
 const validDecision: EnvironmentRouterDecision = {
   needsMemory: false,

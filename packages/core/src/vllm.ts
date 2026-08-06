@@ -64,6 +64,10 @@ export interface VLLMConfig {
   loadFormat?: string;
   /** Optional tokenizer repo or local tokenizer path. Useful for GGUF files. */
   tokenizer?: string;
+  /** Optional tokenizer chat template file used for request formatting. */
+  chatTemplate?: string;
+  /** Disable multimodal encoders for text-only serving workloads. */
+  languageModelOnly?: boolean;
   /** Public model name exposed by the OpenAI-compatible API. */
   servedModelName?: string;
   /** How long to wait for vLLM to bind before treating startup as failed. */
@@ -399,6 +403,7 @@ export interface VLLMChatResponse {
 
 export interface VLLMChatOptions {
   model?: string;
+  seed?: number;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
@@ -407,6 +412,7 @@ export interface VLLMChatOptions {
   frequencyPenalty?: number;
   presencePenalty?: number;
   repetitionPenalty?: number;
+  responseFormat?: 'json';
 }
 
 export function buildVLLMChatMessages(messages: VLLMChatMessage[]): VLLMChatMessage[] {
@@ -430,9 +436,14 @@ export function buildVLLMChatRequest(
     stream: false,
   };
 
+  if (options.seed !== undefined) body.seed = options.seed;
+
   if (options.frequencyPenalty !== undefined) body.frequency_penalty = options.frequencyPenalty;
   if (options.presencePenalty !== undefined) body.presence_penalty = options.presencePenalty;
   if (options.repetitionPenalty !== undefined) body.repetition_penalty = options.repetitionPenalty;
+  if (options.responseFormat === 'json') {
+    body.response_format = { type: 'json_object' };
+  }
   if (options.enableThinking !== undefined) {
     body.chat_template_kwargs = { enable_thinking: options.enableThinking };
   }
@@ -555,6 +566,14 @@ export class VLLMClient {
 
   constructor(endpoint = 'http://localhost:8000') {
     this.endpoint = endpoint.replace(/\/$/, '');
+  }
+
+  setEndpoint(endpoint: string): void {
+    this.endpoint = endpoint.replace(/\/$/, '');
+  }
+
+  getEndpoint(): string {
+    return this.endpoint;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -878,8 +897,23 @@ export class VLLMClient {
       args.push('--tokenizer', effectiveTokenizer);
     }
 
+    if (config.chatTemplate) {
+      if (!fs.existsSync(config.chatTemplate)) {
+        return {
+          pid: 0,
+          success: false,
+          error: `Configured vLLM chat template does not exist: ${config.chatTemplate}`,
+        };
+      }
+      args.push('--chat-template', config.chatTemplate);
+    }
+
     if (config.servedModelName) {
       args.push('--served-model-name', config.servedModelName);
+    }
+
+    if (config.languageModelOnly) {
+      args.push('--language-model-only');
     }
 
     args.push(...buildVLLMMemoryArgs(config));

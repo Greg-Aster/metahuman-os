@@ -404,8 +404,28 @@
     name: string;
     path: string;
     date?: string;
+    createdAt?: string;
     isDualAdapter: boolean;
     size: number;
+    loaded?: boolean;
+  }
+
+  interface EnvironmentRouterSelection {
+    id: string;
+    name: string;
+    provider: string;
+    model: string;
+  }
+
+  interface EnvironmentClassifierStatus {
+    enabled: boolean;
+    configured: boolean;
+    selectedModelId: string | null;
+    selectedModel?: EnvironmentRouterSelection;
+    running: boolean;
+    loaded: boolean;
+    loadedModels: string[];
+    error?: string;
   }
 
   interface ModelCategories {
@@ -449,6 +469,14 @@
   let resolvedBackend: ResolvedBackendType | null = null;
   let remoteProvider: RemoteProviderType | null = null;
   let localModel: LocalModelInfo | null = null;
+  let environmentClassifier: EnvironmentClassifierStatus = {
+    enabled: false,
+    configured: false,
+    selectedModelId: null,
+    running: false,
+    loaded: false,
+    loadedModels: []
+  };
   let modelCategories: ModelCategories = {
     local: [],
     lora: [],
@@ -483,6 +511,9 @@
   function getVllmTooltip(): string {
     const ba = backendAvailability.vllm;
     if (!ba.available) return 'vLLM: Not installed';
+    if (environmentClassifier.loaded && environmentClassifier.selectedModel?.provider === 'vllm') {
+      return `vLLM: Running Environment Router specialist${environmentClassifier.selectedModel?.name ? `\n${environmentClassifier.selectedModel.name}` : ''}`;
+    }
     if (ba.running) return `vLLM: Running${ba.model ? ` (${ba.model})` : ''}${ba.active ? ' [ACTIVE]' : ''}`;
     return 'vLLM: Installed but not running';
   }
@@ -547,6 +578,9 @@
         if (data.modelCategories) {
           modelCategories = data.modelCategories;
         }
+        if (data.environmentClassifier) {
+          environmentClassifier = data.environmentClassifier;
+        }
 
         const seen = new Map<string, AvailableModel>();
         for (const model of availableModels) {
@@ -609,10 +643,10 @@
     }
   }
 
-  async function assignModelToRole(role: string, modelId: string) {
+  async function assignModelToRole(role: string, modelId: string, cognitiveModeOverride?: string) {
     console.log(`[LeftSidebar] assignModelToRole called: role=${role}, modelId=${modelId}`);
     try {
-      const mode = get(currentMode);
+      const mode = cognitiveModeOverride || get(currentMode);
       const payload: Record<string, any> = { role, modelId };
       if (mode) {
         payload.cognitiveMode = mode;
@@ -641,7 +675,7 @@
           pendingLoraName = modelId.replace('vllm-lora.', '');
           showRestartModal = true;
         } else {
-          warmupModel(role).catch(err => {
+          warmupModel(role, mode).catch(err => {
             console.warn(`Failed to warm up model for role ${role}:`, err);
             const errorMsg = (err as Error).message || 'Unknown error';
             alert(`Model warmup failed for ${role}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
@@ -667,12 +701,12 @@
     }
   }
 
-  async function warmupModel(role: string): Promise<void> {
+  async function warmupModel(role: string, cognitiveMode?: string): Promise<void> {
     try {
       const response = await apiFetch('/api/warmup-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role, cognitiveMode }),
       });
 
       const result = await response.json();
@@ -685,6 +719,30 @@
     } catch (error) {
       console.error(`[warmup] Error warming up ${role}:`, error);
       throw error;
+    }
+  }
+
+  async function setEnvironmentClassifierEnabled(enabled: boolean): Promise<void> {
+    try {
+      const response = await apiFetch('/api/model-registry', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalSettings: { environmentClassifierEnabled: enabled }
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to update Environment Classifier');
+      }
+      environmentClassifier = { ...environmentClassifier, enabled };
+      if (enabled && environmentClassifier.configured) {
+        await warmupModel('environmentRouter', 'environment');
+      }
+      void refreshStatus('environment classifier toggle');
+      void loadModelRegistry();
+    } catch (error) {
+      alert('Failed to update Environment Classifier: ' + (error as Error).message);
     }
   }
 
@@ -899,8 +957,78 @@
           </div>
         {/if}
 
+        {#if modelCategories.local.length > 0 || environmentClassifier.configured}
+          <div class="model-role-row">
+            <span class="activity-indicator">
+              <span class="activity-dot"></span>
+            </span>
+            <span class="role-name">env router</span>
+            <span class="role-arrow">→</span>
+            <button
+              class="role-model clickable"
+              class:needs-config={!environmentClassifier.configured}
+              title={environmentClassifier.selectedModel
+                ? `${environmentClassifier.selectedModel.name}\n${environmentClassifier.selectedModel.provider} · profile-selected Environment Router`
+                : environmentClassifier.error || 'Select an Environment Router model'}
+              on:click|stopPropagation={() => toggleModelDropdown('environmentRouter')}
+            >
+              {#if environmentClassifier.selectedModel}
+                {environmentClassifier.selectedModel.model}
+              {:else}
+                select
+              {/if}
+              {#if environmentClassifier.selectedModel}
+                {#if environmentClassifier.loaded}
+                  <span class="vllm-badge">loaded</span>
+                {:else if environmentClassifier.enabled}
+                  <span class="restart-badge">load</span>
+                {/if}
+              {/if}
+              <span class="dropdown-arrow">▼</span>
+            </button>
+            <button
+              class="persona-badge clickable"
+              class:persona-facet-inactive={!environmentClassifier.enabled}
+              title={environmentClassifier.enabled
+                ? 'Environment Classifier enabled for this profile. Click to use the main Environment model instead.'
+                : 'Environment Classifier disabled for this profile. Click to enable the selected model.'}
+              disabled={!environmentClassifier.configured}
+              on:click|stopPropagation={() => setEnvironmentClassifierEnabled(!environmentClassifier.enabled)}
+            >
+              {environmentClassifier.enabled ? 'on' : 'off'}
+            </button>
+
+            {#if modelDropdownOpen.environmentRouter}
+              <div class="model-dropdown categorized">
+                <div class="dropdown-header">Select Environment Router</div>
+                {#if modelCategories.local.length > 0}
+                  <div class="dropdown-category">
+                    <span class="category-label">🦙 Installed production models</span>
+                    {#each modelCategories.local as model}
+                      {@const isCurrentlySelected = environmentClassifier.selectedModelId === model.id}
+                      <button
+                        class="dropdown-item"
+                        class:selected={isCurrentlySelected}
+                        on:click|stopPropagation={() => assignModelToRole('environmentRouter', model.id, 'environment')}
+                      >
+                        <span class="model-name">
+                          {model.model}
+                          {#if model.capabilities?.includes('image')}
+                            <span class="vllm-badge">image</span>
+                          {/if}
+                        </span>
+                        <span class="model-desc">{model.provider} · strict router output required</span>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         {#if hasModelRegistry}
-          {#each Object.entries(modelRoles) as [role, info]}
+          {#each Object.entries(modelRoles).filter(([role]) => role !== 'environmentRouter') as [role, info]}
             <div class="model-role-row">
               <span class="activity-indicator">
                 <span class="activity-dot"></span>

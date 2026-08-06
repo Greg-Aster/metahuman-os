@@ -25,7 +25,7 @@ import {
 import {
   DEVELOPMENT_FOLD_BY_CASE,
   DEVELOPMENT_SEMANTIC_VARIANTS,
-  SEMANTIC_VARIANTS_PER_CASE,
+  MINIMUM_SEMANTIC_VARIANTS_PER_CASE,
 } from './semantic-variants.js'
 
 export const TRAINING_DATA_PATH = resolve(CLASSIFIER_LANE_DIRECTORY, 'development-training.jsonl')
@@ -83,6 +83,18 @@ function appendHistory(
   return varied
 }
 
+const REFERENCE_ONLY_ACTIONS = [
+  'wave once',
+  'sit down',
+  'bow once',
+  'take one step forward',
+] as const
+
+function referenceOnlyAction(testCase: EnvironmentClassifierCase, offset = 0): string {
+  const checksum = [...testCase.id].reduce((total, character) => total + character.charCodeAt(0), 0)
+  return REFERENCE_ONLY_ACTIONS[(checksum + offset) % REFERENCE_ONLY_ACTIONS.length]!
+}
+
 function addStaleVisual(testCase: EnvironmentClassifierCase): EnvironmentClassifierCase {
   const varied = cloneCase(testCase)
   const environment = varied.input.envelope.currentEnvironment
@@ -122,7 +134,7 @@ function staleHistory(testCase: EnvironmentClassifierCase): ClassifierConversati
     ]
   }
   return [
-    { role: 'user', content: 'Earlier, wave once.' },
+    { role: 'user', content: `Earlier, ${referenceOnlyAction(testCase)}.` },
     { role: 'assistant', content: 'That earlier movement finished successfully.' },
   ]
 }
@@ -135,7 +147,10 @@ function futureHistory(testCase: EnvironmentClassifierCase): ClassifierConversat
     ]
   }
   return [
-    { role: 'user', content: 'If I explicitly ask later, stand up then.' },
+    {
+      role: 'user',
+      content: `If I explicitly ask later, ${referenceOnlyAction(testCase, 1)} then.`,
+    },
     { role: 'assistant', content: 'I will wait for a future explicit request.' },
   ]
 }
@@ -531,6 +546,9 @@ export function validateTrainingDataset(
     corpus.cases.filter(testCase => testCase.split === 'development').map(testCase => testCase.id),
   )
   const heldOutIds = new Set(lock.caseIds)
+  const heldOutInstructions = new Set(corpus.cases
+    .filter(testCase => testCase.split === 'held_out')
+    .map(testCase => testCase.input.envelope.currentInstruction.trim().toLocaleLowerCase()))
   const expectedCount = expectedTrainingRecordCount(corpus)
   if (records.length !== expectedCount) {
     errors.push(`training dataset must contain ${expectedCount} records; found ${records.length}`)
@@ -556,6 +574,18 @@ export function validateTrainingDataset(
     }
     if (!record.compactInput.trim()) {
       errors.push(`${record.metadata.recordId}: compact specialized-model input is required`)
+    } else {
+      try {
+        const compactInput = JSON.parse(record.compactInput) as { currentInstruction?: unknown }
+        const instruction = typeof compactInput.currentInstruction === 'string'
+          ? compactInput.currentInstruction.trim().toLocaleLowerCase()
+          : ''
+        if (instruction && heldOutInstructions.has(instruction)) {
+          errors.push(`${record.metadata.recordId}: normalized held-out instruction collision`)
+        }
+      } catch {
+        errors.push(`${record.metadata.recordId}: compact specialized-model input must be JSON`)
+      }
     }
     if (!Number.isInteger(record.metadata.developmentFold)
       || record.metadata.developmentFold < 0
@@ -581,8 +611,10 @@ export function validateTrainingDataset(
   const foldedCaseIds = new Set(Object.keys(DEVELOPMENT_FOLD_BY_CASE))
   for (const caseId of developmentIds) {
     const variants = DEVELOPMENT_SEMANTIC_VARIANTS[caseId]
-    if (!variants || variants.length !== SEMANTIC_VARIANTS_PER_CASE - 1) {
-      errors.push(`${caseId}: expected ${SEMANTIC_VARIANTS_PER_CASE - 1} curated paraphrases`)
+    if (!variants || variants.length < MINIMUM_SEMANTIC_VARIANTS_PER_CASE - 1) {
+      errors.push(
+        `${caseId}: expected at least ${MINIMUM_SEMANTIC_VARIANTS_PER_CASE - 1} curated paraphrases`,
+      )
     }
     semanticCaseIds.delete(caseId)
     foldedCaseIds.delete(caseId)
@@ -639,14 +671,18 @@ export function buildTrainingManifest(input: {
   const { records, corpus, lock, prompt } = input
   const developmentCases = corpus.cases.filter(testCase => testCase.split === 'development')
   return {
-    version: 3,
+    version: 4,
     owner: 'environment-classifier',
     systemOwned: true,
     containsUserOrPersonaData: false,
     sourceSplit: 'development',
     heldOutUsed: false,
     sourceCaseCount: developmentCases.length,
-    semanticVariantsPerCase: SEMANTIC_VARIANTS_PER_CASE,
+    minimumSemanticVariantsPerCase: MINIMUM_SEMANTIC_VARIANTS_PER_CASE,
+    semanticSurfaceCount: developmentCases.reduce(
+      (count, testCase) => count + 1 + DEVELOPMENT_SEMANTIC_VARIANTS[testCase.id]!.length,
+      0,
+    ),
     controlledRouteSurfaceCount: controlledRouteSurfaceCount(corpus),
     actionContextVariantsPerSemanticInput: ACTION_CONTEXT_VARIANTS_PER_SEMANTIC_INPUT,
     nonActionContextVariantsPerSemanticInput: NON_ACTION_CONTEXT_VARIANTS_PER_SEMANTIC_INPUT,

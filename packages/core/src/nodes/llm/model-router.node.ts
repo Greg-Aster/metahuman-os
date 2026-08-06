@@ -22,6 +22,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     role: 'persona',
     maxTokens: 2048,
     temperature: 0.7,
+    format: 'text',
   },
   propertySchemas: {
     role: {
@@ -46,6 +47,12 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       max: 1,
       step: 0.1,
     },
+    format: {
+      type: 'select',
+      default: 'text',
+      label: 'Response Format',
+      options: ['text', 'json'],
+    },
   },
   description: 'Routes request to appropriate model',
 
@@ -64,6 +71,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
           maxTokens: properties?.maxTokens || 2048,
           repeatPenalty: properties?.repeatPenalty || 1.15,
           temperature: properties?.temperature || 0.7,
+          format: properties?.format === 'json' ? 'json' : undefined,
         },
         onProgress: context.emitProgress,
       });

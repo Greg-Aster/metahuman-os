@@ -9,6 +9,10 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
 import { callLLM } from '../../model-router.js';
+import {
+  ENVIRONMENT_ROUTER_MODEL_ROLE,
+  warmEnvironmentClassifierRuntime,
+} from '../../environment-classifier-runtime.js';
 
 // In-memory cache to prevent duplicate warmups
 const warmupCache = new Map<string, number>();
@@ -25,11 +29,12 @@ function markAsWarmed(role: string): void {
   warmupCache.set(role, Date.now());
 }
 
-async function warmupWithTimeout(role: string): Promise<any> {
+async function warmupWithTimeout(role: string, cognitiveMode?: string): Promise<any> {
   return Promise.race([
     callLLM({
       role: role as any,
       messages: [{ role: 'user', content: 'hi' }],
+      cognitiveMode,
       options: {
         maxTokens: 1,
         temperature: 0,
@@ -56,7 +61,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
       };
     }
 
-    const { role } = body || {};
+    const { role, cognitiveMode } = body || {};
 
     if (!role) {
       return {
@@ -66,7 +71,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     }
 
     // Validate role
-    const validRoles = ['orchestrator', 'persona', 'curator', 'coder', 'planner', 'summarizer', 'fallback'];
+    const validRoles = ['orchestrator', 'persona', 'curator', 'coder', 'planner', 'summarizer', 'fallback', ENVIRONMENT_ROUTER_MODEL_ROLE];
     if (!validRoles.includes(role)) {
       return {
         status: 400,
@@ -75,7 +80,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     }
 
     // Skip if recently warmed (deduplication)
-    if (isRecentlyWarmed(role)) {
+    if (role !== ENVIRONMENT_ROUTER_MODEL_ROLE && isRecentlyWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`)) {
       return successResponse({
         success: true,
         message: `Model for role "${role}" was recently warmed (cached)`,
@@ -86,13 +91,17 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     const startTime = Date.now();
 
     try {
-      // Send minimal inference to trigger model loading with timeout
-      await warmupWithTimeout(role);
+      if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
+        await warmEnvironmentClassifierRuntime(user.username);
+      } else {
+        // Send minimal inference to trigger ordinary model loading with timeout
+        await warmupWithTimeout(role, cognitiveMode);
+      }
 
       const duration = Date.now() - startTime;
 
       // Mark as warmed for deduplication
-      markAsWarmed(role);
+      markAsWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`);
 
       audit({
         category: 'system',
@@ -101,6 +110,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
         actor: user.username,
         details: {
           role,
+          cognitiveMode: cognitiveMode || 'default',
           duration,
           trigger: 'user_request',
         },

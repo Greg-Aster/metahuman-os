@@ -90,7 +90,7 @@ test('a valid Environment task decision owns a new action contract over router f
   });
 });
 
-test('Robot Operator delegation keeps the independent router evidence contract', async () => {
+test('Robot Operator delegation does not replace the Environment LLM semantic contract', async () => {
   const currentObservation = observation();
   currentObservation.metadata = {
     ...currentObservation.metadata,
@@ -108,6 +108,7 @@ test('Robot Operator delegation keeps the independent router evidence contract',
       objectiveComplete: false,
       continuationPolicy: 'none',
       requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
     },
     routingAnalysis: {
       needsAction: true,
@@ -121,15 +122,15 @@ test('Robot Operator delegation keeps the independent router evidence contract',
     observation: currentObservation,
   }, {});
 
-  assert.equal(result.reconciled, true);
-  assert.equal(result.contract.continuationPolicy, 'bounded');
-  assert.equal(result.contract.requiredCompletionBasis, 'visual_observation');
-  assert.equal(result.contract.motionClass, 'target_relative');
-  assert.equal(result.taskDecision.motionClass, 'target_relative');
-  assert.equal(result.taskDecision.taskContractSource, 'robot_operator_router');
+  assert.equal(result.reconciled, false);
+  assert.equal(result.contract.continuationPolicy, 'none');
+  assert.equal(result.contract.requiredCompletionBasis, 'action_result');
+  assert.equal(result.contract.motionClass, 'body_local');
+  assert.equal(result.taskDecision.motionClass, 'body_local');
+  assert.equal(result.taskDecision.taskContractSource, 'environment_decision');
 });
 
-test('bounded objectives use the router evidence classification without changing model-owned continuation', async () => {
+test('bounded objectives preserve the Environment LLM evidence classification', async () => {
   const result = await environmentTaskContractNode.execute({
     taskDecision: {
       outcome: 'act',
@@ -149,10 +150,42 @@ test('bounded objectives use the router evidence classification without changing
   }, {});
 
   assert.equal(result.valid, true);
-  assert.equal(result.reconciled, true);
+  assert.equal(result.reconciled, false);
   assert.equal(result.taskDecision.continuationPolicy, 'bounded');
-  assert.equal(result.taskDecision.requiredCompletionBasis, 'visual_observation');
-  assert.equal(result.taskDecision.taskContractSource, 'bounded_router_evidence');
+  assert.equal(result.taskDecision.requiredCompletionBasis, 'action_result');
+  assert.equal(result.taskDecision.taskContractSource, 'environment_decision');
+  assert.equal(result.taskDecision.taskContractConflict.model.requiredCompletionBasis, 'action_result');
+  assert.equal(result.taskDecision.taskContractConflict.routed.requiredCompletionBasis, 'visual_observation');
+});
+
+test('an admitted advertised command keeps its one-shot action-result contract', async () => {
+  const result = await environmentTaskContractNode.execute({
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Execute the admitted advertised robot command and verify its action result.',
+      objectiveComplete: false,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+    },
+    routingAnalysis: {
+      needsAction: true,
+      actionType: 'robot_movement',
+      actionParams: {
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        motionClass: 'body_local',
+      },
+    },
+  }, {});
+
+  assert.equal(result.valid, true);
+  assert.equal(result.taskDecision.continuationPolicy, 'none');
+  assert.equal(result.taskDecision.requiredCompletionBasis, 'action_result');
+  assert.equal(result.taskDecision.motionClass, 'body_local');
+  assert.equal(result.taskDecision.taskContractSource, 'environment_decision');
+  assert.equal(result.contract.requiredCompletionBasis, 'action_result');
+  assert.equal(result.contract.motionClass, 'body_local');
   assert.equal(result.taskDecision.taskContractConflict.model.requiredCompletionBasis, 'action_result');
   assert.equal(result.taskDecision.taskContractConflict.routed.requiredCompletionBasis, 'visual_observation');
 });
@@ -279,6 +312,43 @@ test('a validator-persisted contract remains authoritative on a later no-action 
   assert.equal(result.contract.motionClass, 'target_relative');
   assert.equal(result.taskDecision.motionClass, 'target_relative');
   assert.equal(result.taskDecision.taskContractSource, 'persisted');
+});
+
+test('a current Environment LLM action may replace the previous attempt motion class', async () => {
+  const currentObservation = observation();
+  currentObservation.metadata = {
+    ...currentObservation.metadata,
+    taskValidatorCommand: {
+      version: 4,
+      objective: 'Improve the view until the subject can be identified.',
+      instruction: 'Move closer to the subject.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'target_relative',
+    },
+  };
+  const result = await environmentTaskContractNode.execute({
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Look to one side before choosing another displacement.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'body_local',
+    },
+    routingAnalysis: {
+      needsAction: false,
+      actionType: 'none',
+      actionParams: {},
+    },
+    observation: currentObservation,
+  }, {});
+
+  assert.equal(result.taskDecision.continuationPolicy, 'bounded');
+  assert.equal(result.taskDecision.requiredCompletionBasis, 'visual_observation');
+  assert.equal(result.taskDecision.motionClass, 'body_local');
+  assert.equal(result.contract.motionClass, 'body_local');
+  assert.equal(result.reconciled, false);
 });
 
 test('a direct visual description remains a visible response after contract reconciliation', async () => {

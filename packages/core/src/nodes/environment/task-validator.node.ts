@@ -320,13 +320,18 @@ export const environmentTaskValidatorNode = defineNode({
           ? taskDecision.completionBasis
           : 'response'
         : 'action_result');
-    const taskContract: EnvironmentTaskContract = persistedContract
+    const taskContractBase: EnvironmentTaskContract = persistedContract
       || {
         objective,
         continuationPolicy: taskDecision?.continuationPolicy === 'bounded' ? 'bounded' : 'none',
         requiredCompletionBasis: fallbackCompletionBasis,
         ...(taskDecision?.motionClass ? { motionClass: taskDecision.motionClass } : {}),
       };
+    const currentMotionClass = taskDecision?.motionClass ?? taskContractBase.motionClass;
+    const taskContract: EnvironmentTaskContract = {
+      ...taskContractBase,
+      ...(currentMotionClass ? { motionClass: currentMotionClass } : {}),
+    };
     const continuationPolicy = taskContract.continuationPolicy;
     const requiredCompletionBasis = taskContract.requiredCompletionBasis;
     const completionEvidence = cleanText(taskDecision?.completionEvidence, 500);
@@ -387,10 +392,11 @@ export const environmentTaskValidatorNode = defineNode({
       && continuationPolicy === 'none'
       && requiredCompletionBasis === 'action_result',
     );
-    const effectiveCompletionEvidence = oneShotTerminalComplete
+    const actionResultTerminalComplete = oneShotTerminalComplete;
+    const effectiveCompletionEvidence = actionResultTerminalComplete
       ? cleanText(terminal?.message, 500) || 'Correlated terminal feedback completed the action.'
       : assessedCompletionEvidence;
-    const complete = oneShotTerminalComplete || (effectiveClaimedComplete && completionSupported);
+    const complete = actionResultTerminalComplete || (effectiveClaimedComplete && completionSupported);
     const prematureCompletionWithWork = Boolean(
       !terminal
       && hasCandidateWork
@@ -415,7 +421,7 @@ export const environmentTaskValidatorNode = defineNode({
         proposedOutcome === 'act'
         || (
           delegatedOperatorInstruction
-          && (delegatedActionRequirement ?? routingAnalysis?.needsAction === true)
+          && delegatedActionRequirement === true
         )
       )
     );
@@ -461,7 +467,12 @@ export const environmentTaskValidatorNode = defineNode({
       && QUEUEABLE_OUTCOMES.has(outcome),
     );
     const queueSource = source === 'user' || source === 'autonomy' ? source : null;
-    const continuationAuthorized = continuationPolicy === 'bounded';
+    const retryableActionFailure = Boolean(
+      requiredCompletionBasis === 'action_result'
+      && (terminal?.type === 'failed' || terminal?.type === 'expired'),
+    );
+    const continuationAuthorized = continuationPolicy === 'bounded'
+      || retryableActionFailure;
     const shouldRefine = Boolean(
       stepResultReady
       && incomplete
@@ -525,7 +536,7 @@ export const environmentTaskValidatorNode = defineNode({
     else if (actionAdmissionBlocked) blockedReason = actionAdmissionReason;
     else if (visualAssessmentRejected) blockedReason = 'visual_completion_unverified';
     else if (requiredActionMissing) blockedReason = 'required_action_missing';
-    else if (effectiveClaimedComplete && !completionSupported && !oneShotTerminalComplete) blockedReason = 'objective_completion_unverified';
+    else if (effectiveClaimedComplete && !completionSupported && !actionResultTerminalComplete) blockedReason = 'objective_completion_unverified';
     else if (stepResultReady && incomplete && !objective) blockedReason = 'missing_objective';
     else if (stepResultReady && incomplete && !queueSource) blockedReason = `invalid_source_${source}`;
     else if (stepResultReady && incomplete && step >= maxSteps) blockedReason = 'step_limit';
@@ -537,26 +548,25 @@ export const environmentTaskValidatorNode = defineNode({
     const assessmentResponse = visualAssessmentRequired
       ? cleanText(evidenceAssessment?.response, 1_000)
       : '';
-    const unverifiedCompletionClaim = Boolean(
-      effectiveClaimedComplete
-      && !completionSupported
-      && !oneShotTerminalComplete
-    );
-    const responseSuppressed = Boolean(
-      shouldRefine
-      || (requiredActionNotAdmitted && !actionAdmissionBlocked && !motionStuck)
-      || unverifiedCompletionClaim
-      || operatorIntentionEcho
-    );
-    const visibleResponse = shouldRefine
+    const missingActionResponse = source === 'user'
+      && requiredActionNotAdmitted
+      && !actionAdmissionBlocked
+      ? 'I understood this as an action, but no executable robot command was produced.'
+      : '';
+    const emptyUserResultResponse = source !== 'user' || response || missingActionResponse
       ? ''
-      : assessedVisualCompletion && !claimedComplete
-        ? assessmentResponse || cleanText(evidenceAssessment?.reason, 1_000)
-        : visualAssessmentRejected
-        ? assessmentResponse
-        : responseSuppressed
-          ? ''
-          : response;
+      : complete && terminal?.type === 'completed'
+        ? 'The requested robot action completed.'
+        : requiredActionNotAdmitted
+          ? 'I understood this as an action, but no executable robot command was produced.'
+          : admittedActions.length > 0 || admittedMovementRequest
+            ? 'Executing the requested robot action.'
+            : 'I received the request, but did not produce a usable response.';
+    const visibleResponse = assessedVisualCompletion && !claimedComplete
+      ? assessmentResponse || cleanText(evidenceAssessment?.reason, 1_000)
+      : visualAssessmentRejected
+        ? assessmentResponse || response
+        : missingActionResponse || response || emptyUserResultResponse;
 
     return {
       actions: admittedActions,
@@ -588,7 +598,7 @@ export const environmentTaskValidatorNode = defineNode({
         taskContractSource: taskDecision?.taskContractSource ?? null,
         taskContractConflict: taskDecision?.taskContractConflict ?? null,
         externalCompletionEvidenceRequired,
-        completionBasis: oneShotTerminalComplete ? 'action_result' : assessedCompletionBasis ?? 'none',
+        completionBasis: actionResultTerminalComplete ? 'action_result' : assessedCompletionBasis ?? 'none',
         completionEvidence: effectiveCompletionEvidence,
         completionVerified: complete,
         evidenceAssessment: visualAssessmentRequired
@@ -603,7 +613,7 @@ export const environmentTaskValidatorNode = defineNode({
         admittedActionCount: admittedActions.length,
         actionRequired: currentActionRequired,
         operatorIntentionEcho,
-        responseSuppressed,
+        responseSuppressed: false,
         refinementRequested: shouldRefine,
       },
       outcome,

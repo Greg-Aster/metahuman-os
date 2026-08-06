@@ -2,6 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  buildEnvironmentClassifierMessages,
+  ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT,
   environmentRouterRouteView,
   parseEnvironmentRouterDecision,
   type EnvironmentRouterRouteView,
@@ -26,6 +28,7 @@ const DEFAULT_OLLAMA_MODELS = ['qwen3.5:9b', 'qwen3.5:2b', 'qwen3.5:0.8b']
 const DEFAULT_VLLM_MODELS = ['qwen3.5-2b-base']
 
 type BenchmarkProviderName = 'ollama' | 'vllm'
+type BenchmarkMessageFormat = 'graph' | 'compact'
 
 interface ProviderChatResponse {
   content: string
@@ -179,6 +182,7 @@ interface BenchmarkOptions {
   validateOnly: boolean
   seed: number
   keepAlive: string
+  messageFormat: BenchmarkMessageFormat
 }
 
 interface WarmupResult {
@@ -291,6 +295,19 @@ function createProvider(options: BenchmarkOptions): BenchmarkProvider {
     : createOllamaProvider(options.endpoint)
 }
 
+function renderBenchmarkMessages(
+  testCase: EnvironmentClassifierCase,
+  prompt: ContextRouterPrompt,
+  options: BenchmarkOptions,
+): ReturnType<typeof renderContextRouterMessages> {
+  return options.messageFormat === 'compact'
+    ? buildEnvironmentClassifierMessages({
+        routingRequest: testCase.input.envelope,
+        recentConversation: testCase.input.recentConversation,
+      })
+    : renderContextRouterMessages(testCase, prompt)
+}
+
 function routeMismatches(
   expected: EnvironmentRouterRouteView,
   actual: EnvironmentRouterRouteView | undefined,
@@ -325,7 +342,7 @@ async function runCase(
   try {
     response = await provider.chat(
       model,
-      renderContextRouterMessages(testCase, prompt),
+      renderBenchmarkMessages(testCase, prompt, options),
       prompt,
       options,
     )
@@ -489,6 +506,7 @@ function parseOptions(arguments_: string[]): BenchmarkOptions {
     validateOnly: false,
     seed: 42,
     keepAlive: '10m',
+    messageFormat: 'graph',
   }
 
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -522,6 +540,12 @@ function parseOptions(arguments_: string[]): BenchmarkOptions {
     } else if (argument === '--keep-alive' && value) {
       options.keepAlive = value
       index += 1
+    } else if (argument === '--message-format' && value) {
+      if (value !== 'graph' && value !== 'compact') {
+        throw new Error('--message-format must be graph or compact')
+      }
+      options.messageFormat = value
+      index += 1
     } else {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
@@ -550,7 +574,7 @@ async function warmModel(
   const started = process.hrtime.bigint()
   const response = await provider.chat(
     model,
-    renderContextRouterMessages(testCase, prompt),
+    renderBenchmarkMessages(testCase, prompt, options),
     prompt,
     options,
   )
@@ -570,7 +594,14 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   console.log(`Validated ${corpus.cases.length} cases; held-out digest ${lock.digest}`)
   if (options.validateOnly) return
 
-  const prompt = await loadContextRouterPrompt()
+  const prompt = options.messageFormat === 'compact'
+    ? {
+        systemPrompt: ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT,
+        userPromptTemplate: '@metahuman/core compact JSON input v1',
+        temperature: 0,
+        maxTokens: 512,
+      }
+    : await loadContextRouterPrompt()
   const selectedCases = options.split === 'all'
     ? corpus.cases
     : corpus.cases.filter(testCase => testCase.split === options.split)
@@ -632,6 +663,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       endpoint: options.endpoint,
       seed: options.seed,
       keepAlive: options.keepAlive,
+      messageFormat: options.messageFormat,
       prompt,
       sequentialExecution: true,
       warmupExcluded: true,

@@ -156,6 +156,13 @@ test('training data expands only the 48 development cases into controlled varian
   assert.equal(records.length, expectedCount)
   assert.equal(records.every(record => record.metadata.sourceSplit === 'development'), true)
   assert.equal(records.some(record => lock.caseIds.includes(record.metadata.sourceCaseId)), false)
+  const heldOutInstructions = new Set(corpus.cases
+    .filter(testCase => testCase.split === 'held_out')
+    .map(testCase => testCase.input.envelope.currentInstruction.trim().toLocaleLowerCase()))
+  assert.equal(records.some(record => {
+    const input = JSON.parse(record.compactInput) as { currentInstruction: string }
+    return heldOutInstructions.has(input.currentInstruction.trim().toLocaleLowerCase())
+  }), false)
   assert.equal(records.every(record => Object.keys(JSON.parse(record.output)).length === 14), true)
   assert.equal(records.every(record => record.compactInput.startsWith('{')), true)
   assert.equal(controlledRouteSurfaceCount(corpus), 13)

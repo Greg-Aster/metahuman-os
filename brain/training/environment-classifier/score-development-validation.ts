@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import {
   parseEnvironmentRouterDecision,
@@ -33,6 +33,7 @@ interface ValidationPrediction {
 
 interface FoldReport {
   fold: number
+  predictions: string
   summary: BenchmarkSummary
   fullOutputExact: number
   sourceCasesExact: number
@@ -43,12 +44,14 @@ interface Options {
   root: string
   folds: number[]
   predictions?: string
+  checkpointPolicy?: 'final-epoch'
   reportSuffix?: string
 }
 
 function parseOptions(arguments_: string[]): Options {
   let rootValue: string | undefined
   let predictions: string | undefined
+  let checkpointPolicy: Options['checkpointPolicy']
   let folds = [...Array(DEVELOPMENT_FOLD_COUNT).keys()]
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -67,18 +70,27 @@ function parseOptions(arguments_: string[]): Options {
     } else if (argument === '--predictions' && value) {
       predictions = value
       index += 1
+    } else if (argument === '--checkpoint-policy' && value) {
+      if (value !== 'final-epoch') {
+        throw new Error('--checkpoint-policy must be final-epoch')
+      }
+      checkpointPolicy = value
+      index += 1
     } else {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
   }
   if (!rootValue) {
-    throw new Error('Usage: --root out/environment-classifier/training/<cross-validation-run> [--fold 0]')
+    throw new Error('Usage: --root out/environment-classifier/training/<cross-validation-run> [--fold 0] [--checkpoint-policy final-epoch]')
   }
   const root = resolve(rootValue)
   const outputRoot = resolve(REPOSITORY_ROOT, 'out/environment-classifier/training')
   if (!root.startsWith(`${outputRoot}/`)) throw new Error(`Validation root must be under ${outputRoot}`)
   if (predictions && folds.length !== 1) {
     throw new Error('--predictions requires one explicit --fold')
+  }
+  if (predictions && checkpointPolicy) {
+    throw new Error('--predictions and --checkpoint-policy cannot be combined')
   }
   const predictionPath = predictions ? resolve(predictions) : undefined
   if (predictionPath && !predictionPath.startsWith(`${root}/fold-${folds[0]}/`)) {
@@ -88,10 +100,37 @@ function parseOptions(arguments_: string[]): Options {
     root,
     folds,
     predictions: predictionPath,
+    checkpointPolicy,
     reportSuffix: predictionPath
       ? basename(predictionPath).replace(/-validation-predictions\.jsonl$/, '')
-      : undefined,
+      : checkpointPolicy,
   }
+}
+
+async function resolvePredictionPath(input: {
+  root: string
+  fold: number
+  selectedPredictions?: string
+  checkpointPolicy?: Options['checkpointPolicy']
+}): Promise<string> {
+  if (input.selectedPredictions) return input.selectedPredictions
+
+  const foldRoot = resolve(input.root, `fold-${input.fold}`)
+  if (!input.checkpointPolicy) return resolve(foldRoot, 'validation-predictions.jsonl')
+
+  const candidates = (await readdir(foldRoot))
+    .map(name => ({
+      name,
+      match: /^checkpoint-(\d+)-validation-predictions\.jsonl$/.exec(name),
+    }))
+    .filter((candidate): candidate is { name: string, match: RegExpExecArray } => Boolean(candidate.match))
+    .sort((left, right) => Number(right.match[1]) - Number(left.match[1]))
+
+  const selected = candidates[0]
+  if (!selected) {
+    throw new Error(`fold ${input.fold}: no evaluated checkpoint predictions found for final-epoch policy`)
+  }
+  return resolve(foldRoot, selected.name)
 }
 
 async function loadJsonl<T>(path: string): Promise<T[]> {
@@ -125,6 +164,7 @@ function fullOutputExact(prediction: ValidationPrediction): boolean {
 function markdown(input: {
   root: string
   model: string
+  checkpointPolicy?: Options['checkpointPolicy']
   folds: FoldReport[]
   aggregate: BenchmarkSummary
   aggregateFullOutputExact: number
@@ -137,11 +177,13 @@ function markdown(input: {
     '',
     `Model: \`${input.model}\``,
     `Run: \`${input.root}\``,
+    ...(input.checkpointPolicy ? [`Checkpoint policy: \`${input.checkpointPolicy}\``] : []),
     '',
-    '| Fold | Records | JSON | Core valid | Exact route | Full output exact | Unsafe action | Excess vision | Missed action | Source cases exact |',
-    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| Fold | Predictions | Records | JSON | Core valid | Exact route | Full output exact | Unsafe action | Excess vision | Missed action | Source cases exact |',
+    '| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...input.folds.map(fold => [
       `| ${fold.fold}`,
+      `\`${basename(fold.predictions)}\``,
       fold.summary.caseCount,
       `${fold.summary.jsonValid.count}/${fold.summary.caseCount}`,
       `${fold.summary.contractValid.count}/${fold.summary.caseCount}`,
@@ -173,7 +215,13 @@ function markdown(input: {
 }
 
 export async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
-  const { root, folds, predictions: selectedPredictions, reportSuffix } = parseOptions(arguments_)
+  const {
+    root,
+    folds,
+    predictions: selectedPredictions,
+    checkpointPolicy,
+    reportSuffix,
+  } = parseOptions(arguments_)
   const { lock } = await loadLockedCorpus()
   const heldOutIds = new Set(lock.caseIds)
   const foldReports: FoldReport[] = []
@@ -181,9 +229,13 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   const allResults: BenchmarkCaseResult[] = []
 
   for (const fold of folds) {
-    const predictions = await loadJsonl<ValidationPrediction>(
-      selectedPredictions ?? resolve(root, `fold-${fold}/validation-predictions.jsonl`),
-    )
+    const predictionPath = await resolvePredictionPath({
+      root,
+      fold,
+      selectedPredictions,
+      checkpointPolicy,
+    })
+    const predictions = await loadJsonl<ValidationPrediction>(predictionPath)
     if (predictions.some(prediction => heldOutIds.has(prediction.sourceCaseId))) {
       throw new Error(`fold ${fold}: held-out source exposure`)
     }
@@ -204,6 +256,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       .every(fullOutputExact)).length
     foldReports.push({
       fold,
+      predictions: predictionPath,
       summary: summarize(model, results),
       fullOutputExact: predictions.filter(fullOutputExact).length,
       sourceCasesExact,
@@ -213,7 +266,9 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     allResults.push(...results)
   }
 
-  const model = allPredictions[0]?.model ?? 'unknown'
+  const model = checkpointPolicy && folds.length === DEVELOPMENT_FOLD_COUNT
+    ? 'unsloth/Qwen3.5-0.8B:four-fold:final-epoch'
+    : allPredictions[0]?.model ?? 'unknown'
   const aggregate = summarize(model, allResults)
   const sourceCaseIds = [...new Set(allPredictions.map(prediction => prediction.sourceCaseId))]
   const sourceCasesExact = sourceCaseIds.filter(sourceCaseId => allPredictions
@@ -233,6 +288,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       : `development-fold-${folds[0]}`,
     heldOutUsed: false,
     heldOutDigest: lock.digest,
+    checkpointPolicy,
     model,
     folds: foldReports,
     aggregate,
@@ -249,6 +305,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   await writeFile(resolve(root, `${reportStem}.md`), markdown({
     root,
     model,
+    checkpointPolicy,
     folds: foldReports,
     aggregate,
     aggregateFullOutputExact: report.aggregateFullOutputExact,

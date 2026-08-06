@@ -272,9 +272,8 @@ export const environmentInstructionInterpreterNode = defineNode({
           responseLength: 'brief',
           isFollowUp: true,
           emotionalTone: 'neutral',
-        }
+      }
       : null;
-
     return {
       observation,
       instruction,

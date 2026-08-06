@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT } from '@metahuman/core/environment-classifier'
 import {
   CLASSIFIER_LANE_DIRECTORY,
   REPOSITORY_ROOT,
@@ -28,6 +29,8 @@ interface TrainingOptions {
   configPath: string
   outputPath: string
   folds: number[]
+  final: boolean
+  selectionReportPath?: string
   dryRun: boolean
 }
 
@@ -41,14 +44,31 @@ interface TrainingConfig {
   [key: string]: unknown
 }
 
+interface DevelopmentSelectionReport {
+  split?: string
+  heldOutUsed?: boolean
+  heldOutDigest?: string
+  checkpointPolicy?: string
+  aggregate?: {
+    exactRoute?: {
+      count?: number
+      rate?: number
+    }
+    unsafeActionErrors?: number
+    unnecessaryVisionAdmissions?: number
+  }
+}
+
 function parseOptions(arguments_: string[]): TrainingOptions {
   const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
   const options: TrainingOptions = {
     configPath: DEFAULT_CONFIG_PATH,
     outputPath: resolve(OUTPUT_ROOT, `qwen3.5-0.8b-${stamp}`),
     folds: [...Array(DEVELOPMENT_FOLD_COUNT).keys()],
+    final: false,
     dryRun: false,
   }
+  let selectedFold = false
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -56,6 +76,11 @@ function parseOptions(arguments_: string[]): TrainingOptions {
     if (argument === '--') continue
     if (argument === '--dry-run') {
       options.dryRun = true
+    } else if (argument === '--final') {
+      options.final = true
+    } else if (argument === '--selection-report' && value) {
+      options.selectionReportPath = resolve(value)
+      index += 1
     } else if (argument === '--config' && value) {
       options.configPath = resolve(value)
       index += 1
@@ -68,10 +93,15 @@ function parseOptions(arguments_: string[]): TrainingOptions {
         throw new Error(`--fold must be from 0 through ${DEVELOPMENT_FOLD_COUNT - 1}`)
       }
       options.folds = [fold]
+      selectedFold = true
       index += 1
     } else {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
+  }
+  if (options.final && selectedFold) throw new Error('--final and --fold cannot be combined')
+  if (options.final !== Boolean(options.selectionReportPath)) {
+    throw new Error('--final requires --selection-report, and --selection-report is final-training evidence only')
   }
   return options
 }
@@ -83,18 +113,20 @@ async function loadJson<T>(path: string): Promise<T> {
 async function runTrainer(
   options: TrainingOptions,
   dataPath: string,
-  validationPath: string,
+  validationPath: string | undefined,
   outputPath: string,
 ): Promise<number> {
-  const child = spawn(PYTHON_PATH, [
+  const trainerArguments = [
     TRAINER_PATH,
     '--data', dataPath,
-    '--eval-data', validationPath,
     '--config', options.configPath,
     '--output', outputPath,
     '--skip-gguf',
-    '--skip-validation-generation',
-  ], {
+  ]
+  if (validationPath) {
+    trainerArguments.push('--eval-data', validationPath, '--skip-validation-generation')
+  }
+  const child = spawn(PYTHON_PATH, trainerArguments, {
     cwd: REPOSITORY_ROOT,
     env: process.env,
     stdio: 'inherit',
@@ -117,8 +149,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   const config = await loadJson<TrainingConfig>(options.configPath)
   if (config.owner !== 'environment-classifier'
     || config.base_model !== 'unsloth/Qwen3.5-0.8B'
-    || typeof config.system_prompt !== 'string'
-    || !config.system_prompt.trim()
+    || config.system_prompt !== ENVIRONMENT_CLASSIFIER_SYSTEM_PROMPT
     || config.require_exact_messages !== true
     || config.train_on_responses_only !== true
     || config.development_fold_count !== DEVELOPMENT_FOLD_COUNT) {
@@ -155,6 +186,43 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     heldOutUsed: false,
   }
 
+  let selectionEvidence: {
+    path: string
+    digest: string
+    checkpointPolicy: string
+    exactRouteCount: number
+    exactRouteRate: number
+    unsafeActionErrors: number
+    unnecessaryVisionAdmissions: number
+  } | undefined
+  if (options.selectionReportPath) {
+    const normalizedSelectionRoot = `${OUTPUT_ROOT}${sep}`
+    if (!options.selectionReportPath.startsWith(normalizedSelectionRoot)) {
+      throw new Error(`Selection report must remain under ${OUTPUT_ROOT}`)
+    }
+    const report = await loadJson<DevelopmentSelectionReport>(options.selectionReportPath)
+    const exactRoute = report.aggregate?.exactRoute
+    if (report.split !== 'development-cross-validation'
+      || report.heldOutUsed !== false
+      || report.heldOutDigest !== lock.digest
+      || report.checkpointPolicy !== 'final-epoch'
+      || !Number.isInteger(exactRoute?.count)
+      || typeof exactRoute?.rate !== 'number'
+      || !Number.isInteger(report.aggregate?.unsafeActionErrors)
+      || !Number.isInteger(report.aggregate?.unnecessaryVisionAdmissions)) {
+      throw new Error('Final training requires a complete final-epoch development cross-validation report with the current held-out digest')
+    }
+    selectionEvidence = {
+      path: options.selectionReportPath.slice(REPOSITORY_ROOT.length + 1),
+      digest: sha256(report),
+      checkpointPolicy: report.checkpointPolicy,
+      exactRouteCount: exactRoute.count,
+      exactRouteRate: exactRoute.rate,
+      unsafeActionErrors: report.aggregate.unsafeActionErrors,
+      unnecessaryVisionAdmissions: report.aggregate.unnecessaryVisionAdmissions,
+    }
+  }
+
   const foldSummaries = options.folds.map(fold => {
     const training = records.filter(record => record.metadata.developmentFold !== fold)
     const validation = records.filter(record => record.metadata.developmentFold === fold)
@@ -175,24 +243,59 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   console.log(`Validated ${records.length} system-owned development records for Qwen3.5-0.8B`)
   console.log(`Output: ${options.outputPath}`)
   console.log(`Held-out digest excluded from training: ${lock.digest}`)
-  for (const fold of foldSummaries) {
-    console.log(`Fold ${fold.fold}: ${fold.training.length} training records / ${fold.validation.length} validation records; ${fold.trainingSourceCases}/${fold.validationSourceCases} source cases`)
+  if (options.final) {
+    console.log(`Final adapter: ${records.length} training records / 0 validation records; ${new Set(records.map(record => record.metadata.sourceCaseId)).size} development source cases`)
+    console.log(`Selection report: ${selectionEvidence?.path}`)
+  } else {
+    for (const fold of foldSummaries) {
+      console.log(`Fold ${fold.fold}: ${fold.training.length} training records / ${fold.validation.length} validation records; ${fold.trainingSourceCases}/${fold.validationSourceCases} source cases`)
+    }
   }
   if (options.dryRun) return
 
   await mkdir(options.outputPath, { recursive: true })
+  const compactRecord = (record: ClassifierTrainingRecord) => ({
+    system: config.system_prompt,
+    user: record.compactInput,
+    output: record.output,
+    metadata: record.metadata,
+  })
+  if (options.final) {
+    const finalPath = resolve(options.outputPath, 'final')
+    const trainingPath = resolve(finalPath, 'training.jsonl')
+    const adapterPath = resolve(finalPath, 'adapter')
+    const sourceCaseCount = new Set(records.map(record => record.metadata.sourceCaseId)).size
+    await mkdir(finalPath, { recursive: true })
+    await writeFile(
+      trainingPath,
+      `${records.map(record => JSON.stringify(compactRecord(record))).join('\n')}\n`,
+      'utf8',
+    )
+    await writeFile(
+      resolve(finalPath, 'run-provenance.json'),
+      `${JSON.stringify({
+        ...provenance,
+        mode: 'final-development-training',
+        trainingRecords: records.length,
+        validationRecords: 0,
+        trainingSourceCases: sourceCaseCount,
+        validationSourceCases: 0,
+        selectionEvidence,
+      }, null, 2)}\n`,
+      'utf8',
+    )
+    const exitCode = await runTrainer(options, trainingPath, undefined, adapterPath)
+    if (exitCode !== 0) throw new Error(`Unsloth final trainer exited with code ${exitCode}`)
+    console.log('Final adapter: training complete; evaluate the locked split once through the provider-neutral harness')
+    return
+  }
+
   for (const fold of foldSummaries) {
     const foldPath = resolve(options.outputPath, `fold-${fold.fold}`)
     const trainingPath = resolve(foldPath, 'training.jsonl')
     const validationPath = resolve(foldPath, 'validation.jsonl')
     const adapterPath = resolve(foldPath, 'adapter')
     await mkdir(foldPath, { recursive: true })
-    const compactRecord = (record: ClassifierTrainingRecord) => ({
-      system: config.system_prompt,
-      user: record.compactInput,
-      output: record.output,
-      metadata: record.metadata,
-    })
     await writeFile(
       trainingPath,
       `${fold.training.map(record => JSON.stringify(compactRecord(record))).join('\n')}\n`,
