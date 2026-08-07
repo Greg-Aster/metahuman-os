@@ -50,33 +50,30 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
   );
 
 const historyId = nodeId('conversation_history');
-const contextRouterId = nodeId('orchestrator_llm');
-const memoryDecisionId = nodeId('smart_router');
 const memoryRouterId = nodeId('memory_router');
-const memoryInterpreterId = nodeId('search_interpreter');
 const contextId = nodeId('environment_context_builder');
 const actionParserId = nodeId('environment_action_parser');
 const bridgeId = nodeId('environment_send_action');
 const robotBufferId = nodeId('robot_buffer');
-const personaId = nodeId('persona_formatter');
 const bufferId = nodeId('conversation_buffer');
-const validatorId = nodeId('environment_task_validator');
 const captureId = nodeId('memory_capture');
 const streamId = nodeId('stream_writer');
 const ttsId = nodeId('tts');
+const taskStateNodes = graph.nodes.filter(node => node.data?.nodeType === 'environment_task_state');
+assert.equal(taskStateNodes.length, 2);
+const prepareId = taskStateNodes.find(node => node.data?.properties?.phase === 'prepare')?.id;
+const reducerId = taskStateNodes.find(node => node.data?.properties?.phase === 'reduce')?.id;
+assert.ok(prepareId);
+assert.ok(reducerId);
 
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
-assert.ok(hasEdge(historyId, 'history', contextRouterId, 'conversationHistory'));
-assert.ok(hasEdge(contextRouterId, 'analysis', memoryDecisionId, 'orchestratorAnalysis'));
-assert.ok(hasEdge(memoryDecisionId, 'memoryHints', memoryRouterId, 'orchestratorHints'));
-assert.ok(hasEdge(memoryRouterId, 'memories', memoryInterpreterId, 'searchResults'));
-assert.ok(hasEdge(memoryDecisionId, 'memoryHints', memoryInterpreterId, 'orchestratorIntent'));
-assert.ok(hasEdge(memoryInterpreterId, 'relevantMemories', contextId, 'memories'));
-assert.ok(hasEdge(contextRouterId, 'analysis', contextId, 'routingAnalysis'));
-assert.ok(hasEdge(contextRouterId, 'analysis', actionParserId, 'routingAnalysis'));
-assert.ok(hasEdge(personaId, 'formatted', contextId, 'personaText'));
+assert.ok(hasEdge(prepareId, 'memoryHints', memoryRouterId, 'orchestratorHints'));
+assert.ok(hasEdge(memoryRouterId, 'memories', contextId, 'memories'));
+assert.ok(hasEdge(prepareId, 'routingAnalysis', contextId, 'routingAnalysis'));
+assert.ok(hasEdge(prepareId, 'routingAnalysis', actionParserId, 'routingAnalysis'));
 assert.ok(hasEdge(bridgeId, 'response', bufferId, 'response'));
-assert.ok(hasEdge(validatorId, 'decision', bufferId, 'taskLifecycle'));
+assert.ok(hasEdge(actionParserId, 'actions', reducerId, 'actions'));
+assert.equal(hasEdge(reducerId, 'decision', bufferId, 'taskLifecycle'), false);
 assert.ok(hasEdge(bridgeId, 'response', captureId, 'assistantResponse'));
 assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
 assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
@@ -87,9 +84,9 @@ assert.equal(
   'Environment Mode must not rewrite an already generated response with a second LLM pass',
 );
 assert.equal(
-  graph.edges.some(edge => edge.source === personaId && edge.target === bridgeId),
+  graph.nodes.some(node => node.data?.nodeType === 'persona_loader' || node.data?.nodeType === 'persona_formatter'),
   false,
-  'Persona formatting must never enter the movement/action branch',
+  'Environment Mode must not load persona data for a deleted escalation branch',
 );
 assert.equal(ConversationBufferNode.id, 'conversation_buffer');
 assert.equal(
@@ -146,7 +143,6 @@ const context = await environmentContextBuilderNode.execute({
     { role: 'assistant', content: 'Nice to meet you, Greg.' },
   ],
   memories: [{ content: 'User: My name is Greg.\n\nAssistant: Nice to meet you, Greg.' }],
-  personaText: '## Identity\n- Name: Ainekio\n- Role: Quadruped robot companion',
   routingAnalysis: {
     needsMemory: true,
     needsEnvironment: false,
@@ -158,9 +154,15 @@ const context = await environmentContextBuilderNode.execute({
 
 assert.equal(context.messages.length, 2);
 assert.match(String(context.messages[0]?.content), /My name is Greg/);
-assert.match(String(context.messages[0]?.content), /Quadruped robot companion/);
-assert.match(String(context.messages.at(-1)?.content), /What is my name/);
-assert.doesNotMatch(String(context.messages.at(-1)?.content), /Available actions/);
+const memorySelectorEnvelope = JSON.parse(String(context.messages.at(-1)?.content)) as {
+  currentInstruction: string;
+  currentEnvironment: { capabilities: { actions: string[]; robotCommands: string[] } };
+  memories: string[];
+};
+assert.equal(memorySelectorEnvelope.currentInstruction, 'What is my name?');
+assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.actions, ['robotCommand']);
+assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.robotCommands, ['wave']);
+assert.match(memorySelectorEnvelope.memories[0] ?? '', /My name is Greg/);
 assert.deepEqual(context.context.contextSelection, {
   recentHistory: false,
   recentHistoryCount: 0,
@@ -206,16 +208,16 @@ assert.equal(
   false,
   'Unrequested semantic memory must not enter the prompt',
 );
-assert.doesNotMatch(
+assert.match(
   String(selfContainedMessages.at(-1)?.content),
-  /EXECUTION GROUNDING CONTRACT|Available actions|Sensor truth contract/,
-  'Ordinary conversation must not receive environment action or sensor context',
+  /"capabilities":\{"actions":\[\],"robotCommands":\[\]/,
+  'The action selector receives the advertised capability contract in its bounded envelope',
 );
 assert.deepEqual(selfContainedContext.context.contextAdmission, {
   typed: true,
-  environment: false,
+  environment: true,
   vision: false,
-  actionContracts: false,
+  actionContracts: true,
 });
 
 const followUpInstruction = 'What did you mean by that?';
@@ -243,26 +245,27 @@ const followUpContext = await environmentContextBuilderNode.execute({
 }, {}, { recentHistoryLimit: 4 });
 
 const followUpMessages = followUpContext.messages as Array<{ role: string; content: string }>;
+const followUpEnvelope = JSON.parse(followUpMessages.at(-1)?.content ?? '{}') as {
+  currentInstruction: string;
+  recentConversation: Array<{ role: string; content: string }>;
+};
 assert.equal(
-  followUpMessages.filter(message => message.content.startsWith('conversation message')).length,
+  followUpEnvelope.recentConversation.filter(message => message.content.startsWith('conversation message')).length,
   4,
-  'A genuine follow-up receives only the configured recent dialogue window',
+  'A genuine follow-up receives the configured recent dialogue window once inside the selector envelope',
 );
 assert.equal(
-  followUpMessages.some(message => message.content.includes('[Inner thought - daydream]')),
+  followUpEnvelope.recentConversation.some(message => message.content.includes('[Inner thought - daydream]')),
   false,
   'Inner dialogue is not injected as ordinary recent conversation',
 );
 assert.equal(
-  followUpMessages.filter(message => message.content === followUpInstruction).length,
+  followUpEnvelope.recentConversation.filter(message => message.content === followUpInstruction).length,
   0,
   'The early-persisted current user message must be removed from recent history',
 );
-assert.equal(
-  followUpMessages.filter(message => message.content.includes(`Task instruction:\n${followUpInstruction}`)).length,
-  1,
-  'The current instruction must appear exactly once in the final environment prompt',
-);
+assert.equal(followUpEnvelope.currentInstruction, followUpInstruction);
+assert.equal(followUpMessages.length, 2, 'The compact selector prompt has one system and one user message');
 
 const currentStateContext = await environmentContextBuilderNode.execute({
   observation: {
@@ -284,12 +287,12 @@ const currentStateContext = await environmentContextBuilderNode.execute({
 }, {}, { systemPrompt: 'EXECUTION GROUNDING CONTRACT' });
 
 assert.match(String(currentStateContext.message), /batteryPercent/);
-assert.doesNotMatch(String(currentStateContext.message), /EXECUTION GROUNDING CONTRACT/);
+assert.match(String(currentStateContext.messages[0]?.content), /EXECUTION GROUNDING CONTRACT/);
 assert.deepEqual(currentStateContext.context.contextAdmission, {
   typed: true,
   environment: true,
   vision: false,
-  actionContracts: false,
+  actionContracts: true,
 });
 
 const emptyCapture = await MemoryCaptureNode.execute({

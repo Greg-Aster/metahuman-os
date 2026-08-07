@@ -98,3 +98,24 @@ test('explicit Robot Observer work retains its visual-evidence admission', async
   assert.equal(result.context.contextAdmission.vision, true);
   assert.equal(result.context.imageSelection.requested, true);
 });
+
+test('selector receives history once inside its bounded envelope', async () => {
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Please wave now.',
+    observation: correlatedObservation('environment-perception'),
+    conversationHistory: [
+      { role: 'user', content: 'Earlier, please stand.' },
+      { role: 'assistant', content: 'That earlier request is complete.' },
+    ],
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+      isFollowUp: true,
+    },
+  }, {}, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  assert.equal(result.messages.length, 2);
+  const selectorEnvelope = JSON.parse(String(result.messages[1]?.content));
+  assert.equal(selectorEnvelope.currentInstruction, 'Please wave now.');
+  assert.equal(selectorEnvelope.recentConversation.length, 2);
+});

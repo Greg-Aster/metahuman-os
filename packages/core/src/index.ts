@@ -61,7 +61,20 @@ export * from './function-memory';
 export * from './audit';
 export * from './llm';
 export * from './environment-classifier';
-export * from './environment-classifier-runtime';
+export {
+  buildEnvironmentSelectorEnvelope,
+  buildEnvironmentSelectorSystemPrompt,
+  environmentTaskContractFromObservation,
+  validateEnvironmentSelectorOutput,
+} from './nodes/environment/helpers.js';
+export type {
+  EnvironmentModelOutput,
+  EnvironmentSelectorEnvelopeInput,
+  EnvironmentSelectorSystemInput,
+  EnvironmentSelectorValidationResult,
+  EnvironmentTaskContract,
+  EnvironmentTaskState,
+} from './nodes/environment/helpers.js';
 export * from './ollama';
 export * from './vllm';
 export * from './vllm-lora';

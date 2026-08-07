@@ -1,0 +1,29 @@
+{
+  "owner": "environment-action-selector",
+  "base_model": "unsloth/Qwen3.5-0.8B",
+  "chat_template": "chatml",
+  "system_prompt": "loaded from each exact system-owned training record",
+  "require_exact_messages": true,
+  "train_on_responses_only": true,
+  "development_fold_count": 4,
+  "max_seq_length": 1536,
+  "load_in_4bit": false,
+  "load_in_16bit": true,
+  "dtype": "bfloat16",
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0,
+  "num_train_epochs": 3,
+  "save_total_limit": 3,
+  "learning_rate": 0.00012,
+  "per_device_train_batch_size": 1,
+  "per_device_eval_batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "generation_max_new_tokens": 384,
+  "optimizer": "paged_adamw_8bit",
+  "force_eager_attention": false,
+  "seed": 42,
+  "gguf_conversion": {
+    "enabled": false
+  }
+}

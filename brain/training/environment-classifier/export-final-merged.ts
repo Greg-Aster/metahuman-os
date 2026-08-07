@@ -8,7 +8,7 @@ import { REPOSITORY_ROOT } from './corpus.js'
 import { loadScoredFinalArtifact } from './final-artifact.js'
 
 const PYTHON_PATH = resolve(REPOSITORY_ROOT, 'venv/bin/python')
-const EXPORTER_PATH = resolve(REPOSITORY_ROOT, 'brain/training/environment-classifier/export-merged-gguf.py')
+const EXPORTER_PATH = resolve(REPOSITORY_ROOT, 'brain/training/export-merged-gguf.py')
 
 function parseRoot(arguments_: string[]): string {
   for (let index = 0; index < arguments_.length; index += 1) {

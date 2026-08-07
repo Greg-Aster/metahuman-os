@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "owner": "environment-action-selector",
+  "contract": "@metahuman/core Environment model output",
+  "sourceCaseCount": 129,
+  "recordCount": 1548,
+  "recordsPerSourceCase": 12,
+  "foldCount": 4,
+  "foldRecords": {
+    "0": 396,
+    "1": 384,
+    "2": 384,
+    "3": 384
+  },
+  "datasetDigest": "206ac731cdc6e05ec9673b052da0ff3ffad0f6d767d43429baa06cde3208cd64",
+  "developmentSourceDigest": "5753789e824ed0cd22c7d3f47c04d43493153b7c8378a2645e99993569bac9fb",
+  "activePromptDigest": "95af799b135bbe7dd4f0fc41307af6500e003273a516415659852e8a42eed920",
+  "priorLockedDigest": "6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6",
+  "priorLockedCaseCount": 16,
+  "priorOneShotCompletedAt": "2026-08-05T19:30:14.258Z",
+  "priorLockedCasesUsed": false,
+  "profileDataUsed": false
+}

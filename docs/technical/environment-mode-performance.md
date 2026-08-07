@@ -16,15 +16,16 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 - Optimize the measured critical path before changing model quality.
 - Do not bypass the cognitive graph or add keyword-based intent shortcuts.
-- Context Router owns typed context admission. Context Builder consumes that decision; it does not independently reinterpret user intent.
-- Ordinary conversation must not receive robot action, sensor, task-lifecycle, or image context.
-- Current-state questions may receive environment evidence without receiving action authority.
-- Environment actions and persisted tasks retain the full execution, capability, evidence, and completion contracts.
-- Fresh correlated images are admitted only when the typed route or persisted objective requires visual evidence.
+- The Environment action selector is the sole semantic action owner for each turn. It decides conversation versus physical work, selects one exact advertised command or one body-local movement request, and judges external evidence when Task State requires another semantic pass.
+- The general model is conversation-only behind an explicit typed escalation. It may generate a requested off-script motion plan only after the selector has already owned and typed the body-local movement request; it never reinterprets or overrides a selected action.
+- Environment Task State is the one deterministic lifecycle owner. It validates capabilities and schemas, persists the objective, closes exact action results, and enforces the bounded action ceiling; it does not reinterpret natural language.
+- Every new user input must produce a conversational response, one executable action with a response, or an explicit failure diagnostic.
+- Matching `completed` feedback closes an `action_result` objective without another model call, regardless of whether an earlier model unnecessarily marked the continuation policy bounded.
+- Failed actions and incomplete external objectives return to the same Environment action selector. There is no separate recovery, visual-review, validator, or refiner model.
+- Fresh correlated images are admitted for current visual work. A claimed external change requires an ordered baseline and current frame; an absolute current-scene fact requires one current correlated frame.
 - Raw correlated sensory observations remain available in graph state even when a particular LLM call does not process the image. Context admission controls model input, not sensor existence.
-- Validator-persisted completion contracts are authoritative on later passes. For newly admitted work, the Environment task decision owns one-shot versus bounded continuation. When both independent classifiers identify bounded work, Context Router owns the required whole-objective evidence classification; it remains the complete fallback only when the task decision omitted a usable contract.
-- Missing or malformed admission data must fall back to the full conservative context.
-- A smaller model may serve a specialized role only after measured route parity and automatic fallback to the primary model are demonstrated.
+- The robot-mounted camera may evaluate the external scene but cannot prove the robot's own pose or dynamic body motion.
+- Missing or malformed model output must produce an explicit diagnostic rather than silent suppression or a second LLM attempt.
 - Model roles must reflect coherent responsibilities. Do not create an adapter or model assignment for every individual node or output field.
 - Parallel execution may be introduced only for dependency-independent work. Action authority, task lifecycle, and stateful output ordering must remain explicit.
 
@@ -46,16 +47,107 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 
 ## Current Architecture Findings
 
-- Environment Mode currently has 29 nodes and 76 edges. The recently added task/evidence nodes early-return on ordinary conversation and are not the direct latency source.
+- Environment Mode currently has 24 nodes and 57 edges.
 - The graph executor visits nodes in topological order and awaits them serially.
 - The work coordinator also serializes the broad `local-llm` resource lane with `maxConcurrent: 1` and a 2,000 ms cooldown between complete work items.
-- The example turn required three serial LLM calls: route, memory relevance, and final response.
-- The router, memory interpreter, and persona currently resolve to `qwen3.5:9b` for the active setup.
-- The final context was oversized because task/action contracts and correlated vision were admitted without a typed relevance decision.
+- A normal question or named robot command requires one `environmentActionSelector` call. A valid named command makes no general-model or Movement Generator call. Substantive conversation makes one general-model call only after a typed `escalate` decision. Off-script body-local motion adds the Movement Generator only after the selector returns `movementRequest`.
+- Exact successful `action_result` feedback is reduced without a model call. Failed results and external visual/state objectives use one action-selector evidence/next-action call per physical attempt.
+- Long-term memory retrieval remains a bounded vector lookup. The generative Context Router and Memory Relevance Interpreter are no longer in the active Environment graph.
+- The retired Task Contract, Visual Evidence Assessor, Task Validator, Task Refiner, and Workflow Command nodes are no longer registered or present in the graph.
+- The checked-in registry uses `environmentActionSelector` and the target artifact `environment-action-selector-0.8b:v1`. Registry migration removes the retired `environmentRouter` role and its incompatible 14-field classifier assignment rather than copying that assignment into the new role.
+- The current profile has intentionally not been migrated or restarted while fold training and artifact validation are incomplete. Source implementation is not deployment proof.
 - Ollama model unloading after five minutes adds an intermittent cold-start penalty.
 - Graph serialization and coordinator serialization are MetaHuman policies, not hard Ollama limitations.
 
 ## Work Log
+
+### 2026-08-06 - Dedicated Environment action selector
+
+Status: runtime and Core contract implemented locally; focused tests, graph validation, architecture checks, user-agnostic checks, and the production site build pass. Qwen3.5-0.8B cv-004 fold training and development evaluation are complete and rejected for deployment. No model has been merged, installed, assigned to the live profile, or physically dispatched.
+
+Implemented change:
+
+- Replace the Environment graph's unconditional `persona` role call with the profile-configurable `environmentActionSelector` role.
+- Reuse the Core Environment output contract: `response`, `actions`, `movementRequest`, and `taskDecision`. The specialist must return exactly those four fields and at most one action.
+- Add one Core-owned validation/escalation gate. Valid specialist actions pass through unchanged. Explicit conversation escalation makes exactly one conversation-only general-model call. Invalid specialist output emits a visible failure and cannot authorize motion or silently fall through to the general model.
+- Keep semantic interpretation in the specialist. Core performs only strict output/schema validation, exact advertised-capability matching, safety/motion-class checks, session correlation, Task State lifecycle, and completion validation. No alias, keyword, phrase-matching, or deterministic natural-language command helper was added.
+- Give the specialist a bounded JSON environment envelope shared by runtime and system-owned training data. Persona content is excluded from the selector and supplied only to the explicit conversational escalation path.
+- Keep Movement Generator off the advertised-command path. It receives work only from a specialist-selected `movementRequest` for genuinely off-script body-local motion.
+- Remove the active 14-field classifier runtime and migrate registry ownership from `environmentRouter` to `environmentActionSelector`. The incompatible retired classifier artifact is not reused for the new contract.
+- Preserve Task State as the only objective lifecycle owner. Exact correlated completion of the selected command closes without another model call; failures and incomplete evidence return to the same selector with one-step admission and a bounded ceiling.
+- Admit no incidental camera image on a new turn. A fresh-vision request selects capture when no current correlated frame is available; the correlated capture continuation then admits the returned image when the persisted task requires visual evidence.
+
+Model call paths:
+
+| Turn | Previous active path | Implemented path |
+|---|---|---|
+| Advertised named command | `persona` -> profile 9B; optional downstream work | 0.8B selector only; zero 9B; zero Movement Generator |
+| Simple non-action response | `persona` -> profile 9B | 0.8B selector only |
+| Substantive conversation or complex non-action reasoning | `persona` -> profile 9B | 0.8B selector -> explicit typed escalation -> exactly one profile general-model call |
+| Off-script body-local movement | 9B semantic selection -> Movement Generator | 0.8B selector owns `movementRequest` -> Movement Generator generates only the typed plan |
+| Exact successful named-command feedback | Could be followed by another semantic pass when lifecycle fields disagreed | Task State deterministic closure; zero model calls |
+
+Role assignment:
+
+| Role | Model | Responsibility | Deployment state |
+|---|---|---|---|
+| `environmentActionSelector` | target `environment-action-selector-0.8b:v1`, trained from Qwen3.5-0.8B | Sole Environment semantic action selection and evidence decision | Training/evaluation pending |
+| `persona` on explicit escalation | profile general model; Ainekio currently resolves to `qwen3.5:9b` | Substantive conversation only | Existing; not called on a valid action path |
+| `orchestrator` in Movement Generator | profile-configurable general model | Generate a bounded motion plan from an already selected body-local request | Existing; not called for advertised commands |
+
+Deployment measurements:
+
+| Gate | Current evidence |
+|---|---|
+| Strict JSON | Pending retained-checkpoint behavioral evaluation |
+| Core-contract validity | Pending retained-checkpoint behavioral evaluation; fixture validator coverage passes |
+| False-positive physical authorization | Pending retained-checkpoint behavioral evaluation; invalid fixture outputs authorize zero motion |
+| Exact action selection | Pending retained-checkpoint behavioral evaluation |
+| Unnecessary vision admission | Pending retained-checkpoint behavioral evaluation; Core new-turn admission fixtures pass |
+| Specialist latency and total graph latency | Pending merged-artifact canaries |
+| Explicit escalation rate | Pending deployment evaluation |
+| VRAM residency | Pending merged-artifact canaries |
+| 9B and Movement Generator bypass | Source fixtures prove zero calls for valid named actions; live artifact proof pending |
+
+The selected artifact must preserve Qwen3.5-0.8B visual input support because correlated image evidence can return to the same selector. Before profile migration, `ollama show` and sanitized image canaries must prove that the merged artifact advertises and accepts vision. A text-only GGUF is not deployment-ready for this graph.
+
+### 2026-08-05 - Single-owner Environment workflow
+
+Status: implemented locally; focused and wider robot/environment regression suites pass. The production site has not been restarted as part of this change.
+
+Implemented change:
+
+- Replace the classifier -> Environment LLM -> independent contract -> visual reviewer -> validator -> refiner -> queued continuation chain with one semantic Environment LLM and one typed task-state owner used in prepare/reduce phases.
+- Remove active Context Router and generative Memory Relevance calls. Keep bounded vector memory retrieval, recent conversation, persona, map, state, advertised commands, TTS, chat, memory capture, Robot Buffer, Movement Generator, and Environment Bridge delivery.
+- Persist `EnvironmentTaskState` with the admitted action: objective, phase, action step and ceiling, completion basis, motion class, visual evidence mode, baseline frame reference, and selected semantic action.
+- Bypass model inference when exact matching terminal feedback reports `completed` and the persisted whole-objective basis is `action_result`.
+- On a failed result or incomplete external objective, let the same Environment LLM either return the next advertised action immediately or report the limitation. No successor prompt or hidden workflow command is generated.
+- Admit at most one physical action per objective step. A malformed or empty LLM result produces a visible diagnostic.
+- Carry the exact terminal action ID and adapter command into the feedback instruction instead of reducing feedback to an untyped `done` message.
+- Preserve a bounded in-process baseline frame and attach ordered before/after images for `visualEvidenceMode=comparison`. Reject a comparison completion claim when both distinct frames are unavailable.
+- Remove the orphaned Task Contract, Visual Evidence Assessor, Task Validator, Task Refiner, and Workflow Command implementations and their obsolete test suites after reference checks.
+
+Expected critical paths:
+
+| Request | Model calls after consolidation |
+|---|---:|
+| General inquiry | 1 Environment LLM |
+| Advertised named body command | 1 Environment LLM; exact completion closes deterministically |
+| Off-script body-local motion | 1 Environment LLM + 1 Movement Generator |
+| External visual/state objective | 1 Environment LLM for initial action + 1 Environment LLM per actual evidence/action cycle |
+
+### 2026-08-05 - Retired classifier CV-004 closure
+
+Status: historical evaluation complete; no final adapter was trained or deployed because the active single-owner Environment workflow no longer calls a Context Router or Environment Classifier.
+
+- Four Qwen3.5-0.8B development folds were trained under `out/environment-classifier/training/qwen3.5-0.8b-cv-004`. Folds 0/1 and 2/3 ran as two parallel GPU pairs. Each process used approximately 2.45 GiB of compute VRAM and each fold completed in approximately 18-20 minutes, cutting four-fold wall time roughly in half without output collisions.
+- Every retained epoch checkpoint was then evaluated on its isolated development fold, two evaluators at a time. Each evaluator used approximately 2.3 GiB of compute VRAM. The locked 16-case set was not read or generated during training, checkpoint evaluation, or selection analysis.
+- The final-epoch aggregate was 1,940/1,942 strict JSON, 1,841/1,942 Core-valid, and 1,424/1,942 exact routes (73.3%), with 119 false-positive action hints, 49 unnecessary vision admissions, and 135 missed action hints. This exceeds the operator's 62.5% practical accuracy floor but is not a safe or consistent classifier result.
+- Fold behavior was materially uneven. Fold 0 peaked at checkpoint 368 with 374/476 exact routes, zero false-positive action hints, and zero excess vision. Fold 1 checkpoint 543 reached 445/496 exact but retained 6 false-positive action hints and 18 excess-vision admissions. Fold 2 checkpoint 546 reached 388/486 exact with one false-positive action hint. Fold 3 never generalized acceptably; its final checkpoint produced 112 false-positive action hints and only 232/484 exact routes.
+- A proposed cv-005 semantic-coverage expansion was not generated. The generator correctly stopped because the active graph has no `context-router` prompt, and the production classifier runtime has been deleted. Continuing to optimize an unused 14-field advisory model would not repair named-command execution or improve the active critical path.
+- CV-004 adapters, predictions, and reports remain reproducibility evidence only. Active command accuracy and latency work belongs to the single Environment LLM's typed action selection and the deterministic Task State lifecycle, without restoring a parallel classifier or fallback semantic owner.
+
+The older entries below are retained as historical evidence. References there to the Context Router, Visual Evidence Assessor, Task Validator, Task Refiner, or specialized classifier describe superseded designs, not the active graph.
 
 ### 2026-08-04 - Typed context admission
 
@@ -801,14 +893,283 @@ Context-admission and semantic-selection repair:
 - Motion semantics remain model-selected within the authorized movement route. Core validates the selected class and command against current capability, direct-user displacement authority, target-relative feedback requirements, persisted lifecycle state, and the existing bridge contract.
 - This repair is source- and test-validated but not yet a physical end-to-end latency result. MetaHuman OS was stopped during the repair; the rebuilt bundle must be restarted before a live canary can prove the new critical path on the robot.
 
+### Typed Environment Action Selector cross-validation
+
+The repaired Environment workflow no longer consumes the retired 14-field
+classifier output. A new system-owned training lane under
+`brain/training/environment-action-selector/` now trains the current Core-owned
+four-field output: `response`, `actions`, `movementRequest`, and
+`taskDecision`. The current corpus contains 129 sanitized development source
+cases and 1,548 controlled records; the first complete run used 53 cases and
+636 records. Every source case and all twelve of its instruction/context
+variations remain in one development fold. The retired 16-case lock is read
+only as provenance and was not supplied to training or evaluation.
+
+The first four-way run, `qwen3.5-0.8b-cv-001`, proved that four BF16 rank-16
+trainers fit during optimization but failed at the synchronized epoch-one
+validation boundary. The generic trainer accepted
+`per_device_eval_batch_size` in configuration but did not pass it into
+`UnslothTrainingArguments`, causing an unowned validation-memory spike. That
+owner defect is repaired. The failed run remains partial evidence only and was
+not evaluated.
+
+The clean `qwen3.5-0.8b-cv-002` run trained all four folds concurrently after
+setting the owned evaluation batch to one. Training completed in approximately
+10.4 minutes wall-clock, used about 13.1 GiB of GPU memory at full utilization,
+and produced four independent safetensors adapters. Future training is limited
+to two trainers per wave so normal MetaHuman testing retains GPU headroom.
+
+Best-validation-loss checkpoint cross-validation result (epoch 1 in every fold):
+
+| Measure | Result |
+| --- | ---: |
+| Strict JSON | 607/636 (95.4%) |
+| Core-contract valid | 234/636 (36.8%) |
+| Exact action routing | 413/636 (64.9%) |
+| Exact typed decision view | 149/636 (23.4%) |
+| Unsafe physical authority | 122 |
+| Missed physical actions | 37 |
+| Wrong physical actions | 49 |
+| Unnecessary image captures | 2 |
+| Escalation errors | 44 |
+| Median per-record latency | 3,143 ms |
+| Mean prompt/completion tokens | 585 / 79 |
+
+The latency measurement was collected while four independent BF16 model
+instances shared one RTX 4080 and is not a single-resident deployment
+benchmark. Evaluation used about 9.3 GiB total VRAM and released it when all
+four prediction files closed.
+
+The 64.9% exact action-route result exceeds the user-approved 62.5% viability
+floor, but this checkpoint is not deployable. The initial scorer incorrectly
+labeled full decision-view equality as exact selection; the maintained scorer
+now reports routing equality and full decision equality separately and counts
+unsafe authority only when the model invents physical work. The 122 physical
+false authorizations remain disqualifying regardless of aggregate accuracy.
+
+The errors are strongly fold- and boundary-clustered: fold 0 contributed 70
+unsafe physical authorizations and fold 1 contributed 42, while folds 2 and 3
+contributed 5 and 8. The dominant clusters are future and conditional wording,
+negated actions, capability/state questions, simple conversation, explicit
+escalation, unavailable target-relative motion, and already-complete persisted
+visual tasks. Only two excess captures occurred. This shows insufficient
+source-case generalization and fold balance around action authority, not a
+reason to add aliases or parser-side semantic inference.
+
+The separately retained final-epoch checkpoints were then evaluated through
+the identical unseen-fold harness:
+
+| Measure | Best loss / epoch 1 | Epoch 2 | Final epoch / epoch 3 |
+| --- | ---: | ---: | ---: |
+| Strict JSON | 607/636 (95.4%) | 596/636 (93.7%) | 593/636 (93.2%) |
+| Core-contract valid | 234/636 (36.8%) | 377/636 (59.3%) | 366/636 (57.5%) |
+| Exact action routing | 413/636 (64.9%) | 434/636 (68.2%) | 453/636 (71.2%) |
+| Exact typed decision view | 149/636 (23.4%) | 270/636 (42.5%) | 288/636 (45.3%) |
+| Unsafe physical authority | 122 | 52 | 53 |
+| Missed physical actions | 37 | 84 | 60 |
+| Wrong physical actions | 49 | 44 | 39 |
+| Unnecessary image captures | 2 | 11 | 17 |
+| Escalation errors | 44 | 9 | 9 |
+| Median per-record latency | 3,143 ms | 3,479 ms | 3,121 ms |
+
+Epoch 3 is the better overall semantic checkpoint despite its worse generic
+validation loss: it has the highest routing and complete-decision parity, the
+fewest wrong physical selections, materially fewer missed actions than epoch
+2, and the lowest median latency. Epoch 2 has one fewer unsafe authorization
+but 24 more missed physical actions and does not change the deployment
+decision. Every checkpoint remains disqualified. All twelve
+variants of the persisted visual-complete case were incorrectly reauthorized;
+all persisted failure and persisted visual-incomplete variants missed their
+required retry action; and all twelve fresh-vision variants requested another
+capture despite already having correlated visual evidence. Conversation,
+unavailable vision, unavailable target motion, and several explicit action
+controls contributed the remaining safety and routing failures. This requires
+independent counterfactual source cases on every training side of every fold,
+not deployment of the better checkpoint.
+
+The authoritative report is
+`out/environment-action-selector/training/qwen3.5-0.8b-cv-002/development-validation.json`.
+The final-epoch companion is
+`out/environment-action-selector/training/qwen3.5-0.8b-cv-002/development-validation-final-epoch.json`.
+The middle-checkpoint companion is
+`out/environment-action-selector/training/qwen3.5-0.8b-cv-002/development-validation-epoch-2.json`.
+The four development folds are evaluation rotations, not adapters to merge or
+deploy. No new final adapter or locked action-selector evaluation has been
+created.
+
+The first balanced counterfactual expansion, `qwen3.5-0.8b-cv-003`, used 93
+source cases and 1,116 records. Its epoch-two checkpoints were the safer of the
+retained choices:
+
+| Measure | Epoch 2 | Final epoch / epoch 3 |
+| --- | ---: | ---: |
+| Strict JSON | 1,102/1,116 (98.7%) | 1,096/1,116 (98.2%) |
+| Core-contract valid | 935/1,116 (83.8%) | 908/1,116 (81.4%) |
+| Exact action routing | 1,001/1,116 (89.7%) | 1,002/1,116 (89.8%) |
+| Exact typed decision view | 795/1,116 (71.2%) | 768/1,116 (68.8%) |
+| Unsafe physical authority | 29 | 37 |
+| Missed physical actions | 47 | 43 |
+| Wrong physical actions | 17 | 13 |
+| Unnecessary image captures | 9 | 8 |
+| Escalation errors | 18 | 25 |
+| Median per-record latency | 3,302 ms | 3,303 ms |
+
+This is a substantial accuracy improvement but remains development evidence,
+not a deployable adapter. Epoch two still invented 29 unsafe physical actions
+and missed 47 legitimate actions. Error clustering identified persisted visual
+completion, unavailable vision, identity conversation, negation, capability
+queries, fresh-vision control, hypothetical requests, and positive turn
+commands as the remaining concentrated boundaries.
+
+Thirty-six independent system-owned counterfactual cases were then added,
+balanced across all four folds with matching positive movement controls. The
+resulting `qwen3.5-0.8b-cv-004` corpus has 129 source cases and 1,548 records.
+Training now runs as two successive trainer pairs rather than four concurrent
+trainers, preserving roughly 9 GiB of VRAM for normal system testing. All four
+folds completed successfully in two approximately 15-minute waves. Four-way
+evaluation used about 8.4 GiB total VRAM, leaving about 7.1 GiB available for
+normal testing.
+
+The unchanged evaluator and Core scorer produced:
+
+| Measure | Epoch 2 | Final epoch / epoch 3 |
+| --- | ---: | ---: |
+| Strict JSON | 1,500/1,548 (96.9%) | 1,504/1,548 (97.2%) |
+| Core-contract valid | 1,301/1,548 (84.0%) | 1,241/1,548 (80.2%) |
+| Exact action routing | 1,346/1,548 (87.0%) | 1,320/1,548 (85.3%) |
+| Exact typed decision view | 1,102/1,548 (71.2%) | 1,068/1,548 (69.0%) |
+| Unsafe physical authority | 28 | 32 |
+| Missed physical actions | 94 | 110 |
+| Wrong physical actions | 59 | 61 |
+| Unnecessary image captures | 15 | 10 |
+| Escalation errors | 55 | 62 |
+| Median per-record latency | 3,342 ms | 3,320 ms |
+
+Epoch two is the better cv-004 checkpoint, but cv-004 is rejected. Compared
+with cv-003 epoch two, it reduced unsafe authority by only one while losing
+2.7 percentage points of exact routing, doubling missed physical actions,
+more than tripling wrong physical actions, and increasing invalid JSON,
+unnecessary captures, and escalation errors. Fold 2 alone missed 69 physical
+actions, averaged 128 completion tokens, and fell to 76.8% exact routing.
+Several fold-2 clusters generated 291-384 tokens and required approximately
+11-12 seconds per record even after the other three models unloaded.
+
+The new cases repaired several original clusters but shifted errors into
+off-script body-local selection, target-relative work, legitimate positive
+authority, persisted retries, and malformed long-form output. This is a
+training-distribution and recipe problem, not a reason to add command aliases,
+keyword rules, or parser-side semantic inference. No cv-004 adapter is selected
+or deployed, and the retired 16-case classifier lock remains untouched.
+
+### Live selector contract failure - 2026-08-06
+
+The live failure is currently a workflow ownership defect, not evidence that
+all three tested models failed to understand the command. Audit records confirm
+that the `environmentActionSelector` role actually changed from the merged
+0.8B artifact to `qwen3.5:2b` and then `qwen3.5:9b`. Every production request
+reached the selector, but the Selection Gate replaced its output with the same
+invalid-structured-output response before the Action Parser could admit an
+advertised command.
+
+A direct probe using the current graph prompt, current robot observation, Core
+selector envelope, and the instruction `Please stand up` captured the exact
+responses:
+
+| Model | JSON | Selected action | Probe latency | Gate rejection |
+| --- | --- | --- | ---: | --- |
+| `qwen3.5:2b` | valid | `robotCommand: stand` | 2,890 ms | missing `response`, `reason`, `continuationPolicy`, `requiredCompletionBasis`, and `motionClass` |
+| `qwen3.5:9b` | valid | `robotCommand: stand` | 3,541 ms | missing `response`; `taskDecision` was null |
+| `environment-action-selector-0.8b:v1` | valid | `robotCommand: stand` | 1,405 ms | unsupported `taskDecision.motionClass=body-controlled` |
+
+All three models therefore made the correct semantic command selection, and
+all three commands were discarded because the Selection Gate requires the LLM
+to reproduce the entire lifecycle object. That requirement duplicates existing
+owners: Action Parser already checks the typed action and exact advertised
+command, and Task State already supplies one-shot defaults such as
+`outcome=act`, `objectiveComplete=false`, `continuationPolicy=none`, and
+`requiredCompletionBasis=action_result` for an admitted named command. The
+graph also states that Task State is the sole lifecycle owner, so allowing the
+Selection Gate to veto an advertised action over lifecycle metadata contradicts
+the graph's own ownership contract.
+
+The full-lifecycle veto has now been deleted rather than relaxed. The Selection
+Gate implementation and tests, its two persona-only support nodes, and its
+general escalation prompt output were removed. Six detour/support edges were
+deleted and one direct edge was added. The graph is 21 nodes and 52 edges with the selector flowing directly through
+Thinking Stripper to Action Parser. Action Parser still requires a typed action
+and an exact adapter-advertised named command; Task State remains the only
+lifecycle owner and supplies one-shot command defaults. A focused regression
+passes all three captured selector outputs and confirms that each admits the
+advertised `stand` action despite absent or malformed auxiliary lifecycle data.
+
+Do not start another model-training round from the rejected live result.
+Re-benchmark all three models through the repaired production path before
+deciding whether the 0.8B artifact has a semantic-selection defect.
+
+### Bounded visual lifecycle repair - 2026-08-06
+
+Live `find`, `what do you see`, and `wave until` probes exposed a workflow
+regression after the Selection Gate deletion. Advertised one-shot commands
+reached the robot, but the consolidated lifecycle path did not preserve the
+semantic stopping contract:
+
+- the selector prompt incorrectly said Task State would supply continuation and
+  completion metadata, so the 9B model omitted `taskDecision`;
+- every new instruction started with vision disabled, so a current-scene request
+  could answer from text context without receiving camera pixels;
+- Action Parser consequently defaulted named commands to one-shot
+  `action_result` completion;
+- Ainekio terminal feedback reports emote-backed named commands as the adapter
+  command `emote`, while Task State compared that label to the semantic command
+  such as `wave` or `turn_right_90`;
+- Bridge Out exposed its internal `no_actions` transport status as a chat
+  response when a lifecycle pass legitimately produced no new command.
+
+The repair stays inside the existing consolidated owners and does not restore a
+blocking gate, phrase matcher, alias table, separate context classifier, Task
+Refiner model call, or Visual Evidence Assessor model call. The useful behavior
+from the previous lifecycle nodes is preserved as follows:
+
+- Environment Action Selector now supplies the semantic whole-objective
+  `taskDecision`; Task State remains the sole persistence, correlation, step,
+  and completion owner.
+- A request requiring current sight with no attached image must select the
+  advertised `captureImage` action. The selector may describe the current scene
+  only from attached image content.
+- Bounded visual objectives persist `visual_observation` plus their original
+  stopping condition. After each action, Task State admits the exact correlated
+  frame; the same selector either completes from that frame or returns the next
+  advertised action in the same pass.
+- Terminal feedback correlation is owned by the unique action ID. Adapter
+  transport labels such as `emote` can no longer hide a valid completion, while
+  feedback for a different action ID cannot close the task.
+- One-shot `action_result` completion is deterministic and emits one concise
+  `Objective completed.` response without another LLM call.
+- Bridge `no_actions` remains structured transport telemetry but is no longer a
+  user-visible failure or warning log.
+
+Focused regression coverage includes correlated capture, bounded visual
+continuation, frame-grounded bounded completion, generic adapter command labels,
+unrelated action IDs, one-shot deterministic closure, parser admission, context
+admission, graph ownership, and bridge conversation passthrough. The focused
+suite passes 22/22. `pnpm validate:graphs` passes 27/27. The full `pnpm build`
+passes outside the sandbox-only `tsx` IPC restriction with zero architecture
+violations, the 804-file user-agnostic guard, TTS and voice ownership checks,
+delivery queue tests, and the Astro production build.
+
+Physical robot acceptance remains the next proof: run one direct command, one
+current-scene query, and one bounded visual stopping task through the restarted
+production server. Source validation proves lifecycle and ownership behavior;
+it does not prove what a physical camera frame contains.
+
 ## Current Priorities
 
-1. Restart the rebuilt MetaHuman OS and run a bounded live canary covering natural named-command wording, including stand, turn, and one body-local expression. Confirm the typed advertised command reaches the bridge and Movement Generator is not invoked.
-2. Record classifier accepted/fallback counts, Environment decision latency, total graph latency, action selected, movement-generation calls, and terminal completion behavior. Roll back the 0.8B role assignment if malformed live output remains frequent.
-3. If the classifier still fails on live envelopes, add only sanitized system-owned development cases matching the compact Core serializer. Do not use profile-owned turns, reopen the locked set, or normalize malformed model output into a route.
-4. Reduce the structured Environment decision latency without creating another semantic owner. A smaller specialist may replace that role only if it emits the same typed action/task contract and passes the existing admission and lifecycle tests.
-5. Preserve Ollama as the single inference owner and remove unnecessary generic-model residency from the normal Environment path after the live canary identifies the required roles.
-6. Evaluate `Qwen3-Reranker-0.6B` only after the user-facing Environment critical path is within budget.
+1. Restart the production server so its in-memory graph and rebuilt bundle use the bounded visual lifecycle repair.
+2. Run one direct command, one current-scene query, and one bounded visual stopping task on the physical robot; record semantic selection, image admission, bridge delivery, continuation count, completion basis, and end-to-end latency separately.
+3. Re-benchmark the merged 0.8B selector through this repaired lifecycle before generating more training data. Train again only for demonstrated semantic-selection errors.
+4. Decide whether complex conversation needs a separate general-model route only from live evidence. Any later conversation route must remain outside the physical command path and cannot veto an advertised command.
+5. Keep `qwen3.5-0.8b-cv-003` epoch two as the strongest cross-validation checkpoint and `cv-004` as negative distribution evidence. Neither fold adapter is a production artifact.
+6. Freeze a new action-selector held-out set before later final training. The retired 16 classifier cases remain closed and cannot validate this changed output contract.
 
 Deferred, accepted for now:
 
@@ -832,6 +1193,9 @@ Deferred, accepted for now:
 
 Passed:
 
+- Post-deletion `pnpm build` - architecture guard zero violations, user-agnostic guard 804 maintained runtime files, all 27 cognitive graphs, TTS/voice ownership, delivery queue 6/6, and Astro production build passed after rerunning outside the sandbox-only `tsx` IPC restriction
+- Direct selector-to-parser regression - all three captured 0.8B, 2B, and 9B `stand` outputs admit the exact advertised command; 18/18 focused parser, context, task-state, and graph tests pass after deleting Selection Gate
+- `pnpm validate:graphs` - all 27 graphs pass with Environment Mode reduced to 21 nodes and 52 edges and no dangling gate or persona-support edges
 - Model-owned command-selection regression suite - classifier projection, typed Environment actions, capability admission, motion generation, task contracts, lifecycle completion, vLLM JSON transport, and compatibility passed across the focused test files
 - `pnpm build` - architecture guard zero violations, user-agnostic guard 798 maintained runtime files, all 27 cognitive graphs, TTS/voice ownership, delivery queue 6/6, and Astro production build passed after rerunning outside the sandbox-only `tsx` IPC restriction
 - Live stand safety/fallback canary - the 0.8B response failed strict JSON and was rejected by Core; 9B fallback produced the admitted `body_local` stand command and the bridge delivered one command without malformed specialist output receiving action authority
@@ -845,7 +1209,7 @@ Passed:
 - Qwen3.5-0.8B folds 1-3 - unchanged BF16 rank-16 response-only recipe, source-case isolation, final-epoch evaluation through the Core contract, and no held-out model input
 - Final-adapter dry run - 1,822 records from all 48 development cases, zero validation or held-out model inputs, and the selected cross-validation report accepted as provenance evidence
 - Compact classifier message ownership - one Core formatter used by training, runtime, and specialized benchmark requests; regenerated dataset digest unchanged
-- `node --import tsx --test packages/core/src/nodes/llm/orchestrator-llm.node.spec.ts packages/core/src/environment-classifier-runtime.spec.ts` - compact runtime handoff and artifact discovery owner passed
+- `node --import tsx --test packages/core/src/nodes/llm/orchestrator-llm.node.spec.ts packages/core/src/environment-classifier-runtime.spec.ts` - compact runtime handoff, production-model selection, and retired-fold rejection passed
 - Repaired Qwen3.5-0.8B fold-0 pilot - 1,376 training records, 446 isolated development records, 516 optimizer steps, 14.9-minute training runtime, and 21.5-minute end-to-end artifact generation
 - Repaired epoch-3 checkpoint - 446/446 strict JSON, 446/446 Core valid, 374/446 exact routes, 4 unsafe actions, 0 excess vision, 49 missed actions, and 775 ms median batch latency
 - Route-stratum generation guard - all validation route views are represented on every fold's training side; 13 controlled surfaces and 102 records remain source-fold attached

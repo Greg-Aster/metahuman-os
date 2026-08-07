@@ -31,25 +31,21 @@ function observation(): EnvironmentObservation {
   };
 }
 
-test('instruction interpreter gives the context router current state without image payloads', async () => {
+test('instruction interpreter preserves current state and advertised capabilities', async () => {
   const result = await environmentInstructionInterpreterNode.execute({
     observation: observation(),
   }, {
     userMessage: 'Report the current device value.',
   });
 
-  const routingRequest = JSON.parse(result.routingRequest);
-  assert.equal(routingRequest.currentInstruction, 'Report the current device value.');
-  assert.equal(routingRequest.currentEnvironment.state.device.status.currentValue, 12.4);
-  assert.equal(routingRequest.currentEnvironment.capabilities.visual, true);
-  assert.equal(routingRequest.currentEnvironment.capabilities.navigation, false);
-  assert.deepEqual(routingRequest.currentEnvironment.visualFrames, []);
-  assert.equal(routingRequest.currentEnvironment.hasFreshCorrelatedVisual, false);
-  assert.equal(routingRequest.currentEnvironment.persistedTaskContract, null);
-  assert.doesNotMatch(result.routingRequest, /data:image/i);
+  assert.equal(result.instruction, 'Report the current device value.');
+  assert.equal(result.observation.state.device.status.currentValue, 12.4);
+  assert.equal(result.observation.capabilities.visual, true);
+  assert.equal(result.observation.capabilities.navigation, false);
+  assert.equal(result.routingRequest, undefined);
 });
 
-test('instruction interpreter exposes a persisted whole-objective contract to routing', async () => {
+test('instruction interpreter restores the original objective from a persisted contract', async () => {
   const contract = {
     objective: 'Maintain the requested activity subject to its completion condition.',
     currentInstruction: 'Perform the next admitted step.',
@@ -78,16 +74,12 @@ test('instruction interpreter exposes a persisted whole-objective contract to ro
   };
 
   const result = await environmentInstructionInterpreterNode.execute({ observation: input }, {});
-  const routingRequest = JSON.parse(result.routingRequest);
-
-  assert.deepEqual(routingRequest.currentEnvironment.persistedTaskContract, contract);
-  assert.equal(routingRequest.currentEnvironment.hasFreshCorrelatedVisual, true);
-  assert.equal(routingRequest.currentEnvironment.visualFrames[0].id, 'visual-1');
-  assert.equal(routingRequest.currentEnvironment.visualFrames[0].dataUrl, undefined);
-  assert.equal(result.persistedRoutingAnalysis, null);
+  assert.equal(result.instruction, contract.objective);
+  assert.equal(result.observation.visual.id, 'visual-1');
+  assert.equal(result.observation.visual.dataUrl, 'data:image/jpeg;base64,/9j/2gAA/9k=');
 });
 
-test('a persisted continuation receives a deterministic contract-owned route', async () => {
+test('a legacy queued continuation is normalized without creating routing authority', async () => {
   const input = observation();
   input.metadata = {
     originatingInstruction: encodeEnvironmentTaskInstruction({
@@ -115,26 +107,8 @@ test('a persisted continuation receives a deterministic contract-owned route', a
   };
 
   const result = await environmentInstructionInterpreterNode.execute({ observation: input }, {});
-  assert.deepEqual(result.persistedRoutingAnalysis, {
-    needsMemory: false,
-    memoryTier: 'hot',
-    memoryQuery: '',
-    memoryTypes: [],
-    needsEnvironment: true,
-    needsVision: false,
-    needsAction: true,
-    actionType: 'robot_movement',
-    actionParams: {
-      continuationPolicy: 'bounded',
-      requiredCompletionBasis: 'action_result',
-      motionClass: 'body_local',
-    },
-    complexity: 0.2,
-    responseStyle: 'conversational',
-    responseLength: 'brief',
-    isFollowUp: true,
-    emotionalTone: 'neutral',
-  });
+  assert.equal(result.instruction, 'Perform the next admitted pose change.');
+  assert.equal(result.persistedRoutingAnalysis, undefined);
 });
 
 test('an existing correlated image is not mislabeled as a completed camera request', async () => {
@@ -165,35 +139,36 @@ test('an existing correlated image is not mislabeled as a completed camera reque
   assert.doesNotMatch(String(result.instruction), /visual acquisition.*complete/i);
 });
 
-test('Environment graph routes the state-aware envelope into the existing context router', () => {
+test('Environment graph routes normalized input into the sole task-state owner', () => {
   const graph = JSON.parse(fs.readFileSync(
     new URL('../../../../../etc/cognitive-graphs/environment-mode.json', import.meta.url),
     'utf8',
   ));
-  const edge = graph.edges.find((candidate: Record<string, unknown>) => (
+  const observationEdge = graph.edges.find((candidate: Record<string, unknown>) => (
     candidate.source === '10'
-    && candidate.sourceHandle === 'routingRequest'
-    && candidate.target === 'context-router'
-    && candidate.targetHandle === 'message'
+    && candidate.sourceHandle === 'observation'
+    && candidate.target === 'task-state-prepare'
+    && candidate.targetHandle === 'observation'
   ));
-  const router = graph.nodes.find((candidate: Record<string, any>) => candidate.id === 'context-router');
-  const environmentDecision = graph.nodes.find((candidate: Record<string, any>) => candidate.id === '4');
-  const routerPrompt = [
-    router?.data?.properties?.systemPrompt,
-    router?.data?.properties?.userPromptTemplate,
-  ].join('\n');
-
-  assert(edge);
-  assert(graph.edges.some((candidate: Record<string, unknown>) => (
+  const instructionEdge = graph.edges.find((candidate: Record<string, unknown>) => (
     candidate.source === '10'
-    && candidate.sourceHandle === 'persistedRoutingAnalysis'
-    && candidate.target === 'context-router'
-    && candidate.targetHandle === 'precomputedAnalysis'
+    && candidate.sourceHandle === 'instruction'
+    && candidate.target === 'task-state-prepare'
+    && candidate.targetHandle === 'instruction'
+  ));
+  const prepare = graph.nodes.find((candidate: Record<string, any>) => candidate.id === 'task-state-prepare');
+  const environmentDecision = graph.nodes.find((candidate: Record<string, any>) => candidate.id === '4');
+
+  assert(observationEdge);
+  assert(instructionEdge);
+  assert(graph.edges.some((candidate: Record<string, unknown>) => (
+    candidate.source === 'task-state-prepare'
+    && candidate.sourceHandle === 'precomputedResponse'
+    && candidate.target === '4'
+    && candidate.targetHandle === 'precomputedResponse'
   )));
-  assert.match(routerPrompt, /JSON envelope/i);
-  assert.match(routerPrompt, /needsEnvironment/);
-  assert.match(routerPrompt, /needsVision/);
-  assert.match(routerPrompt, /action_result proves only.*command ran/is);
-  assert.match(routerPrompt, /changed scene, spatial relationship, visibility/is);
+  assert.equal(prepare?.data?.nodeType, 'environment_task_state');
+  assert.equal(prepare?.data?.properties?.phase, 'prepare');
+  assert.equal(graph.nodes.some((candidate: Record<string, any>) => candidate.data?.nodeType === 'orchestrator_llm'), false);
   assert.equal(environmentDecision?.data?.properties?.format, 'json');
 });

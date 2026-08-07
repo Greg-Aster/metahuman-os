@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge the scored classifier LoRA into its exact base and export Q4_K_M GGUF."""
+"""Merge a PEFT LoRA into its exact base and export a text-only Q4_K_M GGUF."""
 
 import argparse
 import gc
@@ -21,7 +21,7 @@ def main() -> None:
     adapter_path = Path(arguments.adapter).resolve()
     output_path = Path(arguments.output).resolve()
     if not (adapter_path / "adapter_model.safetensors").is_file():
-        raise FileNotFoundError(f"Missing scored adapter weights: {adapter_path}")
+        raise FileNotFoundError(f"Missing adapter weights: {adapter_path}")
     output_path.mkdir(parents=True, exist_ok=True)
     final_gguf = output_path / "merged-gguf-no-mtp.Q4_K_M.gguf"
     if final_gguf.is_file():

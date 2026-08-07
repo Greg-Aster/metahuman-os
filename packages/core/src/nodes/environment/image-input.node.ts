@@ -39,7 +39,9 @@ export const environmentImageInputNode = defineNode({
   description: 'Validates a bounded JPEG still and converts it to OpenAI-compatible image content.',
   async execute(inputs) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
-    const accepted = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl)).slice(0, 1);
+    // A comparison objective needs an ordered baseline and current frame. Keep
+    // the input bounded to those two images so multimodal cost remains stable.
+    const accepted = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl)).slice(0, 2);
     return {
       images: accepted.map(frame => ({
         type: 'image_url',

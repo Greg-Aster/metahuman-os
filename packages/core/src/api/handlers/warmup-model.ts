@@ -9,10 +9,6 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
 import { callLLM } from '../../model-router.js';
-import {
-  ENVIRONMENT_ROUTER_MODEL_ROLE,
-  warmEnvironmentClassifierRuntime,
-} from '../../environment-classifier-runtime.js';
 
 // In-memory cache to prevent duplicate warmups
 const warmupCache = new Map<string, number>();
@@ -71,7 +67,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     }
 
     // Validate role
-    const validRoles = ['orchestrator', 'persona', 'curator', 'coder', 'planner', 'summarizer', 'fallback', ENVIRONMENT_ROUTER_MODEL_ROLE];
+    const validRoles = ['orchestrator', 'persona', 'environmentActionSelector', 'curator', 'coder', 'planner', 'summarizer', 'fallback'];
     if (!validRoles.includes(role)) {
       return {
         status: 400,
@@ -80,7 +76,7 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     }
 
     // Skip if recently warmed (deduplication)
-    if (role !== ENVIRONMENT_ROUTER_MODEL_ROLE && isRecentlyWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`)) {
+    if (isRecentlyWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`)) {
       return successResponse({
         success: true,
         message: `Model for role "${role}" was recently warmed (cached)`,
@@ -91,12 +87,8 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     const startTime = Date.now();
 
     try {
-      if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
-        await warmEnvironmentClassifierRuntime(user.username);
-      } else {
-        // Send minimal inference to trigger ordinary model loading with timeout
-        await warmupWithTimeout(role, cognitiveMode);
-      }
+      // Send minimal inference to trigger ordinary model loading with timeout.
+      await warmupWithTimeout(role, cognitiveMode);
 
       const duration = Date.now() - startTime;
 

@@ -14,6 +14,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'messages', type: 'array', description: 'Messages to send' },
     { name: 'role', type: 'string', optional: true, description: 'Model role' },
+    { name: 'precomputedResponse', type: 'string', optional: true, description: 'Exact deterministic result that bypasses model inference' },
   ],
   outputs: [
     { name: 'response', type: 'llm_response', description: 'Model response' },
@@ -29,7 +30,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'persona',
       label: 'Model Role',
-      options: ['persona', 'orchestrator', 'fallback', 'coder'],
+      options: ['persona', 'environmentActionSelector', 'orchestrator', 'fallback', 'coder'],
     },
     maxTokens: {
       type: 'slider',
@@ -57,6 +58,12 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   description: 'Routes request to appropriate model',
 
   execute: async (inputs, context, properties) => {
+    const precomputedResponse = typeof inputs.precomputedResponse === 'string'
+      ? inputs.precomputedResponse.trim()
+      : '';
+    if (precomputedResponse) {
+      return { response: precomputedResponse, precomputed: true };
+    }
     const messages = inputs.messages || inputs[0] || [];
     const role = inputs.role || inputs[1] || properties?.role || 'persona';
     const username = context.userId || context.username;

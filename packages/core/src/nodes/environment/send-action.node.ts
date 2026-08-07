@@ -240,7 +240,7 @@ export const environmentSendActionNode = defineNode({
       }
     }
 
-    if (status !== 'coordinated_for_adapter') {
+    if (status !== 'coordinated_for_adapter' && status !== 'no_actions') {
       console.warn('[EnvironmentBridgeOut]', {
         status,
         reason,
@@ -252,7 +252,7 @@ export const environmentSendActionNode = defineNode({
         commandCount: commands.length,
         rejectedCount: rejectedActions.length,
       });
-    } else {
+    } else if (status === 'coordinated_for_adapter') {
       console.log('[EnvironmentBridgeOut]', {
         status,
         targetSessionId: targetSessionId || null,
@@ -283,7 +283,10 @@ export const environmentSendActionNode = defineNode({
       source: actionCycle?.triggerSource ?? 'user',
       correlationId: actionCycle?.cycleId ?? context.sessionId ?? null,
     };
-    const visibleResponse = conversationalResponse || message;
+    // Bridge status remains available through message and bridgeRecord, but a
+    // no-action transport result is not a user-facing failure. Conversation and
+    // completed-task passes legitimately traverse Bridge Out without a command.
+    const visibleResponse = conversationalResponse;
     const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
       ? 'Camera request queued; waiting for a fresh image.'
       : visibleResponse;

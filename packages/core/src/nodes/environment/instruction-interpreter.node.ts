@@ -6,12 +6,8 @@ import type {
   EnvironmentTextEvent,
 } from '../../environment-interface/index.js';
 import { hasFreshCorrelatedVisual } from '../../environment-interface/index.js';
-import type { EnvironmentRouterDecision } from '../../environment-classifier.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
-import {
-  environmentTaskContractFromObservation,
-  robotOperatorActionRequirement,
-} from './helpers.js';
+import { environmentTaskContractFromObservation } from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -71,7 +67,7 @@ function terminalFeedbackEvent(
   return {
     id: `environment-feedback-${terminal.id}`,
     source: 'system',
-    text: `Robot action ${terminal.type}: ${terminal.message}. This terminal result is evidence for validation only; do not issue a new action from this event.`,
+    text: `Robot action ${terminal.type}: ${terminal.message}. This exact terminal result is evidence for the original objective.`,
     timestamp: terminal.timestamp,
     metadata: { actionId: terminal.actionId, feedbackId: terminal.id },
   };
@@ -97,8 +93,6 @@ export const environmentInstructionInterpreterNode = defineNode({
   outputs: [
     { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
     { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
-    { name: 'routingRequest', type: 'string', description: 'Compact state-aware envelope for Environment context and task-contract routing' },
-    { name: 'persistedRoutingAnalysis', type: 'object', description: 'Strict deterministic route for a persisted continuation, or null for a new instruction' },
     { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
     { name: 'state', type: 'object', description: 'Environment state payload' },
     { name: 'location', type: 'object', description: 'Environment location payload' },
@@ -135,7 +129,6 @@ export const environmentInstructionInterpreterNode = defineNode({
         ].join(' ')
       : '';
     const robotObserver = readRobotObserverCycle(rawObservation);
-    const delegatedActionRequirement = robotOperatorActionRequirement(rawObservation);
     const captureSatisfied = Boolean(
       !currentTaskEvent
       && robotObserver
@@ -161,7 +154,7 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? [
           feedbackEvent.text,
           originalObjective
-            ? `Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): ${originalObjective}`
+            ? `Original user objective (still authoritative): ${originalObjective}`
             : '',
           taskContractInstruction,
         ].filter(Boolean).join('\n')
@@ -201,84 +194,9 @@ export const environmentInstructionInterpreterNode = defineNode({
       feedback: rawObservation?.feedback,
       metadata: rawObservation?.metadata,
     };
-    const visualFrames = [observation.visual, ...(observation.visuals ?? [])]
-      .filter((frame): frame is NonNullable<EnvironmentObservation['visual']> => Boolean(frame))
-      .map(frame => ({
-        id: frame.id,
-        timestamp: frame.timestamp,
-        source: frame.source ?? null,
-        correlationId: frame.metadata?.correlationId ?? null,
-      }));
-    const routingRequest = JSON.stringify({
-      currentInstruction: instruction,
-      currentEnvironment: {
-        state: observation.state ?? {},
-        capabilities: observation.capabilities,
-        visualFrames,
-        hasFreshCorrelatedVisual: Boolean(
-          robotObserver && hasFreshCorrelatedVisual(observation, robotObserver.cycleId),
-        ),
-        persistedTaskContract: taskContract ?? null,
-        delegatedActionRequirement,
-      },
-    });
-    const hasTerminalFeedback = Boolean(feedbackEvent);
-    const hasFreshVisual = Boolean(
-      robotObserver && hasFreshCorrelatedVisual(observation, robotObserver.cycleId),
-    );
-    const isPersistedContinuation = Boolean(
-      !contextMessage.trim()
-      && taskContract
-      && (validatorCommand || hasTerminalFeedback),
-    );
-    const evidenceAlreadyAvailable = Boolean(
-      hasTerminalFeedback
-      || (taskContract?.requiredCompletionBasis === 'visual_observation' && hasFreshVisual)
-      || (
-        taskContract?.requiredCompletionBasis === 'environment_state'
-        && Object.keys(observation.state ?? {}).length > 0
-      )
-      || taskContract?.requiredCompletionBasis === 'response'
-      || taskContract?.requiredCompletionBasis === 'user_input'
-    );
-    const persistedNeedsAction = Boolean(isPersistedContinuation && !evidenceAlreadyAvailable);
-    const persistedActionType: EnvironmentRouterDecision['actionType'] = !persistedNeedsAction
-      ? 'none'
-      : taskContract?.motionClass
-        ? 'robot_movement'
-        : 'environment_action';
-    const deterministicCompletionBasis = taskContract?.requiredCompletionBasis === 'none'
-      ? null
-      : taskContract?.requiredCompletionBasis;
-    const persistedRoutingAnalysis: EnvironmentRouterDecision | null = (
-      isPersistedContinuation && taskContract && deterministicCompletionBasis
-    )
-      ? {
-          needsMemory: false,
-          memoryTier: 'hot',
-          memoryQuery: '',
-          memoryTypes: [],
-          needsEnvironment: true,
-          needsVision: taskContract.requiredCompletionBasis === 'visual_observation',
-          needsAction: persistedNeedsAction,
-          actionType: persistedActionType,
-          actionParams: {
-            continuationPolicy: taskContract.continuationPolicy,
-            requiredCompletionBasis: deterministicCompletionBasis,
-            ...(taskContract.motionClass ? { motionClass: taskContract.motionClass } : {}),
-          },
-          complexity: 0.2,
-          responseStyle: 'conversational',
-          responseLength: 'brief',
-          isFollowUp: true,
-          emotionalTone: 'neutral',
-      }
-      : null;
     return {
       observation,
       instruction,
-      routingRequest,
-      persistedRoutingAnalysis,
       text,
       state: observation.state ?? {},
       location: observation.location ?? null,

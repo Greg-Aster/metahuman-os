@@ -25,18 +25,23 @@ import {
   getVLLMLoadedLoras,
   listLocalModelArtifacts,
   ollama,
-  getEnvironmentClassifierRuntimeStatus,
-  ENVIRONMENT_ROUTER_MODEL_ROLE,
 } from '../../index.js';
-import { invalidateModelCache } from '../../model-resolver.js';
+import {
+  invalidateModelCache,
+  migrateModelRegistry,
+} from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
 
-const RETIRED_ENVIRONMENT_FOLD_PREFIX = 'environment-classifier.';
+export const isRetiredDevelopmentModelId = (modelId: string): boolean => (
+  modelId.startsWith('environment-classifier.')
+  || modelId.startsWith('ollama.environment-classifier')
+);
 
-interface AvailableRegistryModel {
+export interface AvailableRegistryModel {
   id: string
+  aliases?: string[]
   provider: string
   model: string
   roles: string[]
@@ -47,6 +52,51 @@ interface AvailableRegistryModel {
   metadata: Record<string, unknown>
   options: Record<string, unknown>
   source: 'user-registry' | 'runtime-discovery'
+}
+
+/**
+ * Collapse registry aliases to one inventory record per provider/model pair.
+ * Role-specific IDs remain valid in the profile, but they are not distinct
+ * installed models and must not multiply the production inventory.
+ */
+export function collapseModelInventory(models: AvailableRegistryModel[]): AvailableRegistryModel[] {
+  const inventory = new Map<string, AvailableRegistryModel>()
+
+  for (const model of models) {
+    const key = JSON.stringify([model.provider, model.model])
+    const existing = inventory.get(key)
+    if (!existing) {
+      inventory.set(key, {
+        ...model,
+        aliases: Array.from(new Set([...(model.aliases || []), model.id])),
+        roles: [...model.roles],
+        capabilities: [...model.capabilities],
+        adapters: [...model.adapters],
+        metadata: { ...model.metadata },
+        options: { ...model.options },
+      })
+      continue
+    }
+
+    const previousId = existing.id
+    existing.aliases = Array.from(new Set([
+      ...(existing.aliases || []),
+      previousId,
+      ...(model.aliases || []),
+      model.id,
+    ]))
+    existing.roles = Array.from(new Set([...existing.roles, ...model.roles]))
+    existing.capabilities = Array.from(new Set([...existing.capabilities, ...model.capabilities]))
+    existing.adapters = Array.from(new Set([...existing.adapters, ...model.adapters]))
+    if (!existing.description && model.description) existing.description = model.description
+    if (!existing.baseModel && model.baseModel) existing.baseModel = model.baseModel
+
+    // Prefer the provider-native runtime ID over legacy role aliases such as
+    // default.orchestrator when both identify the same installed model.
+    if (model.id === `${model.provider}.${model.model}`) existing.id = model.id
+  }
+
+  return Array.from(inventory.values())
 }
 
 /**
@@ -137,7 +187,15 @@ function readModelRegistry(username: string) {
   try {
     const p = resolveModelsPath(username);
     if (fs.existsSync(p)) {
-      return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      const migration = migrateModelRegistry(parsed);
+      if (migration.changed) {
+        const temporaryPath = `${p}.migration-${process.pid}`;
+        fs.writeFileSync(temporaryPath, `${JSON.stringify(migration.registry, null, 2)}\n`, 'utf8');
+        fs.renameSync(temporaryPath, p);
+        invalidateModelCache();
+      }
+      return migration.registry;
     }
   } catch (e) {
     console.error('[model-registry] Failed to read registry:', e);
@@ -159,7 +217,7 @@ async function writeModelRegistry(username: string, registry: any) {
   invalidateModelCache();
 }
 
-const ALL_ROLES = ['persona', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
+const ALL_ROLES = ['persona', 'environmentActionSelector', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
 
 function normalizeProviderCapabilities(value: unknown): Array<'text' | 'image'> {
   if (!Array.isArray(value)) return []
@@ -194,21 +252,23 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     const backendStatus = await getBackendStatus();
 
     // Process user registry models - this is the ONLY source of truth
-    const availableModels: AvailableRegistryModel[] = Object.entries(registry.models || {})
-      .filter(([id]) => !id.startsWith(RETIRED_ENVIRONMENT_FOLD_PREFIX))
-      .map(([id, config]: [string, any]) => ({
-        id,
-        provider: config.provider,
-        model: config.model,
-        roles: Array.from(new Set<string>(config.roles || [])),
-        capabilities: Array.from(new Set<string>(config.capabilities || [])),
-        description: config.description || '',
-        adapters: config.adapters || [],
-        baseModel: config.baseModel || null,
-        metadata: config.metadata || {},
-        options: config.options || {},
-        source: 'user-registry' as const
-      }));
+    let availableModels = collapseModelInventory(
+      Object.entries(registry.models || {})
+        .filter(([id]) => !isRetiredDevelopmentModelId(id))
+        .map(([id, config]: [string, any]) => ({
+          id,
+          provider: config.provider,
+          model: config.model,
+          roles: Array.from(new Set<string>(config.roles || [])),
+          capabilities: Array.from(new Set<string>(config.capabilities || [])),
+          description: config.description || '',
+          adapters: config.adapters || [],
+          baseModel: config.baseModel || null,
+          metadata: config.metadata || {},
+          options: config.options || {},
+          source: 'user-registry' as const
+        }))
+    )
 
     // Extract base role assignments (defaults)
     const defaults = registry.defaults || {};
@@ -251,10 +311,14 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     // Runtime discovery feeds the existing registry UI; it does not become a
     // second configuration source. A discovered model is persisted only when
     // the user assigns or edits it through this handler.
+    let installedOllamaModels: AvailableRegistryModel[] = []
     if (isOllamaRunning) {
       try {
         const installed = await ollama.listModels()
-        const discovered = await Promise.all(installed.map(async installedModel => {
+        const productionModels = installed.filter(installedModel => (
+          !isRetiredDevelopmentModelId(`ollama.${installedModel.name}`)
+        ))
+        const discovered = await Promise.all(productionModels.map(async installedModel => {
           const details = await ollama.showModel(installedModel.name).catch(() => ({})) as { capabilities?: string[] }
           return {
             id: `ollama.${installedModel.name}`,
@@ -271,14 +335,13 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
           }
         }))
 
-        for (const model of discovered) {
-          const existing = availableModels.find(candidate => candidate.provider === 'ollama' && candidate.model === model.model)
-          if (existing) {
-            if (model.capabilities.length > 0) existing.capabilities = model.capabilities
-          } else {
-            availableModels.push(model)
-          }
-        }
+        availableModels = collapseModelInventory([...availableModels, ...discovered])
+
+        const installedNames = new Set(discovered.map(model => model.model))
+        installedOllamaModels = collapseModelInventory([
+          ...availableModels.filter(model => model.provider === 'ollama' && installedNames.has(model.model)),
+          ...discovered,
+        ])
       } catch (error) {
         console.warn('[model-registry] Failed to discover Ollama models:', error)
       }
@@ -340,14 +403,11 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       }
     }
 
-    const environmentClassifierStatus = await getEnvironmentClassifierRuntimeStatus(user.username);
     const modelCategories = {
-      // The default chat backend and a dedicated classifier may coexist. Keep
-      // the ordinary local model list tied to the selected chat backend.
       local: activeBackend === 'vllm' && isVLLMRunning
         ? [{ id: 'vllm.active', model: backendStatus.model || 'unknown', provider: 'vllm', locked: true }]
         : isOllamaRunning
-          ? availableModels.filter(m => m.provider === 'ollama')
+          ? installedOllamaModels
           : [],
       lora: vllmLoras,  // vLLM LoRA adapters
       remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
@@ -375,7 +435,6 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       activeBackend,
       resolvedBackend,
       localModel,
-      environmentClassifier: environmentClassifierStatus,
       sharedArtifacts: listLocalModelArtifacts(),
       modelCategories
     });
@@ -404,10 +463,16 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     if (!role || !modelId) {
       return { status: 400, error: 'role and modelId are required' };
     }
-    if (modelId.startsWith(RETIRED_ENVIRONMENT_FOLD_PREFIX)) {
+    if (role === 'environmentRouter') {
       return {
         status: 400,
-        error: 'Development-fold Environment Router checkpoints are retired from production selection',
+        error: 'environmentRouter is retired; assign the environmentActionSelector role instead',
+      };
+    }
+    if (isRetiredDevelopmentModelId(modelId)) {
+      return {
+        status: 400,
+        error: 'The retired Environment Router artifact cannot serve the Environment action-selector contract',
       };
     }
 
@@ -526,23 +591,6 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     } else {
       registry.defaults = registry.defaults || {};
       registry.defaults[role] = modelId;
-    }
-
-    // The Environment Router is one profile-owned selection surfaced under the
-    // environment mode. Keep its default and mode mapping aligned so callers
-    // that warm or resolve the role without a cognitive mode cannot revive a
-    // stale provider assignment.
-    if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
-      registry.defaults = registry.defaults || {};
-      registry.defaults[role] = modelId;
-      registry.cognitiveModeMappings = registry.cognitiveModeMappings || {};
-      registry.cognitiveModeMappings.environment = registry.cognitiveModeMappings.environment || {};
-      registry.cognitiveModeMappings.environment[role] = modelId;
-    }
-
-    if (role === ENVIRONMENT_ROUTER_MODEL_ROLE) {
-      registry.globalSettings = registry.globalSettings || {};
-      registry.globalSettings.environmentClassifierEnabled = true;
     }
 
     await writeModelRegistry(user.username, registry);

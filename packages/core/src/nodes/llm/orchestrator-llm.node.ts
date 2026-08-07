@@ -20,8 +20,6 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
-import { validateEnvironmentRouterDecision } from '../../environment-classifier.js';
-import { callEnvironmentClassifierRuntime } from '../../environment-classifier-runtime.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 // Action types that can trigger Big Brother
@@ -109,7 +107,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
-    { name: 'precomputedAnalysis', type: 'object', optional: true, description: 'Strict Core-owned routing result for a persisted workflow continuation' },
   ],
   outputs: [
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
@@ -175,11 +172,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const conversationHistory = inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
     const systemSettings = inputs.systemSettings || inputs[2] || {};
     const feedbackContext = inputs.feedbackContext || inputs[3] || null;
-    if (context.cognitiveMode === 'environment' && inputs.precomputedAnalysis) {
-      const validated = validateEnvironmentRouterDecision(inputs.precomputedAnalysis);
-      if (validated.valid && validated.value) return withAnalysis(validated.value);
-    }
-
     const userMessage = typeof inputData === 'string'
       ? inputData
       : (inputData?.message || context.userMessage || '');
@@ -257,16 +249,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
         { role: 'user' as const, content: userPrompt },
       ];
 
-      // Environment Mode may assign a compact classifier for context selection
-      // in the current user's model registry. Its result is advisory downstream;
-      // null deliberately falls back to the normal context orchestrator.
-      const classifierResponse = context.cognitiveMode === 'environment'
-        ? await callEnvironmentClassifierRuntime({
-            routingRequest: userMessage,
-            recentConversation: conversationHistory,
-          })
-        : null;
-      const response = classifierResponse ?? await callLLM({
+      const response = await callLLM({
         role: 'orchestrator',
         messages,
         cognitiveMode: context.cognitiveMode,
@@ -279,16 +262,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
       });
 
       try {
-        const rawParsed = JSON.parse(response.content);
-        const environmentContract = context.cognitiveMode === 'environment'
-          ? validateEnvironmentRouterDecision(rawParsed)
-          : null;
-        // Environment runtime and classifier evaluation share one Core-owned
-        // output contract. Preserve the existing conservative parser behavior
-        // for malformed or legacy output so this extraction is behavior-neutral.
-        const parsed = environmentContract?.valid && environmentContract.value
-          ? environmentContract.value
-          : rawParsed;
+        const parsed = JSON.parse(response.content);
         const needsEnvironment = typeof parsed.needsEnvironment === 'boolean'
           ? parsed.needsEnvironment
           : undefined;
@@ -308,8 +282,6 @@ Adjust your routing based on this feedback. If memory search already failed, con
           ? Math.max(0, Math.min(1, parsed.complexity))
           : 0.3;
         const actionType = parsed.actionType || 'none';
-        // In Environment Mode these fields select context only. The Environment
-        // LLM independently owns the semantic action decision.
         const triggersBigBrother = resolveOrchestratorActionRequirement({
           declaredNeedsAction: needsAction,
           actionType,

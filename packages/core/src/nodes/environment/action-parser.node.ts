@@ -26,20 +26,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizedCommand(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
 function unsupportedRobotCommand(
   actions: Array<{ type?: string; command?: string }>,
   advertised: string[] | undefined,
 ): string | null {
-  if (!advertised?.length) return null;
-  const supported = new Set(advertised.map(normalizedCommand));
+  const supported = new Set((advertised ?? []).map(command => command.trim()).filter(Boolean));
   const action = actions.find(candidate => (
     candidate.type === 'robotCommand'
     && typeof candidate.command === 'string'
-    && !supported.has(normalizedCommand(candidate.command))
+    && !supported.has(candidate.command.trim())
   ));
   return action?.command?.trim() || null;
 }
@@ -52,16 +47,6 @@ function actionIsAdvertised(
   return observation.capabilities.actions.includes(action.type as any);
 }
 
-function hasTerminalFeedback(observation: EnvironmentObservation | undefined): boolean {
-  return observation?.feedback?.some(feedback => (
-    feedback.type === 'completed'
-    || feedback.type === 'rejected'
-    || feedback.type === 'cancelled'
-    || feedback.type === 'expired'
-    || feedback.type === 'failed'
-  )) === true;
-}
-
 function isPhysicalMotionAction(action: Partial<EnvironmentAction>): boolean {
   return PHYSICAL_MOTION_ACTIONS.has(action.type ?? '');
 }
@@ -70,6 +55,7 @@ function visualFeedbackCapabilityAvailable(
   action: Partial<EnvironmentAction>,
   observation: EnvironmentObservation | undefined,
 ): boolean {
+  if (!observation) return false;
   if (action.type === 'inspect') {
     return observation.capabilities.actions.includes('inspect')
       && Boolean(observation.capabilities.activeView);
@@ -146,9 +132,9 @@ export const environmentActionParserNode = defineNode({
     { name: 'firstAction', type: 'object', description: 'First parsed action' },
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
-    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task validator' },
+    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task-state reducer' },
     { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
-    { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for the existing Environment Task Validator' },
+    { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for the Environment Task State owner' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
@@ -161,7 +147,6 @@ export const environmentActionParserNode = defineNode({
         ? inputs.observation as EnvironmentObservation
         : undefined;
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
-      const terminalFeedback = hasTerminalFeedback(observation);
       const parsed = parseEnvironmentModelOutput(inputs.response, sessionId);
       const routedContract = environmentTaskContractFromRouting(routingAnalysis);
       const persistedContract = environmentTaskContractFromObservation(observation);
@@ -213,11 +198,10 @@ export const environmentActionParserNode = defineNode({
         admissionBlockedReason = 'action_capability_unavailable';
       }
       const admissionBlocked = Boolean(admissionBlockedReason);
-      const requiresGeneratedMovement = !terminalFeedback
-        && !admissionBlocked
+      const requiresGeneratedMovement = !admissionBlocked
         && motionClass === 'body_local'
         && Boolean(parsed.movementRequest);
-      const movementRequestError = terminalFeedback ? '' : parsed.movementRequestError;
+      const movementRequestError = parsed.movementRequestError;
       const movementRequested = Boolean(movementRequestError || requiresGeneratedMovement);
       const movementRequest = requiresGeneratedMovement && movementSupported
         ? {
@@ -227,11 +211,9 @@ export const environmentActionParserNode = defineNode({
         : null;
       const actions = movementRequest
         ? []
-        : !terminalFeedback && !admissionBlocked
+        : !admissionBlocked
           ? supportedParsedActions
           : [];
-      const stopActions = parsed.actions.filter(action => action.type === 'stop');
-      if (terminalFeedback && stopActions.length > 0) actions.push(...stopActions);
       const movementError = motionAdmissionMessage(admissionBlockedReason)
         || movementRequestError
         || (requiresGeneratedMovement && !connectedSession
@@ -261,6 +243,7 @@ export const environmentActionParserNode = defineNode({
         && actions[0]?.type === 'robotCommand';
       const taskDecision = selectedAdvertisedRobotCommand
         ? {
+            ...(parsed.taskDecision ?? {}),
             outcome: 'act' as const,
             reason: parsed.taskDecision?.reason
               || 'Execute the Environment LLM-selected advertised robot command.',

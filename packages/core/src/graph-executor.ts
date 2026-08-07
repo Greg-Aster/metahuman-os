@@ -24,7 +24,7 @@ const LLM_NODE_TYPES = new Set([
   'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
   'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
   'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer',
-  'movement_generator', 'environment_task_refiner',
+  'movement_generator',
 ]);
 
 /**

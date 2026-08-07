@@ -24,27 +24,6 @@
     reason?: string;
   }
 
-  interface EnvironmentClassifierStatus {
-    enabled: boolean;
-    configured: boolean;
-    selectedModelId: string | null;
-    selected?: {
-      name: string;
-      fold: number;
-      checkpoint: number;
-      quality: { exactRouteRate: number };
-    };
-    selectedModel?: {
-      id: string;
-      name: string;
-      provider: string;
-      model: string;
-      scoredArtifact: boolean;
-    };
-    running: boolean;
-    loaded: boolean;
-  }
-
   interface LocalModelArtifact {
     id: string;
     displayName: string;
@@ -134,7 +113,6 @@
   let preferredLocalBackend: 'ollama' | 'vllm' = 'vllm';
   let resolvedBackend: ResolvedBackend | null = null;
   let backendStatus: BackendStatus | null = null;
-  let environmentClassifier: EnvironmentClassifierStatus | null = null;
   let available: BackendAvailability | null = null;
   let sharedArtifacts: LocalModelArtifact[] = [];
   let vllmArtifacts: LocalModelArtifact[] = [];
@@ -591,7 +569,6 @@
       const data = await res.json();
       backendStatus = data.active;
       available = data.available;
-      environmentClassifier = data.environmentClassifier || null;
       resolvedBackend = data.active?.resolvedBackend || null;
       sharedArtifacts = data.sharedArtifacts || data.available?.sharedArtifacts || [];
       applyBackendConfig(data.config);
@@ -789,29 +766,6 @@
       setTimeout(loadStatus, 2000);
     } catch (err) {
       error = `Failed to ${action} ${getBackendLabel(backend)}`;
-    } finally {
-      actionInProgress = null;
-    }
-  }
-
-  async function loadEnvironmentClassifier() {
-    actionInProgress = 'environment-classifier-load';
-    clearMessages();
-    try {
-      const res = await apiFetch('/api/warmup-model', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'environmentRouter', cognitiveMode: 'environment' }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        error = data.error || 'Failed to load the selected Environment Classifier';
-        return;
-      }
-      await loadStatus();
-      statusRefreshTrigger.update(n => n + 1);
-    } catch {
-      error = 'Failed to load the selected Environment Classifier';
     } finally {
       actionInProgress = null;
     }
@@ -1173,18 +1127,6 @@
             <span class="ml-auto w-2.5 h-2.5 rounded-full {available?.ollama.running ? 'bg-green-500' : available?.ollama.installed ? 'bg-red-500' : 'bg-gray-400'}"></span>
           </div>
 
-          {#if environmentClassifier?.configured && environmentClassifier.selectedModel?.provider === 'ollama'}
-            <div class="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/10 p-3 mb-4 text-sm">
-              <div class="font-medium text-violet-800 dark:text-violet-200">Profile Environment Router uses Ollama</div>
-              <div class="mt-1 text-xs text-violet-700 dark:text-violet-300">
-                {environmentClassifier.selectedModel.name}{environmentClassifier.loaded ? ' · loaded' : ''}
-              </div>
-              <p class="mt-2 mb-0 text-xs text-gray-600 dark:text-gray-400">
-                This profile selection is independent of the main Ollama chat model below. Change the router in the left model-status widget.
-              </p>
-            </div>
-          {/if}
-
           <div class="grid grid-cols-1 gap-3 mb-4">
             <label class="block text-sm">
               <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Default model</span>
@@ -1388,24 +1330,6 @@
             </div>
             <span class="ml-auto w-2.5 h-2.5 rounded-full {available?.vllm.running ? 'bg-green-500' : available?.vllm.installed ? 'bg-red-500' : 'bg-gray-400'}"></span>
           </div>
-
-          {#if environmentClassifier?.configured && environmentClassifier.selectedModel?.provider === 'vllm' && configuredActiveBackend !== 'vllm'}
-            <div class="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/10 p-3 mb-4 text-sm">
-              <div class="font-medium text-violet-800 dark:text-violet-200">
-                vLLM is assigned to the per-profile Environment Router
-              </div>
-              <div class="mt-1 text-xs text-violet-700 dark:text-violet-300">
-                {environmentClassifier.selectedModel?.name || environmentClassifier.selected?.name || environmentClassifier.selectedModelId}
-                {#if environmentClassifier.loaded} · loaded{/if}
-                {#if environmentClassifier.selected?.quality}
-                  · {Math.round(environmentClassifier.selected.quality.exactRouteRate * 1000) / 10}% scored exact routing
-                {/if}
-              </div>
-              <p class="mt-2 mb-0 text-xs text-gray-600 dark:text-gray-400">
-                The model and LoRA fields below configure vLLM only when it is selected as the default chat backend. Environment Router selection and enable/disable state remain in the current profile's model widget.
-              </p>
-            </div>
-          {/if}
 
           <div class="grid grid-cols-1 gap-3 mb-4">
             <label class="block text-sm">
@@ -1757,14 +1681,8 @@
               <button class="btn-danger" on:click={() => controlLLMBackend('vllm', 'stop')} disabled={actionInProgress !== null}>
                 {actionInProgress === 'vllm-stop' ? 'Stopping...' : 'Stop'}
               </button>
-              {#if !environmentClassifier?.configured || environmentClassifier.selectedModel?.provider !== 'vllm' || configuredActiveBackend === 'vllm'}
-                <button class="btn-secondary" on:click={() => controlLLMBackend('vllm', 'restart')} disabled={actionInProgress !== null || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>
-                  {actionInProgress === 'vllm-restart' ? 'Restarting...' : 'Restart'}
-                </button>
-              {/if}
-            {:else if environmentClassifier?.configured && environmentClassifier.selectedModel?.provider === 'vllm' && configuredActiveBackend !== 'vllm'}
-              <button class="btn-success" on:click={loadEnvironmentClassifier} disabled={actionInProgress !== null || !environmentClassifier.enabled}>
-                {actionInProgress === 'environment-classifier-load' ? 'Loading...' : 'Load Environment Router'}
+              <button class="btn-secondary" on:click={() => controlLLMBackend('vllm', 'restart')} disabled={actionInProgress !== null || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>
+                {actionInProgress === 'vllm-restart' ? 'Restarting...' : 'Restart'}
               </button>
             {:else}
               <button class="btn-success" on:click={() => controlLLMBackend('vllm', 'start')} disabled={actionInProgress !== null || !available?.vllm.installed || (selectedVllmArtifact !== null && !selectedVllmCompatibility?.compatible)}>

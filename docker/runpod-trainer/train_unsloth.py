@@ -414,6 +414,7 @@ def main():
         output_dir=output_dir,
         num_train_epochs=int(cfg["num_train_epochs"]),
         per_device_train_batch_size=int(cfg["per_device_train_batch_size"]),
+        per_device_eval_batch_size=int(cfg.get("per_device_eval_batch_size", 8)),
         gradient_accumulation_steps=int(cfg["gradient_accumulation_steps"]),
         learning_rate=float(cfg["learning_rate"]),
         fp16=False,  # Qwen models use bfloat16, not fp16

@@ -4,6 +4,7 @@
 
   interface RegistryModel {
     id: string
+    aliases?: string[]
     provider: string
     model: string
     roles?: string[]
@@ -28,6 +29,10 @@
   let error = ''
 
   $: selectedModel = models.find(model => model.id === selectedModelId) || null
+
+  function modelForAssignment(modelId: string): RegistryModel | undefined {
+    return models.find(model => model.id === modelId || model.aliases?.includes(modelId))
+  }
 
   onMount(loadRegistry)
 
@@ -60,10 +65,11 @@
       }
 
       models = Array.isArray(data.availableModels) ? data.availableModels : []
-      environmentModelId = data.roleAssignments?.persona || ''
+      const assignedModelId = data.roleAssignments?.persona || ''
+      environmentModelId = modelForAssignment(assignedModelId)?.id || assignedModelId
       const editableModels = models.filter(model => model.source === 'user-registry')
       if (!selectedModelId || !editableModels.some(model => model.id === selectedModelId)) {
-        selectedModelId = editableModels.find(model => model.id === environmentModelId)?.id || editableModels[0]?.id || ''
+        selectedModelId = modelForAssignment(environmentModelId)?.id || editableModels[0]?.id || ''
       }
       loadSelectedOptions()
     } catch (cause) {

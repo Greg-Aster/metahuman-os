@@ -9,10 +9,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
+import {
+  DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
+  DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID,
+  LEGACY_ENVIRONMENT_ROUTER_ROLE,
+} from './model-defaults.js';
 
 const LOG_PREFIX = '[model-resolver]';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder' | 'environmentRouter';
+export type ModelRole = 'orchestrator' | 'persona' | 'environmentActionSelector' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
@@ -52,7 +57,6 @@ export interface ModelRegistry {
     includePersonaSummary?: boolean;
     useAdapter?: boolean;
     activeAdapter?: unknown; // Can be various adapter configuration formats
-    environmentClassifierEnabled?: boolean;
   };
   defaults: Record<ModelRole, string>;
   models: Record<string, ModelDefinition>;
@@ -79,6 +83,80 @@ export interface ResolvedModel {
 
 const CACHE_TTL = 60000; // 1 minute
 const registryCache = new Map<string, { registry: ModelRegistry; timestamp: number }>();
+
+export interface ModelRegistryMigrationResult {
+  registry: ModelRegistry;
+  changed: boolean;
+}
+
+/**
+ * Migrate the retired advisory Environment Router role to the one full-output
+ * action-selector role. The old trained artifact is deliberately not reused:
+ * it learned a different 14-field contract and is removed from runtime choice.
+ */
+export function migrateModelRegistry(
+  input: ModelRegistry,
+): ModelRegistryMigrationResult {
+  const registry = structuredClone(input);
+  const before = JSON.stringify(registry);
+  const defaults = registry.defaults as Record<string, string>;
+  delete defaults[LEGACY_ENVIRONMENT_ROUTER_ROLE];
+  defaults.environmentActionSelector ??= DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+
+  const mappings = registry.cognitiveModeMappings ?? {};
+  for (const mapping of Object.values(mappings)) {
+    delete mapping[LEGACY_ENVIRONMENT_ROUTER_ROLE];
+  }
+  mappings.environment ??= {};
+  mappings.environment.environmentActionSelector ??= DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+  registry.cognitiveModeMappings = mappings;
+
+  const hierarchy = (registry.roleHierarchy ?? {}) as Record<string, string[]>;
+  delete hierarchy[LEGACY_ENVIRONMENT_ROUTER_ROLE];
+  hierarchy.environmentActionSelector ??= [DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID];
+  registry.roleHierarchy = hierarchy as ModelRegistry['roleHierarchy'];
+
+  for (const [id, definition] of Object.entries(registry.models)) {
+    const hadLegacyRole = definition.roles.includes(LEGACY_ENVIRONMENT_ROUTER_ROLE);
+    definition.roles = Array.from(new Set(
+      definition.roles.filter(role => role !== LEGACY_ENVIRONMENT_ROUTER_ROLE),
+    ));
+    if (hadLegacyRole && definition.roles.length === 0) delete registry.models[id];
+  }
+  registry.models[DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID] ??= {
+    provider: 'ollama',
+    model: DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
+    adapters: [],
+    roles: ['environmentActionSelector'],
+    capabilities: ['text'],
+    description: 'System-owned fast Environment action selector using the complete Core model-output contract',
+    options: {
+      contextWindow: 2048,
+      temperature: 0.1,
+      topP: 0.9,
+      repeatPenalty: 1.05,
+      enableThinking: false,
+    },
+    metadata: {
+      priority: 'high',
+      alwaysLoaded: true,
+      estimatedLatency: 'fast',
+      purpose: 'Environment intent and exact typed action selection',
+      systemOwned: true,
+    },
+  };
+
+  return {
+    registry,
+    changed: before !== JSON.stringify(registry),
+  };
+}
+
+function persistMigratedRegistry(registryPath: string, registry: ModelRegistry): void {
+  const temporaryPath = `${registryPath}.migration-${process.pid}`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(registry, null, 2)}\n`, 'utf8');
+  fs.renameSync(temporaryPath, registryPath);
+}
 
 /**
  * Get the active LLM backend (ollama or vllm)
@@ -115,6 +193,13 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
   // local-models (llama.cpp) runs on CPU - it can run in parallel with GPU backends
   // Never override local-models requests since they don't conflict with vLLM/Ollama
   if (resolved.provider === 'local-models') {
+    return resolved;
+  }
+
+  // The Environment action selector is a dedicated Ollama system model, not a
+  // generic backend slot. Replacing it with vllm.active would silently restore
+  // the general model to the simple action path.
+  if (resolved.roles.includes('environmentActionSelector')) {
     return resolved;
   }
 
@@ -200,12 +285,15 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 
   try {
     const content = fs.readFileSync(registryPath, 'utf-8');
-    const registry = JSON.parse(content) as ModelRegistry;
+    const parsedRegistry = JSON.parse(content) as ModelRegistry;
 
     // Validate required fields
-    if (!registry.defaults || !registry.models) {
+    if (!parsedRegistry.defaults || !parsedRegistry.models) {
       throw new Error('Invalid model registry: missing required fields (defaults, models)');
     }
+    const migration = migrateModelRegistry(parsedRegistry);
+    const registry = migration.registry;
+    if (migration.changed) persistMigratedRegistry(registryPath, registry);
 
     registryCache.set(registryPath, { registry, timestamp: now });
 

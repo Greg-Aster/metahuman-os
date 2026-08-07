@@ -580,7 +580,8 @@ try {
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-empty' } as never, {});
   assert.equal(emptyConversation.status, 'no_actions');
-  assert.match(emptyConversation.response, /no environment action was produced/i);
+  assert.equal(emptyConversation.response, '');
+  assert.match(emptyConversation.message, /no environment action was produced/i);
 
   const unavailableAction = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
@@ -681,7 +682,7 @@ try {
     },
   }, { userMessage: '' });
   assert.match(String(feedbackInstruction.instruction), /Robot action rejected/);
-  assert.match(String(feedbackInstruction.instruction), /do not issue a new action/);
+  assert.match(String(feedbackInstruction.instruction), /exact terminal result/);
 
   const contextualInstruction = await environmentInstructionInterpreterNode.execute({
     observation: contextualResult,
@@ -689,8 +690,8 @@ try {
   assert.equal(
     contextualInstruction.instruction,
     [
-      'Robot action completed: done. This terminal result is evidence for validation only; do not issue a new action from this event.',
-      'Original user objective (still authoritative for completion validation; do not directly re-execute it in this pass): Wave, then use the returned view to tell me what changed.',
+      'Robot action completed: done. This exact terminal result is evidence for the original objective.',
+      'Original user objective (still authoritative): Wave, then use the returned view to tell me what changed.',
     ].join('\n'),
   );
   assert.match(
@@ -704,7 +705,7 @@ try {
       adapter: 'ainekio-gateway',
       sessionId: 'robot-1',
       timestamp: new Date().toISOString(),
-      capabilities: { actions: ['robotCommand'] },
+      capabilities: { actions: ['robotCommand'], robotCommands: ['wave'] },
       feedback: [{
         id: 'completed-result-1',
         timestamp: new Date().toISOString(),
@@ -725,8 +726,8 @@ try {
       },
     },
   }, { userMessage: '' });
-  assert.match(String(continuationInstruction.instruction), /evidence for validation only/);
-  assert.match(String(continuationInstruction.instruction), /do not issue a new action/);
+  assert.match(String(continuationInstruction.instruction), /exact terminal result/);
+  assert.match(String(continuationInstruction.instruction), /original objective/);
 
   const parsedTerminalFeedback = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -739,7 +740,8 @@ try {
     sessionId: 'robot-1',
     routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
   }, {});
-  assert.deepEqual(parsedTerminalFeedback.actions, []);
+  assert.equal(parsedTerminalFeedback.actions.length, 1);
+  assert.equal(parsedTerminalFeedback.actions[0].command, 'wave');
   assert.equal(parsedTerminalFeedback.movementRequest, null);
   assert.equal(parsedTerminalFeedback.movementRequested, false);
   assert.equal(
@@ -930,9 +932,19 @@ try {
   assert.equal(typeof content, 'string');
   assert.deepEqual(contextOutput.images, []);
   assert.doesNotMatch(String(content), /Visual frame/);
-  assert.match(String(content), /Supported robot commands: stand, wave, dance/);
-  assert.match(String(content), /never put a bare command string in actions/i);
-  assert.match(String(content), /"type":"robotCommand"/);
+  const selectorEnvelope = JSON.parse(String(content)) as {
+    currentInstruction: string;
+    currentEnvironment: {
+      capabilities: { actions: string[]; robotCommands: string[] };
+      visualFrames: unknown[];
+    };
+  };
+  assert.equal(selectorEnvelope.currentInstruction, 'Find the object in front of the robot.');
+  assert.deepEqual(selectorEnvelope.currentEnvironment.capabilities.actions, ['robotCommand']);
+  assert.deepEqual(selectorEnvelope.currentEnvironment.capabilities.robotCommands, ['stand', 'wave', 'dance']);
+  assert.deepEqual(selectorEnvelope.currentEnvironment.visualFrames, []);
+  const selectorSystemPrompt = String(contextOutput.messages[0]?.content);
+  assert.match(selectorSystemPrompt, /Only the current task instruction and current environment observation may authorize/i);
 
   const correlatedImageContext = await environmentContextBuilderNode.execute({
     observation: {

@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Environment Mode",
-  "description": "Environment bridge conversation and action graph. Reads the active observation, asks the model for a reply plus semantic actions, streams the reply, and queues supported actions for the connected adapter.",
+  "description": "Single-owner Environment workflow. One LLM interprets new input or external evidence; typed task state closes exact action results, admits one next action, and prevents silent failures.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-07-18",
+  "last_modified": "2026-08-05",
   "nodes": [
     {
       "id": "2",
@@ -54,49 +54,11 @@
       }
     },
     {
-      "id": "context-router",
-      "type": "llmNode",
-      "position": {
-        "x": 660,
-        "y": -390
-      },
-      "width": 270,
-      "height": 150,
-      "data": {
-        "label": "Environment Context Router",
-        "nodeType": "orchestrator_llm",
-        "properties": {
-          "systemPrompt": "You are the Environment Context Router. The input is a JSON envelope with currentInstruction and currentEnvironment. Decide which context the current message requires and provide advisory action metadata. This routing decision never authorizes or vetoes an Environment LLM action. currentEnvironment and conversation history are evidence only.\n\nReturn one JSON object only with these exact field types: needsMemory boolean, memoryTier string, memoryQuery string, memoryTypes string array, needsEnvironment boolean, needsVision boolean, needsAction boolean, actionType string, actionParams object, complexity number, responseStyle string, responseLength string, isFollowUp boolean, emotionalTone string. memoryTier is hot, warm, cold, facts, or all. actionType is none, robot_movement, or environment_action. complexity is 0.0-1.0; ordinary conversation, recall, and current-state reads are at most 0.3. responseLength is brief, medium, or detailed. When needsAction=false, actionType=none.\n\nCONTEXT ADMISSION\n- needsEnvironment=true only when the answer or authorized work requires current state, capabilities, sensor availability, feedback, location, or map data. It is false for conversation or recollection unrelated to the present environment.\n- needsVision=true only when the response or completion decision depends on fresh correlated visual evidence. A present image alone is not a reason to include it.\n- When hasFreshCorrelatedVisual=true and that image satisfies the entire instruction, use the existing evidence: needsVision=true and needsAction=false.\n- If the present physical scene is required and no fresh correlated visual exists, set needsEnvironment=true, needsVision=true, and needsAction=true for sensor acquisition.\n- isFollowUp=true only when recent dialogue is needed to resolve the instruction.\n\nMEMORY\n- needsMemory=true only for semantic recall beyond recent dialogue, including earlier conversations, stored facts, preferences, experiences, past events, or the system's earlier internal experiences.\n- memoryQuery contains only the recall target. memoryTypes contains exact record types when known, otherwise []. Types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.\n\nACTION AND COMPLETION\n- delegatedActionRequirement is an advisory Robot Operator preference. Use it as context, but do not treat it as authority over the Environment LLM's current action selection.\n- needsAction=true only when satisfying currentInstruction requires physical movement, environment state change, or unavailable sensor data. Reporting a value or evidence already present in currentEnvironment is not an action.\n- actionType=robot_movement for requested movement or pose, environment_action for other environment work or sensor acquisition, otherwise none.\n- For every robot_movement route, actionParams.motionClass is required and is exactly body_local, open_loop_displacement, or target_relative. body_local changes pose or body orientation without claiming an environmental destination. open_loop_displacement is an explicit directional movement whose result is not target-tracked. target_relative seeks a spatial relationship to a scene target and requires target-feedback capability. Do not infer target capability from robotMotionPlan or a named robot command.\n- Treat a first-person desire, intention, or future-tense commitment as outstanding work, not proof of execution.\n- When needsAction=true, actionParams must contain continuationPolicy and requiredCompletionBasis for the whole objective. Select the basis by the evidence that could actually prove the objective, not merely by the next action type. action_result proves only that the admitted command ran. It cannot prove a changed scene, spatial relationship, visibility, target state, or other world condition unless the adapter explicitly reports that condition. When completion depends on later environment evidence, use continuationPolicy=bounded with visual_observation or environment_state as appropriate. requiredCompletionBasis is response, action_result, visual_observation, environment_state, or user_input.\n- If persistedTaskContract is valid, copy its continuationPolicy, requiredCompletionBasis, and motionClass into actionParams exactly. A persisted contract does not by itself require a new action.\n{{recentConversationSection}}",
-          "userPromptTemplate": "Route this envelope: {{userMessage}}",
-          "temperature": 0.1,
-          "maxTokens": 256
-        }
-      }
-    },
-    {
-      "id": "memory-decision",
-      "type": "routerNode",
-      "position": {
-        "x": 990,
-        "y": -390
-      },
-      "width": 250,
-      "height": 120,
-      "data": {
-        "label": "Context Decision",
-        "nodeType": "smart_router",
-        "properties": {
-          "routeOnComplexity": true,
-          "simpleThreshold": 0.3
-        }
-      }
-    },
-    {
       "id": "memory-router",
       "type": "memoryNode",
       "position": {
-        "x": 700,
-        "y": -150
+        "x": 650,
+        "y": -160
       },
       "width": 250,
       "height": 120,
@@ -105,25 +67,7 @@
         "nodeType": "memory_router",
         "properties": {
           "topK": 3,
-          "threshold": 0.6
-        }
-      }
-    },
-    {
-      "id": "memory-interpreter",
-      "type": "memoryNode",
-      "position": {
-        "x": 990,
-        "y": -150
-      },
-      "width": 250,
-      "height": 120,
-      "data": {
-        "label": "Memory Relevance",
-        "nodeType": "search_interpreter",
-        "properties": {
-          "relevanceThreshold": 0.6,
-          "maxResults": 3
+          "threshold": 0.65
         }
       }
     },
@@ -131,7 +75,7 @@
       "id": "11",
       "type": "environmentNode",
       "position": {
-        "x": 360,
+        "x": 650,
         "y": 290
       },
       "width": 260,
@@ -143,10 +87,27 @@
       }
     },
     {
+      "id": "task-state-prepare",
+      "type": "environmentNode",
+      "position": {
+        "x": 650,
+        "y": 80
+      },
+      "width": 260,
+      "height": 150,
+      "data": {
+        "label": "Prepare Environment Task",
+        "nodeType": "environment_task_state",
+        "properties": {
+          "phase": "prepare"
+        }
+      }
+    },
+    {
       "id": "3",
       "type": "environmentNode",
       "position": {
-        "x": 700,
+        "x": 970,
         "y": 80
       },
       "width": 280,
@@ -155,7 +116,7 @@
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "EXECUTION GROUNDING CONTRACT\nThe Task instruction may be a Robot Operator inner intention. Treat it as an outstanding, unexecuted objective even when it is written in the first person. Decide how to satisfy it using only current advertised capabilities and current evidence.\n\nWhen the objective requires a physical action or new sensor data, return a corresponding supported action in actions[] or a valid movementRequest in the same JSON response. Do useful work now; do not merely repeat, paraphrase, promise, or narrate the Task instruction. Do not copy the Task instruction verbatim into response.\n\nAn action in the current output has not happened yet. Before correlated terminal feedback, response may describe only what the robot is about to attempt and must not claim that it is moving, has moved, sees a changed viewpoint, or completed the objective. Only correlated terminal feedback or current verified environment evidence may support such a result claim. If no valid action can be produced, leave actions empty, keep movementRequest null, and state the capability or evidence limitation without implying execution.\n\nADVERTISED MOTION CONTRACT\nThe Context Router supplies advisory context hints and fallback contract fields. It never authorizes or vetoes an action. As the semantic action selector, classify the action you actually select with taskDecision.motionClass: body_local, open_loop_displacement, or target_relative. motionClass records semantics; it never vetoes an otherwise advertised action selected by this LLM. Choose completion evidence from the objective. A correlated action_result proves that the selected command executed. A correlated post-action image can prove a requested change in the external scene. The robot-mounted camera observes the external scene, not the robot itself, so never use its image to judge the robot's own pose or body motion. For an external spatial objective such as approaching a visible object, select a useful advertised command, preserve the objective with continuationPolicy=bounded and requiredCompletionBasis=visual_observation, then judge the returned image. If the image does not prove completion, report the failed attempt truthfully and allow the existing refinement stage to ask this LLM for a different next action. Do not hardcode a retry command or infer success from command execution alone. A robotMotionPlan proves only that a bounded joint trajectory can execute and never proves navigation. Never claim target tracking, path planning, obstacle avoidance, distance control, or arrival from an open-loop command.\n\nCOMPLETION AND REFINEMENT CONTRACT\nOn a terminal action result or returned observation, assess only whether the original objective is complete from the required evidence. A failed or expired action result may enter the existing bounded retry path. A completed command whose external objective is not supported by its correlated image remains incomplete and may enter refinement. Do not write a next instruction or plan the retry in this response. The existing Environment Task Validator decides whether refinement is permitted, and the later Environment Task Refiner LLM writes the next prompt only after that decision.",
+          "systemPrompt": "ENVIRONMENT ACTION SELECTION\nReturn exactly one JSON object with the four top-level fields response, actions, movementRequest, and taskDecision. Select at most one action. Interpret the current instruction semantically from the supplied capabilities; never use aliases, keyword rules, or phrase matching.\n\ntaskDecision is the semantic contract for the whole objective. It must contain outcome, reason, objectiveComplete, continuationPolicy, and requiredCompletionBasis. outcome must be exactly one of complete, continue, observe, act, escalate, report, curiosity, background, request_user, or wait. Whenever this response selects an action, use outcome=act and objectiveComplete=false. Use continuationPolicy=none with requiredCompletionBasis=action_result only when successful completion of the selected action itself satisfies the entire objective. Use continuationPolicy=bounded when the objective remains active across observations or actions. Use requiredCompletionBasis=visual_observation when actual robot-camera evidence determines success, environment_state for reported state, response for conversation, and user_input only when the user must supply the missing result. For visual evidence, set visualEvidenceMode=single for a current-scene judgment or comparison only when a before-and-after comparison is necessary. Every physical action must also classify motionClass as body_local, open_loop_displacement, or target_relative.\n\nFor an advertised named command return actions:[{\"type\":\"robotCommand\",\"command\":\"<exact advertised command>\"}] and movementRequest:null. For a genuinely off-script body-local posture or expression that cannot use an advertised command, return actions:[] and movementRequest:{\"description\":\"<precise requested motion>\"}. Never use movementRequest when an advertised command satisfies the request.\n\nThe robot-mounted camera sees the external scene, not its own body. Never describe the current scene from capability flags, frame metadata, conversation history, or memory. If the objective requires current visual evidence and no image content is attached, return actions:[{\"type\":\"captureImage\"}] when captureImage is advertised, keep the original objective incomplete, and preserve a bounded visual_observation contract. captureImage is an action type, never a robotCommand command. When correlated feedback and an image are attached for a bounded objective, inspect that image against the original stopping condition. If the condition is satisfied, return no action and complete from visual_observation. If it is not satisfied, select the next advertised action in the same response. Never claim to be waiting, searching, or continuing without returning the action that performs that next step.\n\nFor conversation, state, or capability questions that do not require current sight, answer in response with actions:[] and movementRequest:null. A direct visual answer is allowed only when image content is attached. An action selected in this output has not happened yet, so response may say what will be attempted but must not claim completion. Task State is the sole lifecycle owner for persistence, feedback correlation, step limits, and completion; this selector supplies the semantic lifecycle contract that Task State preserves. Target-relative work requires explicitly advertised feedback capability. Negated, quoted, hypothetical, stale, conditional, or future work does not authorize current motion.",
           "recentHistoryLimit": 4
         }
       }
@@ -164,18 +125,18 @@
       "id": "4",
       "type": "llmNode",
       "position": {
-        "x": 1050,
+        "x": 1310,
         "y": 90
       },
       "width": 220,
       "height": 120,
       "data": {
-        "label": "Environment LLM",
+        "label": "Environment Action Selector",
         "nodeType": "model_router",
         "properties": {
-          "role": "persona",
+          "role": "environmentActionSelector",
           "maxTokens": 1024,
-          "temperature": 0.55,
+          "temperature": 0.1,
           "format": "json"
         }
       }
@@ -184,7 +145,7 @@
       "id": "5",
       "type": "outputNode",
       "position": {
-        "x": 1340,
+        "x": 1570,
         "y": 90
       },
       "width": 220,
@@ -199,7 +160,7 @@
       "id": "6",
       "type": "environmentNode",
       "position": {
-        "x": 1630,
+        "x": 1550,
         "y": 10
       },
       "width": 240,
@@ -211,90 +172,19 @@
       }
     },
     {
-      "id": "visual-evidence-assessor",
+      "id": "task-state-reduce",
       "type": "environmentNode",
       "position": {
-        "x": 1920,
-        "y": -40
-      },
-      "width": 280,
-      "height": 170,
-      "data": {
-        "label": "Visual Evidence Assessor",
-        "nodeType": "environment_visual_evidence_assessor",
-        "properties": {
-          "role": "orchestrator",
-          "systemPrompt": "You are the Environment Visual Evidence Assessor. Independently evaluate the visual completion condition required by the original objective against exactly the attached current correlated camera frame. Assessment occurs after a completed action step or an explicit completion claim; the Environment model does not have to notice or claim the condition first. Evaluate only whether the required visual condition is clearly and directly satisfied in this frame. The action result, the assistant's narrative, earlier frames, conversation history, and assumptions are not visual evidence. Use verdict supported only when the required condition is unambiguous in the frame. Use unsupported when the frame contradicts or does not contain the required condition. Use uncertain when occlusion, framing, or ambiguity prevents a reliable decision.\n\nYou validate evidence only; you do not plan the next action, write a continuation instruction, or reassign an actor. Preserve the original actors, ownership, sensor, and stopping condition. The existing task validator and graph-owned refinement stage handle an incomplete result. Do not use object-specific rules, invent capabilities, or claim that a condition is visible unless it is directly present.\n\nReturn exactly one JSON object with verdict, reason, and response. verdict must be supported, unsupported, or uncertain. reason must briefly state what the exact frame does or does not prove. response must be one concise evidence-grounded task-status sentence suitable for the user.",
-          "maxTokens": 512,
-          "temperature": 0
-        }
-      }
-    },
-    {
-      "id": "task-contract",
-      "type": "environmentNode",
-      "position": {
-        "x": 1920,
-        "y": -250
-      },
-      "width": 280,
-      "height": 150,
-      "data": {
-        "label": "Environment Task Contract",
-        "nodeType": "environment_task_contract",
-        "properties": {}
-      }
-    },
-    {
-      "id": "task-validator",
-      "type": "environmentNode",
-      "position": {
-        "x": 1920,
-        "y": 180
+        "x": 2120,
+        "y": 90
       },
       "width": 260,
       "height": 170,
       "data": {
-        "label": "Environment Task Validator",
-        "nodeType": "environment_task_validator",
-        "properties": {}
-      }
-    },
-    {
-      "id": "task-refiner",
-      "type": "environmentNode",
-      "position": {
-        "x": 2210,
-        "y": -240
-      },
-      "width": 300,
-      "height": 190,
-      "data": {
-        "label": "Environment Task Refiner",
-        "nodeType": "environment_task_refiner",
+        "label": "Reduce Environment Task",
+        "nodeType": "environment_task_state",
         "properties": {
-          "role": "orchestrator",
-          "systemPrompt": "You are the Environment Task Refiner inside the existing Environment Mode workflow. The existing Environment Task Validator has already determined that the current attempt did not complete the original objective. Do not revalidate that decision and do not claim completion. A supported visual completion is terminal and must never reach refinement.\n\nWrite one improved, narrower high-level instruction for the next Environment Mode attempt. Preserve the original objective, actor roles, ownership, sensor, stopping condition, and required completion evidence exactly. Use the validator reason, terminal feedback, current observation, image, prior instruction, conversation context, and persona to correct or improve the approach. Those sources may inform the approach but may not redefine the objective. The new instruction may change viewpoint, request fresh evidence, choose a different approach, or communicate when appropriate, but it must remain within the stated objective and current advertised capabilities. Describe what the next Environment pass should achieve; do not select raw servo values, joint targets, implementation details, queues, buffers, or tools. Do not merely repeat the prior instruction unless the current evidence makes a repeat the best refined attempt.\n\nAlso write one concise user-visible message that honestly says the prior attempt did not yet complete the objective and explains the refined next attempt. Do not claim the next action is already happening or completed. The message will be recorded in the existing Conversation Buffer before the refined instruction is queued.\n\nReturn exactly one JSON object and no markdown: {\"instruction\":\"one refined Environment Mode instruction\",\"message\":\"one user-visible refinement update\",\"reason\":\"brief evidence-based reason for this refinement\"}.",
-          "historyLimit": 8,
-          "maxTokens": 768,
-          "temperature": 0.2
-        }
-      }
-    },
-    {
-      "id": "workflow-command",
-      "type": "environmentNode",
-      "position": {
-        "x": 2820,
-        "y": -220
-      },
-      "width": 260,
-      "height": 140,
-      "data": {
-        "label": "Environment Workflow Command",
-        "nodeType": "environment_workflow_command",
-        "properties": {
-          "graph": "environment"
+          "phase": "reduce"
         }
       }
     },
@@ -302,7 +192,7 @@
       "id": "8",
       "type": "environmentNode",
       "position": {
-        "x": 2500,
+        "x": 2420,
         "y": 150
       },
       "width": 240,
@@ -313,6 +203,7 @@
         "properties": {
           "allowedActions": [
             "move",
+            "look",
             "jump",
             "interact",
             "stop",
@@ -329,45 +220,11 @@
       }
     },
     {
-      "id": "persona-loader",
-      "type": "personaNode",
-      "position": {
-        "x": 2200,
-        "y": 450
-      },
-      "width": 220,
-      "height": 110,
-      "data": {
-        "label": "Persona Loader",
-        "nodeType": "persona_loader",
-        "properties": {}
-      }
-    },
-    {
-      "id": "persona-formatter",
-      "type": "personaNode",
-      "position": {
-        "x": 2490,
-        "y": 450
-      },
-      "width": 240,
-      "height": 120,
-      "data": {
-        "label": "Persona Formatter",
-        "nodeType": "persona_formatter",
-        "properties": {
-          "includeValues": true,
-          "includeGoals": true,
-          "includePersonality": true
-        }
-      }
-    },
-    {
       "id": "movement-generator",
       "type": "environmentNode",
       "position": {
-        "x": 2210,
-        "y": 0
+        "x": 1830,
+        "y": -80
       },
       "width": 250,
       "height": 150,
@@ -521,19 +378,67 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Latest raw environment observation"
+        "comment": "Normalize the current environment input"
       }
     },
     {
-      "id": "e-10-observation-3-observation",
+      "id": "e-10-observation-task-state-prepare-observation",
       "source": "10",
-      "target": "3",
+      "target": "task-state-prepare",
       "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Normalized environment observation"
+        "comment": "Prepare one typed lifecycle state"
+      }
+    },
+    {
+      "id": "e-10-instruction-task-state-prepare-instruction",
+      "source": "10",
+      "target": "task-state-prepare",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Current instruction or exact feedback envelope"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-memoryHints-memory-router-orchestratorHints",
+      "source": "task-state-prepare",
+      "target": "memory-router",
+      "sourceHandle": "memoryHints",
+      "targetHandle": "orchestratorHints",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Skip memory on feedback; bounded semantic retrieval on a new input"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-instruction-memory-router-userMessage",
+      "source": "task-state-prepare",
+      "target": "memory-router",
+      "sourceHandle": "instruction",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Current objective as the semantic memory query"
+      }
+    },
+    {
+      "id": "e-memory-router-memories-3-memories",
+      "source": "memory-router",
+      "target": "3",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Top semantically matching long-term memories"
       }
     },
     {
@@ -545,163 +450,67 @@
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Shared per-user rolling conversation context"
+        "comment": "Recent dialogue only on a new user pass"
       }
     },
     {
-      "id": "e-10-routingRequest-context-router-message",
-      "source": "10",
-      "target": "context-router",
-      "sourceHandle": "routingRequest",
-      "targetHandle": "message",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Classify context, action intent, and whole-objective evidence from the current instruction plus compact current state"
-      }
-    },
-    {
-      "id": "e-10-persistedRoutingAnalysis-context-router-precomputedAnalysis",
-      "source": "10",
-      "target": "context-router",
-      "sourceHandle": "persistedRoutingAnalysis",
-      "targetHandle": "precomputedAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Reuse the strict persisted task route without a routine Context Router model call"
-      }
-    },
-    {
-      "id": "e-conversation-history-history-context-router-conversationHistory",
-      "source": "conversation-history",
-      "target": "context-router",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Router inspects only its internally bounded recent preview"
-      }
-    },
-    {
-      "id": "e-context-router-analysis-memory-decision-orchestratorAnalysis",
-      "source": "context-router",
-      "target": "memory-decision",
-      "sourceHandle": "analysis",
-      "targetHandle": "orchestratorAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Normalize the LLM context decision"
-      }
-    },
-    {
-      "id": "e-memory-decision-memoryHints-memory-router-orchestratorHints",
-      "source": "memory-decision",
-      "target": "memory-router",
-      "sourceHandle": "memoryHints",
-      "targetHandle": "orchestratorHints",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Skip semantic retrieval unless the router requests recall"
-      }
-    },
-    {
-      "id": "e-10-instruction-memory-router-userMessage",
-      "source": "10",
-      "target": "memory-router",
-      "sourceHandle": "instruction",
-      "targetHandle": "userMessage",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Retrieve long-term memory only for the current conversational message"
-      }
-    },
-    {
-      "id": "e-memory-router-memories-memory-interpreter-searchResults",
-      "source": "memory-router",
-      "target": "memory-interpreter",
-      "sourceHandle": "memories",
-      "targetHandle": "searchResults",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Candidate semantic memories for relevance checking"
-      }
-    },
-    {
-      "id": "e-memory-decision-memoryHints-memory-interpreter-orchestratorIntent",
-      "source": "memory-decision",
-      "target": "memory-interpreter",
-      "sourceHandle": "memoryHints",
-      "targetHandle": "orchestratorIntent",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Tell the relevance interpreter whether recall was requested"
-      }
-    },
-    {
-      "id": "e-10-instruction-memory-interpreter-userQuery",
-      "source": "10",
-      "target": "memory-interpreter",
-      "sourceHandle": "instruction",
-      "targetHandle": "userQuery",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Judge memories against the current instruction"
-      }
-    },
-    {
-      "id": "e-memory-interpreter-relevantMemories-3-memories",
-      "source": "memory-interpreter",
-      "target": "3",
-      "sourceHandle": "relevantMemories",
-      "targetHandle": "memories",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Inject only memories judged relevant to this turn"
-      }
-    },
-    {
-      "id": "e-context-router-analysis-3-routingAnalysis",
-      "source": "context-router",
-      "target": "3",
-      "sourceHandle": "analysis",
-      "targetHandle": "routingAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Select recent dialogue and semantic memory on demand"
-      }
-    },
-    {
-      "id": "e-2-visual-11-visual",
-      "source": "2",
-      "target": "11",
-      "sourceHandle": "visual",
-      "targetHandle": "visual",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Latest camera still"
-      }
-    },
-    {
-      "id": "e-2-visuals-11-visuals",
-      "source": "2",
+      "id": "e-task-state-prepare-visuals-11-visuals",
+      "source": "task-state-prepare",
       "target": "11",
       "sourceHandle": "visuals",
       "targetHandle": "visuals",
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Available camera stills"
+        "comment": "One current frame or ordered baseline and result frames"
+      }
+    },
+    {
+      "id": "e-10-observation-3-observation",
+      "source": "10",
+      "target": "3",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Current capabilities, state, and exact feedback"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-instruction-3-instruction",
+      "source": "task-state-prepare",
+      "target": "3",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Task-state-grounded semantic instruction"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-routingAnalysis-3-routingAnalysis",
+      "source": "task-state-prepare",
+      "target": "3",
+      "sourceHandle": "routingAnalysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Deterministic context admission, never semantic action authority"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-taskState-3-taskState",
+      "source": "task-state-prepare",
+      "target": "3",
+      "sourceHandle": "taskState",
+      "targetHandle": "taskState",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "The sole objective lifecycle state"
       }
     },
     {
@@ -713,19 +522,7 @@
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Validated camera stills for the normally selected model"
-      }
-    },
-    {
-      "id": "e-10-instruction-3-instruction",
-      "source": "10",
-      "target": "3",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Normalized environment instruction"
+        "comment": "Bounded validated model image content"
       }
     },
     {
@@ -737,7 +534,7 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Optional authored or generated map context"
+        "comment": "Optional authored map context"
       }
     },
     {
@@ -749,7 +546,7 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Optional authored or generated location context"
+        "comment": "Optional authored location context"
       }
     },
     {
@@ -761,7 +558,19 @@
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Prompt-ready model messages"
+        "comment": "Prompt-ready Environment decision"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-precomputedResponse-4-precomputedResponse",
+      "source": "task-state-prepare",
+      "target": "4",
+      "sourceHandle": "precomputedResponse",
+      "targetHandle": "precomputedResponse",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Bypass inference only for exact deterministic action-result closure"
       }
     },
     {
@@ -773,7 +582,7 @@
       "type": "default",
       "data": {
         "type": "llm_response",
-        "comment": "LLM response with possible thinking blocks"
+        "comment": "Pass the semantic Environment decision directly to the parser path"
       }
     },
     {
@@ -785,7 +594,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Parse response into environment actions"
+        "comment": "Parse the one Environment decision"
       }
     },
     {
@@ -797,7 +606,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Default environment session"
+        "comment": "Target robot session"
       }
     },
     {
@@ -809,259 +618,19 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Adapter capabilities and supported semantic robot commands"
+        "comment": "Advertised actions and named robot commands"
       }
     },
     {
-      "id": "e-context-router-analysis-6-routingAnalysis",
-      "source": "context-router",
+      "id": "e-task-state-prepare-routingAnalysis-6-routingAnalysis",
+      "source": "task-state-prepare",
       "target": "6",
-      "sourceHandle": "analysis",
+      "sourceHandle": "routingAnalysis",
       "targetHandle": "routingAnalysis",
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Advisory context and fallback contract metadata; never an action veto"
-      }
-    },
-    {
-      "id": "e-context-router-analysis-task-validator-routingAnalysis",
-      "source": "context-router",
-      "target": "task-validator",
-      "sourceHandle": "analysis",
-      "targetHandle": "routingAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Carry structured task persistence and whole-objective evidence requirements into validation"
-      }
-    },
-    {
-      "id": "e-context-router-analysis-visual-evidence-assessor-routingAnalysis",
-      "source": "context-router",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "analysis",
-      "targetHandle": "routingAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Carry the whole-objective evidence contract into independent visual assessment"
-      }
-    },
-    {
-      "id": "e-context-router-analysis-task-contract-routingAnalysis",
-      "source": "context-router",
-      "target": "task-contract",
-      "sourceHandle": "analysis",
-      "targetHandle": "routingAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Provide advisory context and fallback task-contract fields"
-      }
-    },
-    {
-      "id": "e-10-observation-task-contract-observation",
-      "source": "10",
-      "target": "task-contract",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Carry validator-persisted task contracts into reconciliation"
-      }
-    },
-    {
-      "id": "e-task-contract-taskDecision-visual-evidence-assessor-taskDecision",
-      "source": "task-contract",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "taskDecision",
-      "targetHandle": "taskDecision",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Audit the completion claim against the reconciled whole-objective contract"
-      }
-    },
-    {
-      "id": "e-6-taskDecision-task-contract-taskDecision",
-      "source": "6",
-      "target": "task-contract",
-      "sourceHandle": "taskDecision",
-      "targetHandle": "taskDecision",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Preserve the Environment LLM result while reconciling its contract fields"
-      }
-    },
-    {
-      "id": "e-10-instruction-visual-evidence-assessor-instruction",
-      "source": "10",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Preserve the current objective for semantic evidence assessment"
-      }
-    },
-    {
-      "id": "e-10-observation-visual-evidence-assessor-observation",
-      "source": "10",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Bind assessment to the current correlated observation"
-      }
-    },
-    {
-      "id": "e-11-images-visual-evidence-assessor-images",
-      "source": "11",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "images",
-      "targetHandle": "images",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Provide only validated current image content"
-      }
-    },
-    {
-      "id": "e-11-frames-visual-evidence-assessor-frames",
-      "source": "11",
-      "target": "visual-evidence-assessor",
-      "sourceHandle": "frames",
-      "targetHandle": "frames",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Bind the assessment output to exact frame metadata"
-      }
-    },
-    {
-      "id": "e-visual-evidence-assessor-assessment-task-validator-evidenceAssessment",
-      "source": "visual-evidence-assessor",
-      "target": "task-validator",
-      "sourceHandle": "assessment",
-      "targetHandle": "evidenceAssessment",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Require independent frame-bound support before accepting visual completion"
-      }
-    },
-    {
-      "id": "e-6-actions-task-validator-actions",
-      "source": "6",
-      "target": "task-validator",
-      "sourceHandle": "actions",
-      "targetHandle": "actions",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Validate current-pass semantic actions before bridge admission"
-      }
-    },
-    {
-      "id": "e-6-movementRequest-task-validator-movementRequest",
-      "source": "6",
-      "target": "task-validator",
-      "sourceHandle": "movementRequest",
-      "targetHandle": "movementRequest",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Validate current-pass off-script movement before generation"
-      }
-    },
-    {
-      "id": "e-6-response-task-validator-response",
-      "source": "6",
-      "target": "task-validator",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Preserve the conversational result through task validation"
-      }
-    },
-    {
-      "id": "e-task-contract-taskDecision-task-validator-taskDecision",
-      "source": "task-contract",
-      "target": "task-validator",
-      "sourceHandle": "taskDecision",
-      "targetHandle": "taskDecision",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Validate the Environment result under the independent whole-objective contract"
-      }
-    },
-    {
-      "id": "e-6-taskDecisionError-task-validator-taskDecisionError",
-      "source": "6",
-      "target": "task-validator",
-      "sourceHandle": "taskDecisionError",
-      "targetHandle": "taskDecisionError",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Surface malformed completion decisions to the validator"
-      }
-    },
-    {
-      "id": "e-6-actionAdmission-task-validator-actionAdmission",
-      "source": "6",
-      "target": "task-validator",
-      "sourceHandle": "actionAdmission",
-      "targetHandle": "actionAdmission",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Carry typed motion capability admission into the existing task lifecycle validator"
-      }
-    },
-    {
-      "id": "e-10-instruction-task-validator-instruction",
-      "source": "10",
-      "target": "task-validator",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Keep validation bounded to the current objective"
-      }
-    },
-    {
-      "id": "e-10-observation-task-validator-observation",
-      "source": "10",
-      "target": "task-validator",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Use current source metadata and terminal feedback for validation"
-      }
-    },
-    {
-      "id": "e-task-validator-actions-8-actions",
-      "source": "task-validator",
-      "target": "8",
-      "sourceHandle": "actions",
-      "targetHandle": "actions",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Queue only validator-admitted current actions; continuation instructions use the separate workflow branch"
+        "comment": "Fallback persisted task semantics only"
       }
     },
     {
@@ -1073,187 +642,7 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Generate a bounded body-local plan before the existing task validator admits it"
-      }
-    },
-    {
-      "id": "e-task-validator-response-8-response",
-      "source": "task-validator",
-      "target": "8",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Pass the validator-normalized conversational response through bridge delivery checks"
-      }
-    },
-    {
-      "id": "e-task-validator-taskInstruction-8-taskInstruction",
-      "source": "task-validator",
-      "target": "8",
-      "sourceHandle": "taskInstruction",
-      "targetHandle": "taskInstruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Persist the validator-owned task contract with correlated action feedback"
-      }
-    },
-    {
-      "id": "e-task-validator-refinementRequest-task-refiner-request",
-      "source": "task-validator",
-      "target": "task-refiner",
-      "sourceHandle": "refinementRequest",
-      "targetHandle": "request",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Only the existing validator may open the graph-owned refinement stage"
-      }
-    },
-    {
-      "id": "e-10-observation-task-refiner-observation",
-      "source": "10",
-      "target": "task-refiner",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Give the refinement LLM the current correlated result and capabilities"
-      }
-    },
-    {
-      "id": "e-11-images-task-refiner-images",
-      "source": "11",
-      "target": "task-refiner",
-      "sourceHandle": "images",
-      "targetHandle": "images",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Provide the exact current correlated image when available"
-      }
-    },
-    {
-      "id": "e-11-frames-task-refiner-frames",
-      "source": "11",
-      "target": "task-refiner",
-      "sourceHandle": "frames",
-      "targetHandle": "frames",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Bind refinement vision to current frame metadata"
-      }
-    },
-    {
-      "id": "e-conversation-history-history-task-refiner-conversationHistory",
-      "source": "conversation-history",
-      "target": "task-refiner",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Preserve bounded conversational continuity during refinement"
-      }
-    },
-    {
-      "id": "e-persona-formatter-formatted-task-refiner-personaText",
-      "source": "persona-formatter",
-      "target": "task-refiner",
-      "sourceHandle": "formatted",
-      "targetHandle": "personaText",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Keep refined attempts consistent with the active persona"
-      }
-    },
-    {
-      "id": "e-task-validator-decision-conversation-buffer-taskLifecycle",
-      "source": "task-validator",
-      "target": "conversation-buffer",
-      "sourceHandle": "decision",
-      "targetHandle": "taskLifecycle",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Persist the existing validator-owned task lifecycle with the visible assistant result"
-      }
-    },
-    {
-      "id": "e-task-refiner-conversationEntry-conversation-buffer-entry",
-      "source": "task-refiner",
-      "target": "conversation-buffer",
-      "sourceHandle": "conversationEntry",
-      "targetHandle": "entry",
-      "type": "default",
-      "data": {
-        "type": "message",
-        "comment": "Record the user-visible refinement through the existing canonical Conversation Buffer owner"
-      }
-    },
-    {
-      "id": "e-task-refiner-workflowCommand-conversation-buffer-passthrough",
-      "source": "task-refiner",
-      "target": "conversation-buffer",
-      "sourceHandle": "workflowCommand",
-      "targetHandle": "passthrough",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Sequence conversation admission before the refined Environment command"
-      }
-    },
-    {
-      "id": "e-conversation-buffer-passthrough-workflow-command-command",
-      "source": "conversation-buffer",
-      "target": "workflow-command",
-      "sourceHandle": "passthrough",
-      "targetHandle": "command",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Send the LLM-authored refined prompt through the existing Environment workflow command"
-      }
-    },
-    {
-      "id": "e-conversation-buffer-response-tts-out-conversation",
-      "source": "conversation-buffer",
-      "target": "tts-out",
-      "sourceHandle": "response",
-      "targetHandle": "conversation",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Reuse the single node-owned conversation TTS path for the visible refinement update"
-      }
-    },
-    {
-      "id": "e-conversation-buffer-response-12-response",
-      "source": "conversation-buffer",
-      "target": "12",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Stream the persisted refinement update through the existing Environment conversation path"
-      }
-    },
-    {
-      "id": "e-10-observation-workflow-command-observation",
-      "source": "10",
-      "target": "workflow-command",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Carry the current robot session and observation into the queued workflow"
+        "comment": "Generate body-local motion only when requested"
       }
     },
     {
@@ -1265,7 +654,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Original request for dedicated movement generation"
+        "comment": "Original movement objective"
       }
     },
     {
@@ -1277,7 +666,7 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Capability and current robot state gate"
+        "comment": "Current joint and capability context"
       }
     },
     {
@@ -1289,43 +678,187 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Coordinator-owned target session"
+        "comment": "Target robot session"
       }
     },
     {
-      "id": "e-movement-generator-actions-task-validator-generatedActions",
+      "id": "e-task-state-prepare-taskState-task-state-reduce-taskState",
+      "source": "task-state-prepare",
+      "target": "task-state-reduce",
+      "sourceHandle": "taskState",
+      "targetHandle": "taskState",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Prepared lifecycle state"
+      }
+    },
+    {
+      "id": "e-10-observation-task-state-reduce-observation",
+      "source": "10",
+      "target": "task-state-reduce",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Exact terminal result and current state"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-instruction-task-state-reduce-instruction",
+      "source": "task-state-prepare",
+      "target": "task-state-reduce",
+      "sourceHandle": "instruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Current objective or feedback decision instruction"
+      }
+    },
+    {
+      "id": "e-6-actions-task-state-reduce-actions",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "Capability-validated semantic actions"
+      }
+    },
+    {
+      "id": "e-6-movementRequest-task-state-reduce-movementRequest",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "movementRequest",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Movement generation request"
+      }
+    },
+    {
+      "id": "e-6-response-task-state-reduce-response",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Conversational result"
+      }
+    },
+    {
+      "id": "e-6-taskDecision-task-state-reduce-taskDecision",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Environment LLM completion decision"
+      }
+    },
+    {
+      "id": "e-6-taskDecisionError-task-state-reduce-taskDecisionError",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "taskDecisionError",
+      "targetHandle": "taskDecisionError",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Malformed semantic decision"
+      }
+    },
+    {
+      "id": "e-6-actionAdmission-task-state-reduce-actionAdmission",
+      "source": "6",
+      "target": "task-state-reduce",
+      "sourceHandle": "actionAdmission",
+      "targetHandle": "actionAdmission",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Typed capability validation"
+      }
+    },
+    {
+      "id": "e-movement-generator-actions-task-state-reduce-generatedActions",
       "source": "movement-generator",
-      "target": "task-validator",
+      "target": "task-state-reduce",
       "sourceHandle": "actions",
       "targetHandle": "generatedActions",
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Send strictly validated generated plans through the existing task lifecycle validator"
+        "comment": "Generated bounded body-local action"
       }
     },
     {
-      "id": "e-movement-generator-response-task-validator-generatedResponse",
+      "id": "e-movement-generator-response-task-state-reduce-generatedResponse",
       "source": "movement-generator",
-      "target": "task-validator",
+      "target": "task-state-reduce",
       "sourceHandle": "response",
       "targetHandle": "generatedResponse",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Let the existing task validator expose the generated-plan result or rejection"
+        "comment": "Movement generation status"
       }
     },
     {
-      "id": "e-movement-generator-controlResult-task-validator-motionControlResult",
-      "source": "movement-generator",
-      "target": "task-validator",
-      "sourceHandle": "controlResult",
-      "targetHandle": "motionControlResult",
+      "id": "e-11-frames-task-state-reduce-frames",
+      "source": "11",
+      "target": "task-state-reduce",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Carry cycle-owned plan identity and stuck evidence into the existing task validator"
+        "type": "array",
+        "comment": "Exact frames used for completion evidence"
+      }
+    },
+    {
+      "id": "e-task-state-reduce-actions-8-actions",
+      "source": "task-state-reduce",
+      "target": "8",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "comment": "At most one action for this objective step"
+      }
+    },
+    {
+      "id": "e-task-state-reduce-response-8-response",
+      "source": "task-state-reduce",
+      "target": "8",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Every new input receives a visible response or explicit failure"
+      }
+    },
+    {
+      "id": "e-task-state-reduce-taskInstruction-8-taskInstruction",
+      "source": "task-state-reduce",
+      "target": "8",
+      "sourceHandle": "taskInstruction",
+      "targetHandle": "taskInstruction",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Persist the sole typed lifecycle state with the action"
       }
     },
     {
@@ -1337,31 +870,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Target active environment session"
-      }
-    },
-    {
-      "id": "e-persona-loader-persona-persona-formatter-persona",
-      "source": "persona-loader",
-      "target": "persona-formatter",
-      "sourceHandle": "persona",
-      "targetHandle": "persona",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Load the active persona for text formatting only"
-      }
-    },
-    {
-      "id": "e-persona-formatter-formatted-3-personaText",
-      "source": "persona-formatter",
-      "target": "3",
-      "sourceHandle": "formatted",
-      "targetHandle": "personaText",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Apply the active persona in the primary Environment decision pass"
+        "comment": "Target robot session"
       }
     },
     {
@@ -1373,11 +882,11 @@
       "type": "default",
       "data": {
         "type": "object",
-        "comment": "Persist the structured outbound bridge result in the dedicated Robot Buffer"
+        "comment": "Structured outbound bridge record"
       }
     },
     {
-      "id": "e-conversation-history-history-conversation-buffer-history",
+      "id": "e-conversation-history-history-conversation-buffer-conversationHistory",
       "source": "conversation-history",
       "target": "conversation-buffer",
       "sourceHandle": "history",
@@ -1385,7 +894,7 @@
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Use the shared history to avoid duplicate user-message persistence"
+        "comment": "Canonical conversation history"
       }
     },
     {
@@ -1397,7 +906,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Persist only a genuine normalized conversational message"
+        "comment": "Current user input when not already admitted"
       }
     },
     {
@@ -1409,7 +918,31 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Append the single final response through the canonical buffer owner"
+        "comment": "One user-visible Environment response"
+      }
+    },
+    {
+      "id": "e-conversation-buffer-response-tts-out-conversation",
+      "source": "conversation-buffer",
+      "target": "tts-out",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Speak the same visible response"
+      }
+    },
+    {
+      "id": "e-conversation-buffer-response-12-response",
+      "source": "conversation-buffer",
+      "target": "12",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "comment": "Stream the same visible response"
       }
     },
     {
@@ -1421,7 +954,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Capture the genuine conversational message in global episodic memory"
+        "comment": "Current Environment input"
       }
     },
     {
@@ -1433,7 +966,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Capture the single final response for long-term retrieval"
+        "comment": "Final Environment response"
       }
     },
     {
@@ -1445,16 +978,20 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Display Environment Mode reply in chat"
+        "comment": "Environment chat output"
       }
     },
     {
-      "id": "e-task-validator-decision-node-1783475676613-data",
-      "source": "task-validator",
+      "id": "e-task-state-reduce-decision-node-1783475676613-data",
+      "source": "task-state-reduce",
       "target": "node-1783475676613",
       "sourceHandle": "decision",
       "targetHandle": "data",
-      "data": {}
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Typed lifecycle diagnostics"
+      }
     }
   ]
 }

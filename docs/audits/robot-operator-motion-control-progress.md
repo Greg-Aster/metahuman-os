@@ -28,6 +28,17 @@ sensors, a richer body, or a trained motion policy should replace or extend a
 body-side component without requiring the pet cognition, Environment Bridge,
 or semantic skill contracts to be rebuilt.
 
+Autonomous operation is part of that product intent. Subject to the selected
+Active Operator mode, MetaHuman may combine a fresh, correlated environmental
+photo or sensor event with bounded relevant context from the existing memory
+owners to choose a high-level activity. Memory may influence attention,
+preference, curiosity, and semantic intention, but it is not current sensor
+truth or physical authorization. The governing mode, observation, memory, and
+future-body contract lives in the **Intended Intelligent-Pet Operating Model**
+section of `docs/implementation-plans/robot-active-operator-roadmap.md`; this
+motion record must implement its body-side seam rather than duplicate its
+autonomy policy or memory system.
+
 V1 should therefore produce more than a demonstration. It should establish
 truthful state and capability contracts, replaceable controller boundaries,
 timestamped replay data, independent safety ownership, and simulator seams
@@ -497,6 +508,23 @@ and then use the same Environment Mode -> Embodied Skill Runtime path. Do not
 put action planning back into the reflection-only Boredom Movement graph or
 give the boredom timer its own robot-control loop.
 
+Longer term, an authorized Full-mode policy may use a fresh Robot Observer image,
+relevant bounded memory, current task state, and body capabilities to select an
+investigation or another useful activity. That high-level choice still enters
+the same Environment Mode -> Embodied Skill Runtime path. Memory, an interesting
+image, or a detector label may make an activity worth considering, but none of
+them bypasses mode admission, action authorization, capability truth, or safety.
+
+A request such as `find a cat` also exposes a skill boundary that the current
+`inspect` lane does not by itself satisfy. `inspect` improves and verifies the
+view of a subject already present in a fresh frame. A bounded future object-
+search or investigation skill must own the local scan, reacquisition, and, when
+truthful clearance and locomotion capabilities exist, approach loop. It should
+return progress and one terminal result without converting each V1 quadruped
+turn, walk asset, or photo into another MetaHuman graph pass. The semantic goal
+and result remain valid if a future body performs those corrections through a
+different locomotion backend.
+
 ## Expanded Goal: Object-Centered Robot Skills
 
 Stopping repeated failed movement is necessary, but it is not the end goal. The
@@ -768,6 +796,10 @@ scenarios are:
   checkpoint plus PyTorch/CUDA environments and replay artifacts. Model cache or
   storage placement must be an explicit owner decision; this work will not
   delete existing caches or user data to create space.
+- A later owner-led cleanup on 2026-08-05 raised available space to
+  approximately 98 GiB. This makes additional bounded replay practical but does
+  not relax the requirement to inventory source, checkpoints, transitive model
+  caches, and captures before selecting a production package.
 - An existing MetaHuman vLLM environment already contains NumPy, OpenCV 4.13,
   PyTorch, TorchVision, and Transformers. It is suitable for a read-only
   component screen without another installation. Production active perception
@@ -783,12 +815,12 @@ hardware as impossible.
 
 | Current condition | Immediate software option | Upgrade option and expected value |
 | --- | --- | --- |
-| About 12 GiB free disk after owner-led cleanup; host RAM is approximately 62 GiB | Reuse installed runtimes and record every model/replay footprint. The earlier low point was 2.9 GiB, so do not allow unbounded captures or duplicate checkpoints. | Allocate a dedicated model/replay volume if the selected production stack or longer datasets outgrow this headroom. More system RAM is not currently indicated. |
+| About 98 GiB free disk after owner-led cleanup; host RAM is approximately 62 GiB | Continue bounded replay and record source, checkpoints, implicit backbone caches, and captures. The earlier low points were 2.9 and 7.0 GiB, so do not allow unbounded captures or duplicate checkpoints. | Allocate a dedicated model/replay volume if the selected production stack or longer datasets outgrow this headroom. More system RAM is not currently indicated. |
 | OV3660 preview exists at QVGA/VGA up to 10 fps, but the Environment Adapter discards uncorrelated preview frames | Add a skill-owned latest-frame consumer to the existing Gateway preview; keep per-frame data out of the LLM graph. | Firmware may expose better stream control, timestamps, resolution, or cadence if measurements show 10 fps or JPEG behavior is inadequate. A new camera is an option, not the first assumption. |
 | No measured body heading, joint position, odometry, range, contact, or cliff state | Use camera-measured target displacement and calibrated semantic body primitives for bounded active inspection. Do not advertise navigation or clearance. | An IMU improves heading/change estimation; front/side time-of-flight or depth improves clearance; contact/cliff sensing improves independent safety; measured joint feedback improves body control. Each capability must be advertised only after integration and validation. |
 | Camera is fixed to the moving body | Derive and calibrate smaller whole-body left/right orientation primitives and correct from the next image. | A pan/tilt camera can improve views without destabilizing the whole body. Stereo/depth or a tracking camera can add geometry, but requires a new calibrated sensor contract. |
 | Current simulator motion does not alter the camera view | Add an action-indexed scenario through the existing `CameraSource` and `MotionBackend` seams. | A full robot-eye 3D simulator is useful later if contact, terrain, localization, or manipulation become active scope. |
-| No usable ordinary-object OV3660 replay is currently maintained | Capture ignored owner-local preview sequences with exact timestamps, action correlations, and separate annotation manifests. | A repeatable tagged test area and later ordinary-object suite improve regression quality; captured personal media remains untracked. |
+| One ignored owner-local ordinary-object OV3660 sequence now covers a distinct distractor, partial cover, full loss, and return | Keep it as the first component-comparison fixture while adding an independent target and same-class distractor sequence before selection. | A repeatable tagged test area and broader ordinary-object suite improve regression quality; captured personal media remains untracked. |
 
 Hardware priority should follow the objective gap. For active **inspection**, the
 highest-value first changes are live preview consumption and a smaller semantic
@@ -806,7 +838,9 @@ These are benchmark decisions, not production dependency selections.
 | [AprilTag 3](https://github.com/AprilRobotics/apriltag) | Fast deterministic target detection and calibrated pose for repeatable fixtures. | Use as the first calibration and regression truth lane. It cannot replace ordinary-object perception. |
 | [OpenCV optical flow and tracking](https://docs.opencv.org/5.0/tutorials/others/optical_flow.html) | CPU-capable short-horizon feature motion, target displacement, and inter-frame tracking. | Benchmark as a lightweight baseline and possible bridge between detector refreshes. Do not treat a drifting box tracker as durable object identity. |
 | Existing local YOLOv8m person segmentation | Already-installed 53 MiB checkpoint that can validate the host detector/runtime seam without another download. | Use only as a runtime and person-fixture screen. It is class-specific and cannot satisfy general open-set object acquisition. Measured CPU/GPU results are recorded under ROM-19. |
-| [EdgeTAM](https://github.com/facebookresearch/EdgeTAM) | Apache-2.0 promptable video-object segmentation designed for substantially lighter on-device tracking than SAM 2. | Benchmark as the primary 10 Hz box-seeded target-mask/retention candidate. The existing Robot Operator target box can seed it, but it still needs a separate acquisition/re-identification path after full loss. |
+| [EdgeTAM](https://github.com/facebookresearch/EdgeTAM) | Apache-2.0 promptable video-object segmentation designed for substantially lighter on-device tracking than SAM 2. | Retain as a fast tracking-tier reference, not an identity authority. OV3660 replay met the latency budget and followed the correct target through partial cover and return, but its learned presence head retained a positive mask in all full-loss frames. The official high-level predictor is also finite-video rather than append-only live input. |
+| [Cutie](https://github.com/hkchengrex/Cutie) | MIT-licensed video-object segmentation with an official frame-by-frame `InferenceCore.step()` path and object-memory design. | Retain as the strongest current V1 tracking candidate, not an identity authority. It tracked all 86 visible frames, never switched to the distinct cup, and recovered all 28 return frames without reseeding at 23-millisecond p95, but falsely retained a target mask in 15 of 29 full-loss frames. Its constructor also performs implicit TorchVision backbone downloads unless the package supplies a controlled model path. |
+| [BootsTAPIR](https://github.com/google-deepmind/tapnet) | Apache-2.0 causal point tracker with official per-point visibility/uncertainty, PyTorch weights, live-camera code, and RoboTAP evaluation. | Reject as the sole object-presence owner on the current sequence. It tracked all visible/return frames at 80-millisecond p95, but three of eight seeded target points remained officially visible through every full-loss frame. Retain as a possible independent motion/visibility signal only if broader replay justifies an object-level aggregation policy. |
 | [SAM 3.1](https://github.com/facebookresearch/sam3) | Unified text/exemplar/box detection, segmentation, unique instance identities, and video tracking. | Benchmark as a slower acquisition/reacquisition candidate, not assume it is the 10 Hz loop. It has 848M parameters, requires a CUDA 12.6+ runtime and gated checkpoint access, and uses the custom SAM License; throughput and license fit must be accepted explicitly. |
 | [Grounding DINO](https://github.com/IDEA-Research/GroundingDINO) | Apache-2.0 language-conditioned open-set box acquisition or reacquisition. The official Transformers-compatible Tiny checkpoint is about 0.2B parameters with a 689 MB safetensors file. | Use Tiny as the first open-set acquisition benchmark after storage is available. The installed Transformers runtime already exposes the required model API. Do not select it before OV3660 replay/GPU measurement or run it on every frame. |
 | [ONNX Runtime execution providers](https://onnxruntime.ai/docs/execution-providers/) | Stable detector interface with CPU, CUDA, or TensorRT backends when a candidate exports cleanly. | Keep as the preferred portability seam for compatible detectors; measure conversion correctness and fallback boundaries before adopting it. |
@@ -833,7 +867,9 @@ one large model in every frame:
 slow acquisition/reacquisition
   -> SAM 3.1 concept/exemplar prompt OR Grounding DINO box
 fast stream tracking
-  -> EdgeTAM mask track OR OpenCV CPU baseline
+  -> Cutie frame-step leading candidate OR EdgeTAM finite-video quality reference
+explicit presence/loss and bounded reacquisition
+  -> a maintained identity/presence owner must reject absence before action
 active-view controller
   -> measured target state -> bounded semantic orientation primitive
 ```
@@ -878,8 +914,9 @@ node output, not a bypass around the cognitive graph or Environment Bridge.
 The first implementation target is `inspect`, not general `approach`:
 
 ```text
-Robot Operator supplies an exact current frame, target box, and objective
-  -> seed tracker from that box
+Robot Operator supplies an exact current frame, bounded target query, and objective
+  -> adapter semantic perception localizes the target
+  -> install the resulting verifier prompt and seed temporal continuity
   -> start existing bounded local preview under Gateway ownership
   -> track target and calculate center error, scale, mask quality, sharpness,
      exposure, and occlusion
@@ -934,10 +971,10 @@ physical movement is authorized.
 | Environment action admission | Correctly rejects target-relative work when the adapter does not advertise a feedback skill. | Admit the new skill only after the Ainekio adapter truthfully advertises it; do not reopen open-loop LLM locomotion. |
 | Ainekio Environment Adapter | The live adapter still handles snapshot, text, stop, coarse move/command, and generated body-local plans only. It now has an optional typed camera-frame bridge seam, but the launcher supplies no bridge or active-view controller and advertises no inspection skill. | Compose the validated controller only after identity and fine-turn gates pass; one composition point must own frames, milestones, cancellation, and the terminal result. |
 | Gateway camera path | One Gateway-owned lease manager coordinates dashboard and isolated active-view consumers. An optional synchronous adapter bridge now correlates selected-robot frames into the existing bounded mailbox without exposing continuous preview to the LLM. | Keep the bridge inert by default until the controller's identity and calibrated-control prerequisites pass, then validate one composition point before registration. |
-| Perception | Grounding DINO Tiny has perfect labeled-positive recall on the current three-query OV3660 replay, but one absent query produced 12 accepted false candidates. OpenCV MIL/HSV also failed full loss. The identity gate remains false and nothing is advertised. | Select and replay-test an established instance-association or video-object component; semantic query score alone cannot authorize arbitrary target identity. |
+| Perception | The selected isolated V1 composition is YOLOE-11-M plus MobileCLIP for query bootstrap and independent semantic verification, with Cutie Base Mega restricted to frame-to-frame continuity. CPU and GPU worker lifecycles pass. On the existing bottle/cup replay, YOLOE owns correct visible, absent, and return semantics while Cutie meets the 5-fps continuity budget without switching to the cup. Partial-cover 2D mask geometry and one ambiguous semantic return frame remain limitations. The one-scene result does not satisfy the held-out identity gate, YOLOE licensing remains unresolved, and nothing is advertised. | Run one frozen multi-scene held-out composition replay covering same-class distractors, partial cover, full loss, return, lighting, and viewpoint change. Keep semantic verification, temporal continuity, physical authorization, and motion calibration separate. |
 | Body control | Smallest named orientation is a 6.24-second estimated 45-degree turn. | Add calibrated fine/coarse body-owned semantic orientation profiles and learn their observed image response. |
 | Simulator | The visual renderer and host webcam still do not share a scene or pose. A remote-safe action-indexed replay source now couples the existing BodySession motion backend and camera-source seams for deterministic post-action frames. | Replace synthetic JPEG bytes with ignored labeled OV3660 sequences and score the same public controller lifecycle before considering a richer shared-scene renderer. |
-| Companion host | Suitable CPU/RAM/GPU hardware is healthy and the owner freed storage. On 2026-08-05 the home filesystem had 16 GiB available; Grounding DINO Tiny was cached, but no locked production perception runtime is installed. | Keep replay/model growth bounded, create a locked runtime only after replay selection, and preserve a CPU diagnostic fallback. |
+| Companion host | Suitable CPU/RAM/GPU hardware is healthy. The selected offline GPU process passed the frozen runtime gates at 1,768 MiB peak process VRAM, 35.083-millisecond XGA semantic p95, and 26.043-millisecond QVGA continuity p95. The CPU path remains a measured diagnostic but not a 5-fps claim. Research sources and weights remain pinned in temporary/local caches, and no production perception service is installed. | Keep replay/model growth bounded, prohibit implicit downloads, retain the CPU diagnostic fallback, and define one removable production environment only after the held-out identity and AGPL decisions pass. |
 
 Until those links exist, the current MetaHuman gate can prevent an unsupported
 open-loop target attempt, but it cannot help achieve the target. That limitation
@@ -1161,6 +1198,26 @@ evidence.
   OpenCV and EdgeTAM measurements remain evidence under the one `ROM-19` work
   item rather than separate completed implementations.
 
+### 2026-08-06 Goal-Alignment Checkpoint
+
+Status: still aligned in late Batch 3; component selection is closed and live
+Batch 4 integration remains gated.
+
+- Evidence AD selects one V1 composition rather than reopening the model
+  comparison: YOLOE plus MobileCLIP owns semantic bootstrap and verification;
+  Cutie owns temporal continuity only.
+- `ROM-13` now has isolated source and a real worker lifecycle, so it is
+  `implemented` but not validated. Held-out identity, locked-runtime,
+  cancellation, and cadence acceptance remain before registration.
+- The selected-stack GPU qualification now passes. The `ROM-21` body-backend/
+  state boundary has started inside the isolated controller and passes focused
+  tests. Held-out composition replay and simulator fine-turn calibration remain;
+  none of these steps authorizes a live capability or physical command.
+- MetaHuman owns semantic interpretation and task intention. Ainekio owns the
+  fast body-local acquisition, continuity, verification, and corrective skill
+  loop after admission. This is the same Environment Interface path, not a new
+  cognitive graph, queue, or autonomy owner.
+
 ## Work Register
 
 | ID | Status | Work item | Acceptance summary |
@@ -1175,17 +1232,17 @@ evidence.
 | `ROM-08` | `in_progress` | Establish the adapter-owned Embodied Skill Runtime seam and implement an active-view skill within it. | One admitted request owns acquisition, view improvement, semantic verification, bounded reacquisition, milestones, cancellation, and one terminal result. Camera leases and optional bounded frame routing are validated; live controller composition and capability registration remain gated. |
 | `ROM-09` | `in_progress` | Keep the independent interruption and body-safety monitor subordinate to the goal controller. | Cancellation, stale evidence, and body faults can interrupt immediately, while ordinary uncertainty enters bounded active reacquisition instead of becoming the controller's default result. |
 | `ROM-10` | `not_started` | Validate simulator, controlled physical tests, interruption, and recovery. | Automated contracts pass and physical evidence demonstrates stop, target loss, no-progress, interruption, and bounded success/failure behavior. |
-| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | OV3660 replay now rejects both MIL/HSV continuity and uncalibrated text-query confidence as identity authorities. Camera ownership is validated; maintained instance association, control calibration, and the final component decision remain. |
+| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | V1 perception selection is closed: YOLOE plus MobileCLIP owns semantic bootstrap and independent verification; Cutie owns continuity only. The locked GPU runtime gate passes. The AGPL decision, multi-scene held-out identity evidence, control calibration, and later safety/navigation/manipulation selections remain. |
 | `ROM-12` | `not_started` | Add typed multi-object observations and capability discovery without changing the current action queue. | Contracts distinguish class hypothesis, short-lived track identity, durable object identity, frame binding, and optional calibrated pose. |
-| `ROM-13` | `not_started` | Integrate the selected detector and tracker behind the adapter-owned perception interface. | A replayable camera sequence demonstrates measured detection latency, stable target association, confidence decay, occlusion/loss, and bounded reacquisition without per-frame LLM calls. |
+| `ROM-13` | `implemented` | Integrate the selected detector and tracker behind the adapter-owned perception interface. | The isolated offline worker composes YOLOE semantic verification with non-authoritative Cutie continuity and passes real CPU and GPU lifecycles. GPU latency and memory gates pass. Held-out multi-scene association, occlusion/loss/reacquisition, continuous controller frame consumption, and live registration remain unvalidated. |
 | `ROM-14` | `in_progress` | Add a bounded `inspect` object skill using the new perception contract. | MetaHuman now has exact-frame `inspect` admission behind a truthful `activeView` capability and its Bridge Out allowlist. The adapter-owned acquisition/tracking/control implementation and end-to-end evidence remain. |
 | `ROM-15` | `not_started` | Integrate a local obstacle/clearance representation below object skills. | Fresh range, depth, point-cloud, or conservative visual evidence can independently slow or stop motion; missing evidence never becomes assumed free space. |
 | `ROM-16` | `not_started` | Replace generic physical `interact` claims with advertised object-interaction verbs, prerequisites, limits, and results. | Unsupported verbs are rejected at admission; supported verbs reference a current object identity and define how success is physically verified. |
 | `ROM-17` | `not_started` | Integrate the first hardware-supported bounded contact or manipulation skill. | Simulator and controlled physical evidence cover reachability, collision/workspace checks, interruption, controller feedback, fresh visual/contact verification, and terminal failure. |
 | `ROM-18` | `deferred` | Add full localization, mapped navigation, and manipulation-planner bridges when sensors and body hardware justify them. | Navigation or manipulation is advertised only after the required state estimate, world model, planner, controller feedback, and safety layer pass their own acceptance. |
-| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | A generic presence/loss scorer now records recall, false acceptance, and p95 latency. Three queries across 345 OV3660 inferences produced 258/258 accepted positives but 12/87 false-accepted negatives, so the identity gate correctly remains failed. |
+| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | QVGA and XGA suites reject the earlier sole-owner candidates. YOLOE/Cutie passes isolated runtime gates but fails both frozen held-out scenes at semantic bootstrap, so the identity gate remains false and runtime registration is forbidden. |
 | `ROM-20` | `in_progress` | Retire the robot-skill evaluator/refiner/requeue pipeline after the local skill cutover. | Robot investigations use no Visual Evidence Assessor, Task Refiner, Workflow Command retry, or Movement Generator locomotion; retained admission, correlation, cancellation, stable objective, and terminal-result contracts pass focused tests and the same objective records materially lower model calls, tokens, and wall time. |
-| `ROM-21` | `not_started` | Preserve the current V1 robot behind a replaceable locomotion-backend and learned-policy seam. | V1 named motions, the deterministic feedback controller, and a future trained backend share versioned `BodyMotionCommand`, truthful `RobotStateSnapshot`, bounded output, policy-manifest, logging, fallback, and independent-safety contracts. Learned control remains disabled until its declared sensors, digital twin, replay/simulator results, shadow comparison, and authorized physical acceptance are complete. |
+| `ROM-21` | `in_progress` | Preserve the current V1 robot behind a replaceable locomotion-backend and learned-policy seam. | The isolated Active View controller now emits bounded `BodyMotionCommand` values with frame-derived `RobotStateSnapshot` input through an injected `LocomotionBackend`; only the V1 backend maps them to named assets. Versioned manifests, broader body state, logging, learned-backend fallback, simulator calibration, and authorized physical acceptance remain. |
 | `ROM-22` | `validated` | Establish the isolated active-view hygiene gate before integration. | Existing Ainekio runtime owners remain unchanged; valid timestamp, cancellation, subprocess shutdown, feature-absence, calibration-gate, and identity-gate tests pass with a complete removal manifest. |
 | `ROM-23` | `validated` | Couple the active-view controller to action-indexed frames through the existing Body Emulator lifecycle. | A semantic orientation command passes through `BodySession`, unlocks its correlated replay frame, emits the normal post-action snapshot before `done`, and lets the controller verify measured image improvement without an LLM, live adapter, or physical robot. |
 
@@ -1211,6 +1268,12 @@ This batch should record before/after model call counts, prompt tokens, and
 wall-clock timing using the same bounded test objective.
 
 ### Batch 3: Establish measured active perception before more control code
+
+Current checkpoint: component selection, camera leases, bounded frame routing,
+CPU and GPU lifecycle qualification, and the action-indexed emulator seam are
+complete. Frozen held-out composition replay, simulator fine-turn calibration,
+and `ROM-21` source contracts remain. Batch 4 has not started live adapter
+composition or capability registration.
 
 - `ROM-11`: complete the hardware-grounded component comparison and decision
   record.
@@ -1371,6 +1434,30 @@ Each implementation batch must record the applicable results:
   terminal state.
 
 ## Decision Log
+
+### 2026-08-06 - Preserve memory-informed autonomy above the body seam
+
+- Record the current quadruped as the first embodiment of a persistent
+  intelligent pet whose personality, relationships, memories, curiosity, and
+  objectives remain owned by MetaHuman and survive future body changes.
+- Allow authorized autonomy to combine fresh, correlated environmental evidence
+  with bounded relevant memory when selecting a semantic intention. Memory may
+  influence attention and preference but cannot establish current physical
+  truth, authorize movement, or bypass capability and safety gates.
+- Keep photographs used for semantic deliberation in the existing Robot
+  Observer / Full-policy path. Keep ordinary tracking frames and motor
+  corrections inside the embodied runtime so an investigation does not create
+  an LLM pass for every V1 walk or turn.
+- Treat `find a cat` as a stable search/investigation objective. The existing
+  `inspect` lane covers a currently visible subject; a future bounded search
+  skill must add local scan and reacquisition, with approach admitted only when
+  truthful locomotion and clearance capabilities support it.
+- Put V1 quadruped assets behind the replaceable locomotion-backend seam. A
+  future embodiment may execute the same admitted semantic skill differently
+  without rebuilding memory, autonomy, Environment Mode, or bridge contracts.
+- The Active Operator roadmap owns the complete memory and autonomous-mode
+  policy. This motion paper owns only the compatible embodied skill, state,
+  control, result, and safety boundaries.
 
 ### 2026-08-05 - Make the embodied-control system removable by construction
 
@@ -3855,6 +3942,2369 @@ Decision and next gate:
   additional ordinary targets before identity can become available.
 - Fine-turn asset calibration remains the separate physical-control blocker and
   still requires the owner's exact authorization for a later movement test.
+
+### 2026-08-05 - ROM-19 evidence O - EdgeTAM loss and return replay
+
+Status: fast target continuity measured; the persistent-identity gate failed
+and remains false.
+
+Selection and acceptance fixed before inference:
+
+- Reused the official Apache-2.0 EdgeTAM source and 54 MiB checkpoint already
+  present under `/tmp` from evidence B. No repository, checkpoint, package,
+  cache, camera phase, or dependency was downloaded or installed.
+- Replayed the 115 ignored owner-local QVGA frames from the target/distractor,
+  partial-occlusion, full-loss, and return-at-new-position phases as one
+  chronological finite-video sequence. The EdgeTAM predictor received one
+  initial Grounding DINO box on frame zero and no later prompt or reseed.
+- Grounding DINO independently evaluated the described target and coffee-cup
+  distractor on every frame. Those 230 acquisitions were evaluation references,
+  not per-frame runtime inputs to EdgeTAM or the controller.
+- A present frame passed only when the EdgeTAM mask was nonempty, its normalized
+  center was within the controller's existing 0.12 center tolerance of the
+  independently detected target, and it was not closer to the cup. Every
+  full-loss frame required an empty mask. Return had to pass without reseeding,
+  and aggregate p95 propagation had to remain below the 100-millisecond period
+  of the maximum 10-fps camera preview.
+
+Measured result:
+
+- EdgeTAM agreed with the target reference on all 86 labeled-present frames and
+  was never closer to the cup. Target/distractor center error measured 0.0011
+  median and 0.0052 maximum; partial-occlusion error measured 0.0040 median and
+  0.0063 maximum.
+- After full target loss, all 29 masks remained positive, so all 29 strict
+  absence cases failed. Median mask area fell from approximately 1.57 percent
+  of the frame before cover and 1.17 percent under partial cover to 0.17 percent
+  during full loss; maximum full-loss area was 0.24 percent.
+- The target returned in a new position without a new prompt. All 28 return
+  frames again agreed with the target reference, with center error 0.0087 median
+  and 0.0143 maximum. This is useful learned continuity and return evidence, but
+  it does not erase the false retention during absence.
+- Model construction measured 438 milliseconds, finite-state initialization
+  3,200 milliseconds, and box seeding 124 milliseconds in the already-warm
+  runtime. Propagation measured 33.4 milliseconds mean, 38.7 milliseconds p95,
+  45.5 milliseconds maximum, and 448.6 MiB peak CUDA allocation on the RTX 4080
+  with bfloat16 autocast. The tracking cadence passed comfortably.
+- The independent Grounding DINO references measured 163.6 milliseconds mean
+  and 174.8 milliseconds p95 across 230 inferences. They were deliberately
+  exhaustive for scoring and are not a proposed 10-fps production loop.
+- The optional SAM2 connected-components extension remained unavailable under
+  the current Torch 2.11/CUDA 13 runtime, so EdgeTAM skipped its documented
+  small-hole post-processing. This is the same explicit reduced path recorded
+  in evidence B and must remain a packaging acceptance item.
+
+Interpretation and component comparison:
+
+- EdgeTAM did not drift to the obvious cup distractor and recovered the correct
+  returned target, unlike the earlier MIL location track. It remains a strong
+  fast tracking-tier quality reference.
+- The official EdgeTAM configuration enables its learned object-presence head,
+  and the model suppresses output masks when that learned score declares the
+  object absent. Positive masks in every full-loss frame therefore show that
+  the component itself did not declare loss on this sequence.
+- Do not turn the observed mask-area collapse into a project-authored object- or
+  scene-specific threshold. The official high-level video iterator returns
+  masks but not the learned presence logit, and its supported input is a finite
+  JPEG directory or video rather than append-only camera frames. Production
+  code must not read private predictor dictionaries or mutate private state to
+  manufacture a live API.
+- [Cutie](https://github.com/hkchengrex/Cutie) is the next V1 replay candidate:
+  its MIT-licensed official API accepts one frame at a time through
+  `InferenceCore.step()`, and its object-memory design targets stronger
+  consistency than XMem. It still needs a separate semantic seed and must prove
+  full-loss rejection, return, and same-class distractor behavior on OV3660
+  frames before selection.
+- [SAM 3.1](https://github.com/facebookresearch/sam3) remains a later comparison
+  because it integrates open-vocabulary detection and tracking, but the official
+  model is 848M parameters, checkpoint access is gated, its examples start from
+  a finite JPEG directory or video, and its custom SAM License requires an
+  explicit owner decision. It is not a reason to bypass the V1 worker contract.
+- The home filesystem measured only 7.0 GiB available before the owner began
+  another cleanup. No Cutie or SAM 3 dependency should be installed until the
+  post-cleanup measurement and expected model/runtime footprint are recorded.
+
+Isolation, rollback, and next gate:
+
+- The run used only a temporary `/tmp` harness, existing ignored recordings,
+  existing cached models, and the already-isolated host runtime. It did not
+  change Ainekio or MetaHuman runtime source, register a worker, instantiate a
+  live controller, advertise a capability, start the camera, or issue a robot
+  command.
+- The temporary harness is removed after this entry. The pre-existing `/tmp`
+  EdgeTAM checkout/checkpoint remain reusable local research inputs and are not
+  repository state. Removing this documentation entry is the complete tracked
+  rollback for evidence O.
+- Keep `identity_gate_validated` false and keep Active View unregistered. After
+  disk headroom is remeasured, benchmark Cutie's supported frame-step path
+  against this same sequence, then add a same-class distractor and at least one
+  additional ordinary target before choosing the V1 identity component.
+- Fine-turn calibration remains a separate physical gate and still requires the
+  owner's exact authorization; no perception result authorizes movement.
+
+### 2026-08-05 - ROM-19 evidence P - Cutie frame-step loss and return replay
+
+Status: Cutie is the strongest current streaming tracker, but the persistent-
+identity gate failed and remains false.
+
+Selection, acquisition, and acceptance:
+
+- After owner-led cleanup raised available storage to approximately 98 GiB,
+  cloned the official MIT-licensed
+  [Cutie](https://github.com/hkchengrex/Cutie) source at commit
+  `ec5cdd4cf16f75c73ad785a2f96fb97dbad4125a` into `/tmp`. The source checkout
+  occupied approximately 7 MiB before weights.
+- Downloaded only the official `cutie-base-mega.pth` VOS checkpoint declared by
+  Cutie's model utility. It is 140,443,788 bytes with the expected MD5
+  `a6071de6136982e396851903ab4c083a` and SHA-256
+  `9c05402ee36d3a356fb72715d263ba7e1ea06ad3bada48c1306491792da43023`.
+  The separate interactive-mask checkpoint was not downloaded.
+- Cutie's model constructor also loaded pretrained ResNet-50 and ResNet-18
+  weights through `torch.utils.model_zoo`, causing two previously undisclosed
+  TorchVision-cache downloads. The ResNet-50 file is 102,502,400 bytes with
+  SHA-256 `19c8e3572231adff6824a2da93fd67b5986919a2e65f8b6007eab4edee220097`;
+  the ResNet-18 file is 46,827,520 bytes with SHA-256
+  `5c106cde386e87d4033832f2996f5493238eda96ccf559d1d62760c4de0613f8`.
+  The three model files total 289,773,708 bytes, approximately 276 MiB, before
+  source and Python dependencies.
+- This implicit-download behavior is unacceptable for production construction.
+  Any selected package must preseed a locked model directory, verify every
+  digest, set Cutie's existing `resnet_model_path`, disable network access, and
+  fail closed when an asset is absent. The live gateway must never download a
+  model in response to a robot task.
+- Replayed the same 115 ignored owner-local QVGA frames as one chronological
+  sequence. One initial Grounding DINO target box was converted to a 1,160-pixel
+  seed mask by the established EdgeTAM prompt segmenter. EdgeTAM did not track
+  later frames. Cutie's official `InferenceCore.step()` then processed every
+  frame with no new prompt or reseed.
+- Independent Grounding DINO target and cup queries remained evaluation-only.
+  The strict gate was identical to evidence O: every visible frame must produce
+  a mask centered within 0.12 normalized image units of the target and not
+  closer to the cup; every full-loss frame must produce Cutie's official empty
+  argmax mask; return must pass without reseeding; aggregate p95 must remain
+  below the camera's 100-millisecond maximum preview period.
+
+Measured result and repeatability:
+
+- Cutie agreed with the independent target on all 86 labeled-present frames,
+  never moved closer to the cup, and recovered all 28 return frames without a
+  prompt or reseed. Target/distractor center error was 0.0010 median and 0.0028
+  maximum; partial-cover error was 0.0041 median and 0.0067 maximum; return
+  error was 0.0076 median and 0.0131 maximum.
+- During the 29-frame full-loss phase, Cutie emitted a nonempty mask on 15
+  frames and an empty mask on 14, so the identity gate failed. This improves
+  materially on EdgeTAM's 29 of 29 false-retained masks but is not sufficient
+  to authorize action.
+- The exact loss-presence pattern was
+  `11111111111110000000100000100`, where `1` is a false retained mask and `0`
+  is Cutie's official background result. Cutie first declared absence after 13
+  frames, remained absent for seven, produced one false-positive frame, remained
+  absent for five, produced another false-positive frame, and ended with two
+  absent frames. The returning target was nevertheless recovered immediately
+  and remained correct throughout the next phase.
+- False-retained object probabilities were not merely marginal: the initial 13
+  measured from 0.997434 through 0.999969, and the two later single-frame
+  reappearances measured 0.877728 and 0.920495. A project-authored confidence or
+  mask-area threshold would therefore encode this sequence rather than repair
+  identity.
+- The first run, which included constructor-triggered backbone downloads,
+  measured 8,219 milliseconds for model construction and 32.5 milliseconds
+  mean, 31.2 milliseconds p95, 1,063 milliseconds maximum frame latency, and
+  177.3 MiB peak CUDA allocation. The first-frame maximum included seed/memory
+  initialization.
+- A fully cached repeat produced the identical 86/86 present, 15/29 false-loss,
+  zero distractor-switch, and 28/28 return outcome. It measured 1,301
+  milliseconds model load, 19.9 milliseconds mean, 22.7 milliseconds p95,
+  68.3 milliseconds maximum, and the same 177.3 MiB peak CUDA allocation. This
+  passes the steady-state 10-fps throughput screen. The evaluation-only DINO
+  references measured 159.5 milliseconds mean and 162.6 milliseconds p95 on
+  the repeat and are not proposed for per-frame production use.
+
+Interpretation, isolation, and next gate:
+
+- Cutie's official append-one-frame API fits the existing isolated worker
+  boundary substantially better than EdgeTAM's finite-video predictor. Its
+  visible-target continuity, distinct-distractor behavior, partial-cover
+  retention, return without reseeding, and latency make it the leading V1
+  tracking candidate.
+- Cutie is not a semantic detector or a complete identity/presence owner. The
+  loss pattern also shows why blindly adding an `N`-frame absence debounce is
+  not a complete correction: delayed absence was followed by two later
+  high-probability one-frame reappearances. No threshold, debounce constant,
+  object name, coordinate, or scene rule was added to runtime source.
+- The next selection evidence must include at least one independent ordinary
+  target and a same-class or visually similar distractor, then compare a
+  maintained presence/verification owner that can veto false track memory. Any
+  temporal confirmation policy must be generic, predeclared, and evaluated
+  across those sequences before it can affect action admission.
+- The run changed no Ainekio or MetaHuman runtime source, did not register a
+  worker, instantiate a live controller, advertise a capability, start the
+  camera, or issue a robot command. It used ignored owner-local frames, isolated
+  `/tmp` source/checkpoints, existing GPU dependencies, and a temporary harness.
+- Removing `/tmp/rom19-cutie`, the temporary Cutie harness, and—only with owner
+  approval—the two newly downloaded TorchVision cache files removes all local
+  research artifacts. Removing this documentation entry is the complete tracked
+  rollback for evidence P. The cache files are retained for now because deletion
+  was not authorized and they are recorded inputs rather than repository state.
+- Keep `identity_gate_validated` false, keep Active View unregistered, and do
+  not compose the worker into `server.py`. Fine-turn calibration remains a
+  separate physical gate and still requires exact owner authorization.
+
+### 2026-08-05 - ROM-19 evidence Q - Causal BootsTAPIR visibility replay
+
+Status: independent point visibility measured; the object-presence gate failed
+and remains false.
+
+Selection and predeclared acceptance:
+
+- Screened the official Apache-2.0
+  [Google DeepMind TAP repository](https://github.com/google-deepmind/tapnet)
+  because its causal BootsTAPIR path processes a live stream, publishes learned
+  per-point occlusion and uncertainty, supplies official PyTorch weights and a
+  live-camera example, and is evaluated on the robotics-oriented RoboTAP data.
+- Rejected CoTracker 3 as the first V1 screen because most of its official
+  repository is CC-BY-NC. Deferred Track-On-R because its current supported
+  package requires a gated DINOv3 backbone, PyTorch 2.4.1/CUDA 12.1, and a
+  compiled MMCV extension. Deferred TAPNext++ because its official checkpoint
+  alone is 2,532,282,370 bytes. These remain later research options, not runtime
+  dependencies or claimed impossibilities.
+- Cloned TAP at commit `c2cbab81cc06092b5f05bfe2da7bfec54e2079c9`
+  into `/tmp` and downloaded only the official causal BootsTAPIR PyTorch
+  checkpoint. It is 218,887,028 bytes with MD5
+  `d42f8a6502f656e49d1091b11b010748` and SHA-256
+  `87c1e752cf5ce56e3e2f7da460aeb4d40fc826d04ef2939bade86a5c7495377f`.
+  The checkout plus checkpoint occupied approximately 216 MiB.
+- Installed only `einshape` 1.0 and `dm-tree` 0.1.10 without dependencies into
+  an isolated `/tmp` target. Their installed footprint was 832 KiB. No package
+  was added to Ainekio, MetaHuman, the gateway Python environment, or the
+  ComfyUI environment.
+- Reused the same 115 ignored QVGA frames, initial DINO box, and one-frame
+  EdgeTAM seed mask. OpenCV's established Shi-Tomasi implementation selected
+  eight trackable points inside that mask. BootsTAPIR received those points on
+  frame zero and no later point, prompt, mask, or reseed.
+- Used BootsTAPIR's official visibility rule unchanged: a point is visible when
+  `(1 - sigmoid(occlusion)) * (1 - sigmoid(expected_distance)) > 0.5`.
+  No model score or visibility threshold was introduced by the project.
+- The strict object-presence screen required at least one officially visible
+  point centered within 0.12 normalized image units of the independent target
+  and not closer to the cup on every present frame, zero officially visible
+  points on every full-loss frame, return without reseeding, and aggregate p95
+  below the camera's 100-millisecond maximum preview period.
+
+Measured result:
+
+- All 86 labeled-present frames agreed with the independent target, no visible
+  point set moved closer to the cup, and all 28 return frames recovered without
+  reseeding. Target/distractor frames retained all eight query points. Partial
+  cover retained four to six, with a median of six. Return retained all eight.
+- All 29 full-loss frames still contained exactly three points that BootsTAPIR
+  officially classified visible. The loss pattern was 29 consecutive positive
+  frames, so the strict presence gate failed.
+- Median point-set center error was 0.0407 before cover, 0.0412 under partial
+  cover, and 0.0281 after return. Maximum error remained 0.0428, 0.0713, and
+  0.0390 respectively, within the evaluation tolerance.
+- Model construction and locked local checkpoint load measured 423 milliseconds.
+  Frame processing measured 77.1 milliseconds mean, 80.2 milliseconds p95,
+  150.8 milliseconds maximum, and 273.0 MiB peak CUDA allocation in float32 on
+  the RTX 4080. Aggregate cadence passed; the first phase's p95 was 100.3
+  milliseconds while later phase p95 values were approximately 79.5 to 82.0.
+- The 230 evaluation-only DINO references measured 168.3 milliseconds mean and
+  188.9 milliseconds p95. They remain scoring evidence, not a proposed
+  per-frame production path.
+
+Interpretation, isolation, and next gate:
+
+- Learned point visibility is independent evidence and may later help estimate
+  target motion, deformation, or partial cover, but it did not veto false object
+  presence on this sequence. Point tracking and object identity are distinct
+  responsibilities; an official per-point decision does not create an official
+  object-level decision.
+- A four-of-eight point vote would separate this one recording: partial cover
+  bottoms at four points while full loss retains three. Conjoining that vote
+  with Cutie would also make the current sequence appear to pass. The margin is
+  one selected point on one target, so encoding that vote now would be replay-
+  specific threshold fitting, not validated architecture. No such policy was
+  implemented.
+- BootsTAPIR is therefore rejected as the sole object-presence authority. Keep
+  it only as a possible secondary geometry/visibility component if independent
+  targets and similar distractors later demonstrate a stable, predeclared
+  aggregation contract.
+- The run changed no Ainekio or MetaHuman runtime source, did not register or
+  compose a worker, advertise a capability, start a camera, or issue a robot
+  command. It used `/tmp` source, checkpoint, isolated dependencies, ignored
+  frames, and one temporary harness.
+- Removing `/tmp/rom19-tapnet`, `/tmp/rom19-tapdeps`, and the temporary harness
+  removes all local evidence-Q assets. Removing this documentation entry is its
+  complete tracked rollback. The source/checkpoint remain temporarily available
+  for reproducibility; they are not repository or production state.
+- Keep `identity_gate_validated` false and keep Active View unregistered. The
+  next decisive evidence is a second ordinary target and a visually similar or
+  same-class distractor captured through the existing ignored replay lane. That
+  sequence is needed before choosing Cutie, defining any multi-signal presence
+  policy, or spending further storage on a larger model.
+
+### 2026-08-06 - ROM-19 evidence R - Second-sequence acceptance contract
+
+Status: capture and scoring rules fixed before data; owner staging is pending.
+
+Current-checkpoint audit:
+
+- Re-read the isolated replay owner before adding code. The current
+  `replay_manifest.py` binds immutable frame ids, timestamps, hashes, target
+  state, and optional target geometry to the existing action-indexed replay. Its
+  semantic scorer can join any set of globally unique frames and requires both
+  presence and loss evidence.
+- It does not yet encode negative-instance boxes, score target-versus-distractor
+  geometry, or require every member of a multi-sequence suite to pass
+  independently. Those are real gaps for same-class identity evidence.
+- Do not add another schema, suite type, or scoring module before the second
+  sequence exists. The isolated experiment already contains 2,173 production
+  and 1,494 direct Active View test lines. A temporary evidence harness can
+  compare annotated target and distractor geometry without becoming a runtime
+  owner. If the selected composition passes, the smallest generic remote-safe
+  score contract can then be extracted from measured fields and tested before
+  integration.
+- Re-ran the current non-physical boundary suite on 2026-08-06. Gateway camera
+  leases, dashboard, security, Gateway service, Active View, action-indexed
+  replay, replay manifest, media/session, Environment Adapter, and command
+  catalog passed 170 of 170 tests in 14.6 seconds with localhost fixtures
+  enabled. The restricted first attempt produced only expected socket-binding
+  permission errors; the permitted run was clean.
+- All nine Active View production modules and three direct Active View test
+  modules parse successfully and pass the 100-column/trailing-whitespace screen.
+  `git diff --check` is clean. The live adapter and launcher still contain no
+  Active View import, `inspect` route, `activeView` capability, worker,
+  controller instance, or composition point.
+
+Capture contract:
+
+- Use a different ordinary target from the first blue-creature sequence and a
+  second, visually similar or same-class object as the negative instance. Two
+  cups, bottles, plush toys, boxes, or comparable same-category objects are
+  suitable. Object names remain ignored capture annotations and must not enter
+  runtime prompts, aliases, controller policy, or source tests.
+- Keep the robot stationary. Capture through the existing authenticated Gateway
+  camera path only; do not issue an intent, state, servo, motion plan, audio, or
+  firmware command. One camera-on/snapshot/preview/camera-off lifecycle per
+  phase remains independently attributable and bounded.
+- Record at least 20 monotonic QVGA preview frames plus one XGA evidence snapshot
+  in each phase, with received timestamps, frame counters, dimensions, and
+  SHA-256 digests. Captures remain ignored owner-local data.
+- Phase one: the chosen target and similar distractor are both fully visible and
+  spatially separated. Phase two: the target is partially covered while the
+  distractor remains visible. Phase three: only the target is completely removed
+  or covered while the distractor remains in view. Phase four: the same target
+  returns at a different image position without moving or replacing the
+  distractor.
+- Keep camera configuration and ordinary room lighting unchanged across phases.
+  Do not improve a failing result by changing exposure, model prompts, target
+  wording, frame selection, or thresholds after capture. A later lighting
+  sequence is separate evidence, not a correction to this identity test.
+
+Predeclared scoring contract:
+
+- Run Cutie's official frame-step path first because it is the current leading
+  streaming tracker. Seed it once from the initial target instance and provide
+  no later prompt, mask, point, box, or semantic reseed.
+- Use independently annotated or independently detected target and distractor
+  geometry only for evaluation. A present frame passes when the tracked center
+  is within the existing 0.12 normalized tolerance of the target and is closer
+  to that target than to every annotated distractor. Every full-loss frame
+  requires the component's official empty/background result. Return must pass
+  without reseeding.
+- Preserve the existing 100-millisecond p95 streaming limit. Do not introduce a
+  confidence, mask-area, color, point-count, object-name, coordinate, or temporal
+  threshold to make the second sequence pass.
+- Score the first and second ordinary-target sequences independently. The suite
+  passes only when both sequences pass every visible, partial-cover, loss,
+  distractor, return, and latency gate. Aggregate recall is evidence but cannot
+  hide failure of either target.
+- BootsTAPIR remains observational comparison data, not a required component.
+  Do not add it to a production composition unless independent sequences first
+  justify a generic object-level aggregation rule with a useful margin.
+- If Cutie fails the second sequence, record the failure before deciding whether
+  to compare a maintained object verifier or larger licensed model. Do not tune
+  Cutie, combine two failing signals, or expand runtime code in response to one
+  replay.
+
+Isolation and next action:
+
+- This entry changes documentation only. No Ainekio source, schema, test,
+  dependency, model, cache, service, process, camera state, or robot state
+  changed. Removing this entry is its complete rollback.
+- Keep `identity_gate_validated` false, fine-turn control unavailable, and
+  Active View unregistered. The next operation is the four-phase camera capture
+  after the owner identifies and stages two similar objects. Physical body
+  movement remains separately unauthorized.
+
+### 2026-08-06 - ROM-19 evidence S - Independent bottle/cup identity replay
+
+Status: the second sequence is captured and replayed; Cutie and the current
+semantic-acquisition composition failed the independent suite, so the identity
+gate remains false.
+
+Capture evidence:
+
+- Captured a dark bottle as the target and a stationary gray cup as the
+  visually similar distractor through the existing authenticated Gateway
+  camera owner. The ignored owner-local sequence is
+  `Ainekio/recordings/active-view/20260806-identity-sequence-02/`.
+- Each of the four predeclared phases contains one XGA evidence snapshot and 24
+  monotonic QVGA preview frames. The replay input is therefore 96 QVGA frames;
+  the evidence directory contains 100 JPEG frames in total.
+- Target/distractor counters are 6 through 37 after watermark 5; partial-cover
+  counters are 40 through 64 after watermark 39; full-loss counters are 66
+  through 90 after watermark 65; return counters are 91 through 115 after
+  watermark 90. All recorded counters are unique, globally increasing, and
+  newer than their phase watermark.
+- Every recorded byte length and SHA-256 digest matches its manifest. Each
+  phase contains exactly 24 previews and one snapshot. Camera-off received its
+  matching terminal ACK at sequences 10, 14, 18, and 21.
+- The bottle is fully visible near image center in phase one, partially covered
+  while the cup remains fixed in phase two, absent while the cup remains fixed
+  in phase three, and the same bottle returns fully visible at the far left in
+  phase four. The robot and camera remained stationary and ordinary lighting
+  was not deliberately changed.
+- Every phase records `physicalMotion: false`. Capture issued camera-on,
+  snapshot, bounded preview, and camera-off operations only. It sent no intent,
+  state, servo, motion-plan, audio, or firmware command. `git check-ignore`
+  resolves the sequence through Ainekio's existing `recordings/` rule.
+
+Reference acquisition and fixed evaluation geometry:
+
+- The first second-sequence attempt was externally terminated by SIGTERM before
+  a result and was discarded. Host health then showed approximately 49 GiB RAM
+  available, roughly 15 GiB VRAM free, 97 GiB disk free, and no remaining
+  replay process. One clean retry reached the established seed gate and failed
+  because Grounding DINO Tiny did not accept the initial `dark bottle`
+  reference. Cutie was not seeded in that attempt, so this is acquisition
+  evidence rather than a tracker score.
+- The predeclared contract allowed independent annotations or detections.
+  Before any second-sequence Cutie output, human review fixed XGA `xyxy` boxes:
+  target/distractor `[399,261,573,767]` / `[640,576,830,767]`; partial target /
+  distractor `[430,445,573,767]` / `[640,576,830,767]`; full-loss target absent
+  with distractor `[640,576,830,767]`; return target/distractor
+  `[75,290,245,767]` / `[640,576,830,767]`. The temporary evaluator converted
+  these to normalized geometry for scoring. They were not changed after seeing
+  tracker output.
+- The annotated first-frame bottle box produced a 6,716-pixel EdgeTAM seed
+  mask. EdgeTAM supplied no later frame, mask, box, point, or correction. Cutie
+  then received all 96 frames through official `InferenceCore.step()` with one
+  seed and no semantic or geometric reseed.
+- The prior temporary replay source had already been removed, so this run
+  reused its remaining CPython 3.12 artifact with SHA-256
+  `219f061a15be7a7b50344f1dfeaa66f6a0132c8621a4eef79881ecaafd8f1a8c`.
+  A readable temporary suite driver supplied only dataset paths, annotations,
+  and result packaging. The compiled artifact is acceptable for reproducing
+  this local research result but is not reviewable production source and must
+  not become a maintained dependency.
+
+Control and second-sequence results:
+
+- Replayed the original 115-frame blue-creature/cup sequence first with the
+  same artifact and detected references. It reproduced evidence P exactly:
+  86 of 86 present frames agreed, 15 of 29 absent frames retained a false mask,
+  the loss pattern remained `11111111111110000000100000100`, return recovered
+  28 of 28 without reseeding, no frame moved closer to the cup, and aggregate
+  Cutie p95 was 22.481 milliseconds. This closes result-path parity before the
+  second comparison.
+- On the 96-frame bottle/cup sequence, Cutie passed all 24 fully visible frames,
+  produced zero false retained masks on all 24 full-loss frames, recovered all
+  24 return frames without reseeding, and never moved closer to the gray cup.
+- Partial cover failed the predeclared geometry gate. All 24 masks were
+  nonempty, but only 8 of 24 centers were within 0.12 of the fixed visible-
+  bottle annotation. Median error was 0.121058 and maximum error was 0.123580.
+  Median mask area increased from 0.085020 of the image before cover to
+  0.129427 under cover, which is consistent with the tracker absorbing part of
+  the covering material rather than preserving the visible bottle extent.
+- The complete second sequence therefore accepted 56 of 72 expected-present
+  frames and 24 of 24 expected-absent frames. Aggregate Cutie latency was
+  21.045 milliseconds mean, 23.252 milliseconds p95, and 101.075 milliseconds
+  maximum with 179.512 MiB peak CUDA allocation. The declared latency gate is
+  p95 below 100 milliseconds, so cadence passed.
+- The second sequence failed independently on partial-cover association. The
+  original sequence still fails independently on full-loss rejection. The
+  multi-sequence suite therefore fails without relying on aggregate recall.
+
+Decision, architecture, and rollback:
+
+- Cutie remains the strongest tested streaming continuity component, but it is
+  rejected as the sole object identity/presence owner. The current Grounding
+  DINO acquisition path also cannot be treated as a general seed owner because
+  it failed to admit this ordinary low-contrast target.
+- Do not move the annotation, relax 0.12, add a mask-area rule, debounce loss,
+  combine Cutie with the failed BootsTAPIR signal, change the target wording,
+  or fit a bottle/room special case. The measurements are rejection evidence,
+  not constants to tune against.
+- The next non-physical selection step is a maintained object-level verifier or
+  integrated promptable video-object component that owns target acquisition,
+  occlusion/loss, distractor rejection, and return semantics. It must replay
+  both sequences independently behind the existing perception boundary before
+  any runtime extraction or registration.
+- This evidence added no Ainekio or MetaHuman runtime code, route, capability,
+  controller composition, dependency, model installation, firmware change, or
+  physical command. Active View remains unregistered,
+  `identity_gate_validated` remains false, and fine-turn calibration remains a
+  separate physical gate requiring exact owner authorization.
+- Removing the ignored second sequence removes its persistent local media.
+  Removing the temporary suite driver and review overlays removes evidence-S
+  tooling. The previously retained `/tmp` research checkouts, checkpoints, and
+  compiled harness remain separately removable as recorded in evidence P and
+  Q. Removing this documentation entry is the complete tracked rollback for
+  evidence S.
+
+### 2026-08-06 - ROM-11/ROM-19 evidence T - Verifier candidate screen
+
+Status: the current V1 composition is rejected; SAM 3.1 is selected only as the
+next isolated verifier experiment, pending explicit owner acceptance of its
+gated license and checkpoint access.
+
+Primary-source screen:
+
+- [MASA](https://github.com/siyuanliii/masa) is Apache-2.0 and learns generic
+  instance association, but its own documented limitations say it cannot track
+  objects its detector misses, cannot repair inconsistent detections, and may
+  degrade under heavy occlusion. It therefore does not own either the failed
+  dark-bottle acquisition or the failed partial-cover semantics by itself.
+- [DAM4SAM](https://github.com/jovanavidenovic/DAM4SAM) directly targets
+  distractor-aware memory and re-detection. Its 2026 paper also reports that the
+  method can improve EdgeTAM. The current public repository, however, contains
+  no declared license file for the DAM modifications. It is useful research
+  direction but cannot become a clean maintained dependency without explicit
+  upstream licensing.
+- Cloned only the official Apache-2.0
+  [SAMURAI](https://github.com/yangchris11/samurai) source at commit
+  `76ba195984892b0d1e3db5d9c9f90bb62175680a` into `/tmp`; the checkout occupies
+  67 MiB and no checkpoint or dependency was installed. SAMURAI's public API
+  preloads an MP4 or finite JPEG directory and its documentation explicitly
+  says live/streaming input is unsupported. Its official propagated mask can
+  represent no object, but the useful object-existence logit remains inside
+  predictor state rather than the public yielded result. It is therefore not a
+  clean append-one-frame owner for the current worker boundary.
+- [ODTrack](https://github.com/GXNU-ZhongLab/ODTrack) is MIT-licensed and
+  propagates an initialized target through arbitrarily long online video, which
+  is a better transport shape. It does not provide semantic acquisition or an
+  official target-absent result, so it cannot independently own the missing
+  presence/identity contract.
+- [SAM 3.1](https://github.com/facebookresearch/sam3) is the only screened
+  maintained component that unifies text/exemplar acquisition, segmentation,
+  and video tracking. The official release reports improved VOS and first-
+  person concept-tracking results, and its supported Python 3.12, PyTorch 2.7+,
+  and CUDA 12.6+ floor fits the current RTX 4080 companion-host software stack.
+  It remains a large verifier rather than an edge tracker.
+- The official `facebook/sam3.1` checkpoint is 3.5 GB and
+  [gated on Hugging Face](https://huggingface.co/facebook/sam3.1/tree/main).
+  Access requires an authenticated user to agree to share contact information.
+  Code and weights use Meta's custom
+  [SAM License](https://github.com/facebookresearch/sam3/blob/main/LICENSE), not
+  Apache or MIT. No local Hugging Face token or cached token file is present.
+  Accepting those terms is an owner decision and must not be inferred from the
+  request to continue research.
+
+Architecture decision:
+
+- Do not replace the current fast tracker with a 3.5 GB verifier and do not
+  send every camera frame to SAM 3.1. Preserve the existing responsibility
+  boundary: a streaming component supplies low-latency target continuity while
+  an independent object-level verifier owns acquisition, identity, absence,
+  distractor rejection, and return at objective admission, motion milestones,
+  uncertainty, and reacquisition boundaries.
+- Cutie may remain a candidate for the continuity role because it met the
+  100-millisecond cadence and never switched to either distractor. It must not
+  authorize motion or claim target presence. A verifier veto or unavailable
+  result keeps the controller in acquisition/reacquisition rather than being
+  averaged with Cutie confidence.
+- This role split is not a conjunction of two weak scores. SAM 3.1 must pass
+  the identity suite independently before it can own the verifier result; Cutie
+  remains separately responsible only for the position of an already verified
+  target between verifier milestones.
+- The verifier can consume one fresh frame or a bounded recent clip through the
+  existing isolated worker because it is not the high-rate control signal. That
+  avoids requiring SAM 3.1's finite-video session to masquerade as the live
+  camera owner. The Gateway lease manager and latest-frame mailbox remain the
+  only acquisition owners.
+
+Predeclared SAM 3.1 experiment:
+
+- After explicit license acceptance, clone the official source and fetch only
+  the official SAM 3.1 multiplex checkpoint into an isolated `/tmp` research
+  environment. Record source revision, checkpoint digest, installed footprint,
+  dependency footprint, model-load time, peak RAM/VRAM, and clean shutdown.
+  Disable network access for replay and prohibit runtime downloads.
+- First evaluate text-only acquisition on the initial frame of both existing
+  sequences. The target prompt must resolve an unambiguous mask whose center is
+  within the existing 0.12 normalized tolerance of the independent target and
+  is closer to it than to the distractor. Manual geometry remains evaluation
+  truth, not a runtime prompt.
+- Then run the official video-object path with one initial target prompt and no
+  later text, exemplar, point, box, mask, or semantic reseed. Every present and
+  partially covered frame must agree with the target rather than the
+  distractor; every full-loss frame must return the component's official absent
+  or empty result; return must recover the same target instance without a new
+  prompt.
+- Each sequence must pass independently. Do not change prompt wording,
+  annotations, model thresholds, coordinates, mask-area rules, temporal rules,
+  or frame selection after seeing output.
+- Cutie retains its separate sub-100-millisecond streaming budget. As a bounded
+  verifier, SAM 3.1 must complete at p95 below 1,000 milliseconds per requested
+  verification and fit within 14 GiB peak CUDA allocation so the companion host
+  retains display and service headroom. These are role/hardware budgets, not
+  presence thresholds.
+- A pass authorizes only extraction of a typed verifier interface and direct
+  tests behind the existing isolated Active View worker. It does not authorize
+  adapter registration, capability advertisement, camera startup, robot motion,
+  or fine-turn assets. Those gates remain separate.
+
+Isolation and rollback:
+
+- This screen changed documentation and `/tmp` research source only. It added no
+  runtime source, route, schema, package, checkpoint, cache asset, service,
+  camera operation, or physical command. Active View remains unregistered,
+  `identity_gate_validated` remains false, and fine-turn calibration remains
+  false.
+- Removing `/tmp/rom19-samurai` removes the only evidence-T source checkout.
+  No model or environment rollback is needed because none was installed.
+  Removing this documentation entry is the complete tracked rollback for this
+  candidate screen.
+
+### 2026-08-06 - ROM-11/ROM-19 evidence U - Gated-access preparation
+
+Status at this checkpoint: owner authentication is complete; blocked at gated
+repository approval. No SAM 3.1 source or checkpoint had been acquired yet.
+
+Changes:
+
+- Created the disposable Python environment `/tmp/rom19-hf-auth` and installed
+  `huggingface_hub` 1.26.1 plus its client dependencies. The first package
+  attempt was correctly blocked by the sandbox's network isolation; the same
+  isolated install succeeded after explicit network escalation.
+- Did not store, request, print, or infer an owner token. Did not accept the SAM
+  License, request gated model access, clone SAM 3.1, download a checkpoint, or
+  execute model code.
+
+Validation:
+
+- `/tmp/rom19-hf-auth/bin/hf --version` returned `1.26.1`.
+- `/tmp/rom19-hf-auth/bin/hf auth whoami` returned `Error: Not logged in` with
+  exit code 1. The host also had no `HF_TOKEN`, standard cached token file,
+  legacy token file, pre-existing `hf` command, or installed
+  `huggingface_hub` module before this disposable environment was created.
+- After the owner completed private browser authentication,
+  `/tmp/rom19-hf-auth/bin/hf auth whoami` confirmed the account as `gmaster`.
+  No token value was requested, printed, or copied into project files.
+- An authenticated metadata-only dry run for `facebook/sam3.1` returned
+  `Access denied. This repository requires approval.` No repository file was
+  downloaded. This proves login succeeded but gated license access has not yet
+  been granted.
+- The companion host had 126 GB free storage, approximately 48 GB available
+  system memory, and 14,688 MiB free on its RTX 4080 at the gate check. These
+  are capacity observations, not model-runtime proof.
+- No gateway registration, camera acquisition, runtime route, capability,
+  physical motion, robot command, audio operation, or firmware change occurred.
+
+Remaining:
+
+- The owner must request or accept access on the official `facebook/sam3.1`
+  model page. Authentication alone does not accept the repository's gated
+  terms. A request to continue research is not treated as acceptance of
+  third-party license terms.
+- Once authenticated access is independently confirmed, execute the frozen
+  evidence-T experiment without changing its prompt, geometry, thresholds,
+  sequences, frame selection, or pass criteria.
+
+Isolation and rollback:
+
+- Removing `/tmp/rom19-hf-auth` removes the complete evidence-U environment.
+  No tracked runtime source or persistent model asset was created. Removing
+  this documentation entry is the complete tracked rollback for evidence U.
+
+### 2026-08-06 - ROM-11/ROM-19 evidence V - Frozen SAM 3.1 replay harness
+
+Status: checkpoint-independent harness validated; gated inference remains
+pending repository-author approval.
+
+Official-source findings:
+
+- After the owner submitted the gated access request, cloned the public SAM 3
+  source into `/tmp/rom19-sam3` and pinned commit
+  `96914d2425f90a64f45ca977c2b5165418099543`. The clean checkout occupies
+  131 MiB. Its `LICENSE` SHA-256 is
+  `4dea99bfaa016e21bc860d73f344236bd1e5c4977d1a9a8fd32f822b500ae1be`.
+  The repository request remains under author review and the checkpoint is
+  absent.
+- The official SAM 3.1 builder accepts a local `sam3.1_multiplex.pt`, loads its
+  tokenizer vocabulary from the package, and does not call Hugging Face when a
+  checkpoint path is supplied. The replay runner additionally sets Hub and
+  Transformers offline flags before importing model code. Runtime download is
+  therefore structurally excluded from the experiment.
+- The public predictor owns finite JPEG/MP4 sessions and exposes
+  `start_session`, one `add_prompt`, streaming `propagate_in_video`, and an
+  idempotent `close_session`. The official public output contains object ids,
+  normalized boxes, probabilities, and binary masks. Its postprocessor removes
+  zero-area masks before returning those arrays, so zero public objects is an
+  official absence result; the harness reads no private presence logit, memory,
+  or predictor dictionary.
+- The recommended multiplex builder contains its own detector, tracker,
+  association, suppression, and output policy. The experiment omits all
+  project-authored confidence and mask-area thresholds and leaves the official
+  output probability default untouched. It disables optional Flash Attention
+  only for dependency portability; this is an official builder option, not a
+  result threshold.
+
+Frozen experiment assets:
+
+- Created only `/tmp/rom19-sam31-harness`, containing a 103-line JSON contract,
+  157-line input/scoring module, 194-line official-API runner, and 159-line test
+  module: 613 lines including data and tests. Nothing was added to Ainekio or
+  MetaHuman runtime source.
+- The contract pins the source revision, checkpoint filename, eight manifest
+  digests, exact prompt text, phase order, 115- and 96-frame input counts,
+  target/distractor reference centers, 0.12 geometry gate, 1,000-millisecond
+  verifier p95 budget, 14-GiB CUDA-allocation budget, one frame-zero text
+  prompt, zero reseeds, official empty-output absence, initial-object-id
+  continuity, and independent per-sequence pass requirements.
+- Contract SHA-256 is
+  `e23b690bd4579aaaf2d07fe9dc27cfea90be71189524fd2838f12ef01c73124d`.
+  Scorer, runner, and test SHA-256 values are respectively
+  `bc086084e944ee42097946505389b003ce23222c7bfc24d457d13af3396762c5`,
+  `0b5d6e063613309f64cfa978a1cc7616295a802f648a1ec9616cb199cb64baf8`,
+  and `aaca2cc560c31a27bdb59c6b3da59d32e36ed8afa3fb8c150ba7b9b90855a39f`.
+- The runner stages chronological symlinks in its own temporary directory,
+  invokes one text prompt, consumes only public propagated results, closes the
+  session in `finally` even when propagation raises, records source/checkpoint
+  digests, model-load time, response latency, peak process RAM, peak CUDA
+  allocation, and writes a result only after both sequences finish. The
+  one-process experiment exits after model cleanup; it is not a service.
+
+Validation:
+
+- Input-only execution rehashed every selected manifest and JPEG and returned
+  exactly `blue-creature-cup: 115` and `dark-bottle-gray-cup: 96`. Counters are
+  unique and monotonically increasing within each chronological sequence.
+- Ten pure-stdlib automated tests pass. They cover strict success, false target
+  retention during loss, distractor switching, ambiguous extra output,
+  different object id after return, reseeding, verifier latency, missing output,
+  exactly one prompt plus normal close, and close after a propagation error.
+- The three Python files compile, contain no line longer than 100 columns, and
+  the progress document passes `git diff --check`. The harness occupies 72 KiB,
+  the disposable authentication environment occupies 48 MiB, and no
+  `sam3.1_multiplex.pt` exists locally.
+
+Denied-or-delayed fallback:
+
+- SAM 3.1 is not an architecture dependency. If access is denied or exceeds the
+  owner's chosen wait, retain this frozen result as an unavailable candidate and
+  replay public components against the same contract. Do not relax geometry,
+  absence, identity, latency, or independent-sequence gates.
+- The immediate honest V1 fallback is operator-seeded target geometry followed
+  by the existing fast continuity lane and independent milestone verification.
+  That preserves useful semi-autonomous view correction without pretending that
+  text-only acquisition is validated.
+- The autonomous fallback screen may compare public SAM 2.1 segmentation and
+  tracking, a separately owned open-vocabulary acquisition component, and a
+  separately owned instance-association component. SAM 2.1 alone is not a text
+  or identity authority, and MASA alone cannot recover detections that never
+  occurred. No weak scores may be averaged into authority; each selected owner
+  must pass its responsibility and both recordings before extraction.
+
+Architecture, safety, and rollback:
+
+- No adapter registration, worker composition, route, schema, capability,
+  package, persistent checkpoint, camera operation, robot command, audio
+  operation, firmware change, or physical motion occurred. Active View remains
+  unavailable, `identity_gate_validated` remains false, and fine-turn
+  calibration remains false.
+- Removing `/tmp/rom19-sam3` and `/tmp/rom19-sam31-harness` removes all
+  evidence-V source and harness assets. `/tmp/rom19-hf-auth` remains the
+  separately removable evidence-U client. The owner's Hugging Face login cache
+  is personal credential state and is neither copied into these assets nor part
+  of this rollback. Removing this documentation entry is the complete tracked
+  rollback for evidence V.
+
+### 2026-08-06 - ROM-19 evidence W - Public acquisition fallback contract
+
+Status: acceptance frozen before download or inference; this is an acquisition
+and absence screen, not a persistent-instance identity claim.
+
+Candidate boundary:
+
+- SAM 3.1 access remains under repository-author review. A fresh authenticated
+  metadata request still returns `Access denied. This repository requires
+  approval.` Continue the non-gated screen without changing the frozen SAM 3.1
+  experiment or treating its external wait as a system dependency.
+- OWLv2 is an Apache-2.0 zero-shot detector and exposes query-independent
+  objectness, but its official postprocessor requires a score threshold and it
+  has no temporal object id or official object-absence result. DINOv2 provides
+  Apache-2.0 appearance features but likewise does not own proposal generation
+  or absence. MASA owns association only after a detector emits an object and
+  documents that it cannot repair missed or inconsistent detections. None is a
+  clean first owner for the failed dark-bottle acquisition by itself.
+- Microsoft Florence-2-base is a public MIT-licensed 0.23-billion-parameter
+  model with an official caption-to-phrase-grounding task that returns parsed
+  boxes and labels. A metadata-only preflight of the source repository pinned
+  at `5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac` exposed an invalid assumption in
+  this contract before weight download or inference: its current model card
+  requires `trust_remote_code=True`, and its tokenizer metadata cannot
+  construct the installed native `Florence2Processor` with remote code
+  disabled. Do not execute that repository's Python or synthesize the missing
+  tokenizer fields locally.
+- Current Transformers documentation instead uses
+  `florence-community/Florence-2-base`, described as the native Transformers
+  conversion of Microsoft's checkpoint. Pin revision
+  `00921df66db728a9ceb750f5eca43e5c203a2051`. Its repository contains no Python
+  files, is MIT-licensed, and publishes one 463,178,864-byte FP16
+  `model.safetensors` with SHA-256
+  `62f3e696da74f8869a68ddb529a9b3e14eb25b21c592cb3dea6179bf944df6a0`.
+- The existing isolated ComfyUI Python runtime has Torch 2.11.0 and
+  Transformers 4.57.6. With networking disabled and
+  `trust_remote_code=False`, the pinned converted metadata resolves to the
+  installed `Florence2Config`, `Florence2Processor`, `BartTokenizerFast`, and
+  `CLIPImageProcessor`; its required `<image>` token resolves to id 51289.
+  Freeze `use_fast=False` to avoid a documented future processor-default
+  change. Do not install another Torch environment.
+
+Predeclared acquisition/absence screen:
+
+- Reuse the exact two prompts, eight pinned phase manifests, 115- and 96-frame
+  order, target/distractor reference centers, and 0.12 normalized geometry gate
+  from evidence V. Run every QVGA replay frame, not selected examples.
+- Invoke only the official `<CAPTION_TO_PHRASE_GROUNDING>` task with the frozen
+  sequence prompt. Freeze `do_sample=False`, three beams, 256 maximum new
+  tokens, processor `use_fast=False`, and the model processor's public
+  token-sequence postprocessing path before the scored replay. A one-frame
+  lifecycle probe showed that generic batch decoding inserts spaces between
+  location tokens and therefore produces an empty text-parser result even when
+  the model emits a box. Passing the unchanged generated token sequence to the
+  processor's explicitly supported `sequence` input preserves token boundaries;
+  it is not a project parser or a perception threshold. Add no confidence
+  threshold, mask-area rule, color test, query alias, coordinate hint, temporal
+  debounce, or scene special case.
+- Every visible, partially covered, and return frame must contain exactly one
+  parsed box whose center is within 0.12 of the independent target and closer to
+  it than every recorded distractor. Every full-loss frame must contain zero
+  parsed boxes. Each sequence and phase passes independently; aggregate recall
+  cannot hide either failure.
+- Cached offline replay must remain below 1,000 milliseconds p95 per frame and
+  below 14 GiB peak CUDA allocation. Record repository revision, exact file
+  digests and footprint, model-load time, frame latency, process RAM, CUDA use,
+  deterministic repeat result, and cleanup.
+- A pass may nominate Florence-2 as a low-frequency semantic acquisition and
+  absence verifier. It cannot validate persistent instance identity because it
+  has no temporal object id or cross-frame memory. Cutie remains only the fast
+  continuity candidate, and a same-class association gate remains required
+  before any physical action authority or typed runtime extraction.
+
+Isolation and rollback:
+
+- This entry changes documentation only. No Florence file, dependency, source,
+  cache asset, service, route, capability, camera operation, or physical command
+  exists at this checkpoint. Removing this entry is its complete rollback.
+- If the frozen screen proceeds, keep all model and harness assets under
+  `/tmp/rom19-florence2-*`, record their digests, and retain Active View as
+  unregistered with `identity_gate_validated` and fine-turn calibration false.
+
+### 2026-08-06 - ROM-11/ROM-19 evidence X - SAM 3.1 official-main preflight failure
+
+Status: checkpoint acquired; the frozen replay did not reach frame inference
+because the official public predictor path is internally incompatible. This is
+an upstream preflight failure, not a perception result.
+
+Acquisition and provenance:
+
+- The owner reported that the `SAM3` gating-group request was accepted on
+  August 6. The authenticated download resolved `facebook/sam3.1` revision
+  `daa63191845a41281374e725f4c9e51c7a824460` and acquired only
+  `sam3.1_multiplex.pt` under `/tmp/rom19-sam31-checkpoint`.
+- The checkpoint is 3,502,755,717 bytes with SHA-256
+  `0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6`.
+  Its state dictionary has 1,623 entries: 1,166 under `detector` and 457 under
+  `tracker`. No duplicate checkpoint format was downloaded.
+- The gated model card was pinned at the same repository revision and has
+  SHA-256
+  `4835b42b1a317f5bbfb664f17c421d0a081ad91ddf9288c76c9c0d205cbc5179`.
+  It delegates code and usage to the public SAM 3 repository; it does not name
+  an alternate source revision or checkpoint conversion.
+- The official public source remains clean at
+  `96914d2425f90a64f45ca977c2b5165418099543`. A fresh remote-ref check returned
+  the same commit for `refs/heads/main`.
+
+First execution result:
+
+- The isolated runner revalidated both immutable input sequences, loaded the
+  model, and failed on the first `start_session` request before a frame was
+  inferred or a prompt was submitted. No replay-result JSON was written.
+- `Sam3BasePredictor.start_session` always supplies
+  `offload_state_to_cpu`, but the official
+  `Sam3MultiplexTrackingWithInteractivity.init_state` signature does not accept
+  it. Python therefore raised
+  `TypeError: Sam3MultiplexTrackingWithInteractivity.init_state() got an
+  unexpected keyword argument 'offload_state_to_cpu'`.
+- This exact official-notebook failure is independently recorded in
+  [facebookresearch/sam3 issue 544](https://github.com/facebookresearch/sam3/issues/544).
+  The associated [open PR 543](https://github.com/facebookresearch/sam3/pull/543)
+  filters initialization arguments with the same signature-inspection pattern
+  already used by adjacent predictor methods. Its CLA-signed head is
+  `081b4fca8296318b9f958b3b4a2527cb2f74dad4`; it remains open and is not part
+  of official `main`.
+- The model also reported 64 outer missing RoPE buffers under the builder's
+  default `use_rope_real=True`. The acquired checkpoint contains complex
+  `freqs_cis` entries rather than `freqs_cis_real` and `freqs_cis_imag` pairs.
+  A public issue report identifies `use_rope_real=False` as the compatible
+  video-builder configuration, but the official notebook, builder signature,
+  and model card do not declare that requirement. The large first-stage
+  missing-key report comes from the builder loading the combined
+  detector/tracker checkpoint into its tracker submodel before loading the
+  combined model; it cannot be treated as clean-load evidence.
+- The failed runner exited, left no SAM process, and issued no camera or robot
+  operation. Existing MetaHuman GPU processes were left untouched.
+
+Decision and next measurement:
+
+- Do not patch the pinned official checkout, suppress missing-key output, or
+  call private model state an integration-ready owner path. Official-main SAM
+  3.1 is not currently eligible for runtime selection.
+- A second replay may be run only as a clearly provisional research result by
+  applying the semantic PR 543 session-argument filter, without its two
+  trailing-whitespace lines, to a separate temporary worktree based on the
+  pinned official commit and by selecting the checkpoint's matching
+  complex-RoPE configuration. Record the base and upstream patch commits,
+  verify the resulting diff contains only the session-argument filter, and add
+  a focused regression test before inference.
+- A provisional pass would answer whether SAM 3.1's model outputs satisfy the
+  frozen identity/presence contract; it would not clear integration. Production
+  candidacy still requires an official merged owner path or a separately
+  reviewed, tested dependency policy decision.
+- If the provisional model fails either sequence, reject it and continue the
+  already frozen public fallback screen. Do not tune prompts, thresholds,
+  geometry, phases, or object-specific rules after viewing outputs.
+
+Provisional harness and resource gate:
+
+- A detached temporary worktree at `/tmp/rom19-sam3-pr543` retains the official
+  base commit and changes only `sam3/model/sam3_base_predictor.py`. The clean
+  seven-line semantic filter has working-diff SHA-256
+  `db034c816eadded0c0df891144e0baa55c357808a9e2ebd1cc45ccef57ddac66`;
+  its patched-file SHA-256 is
+  `8433b027020295c34082b16658e73cac75885c1aace6d4f0d739203b80b9a427`.
+  `git diff --check` passes.
+- The revised research contract pins that exact base, changed file, file
+  digest, diff digest, upstream PR and patch commit, and declares
+  `use_rope_real=false`, `use_fa3=false`, compilation off, warm-up off, and
+  asynchronous loading off. After the memory-fit measurement, it also pins the
+  official session's `offloadVideoToCpu=true`. Its SHA-256 is
+  `990749f98178366c1eb9dc79d0bdd92bb41fbd61ceb134d1d35020776170028d`.
+  Acceptance criteria, prompts, reference geometry, phases, manifests, and
+  frame counts did not change.
+- The runner rejects any changed source commit, extra dirty file, patched-file
+  digest, or diff digest before model construction. Ten replay/scorer tests and
+  the new focused predictor-compatibility test pass. Input-only execution again
+  returns exactly 115 and 96 frames. No output line in the harness exceeds 100
+  characters.
+- Actual inference is deferred while owner-authorized model training occupies
+  the GPU. At the measured checkpoint, four existing MetaHuman Python processes
+  used about 12.1 GiB of the 16-GiB RTX 4080, leaving 2.8 GiB free at 100%
+  utilization. They were not inspected, stopped, unloaded, or interrupted.
+- After the owner reported that GPU space had been freed, a fresh measurement
+  showed improvement but not an idle benchmark window: 9.3 GiB remained used,
+  6.6 GiB was free, four training processes each retained about 2.1 GiB, and GPU
+  utilization remained 99%. The frozen replay was not started because both its
+  load headroom and latency measurement would be compromised.
+- CPU is not an equivalent supported replay path. The official SAM 3.1
+  prerequisites require a CUDA GPU; the multiplex builder calls
+  `demo_model.cuda()`, session initialization fixes its device to `cuda`, and
+  the predictor enters CUDA BF16 autocast. Porting those paths to CPU would be
+  an invasive third-party fork and would invalidate this candidate comparison.
+  Contract logic and lifecycle tests can run on CPU; the 211-frame perception
+  result cannot honestly be reported until sufficient GPU memory is available.
+- No result JSON exists. Resource deferral is not a model pass or failure and
+  does not change the rejection of the current DINO/Cutie composition.
+- With 15.0 GiB free and no listed compute process, the first actual replay
+  reached frame-zero text acquisition and began forward propagation. Before
+  emitting a propagation-frame result, CUDA allocation failed: the process held
+  13.59 GiB, 1.05 GiB remained free, and the next operation requested 1.27 GiB.
+  The session closed in `finally`, released its frame state, and wrote no result
+  JSON. This is a memory-fit failure before perception scoring, not a failed
+  identity or presence decision.
+- The official `start_session` request owns a non-semantic
+  `offload_video_to_cpu` option. For the 115-frame sequence, its FP16
+  3-by-1008-by-1008 frame store is approximately 0.65 GiB, exceeding the
+  observed 0.22-GiB allocation shortfall. Freeze that option as `true` before a
+  bounded retry. It changes storage placement and measured latency, not weights,
+  prompts, outputs, thresholds, reference geometry, or acceptance. The runner
+  now reads the setting from the contract, exposes it in its result, and its
+  focused test proves the start request carries it. All 11 tests and the exact
+  115/96 input validation pass after this change.
+- Before the bounded retry could start, two new non-SAM Python compute processes
+  appeared and grew GPU use from 3.3 GiB to 4.9 GiB within 14 seconds, reducing
+  free memory to 11.0 GiB. They were not stopped or inspected. The offloaded
+  retry has not run, and no result JSON exists.
+- After the GPU returned to 14.94 GiB free with no listed compute process, the
+  CPU-frame-offloaded retry again reached frame-zero acquisition and forward
+  propagation, then failed before emitting a propagation-frame output. Live
+  PyTorch allocation fell from 12.42 GiB to 12.09 GiB, confirming that offload
+  reduced the intended storage owner, but the allocator held another 1.51 GiB
+  reserved and unused while a 1.27-GiB contiguous request failed. The session
+  closed and no result JSON was written.
+- Installed PyTorch 2.11.0+cu130 supports `PYTORCH_ALLOC_CONF` and tests the
+  `expandable_segments` option. Freeze
+  `PYTORCH_ALLOC_CONF=expandable_segments:True` in the contract and set it
+  before importing Torch. This is allocator fragmentation control recommended
+  by the emitted PyTorch failure, not perception tuning. It does not change
+  model weights, prompts, thresholds, outputs, references, or acceptance.
+- Permit one final bounded retry with both official video CPU offload and the
+  frozen allocator configuration. If it still cannot emit frame zero on an
+  otherwise idle 16-GiB card, reject SAM 3.1 as not fitting the V1 hardware
+  envelope; do not add further memory workarounds.
+- The final bounded retry ran with 14.9 GiB initially free. Expandable segments
+  reduced reserved-unused memory from 1.51 GiB to 127.55 MiB, proving the
+  fragmentation control took effect. The first propagation operation still
+  failed before output with 13.75 GiB in process use, 837.19 MiB free, and a
+  further 1.27-GiB request. This is a real capacity deficit of approximately
+  0.45 GiB at that operation, not allocator fragmentation.
+- A later owner-provided lower-baseline window began with 15.35 GiB free. The
+  exact same frozen runner emitted the first 16 of 115 propagation frames, then
+  failed when the next multiplex chunk requested another 1.27 GiB. At failure,
+  the process held 13.87 GiB, PyTorch had allocated 13.38 GiB with 200.47 MiB
+  reserved but unused, and approximately 1.28 GiB remained free. This confirms
+  that the earlier failure was not caused only by display or unrelated process
+  occupancy: the official 16-frame batched-grounding path grows beyond the
+  16-GiB card as replay advances. The incomplete run is not a perception score.
+- The checkpoint contains 874,365,676 tensor elements occupying 3.262 GiB:
+  873,186,028 FP32 parameters or buffers and 1,179,648 complex64 elements. The
+  checkpoint itself therefore accounts for only part of runtime use. The
+  official multiplex builder combines detector and tracker owners, uses
+  1008-by-1008 inputs and 16-frame batched grounding, and retains video,
+  feature, mask, and tracking state. Activations, caches, CUDA workspace, and
+  the observed 1.27-GiB transient operation account for most of the gap between
+  the 3.26-GiB tensors and the greater than 15-GiB execution requirement.
+- Reject the public SAM 3.1 multiplex candidate for the RTX 4080 V1 hardware
+  envelope before perception scoring. It produced no scored frame, no result
+  JSON, and no evidence about target identity or presence. Retain it only as a
+  future larger-memory research candidate; a practical later revision should
+  use a GPU with materially more than 16 GiB rather than depending on a
+  razor-thin theoretical fit. The owner has now closed this candidate for V1.
+  If it is reconsidered for production, treat 24 GiB as the practical starting
+  class rather than a proven minimum, and rerun the entire frozen replay plus a
+  production-length soak before selection; the incomplete 16-GiB measurements
+  cannot establish the full-run peak.
+- Do not add batching changes, model surgery, precision conversion, private
+  state access, prompt changes, lower image resolution, or more allocator
+  workarounds. Continue the evidence-W public fallback contract unchanged.
+
+Isolation and rollback:
+
+- No tracked source, package, adapter, graph, service, capability, firmware, or
+  runtime configuration changed. Active View remains unavailable,
+  `identity_gate_validated` remains false, and fine-turn calibration remains
+  false.
+- Removing `/tmp/rom19-sam31-checkpoint`, `/tmp/rom19-sam31-model-card`, and the
+  already documented SAM source, dependency, authentication, harness, and
+  `/tmp/rom19-sam3-pr543` worktree directories removes the local evidence-X
+  assets. The owner's Hugging Face credential cache is not copied, inspected,
+  or included in rollback.
+- Removing this documentation entry is the complete tracked rollback for
+  evidence X.
+
+### 2026-08-06 - ROM-19 evidence Y - Florence-2 phrase-grounding rejection
+
+Status: the native public fallback completed both immutable sequences on CPU
+and failed the perception contract independently on both. GPU benchmarking is
+unnecessary for this rejected task/model composition.
+
+Dependency and API correction:
+
+- The original Microsoft repository pinned in evidence W requires
+  `trust_remote_code=True`; its tokenizer metadata cannot construct the native
+  Transformers 4.57.6 `Florence2Processor`. That mismatch was found before its
+  weights were downloaded or any frame was inferred. No repository Python was
+  executed and no missing token or processor field was synthesized.
+- Current
+  [Transformers Florence-2 documentation](https://huggingface.co/docs/transformers/model_doc/florence2)
+  instead uses the native converted
+  [`florence-community/Florence-2-base`](https://huggingface.co/florence-community/Florence-2-base)
+  artifact. Pinned revision
+  `00921df66db728a9ceb750f5eca43e5c203a2051` contains no Python files. Its only
+  weight file is a 463,178,864-byte FP16 safetensors checkpoint with SHA-256
+  `62f3e696da74f8869a68ddb529a9b3e14eb25b21c592cb3dea6179bf944df6a0`.
+- Offline construction with `trust_remote_code=False` resolved only installed
+  native classes: `Florence2Config`, `Florence2Processor`,
+  `BartTokenizerFast`, and `CLIPImageProcessor`. The required `<image>` token
+  resolved to id 51289. Processor `use_fast=False` was frozen to avoid a
+  documented default change.
+- Generic batch decoding inserts spaces between generated location tokens, so
+  passing decoded text to the official parser produced an empty result despite
+  a valid generated box. The processor's public `post_process_generation`
+  method explicitly accepts the unchanged generated token `sequence`; that
+  owner path preserves the location-token boundaries and returned the expected
+  parsed box. The harness uses that public input and contains no location-token
+  parser.
+
+Harness and validation:
+
+- `/tmp/rom19-florence2-harness` contains one 43-line JSON contract, a
+  154-line input/scoring module, a 219-line runner, a 122-line test module, and
+  a 102-line lifecycle probe: 640 lines including data and tests. It reuses the
+  previously frozen 115/96-frame input contract by exact SHA-256 rather than
+  copying the sequence geometry or manifests.
+- Contract SHA-256 is
+  `68f161e8b6659c67dc39d646a767ed5efc16dfa92a0f68769dca6aa3304a67f0`.
+  Scorer, runner, tests, and probe SHA-256 values are respectively
+  `76f96335050c987f01625008f4e0c563ddb960b7a85216ad40fc4ada7e11af56`,
+  `f60916179afc4eff21d55bb5f471d19fffc249380ab54585bec892aed9579931`,
+  `4e8bcda26c1ef09e34ae3ee00be53277e181f0cc48f43a10e7b2251b2129c568`,
+  and `7d2e75672e5bede2e816a88f746257b089b9f970d99742da81e775b83d19b61d`.
+- Eight pure scoring tests pass. They cover strict success, false presence,
+  missing presence, ambiguous boxes, distractor localization, latency,
+  deterministic repeat, and missing/reordered output. All Python files compile,
+  the line-length screen passes, and exact input validation returns 115 and 96
+  frames.
+- A two-sequence one-frame smoke loaded once, produced one correct box for each
+  target, repeated both outputs exactly, stayed offline, used no remote code,
+  and completed cleanup. This justified the full CPU correctness replay without
+  waiting for the owner-occupied GPU.
+
+Measured replay result:
+
+- The complete 118,177-byte result has SHA-256
+  `0c659200b01e7c6c392d31b14ae7e783013d18e8ec1440532f7daf35ff36cce5`.
+  Model load took 406.48 milliseconds and peak process RSS was 2,306,940 KiB.
+  Both sequence repeat checks and the offline/no-remote-code/official-parser/
+  cleanup lifecycle checks passed.
+- Blue creature/cup accepted all 29 visible and all 28 return frames, only 6
+  of 29 partial-cover frames, and zero of 29 full-loss frames. Twenty-three
+  partial frames produced two candidate boxes; every loss frame produced one
+  false box. Aggregate acceptance was 63 of 115 frames.
+- Dark bottle/gray cup accepted all 24 visible and all 24 return frames, zero
+  of 24 partial-cover frames, and zero of 24 full-loss frames. Every partial and
+  loss frame produced one box, but the partial boxes failed frozen target
+  geometry and every loss box was a false presence. Aggregate acceptance was
+  48 of 96 frames.
+- CPU p95 was 2,671.04 milliseconds for the first sequence and 2,142.27
+  milliseconds for the second, above the production budget. This is a CPU
+  diagnostic rather than GPU latency evidence. It cannot affect the rejection:
+  faster execution would not repair 53 of 53 false-present loss outputs or the
+  independent partial-cover failures.
+
+Decision, architecture, and rollback:
+
+- Reject caption-to-phrase grounding as the V1 acquisition/absence verifier.
+  It grounds an asserted caption phrase and did not own absence on either
+  sequence. Do not add a confidence threshold, box-area rule, text cleanup,
+  location parser, phase debounce, target alias, scene rule, or tracker vote to
+  reinterpret these outputs.
+- The result does not reject the weight file for every task. Before any further
+  inference, a separately frozen screen may evaluate Florence-2's maintained
+  `<OPEN_VOCABULARY_DETECTION>` task because that is the API semantically
+  intended to locate a queried concept rather than ground an asserted caption.
+  It must use the same exact prompts, frames, geometry, independent sequence
+  gates, official token-sequence parser, and zero-threshold absence rule. One
+  bounded task-correct screen is permitted; failure rejects Florence-2 for V1.
+  This limits the Florence comparison to two tasks total. OCR, captioning,
+  region-description, and segmentation tasks are outside this responsibility
+  and must not become an open-ended mode search.
+- The replay resolution is a controller-policy choice, not an OV3660 hardware
+  ceiling. The isolated `ActiveViewConfig` currently defaults to QVGA 320 by
+  240 at 5 fps. The Gateway home profile supports QVGA or VGA 640 by 480 up to
+  10 fps and defaults its general camera capability to VGA; firmware separately
+  captures fresh XGA 1024 by 768 stills. The two identity recordings used QVGA
+  because they were designed around the proposed low-bandwidth live-control
+  stream, battery/data constraints, and fast-tracker cadence.
+- QVGA is too conservative as the only semantic-verifier evidence. Florence
+  expands those frames to 768 by 768 and SAM 3.1 expands them to 1008 by 1008;
+  resizing cannot restore source detail. Preserve the QVGA results as truthful
+  evidence for the current QVGA configuration, but do not generalize them to a
+  higher-resolution verifier lane. Before final component selection, capture
+  equivalent identity/absence evidence through the existing fresh-XGA still
+  owner. The intended split is low-frequency XGA for acquisition, uncertainty,
+  reacquisition, and milestone/terminal verification; QVGA may remain the fast
+  continuity lane only if it passes that narrower responsibility.
+- No adapter, graph, route, worker, capability, package, persistent model,
+  camera owner, firmware, or robot state changed. Active View remains
+  unregistered, `identity_gate_validated` remains false, and fine-turn
+  calibration remains false.
+- Removing `/tmp/rom19-florence2-base`, `/tmp/rom19-florence2-native`, and
+  `/tmp/rom19-florence2-harness` removes all evidence-W/Y model, metadata,
+  harness, and result assets. Removing this entry and the evidence-W changes is
+  the complete tracked rollback.
+
+### 2026-08-06 - ROM-19 - Freeze XGA verifier acquisition contract
+
+Status: validated
+
+Decision and owner evidence:
+
+- Use the existing Gateway `snap` command for the next bounded semantic-
+  verifier replay. Current firmware initializes its only PSRAM framebuffer at
+  XGA 1024 by 768 and switches to XGA for each fresh snapshot before restoring
+  an active preview. The dashboard already routes `/api/snap` through the
+  canonical Gateway `request_snap` owner. Repeated XGA stills therefore require
+  neither a firmware change nor a reflash.
+- Do not reinterpret the still path as continuous XGA video. The Gateway
+  rejects preview resolutions other than QVGA and VGA, and firmware rejects a
+  configured preview resolution above VGA. Reducing preview FPS would reduce
+  data and battery use, but it does not change either resolution contract.
+  Continuous XGA preview remains a possible future coordinated Gateway and
+  firmware capability, with rebuild, reflash, and physical validation required.
+- XGA 1024 by 768 is the closest current camera-owned source to Florence-2's
+  768 by 768 processor input. It preserves substantially more source evidence
+  than QVGA while matching the low-frequency semantic-verifier responsibility;
+  it is not proposed as the fast continuity or live-control stream.
+
+Frozen acquisition contract before capture:
+
+- Record four independent 20-frame phases under
+  `20260806-identity-sequence-03-xga`: target and distractor fully visible;
+  target partially covered; target absent or fully covered while the distractor
+  remains; and the same target returned at a different position. The target is
+  `dark bottle` and the distractor is `gray cup`.
+- Dispatch exactly one fresh snapshot command at a time. Wait for both a new
+  monotonic camera-frame counter and that command's terminal result before
+  dispatching the next command. Never overlap capture commands.
+- Pace dispatch at no more than one snapshot per second. Hardware, encoding, or
+  transport latency may make the measured cadence lower. Record each frame's
+  counter, command sequence, receipt time, elapsed time, dimensions, byte size,
+  and digest, plus total and effective cadence; do not label the result as a
+  fixed one-FPS video stream.
+- Leave continuous preview disabled and acquire no camera lease. Confirm before
+  and after each phase that the staged robot is connected, there are no other
+  camera consumers, no capture command remains pending, and the camera is off.
+  Do not command locomotion, joints, pose, speech, or any other physical action.
+- Write a phase only after all 20 XGA frames and terminal results are complete;
+  an interrupted or invalid phase must leave no accepted output directory.
+  Initial target geometry for scoring must be reviewed independently from this
+  new XGA sequence and frozen before model inference.
+- Preserve the previously frozen Florence screen: exactly one
+  `<OPEN_VOCABULARY_DETECTION>` replay with the exact prompt `dark bottle`, the
+  maintained processor's official token-sequence parser, deterministic
+  generation, zero detections as absence, and no invented score, box-area,
+  temporal, color, phase, or scene heuristic. Failure rejects Florence-2 for
+  the V1 semantic-verifier role; no additional Florence task search follows.
+
+Current boundaries:
+
+- This entry freezes an evidence acquisition method, not a production camera
+  loop. Active View remains unregistered, `identity_gate_validated` remains
+  false, and fine-turn calibration remains false.
+- The capture harness and recordings remain isolated and removable. No adapter,
+  graph, route, worker, capability, package, firmware, or robot runtime owner is
+  changed by this acquisition.
+
+Validation to date:
+
+- Extended the existing isolated `/tmp/ainekio_capture_identity_phase.py`
+  harness with a `snapshot-series` mode rather than adding another capture
+  owner. Harness SHA-256 is
+  `d30838d4d6731df8bef56c68004037b7daae999c40a7582def59d8068f46d0d0`;
+  `python3 -m py_compile` and CLI argument rendering pass. The mode validates an
+  idle connected robot and empty lease set, correlates every frame with one
+  `done` terminal, enforces XGA dimensions and monotonic counters, paces from
+  dispatch time, rechecks idle state, logs out, and writes only a complete
+  phase. It commands no camera preview or physical motion.
+- Captured phase `phase-01-target-distractor` from 18:28:02Z to 18:28:25Z.
+  All 20 snapshot commands completed exactly once: command sequences 5 through
+  24 map to camera counters 4 through 23, every terminal is `done`, every image
+  is 1024 by 768, and all 20 JPEG digests are unique. The 898,167 captured
+  bytes were dispatched at an effective 0.845179 FPS over 22.902 seconds; the
+  minimum dispatch interval was 1,000.027 milliseconds. Continuous preview and
+  camera leases remained disabled and `physicalMotion` is false.
+- Phase metadata SHA-256 is
+  `d0d356939a52f91072cede4b8c60b02d8f5dd4bcf0733248a7237e835a517941`.
+  Independent visual review of frame 10 confirms the dark bottle is fully
+  visible on the left and the gray cup is fully visible on the right. A small
+  blue figure remains visible between them as ordinary scene clutter; it is
+  neither relabelled as the named distractor nor removed from the truthful
+  scene description.
+- Captured and accepted `phase-02-target-partially-covered`. Command sequences
+  26 through 45 map one-to-one to camera counters 25 through 44; all 20
+  terminals are `done`, all frames are 1024 by 768, and all 20 image digests are
+  unique. The 893,020 captured bytes ran at an effective 0.999922 FPS with a
+  minimum 1,000.061-millisecond dispatch interval. Metadata SHA-256 is
+  `ba4aa7512d5e008e96ee3200750e52ce5f39857329a2c2490157043864be3cff`.
+  Independent review of frame 10 confirms a light covering obscures most of the
+  bottle while its lower body and outline remain visible; the gray cup and blue
+  scene-clutter figure remain visible. This is a genuine partial-cover phase,
+  not an unchanged target or a fully absent target. Continuous preview, camera
+  leases, and physical motion remained false.
+- Captured and accepted `phase-03-target-absent`. Command sequences 46 through
+  65 map one-to-one to camera counters 45 through 64; all 20 terminals are
+  `done`, every frame is 1024 by 768, and all 20 image digests are unique. The
+  871,280 captured bytes ran at an effective 0.999924 FPS with a minimum
+  1,000.030-millisecond dispatch interval. Metadata SHA-256 is
+  `ebb5c207120a3fdcc3be59ee15e0ba3fb2bd01bcd229635bf35d1b5be597186a`.
+  Full-sequence contact-sheet review confirms the dark bottle and covering
+  material are absent in every frame while the gray cup and blue scene-clutter
+  figure remain visible. Continuous preview, camera leases, and physical motion
+  remained false.
+- Captured and accepted `phase-04-target-returned`. Command sequences 67 through
+  86 map one-to-one to camera counters 66 through 85; all 20 terminals are
+  `done`, every frame is 1024 by 768, and all 20 image digests are unique. The
+  868,024 captured bytes ran at an effective 0.999915 FPS with a minimum
+  1,000.046-millisecond dispatch interval. Metadata SHA-256 is
+  `29501af0b4062d43e78311ce8888b2ae630bc59b1a00938bba97b26dc536e8ac`.
+  Full-sequence contact-sheet review plus original-resolution review of frame 10
+  confirms the same bottle is fully visible to the right of the cup, distinctly
+  separated and substantially displaced from its original left-side position.
+  The gray cup and blue scene-clutter figure remain visible. Continuous preview,
+  camera leases, and physical motion remained false.
+- The physical XGA acquisition gate is complete: four independently staged
+  phases, 80 fresh snapshots, 80 unique image digests, four monotonic and
+  non-overlapping command/counter ranges, and no live preview or motion. This
+  proves the current chip, flashed firmware, Gateway, and low-cadence still path
+  can supply the resolution class chosen for the semantic verifier. It does not
+  prove a perception model or a continuous XGA video capability.
+
+Remaining:
+
+- The XGA capture-path validation is complete. Perception selection remains a
+  separate gate and is resolved for Florence-2 by evidence Z below.
+
+### 2026-08-06 - ROM-19 evidence Z - XGA open-vocabulary rejection
+
+Status: validated rejection; no V1 semantic verifier selected.
+
+Pre-output contract and harness validation:
+
+- Froze `/tmp/rom19-florence2-harness/xga-input-contract.json` before model
+  inference with SHA-256
+  `b335e216613655453f4144826bfee531402bcf287c9c19308d80ac514b73b49a`.
+  It binds all four phase-manifest digests, 80 frame digests, exact prompt
+  `dark bottle`, XGA dimensions, phase states, and independently reviewed
+  target/distractor centers. The partial-cover phase retains the stationary
+  physical target center from phase one rather than recentering truth on the
+  covering material.
+- Froze the Florence replay contract with SHA-256
+  `acf31029e8cc9014b3fc8fc00e1204b9ae51c8d097041934a926977d206ef7ae`.
+  It permits only `<OPEN_VOCABULARY_DETECTION>`, deterministic three-beam
+  generation, at most 256 new tokens, native slow processing, and the official
+  token-sequence postprocessor. Presence requires exactly one parsed box and no
+  polygon; absence requires neither a parsed box nor a polygon. The existing
+  0.12 normalized center-distance, one-second verifier latency, 14-GiB CUDA,
+  independent-sequence, exact-artifact, offline, and no-remote-code gates remain.
+- Generalized the existing temporary Florence harness rather than adding a
+  second inference owner. The input validator now checks the saved still schema,
+  phase and frame digests, XGA geometry, monotonic camera and command sequences,
+  matching `done` terminals, camera-lease and continuous-preview absence, and
+  `physicalMotion: false`. The scorer uses each source frame's dimensions and
+  counts official polygons as detections instead of treating them as absence.
+  The runner records both official output types and enforces the CUDA budget.
+- Replay validator, runner, and test SHA-256 digests are respectively
+  `44eb6a5319d86d82e817c945d3bcd6a256bd3932795a255a388355445fe44d5b`,
+  `09df465a98a77dc18848a11d8bc0f36c0f50ab40669859f660cd610e5c5e524c`,
+  and `43b3930121ab7942314b0a71e0a842a86678ddec62870e2dfebe64f3d5be9da9`.
+  Python compilation passes, all 11 pure scorer tests pass, and pre-inference
+  input loading resolves exactly 80 frames across four 20-frame phases.
+
+Execution and result:
+
+- A one-frame CPU probe used the pinned native model offline and produced one
+  official `dark bottle` box `[168,80,309,518]` on the actual bottle, no polygon,
+  and a deterministic repeat. It loaded in 442.610 milliseconds, used 2,292,116
+  KiB peak RSS, and inferred in 2,041.292 milliseconds. Probe SHA-256 is
+  `025ab1f7e3c506547a2d2d9b7889f3d26011a8f9adb697048365d2f5b7985719`.
+- The companion GPU was executing a separate training job at the decision
+  point: 6,863 MiB used, 9,050 MiB free, and 99-percent utilization. The full
+  screen therefore set `CUDA_VISIBLE_DEVICES` empty and ran on CPU, preserving
+  the user's training workload. CPU latency is diagnostic rather than a GPU
+  throughput claim.
+- The complete result is 47,673 bytes with SHA-256
+  `0ddc6ccbe7851dc6ec0f12a8aefc1604c86c8df0ec92f232bd8ed270d7c1148b`.
+  Model load was 443.511 milliseconds, peak RSS was 2,290,944 KiB, peak CUDA
+  allocation was zero, deterministic repeat passed, and offline/no-remote-code/
+  official-sequence-postprocess/cleanup lifecycle checks passed. CPU p95 was
+  2,035.947 milliseconds, so the one-second production latency gate failed as
+  expected for this diagnostic path.
+- Perception accepted 60 of 80 frames: 20 of 20 fully visible, 20 of 20
+  partially covered, and 20 of 20 returned frames. Every one of those outputs
+  contained one box labeled `dark bottle`, no polygon, and target-consistent
+  frozen geometry.
+- Perception failed all 20 target-absent frames. Florence emitted one box
+  labeled `dark bottle` and no polygon in every loss frame. Eighteen boxes cover
+  the small blue scene-clutter figure; two cover an unrelated upper-frame
+  hanging object. Original-resolution review of the first official false box
+  `[371,384,466,518]` confirms it encloses the blue figure, not the absent
+  bottle. This is a complete false-presence failure, not a parsing ambiguity or
+  a resolution shortfall.
+
+Decision, architecture, and rollback:
+
+- Reject Florence-2-base as the V1 semantic acquisition/absence verifier. XGA
+  repaired positive target localization but did not provide target absence or
+  instance identity; the task always returned a plausible queried-object box.
+  Do not add a score, color, area, text, phase, scene-object, temporal, or
+  cross-model rule to reinterpret the 20 false presences.
+- The predeclared Florence comparison is closed after exactly two tasks:
+  caption-to-phrase grounding and open-vocabulary detection. Do not test OCR,
+  captioning, region description, or another Florence task for this owner.
+- No deployable V1 identity composition is selected from the tested components.
+  Cutie remains the strongest low-latency continuity candidate, but it cannot
+  authorize presence or motion. Grounding DINO and Florence may propose
+  candidates, but neither owns absence; combining their scores with Cutie would
+  combine failing signals rather than establish an independent verifier.
+- Preserve the validated low-cadence XGA acquisition path as camera-owner
+  evidence. It is model-independent and usable by a future verifier without a
+  firmware reflash. It does not authorize continuous XGA preview, adapter
+  registration, capability advertisement, target-relative motion, or fine-turn
+  control.
+- Active View remains unregistered, `identity_gate_validated` remains false,
+  and fine-turn calibration remains false. The safe V1 decision is explicit
+  non-availability of target-relative Active View on the current selected
+  perception stack, not a conversational fallback or a silent stationary
+  success.
+- A later selection cycle may evaluate an independently maintained instance-
+  identity verifier on multi-scene held-out evidence, or retry the official SAM
+  3.1 verifier on hardware with adequate VRAM. It must retain the same absence,
+  distractor, lifecycle, and no-post-output-tuning contract; it must not reopen
+  the bounded Florence mode search.
+- Removing the four ignored XGA phase directories removes the physical media.
+  Removing `/tmp/ainekio_capture_identity_phase.py` and
+  `/tmp/rom19-florence2-harness` removes all evidence-Z tools, contracts,
+  overlays, probes, and results. Removing this entry is the complete tracked
+  rollback. No maintained Ainekio or MetaHuman runtime source changed.
+
+### 2026-08-06 - ROM-19 evidence AA - Benchmark-first perception selection gate
+
+Status: selection screen complete; one new acquisition candidate and one
+higher-resolution control replay are justified. No model inference, runtime
+integration, or physical motion occurred.
+
+Method correction:
+
+- Earlier ROM-19 screens mixed two distinct purposes: falsifying whether a
+  component could own the required responsibility, and selecting the best
+  available model for that responsibility. The falsification evidence remains
+  valid, but future selection must not give every available or older model an
+  equal full replay.
+- Public benchmarks now narrow the field before local work. Local Ainekio
+  replay remains necessary only to measure domain shift from the OV3660 image,
+  compression, lighting, similar distractors, full target loss, return, the
+  RTX 4080 budget, and the maintained worker contract. It is not a replacement
+  for community model comparison.
+- Detection AP and long-term tracking quality are not interchangeable. LVIS
+  open-vocabulary and visual-prompt results inform acquisition. Distractor,
+  occlusion, loss, and return benchmarks inform temporal continuity. A model
+  must still expose the semantics required by the controller; a high tracking
+  score cannot create an official `lost` result if the implementation always
+  emits a box.
+
+Hard gates before a full local replay:
+
+1. Source and model artifacts must have an explicit, reviewed license and be
+   usable from pinned local files with inference-time networking disabled.
+2. The component must fit an existing responsibility: independent-frame
+   acquisition/reacquisition, or persistent append-one-frame continuity. A
+   whole prerecorded video or completed frame-directory API is not a live
+   owner merely because the camera supplies JPEG snapshots.
+3. Acquisition must expose detections, including a legitimate empty result.
+   Continuity must expose an official loss, ambiguity, or confidence semantic
+   that can satisfy `ActiveViewEstimate`; a project-authored score threshold
+   may not synthesize identity or absence after seeing the replay.
+4. A smoke must remain below the existing 14-GiB CUDA ceiling, load and shut
+   down cleanly, remain deterministic for a repeated frame, and leave the
+   training workload undisturbed.
+5. Only a candidate that passes the smoke receives the frozen 80-frame XGA
+   semantic replay or a newly captured VGA temporal replay. Parameters and
+   acceptance rules are frozen before model output.
+
+Weighted comparison after hard gates:
+
+- 30 percent: task match for similar distractors, partial cover, full loss,
+  and return;
+- 20 percent: task-aligned public benchmark evidence rather than popularity;
+- 15 percent: maintained independent-frame or append-one-frame API fit;
+- 15 percent: license, local weights, offline operation, and reproducibility;
+- 10 percent: measured latency, VRAM, and process lifecycle on the local host;
+- 10 percent: maintenance state and bounded integration cost.
+
+Community and source screen:
+
+- The official
+  [YOLOE repository](https://github.com/THU-MIG/yoloe) reports visual-prompt
+  LVIS results at 640-pixel input. YOLOE-11-M uses 27 million parameters in
+  visual-prompt mode, reports 31.4 fixed AP and 39.2 visual-prompt FPS on a T4
+  with TensorRT, and supports a cross-image visual prompt. This is a closer
+  acquisition responsibility match than another text-only `dark bottle`
+  query because the initial target box supplies the exemplar.
+- Read-only source review is pinned to official YOLOE commit
+  `40cd606cabdbe2b566d6f14a6b162c89206e9a1b` in
+  `/tmp/rom19-yoloe-source`. The checkout is 61 MiB and clean. The official
+  example first derives a visual-prompt embedding from a source image and box,
+  installs that embedding with `set_classes`, clears the prompt predictor, and
+  applies it to another image. The maintained input loader accepts NumPy image
+  arrays, so Gateway JPEGs can be decoded and passed one at a time without a
+  video file or a second camera owner.
+- YOLOE source and the selected Hugging Face model card are AGPL-3.0. This does
+  not block isolated local research, but production adoption requires an
+  explicit license decision. The official `jameslahm/yoloe-11m-seg` dry run
+  reported a 119.9-MB FP32 safetensors file and 30 million parameters. No
+  checkpoint was downloaded in this screen.
+- The distractor-focused DiDi table published by
+  [DAM4SAM](https://github.com/jovanavidenovic/DAM4SAM) reports quality 0.575
+  for Cutie, 0.608 for ODTrack, 0.680 for SAMURAI, and 0.694 for DAM4SAM. This
+  is more relevant to the staged cup/target problem than a generic detection
+  leaderboard, but it does not supersede the hard interface and license gates.
+- DAM4SAM is the top task-aligned research result, but official commit
+  `9c954504b39ebca4c412f207be0787c26bfac85a` has no repository-level license
+  visible and its documented demo consumes a completed directory of frames.
+  Do not clone, download, or integrate it until permission is established and
+  an official append-one-frame path is demonstrated.
+- SAMURAI is Apache-2.0 and ranks second on DiDi, but its own FAQ states that
+  live/streaming input is not supported. Here `streaming` means preserving one
+  tracking session while future JPEGs arrive, not encoded continuous video.
+  The one-XGA-snapshot-per-second lane still needs that temporal API if a model
+  is to guide the next action. SAMURAI may be replayed offline in a later
+  research cycle, but adapting its whole-video state is a separate engineering
+  project, not a V1 drop-in.
+- Read-only review of MIT-licensed ODTrack at official commit
+  `88c0a8e4b50faa8fe4e087f1f4b634dc78b6911d` confirms a genuine
+  `initialize(image, init_bbox)` plus `track(image)` online interface. However,
+  the official tracker always updates and returns `target_bbox`; it exposes no
+  official absent, lost, ambiguous, or confidence result. Adding a threshold
+  over its internal score map would be new project policy. ODTrack is therefore
+  not an identity/absence verifier and receives no V1 replay despite ranking
+  above Cutie on DiDi.
+- Cutie remains the practical continuity control because its official
+  append-one-frame API, MIT license, approximately 23-millisecond local p95,
+  and low CUDA allocation already passed the runtime-shape screen. Its failed
+  QVGA identity results remain binding: it cannot authorize presence or
+  motion, and a higher-resolution replay cannot promote it to verifier by
+  itself.
+
+Resolution decision:
+
+- Do not rerun OpenCV MIL/HSV, BootsTAPIR, EdgeTAM, Grounding DINO Tiny,
+  Florence-2, or SAM 3.1 merely with more pixels. Their recorded failures are
+  responsibility, absence, interface, or hardware failures rather than an
+  unresolved source-detail question. Florence-2 already received the frozen
+  XGA replay and failed all 20 absent frames.
+- Evaluate the selected semantic candidate on the existing low-cadence XGA
+  1024-by-768 sequence. This exercises the maintained fresh-snapshot lane
+  closest to its 640-pixel model input without reflashing firmware.
+- If semantic acquisition passes, capture one equivalent VGA 640-by-480,
+  5-fps sequence for Cutie as the continuity control. This is the meaningful
+  QVGA-to-VGA comparison. Replaying isolated one-fps XGA stills would not prove
+  the cadence or temporal behavior used by the control loop.
+
+Next bounded experiment:
+
+- Pin the exact `jameslahm/yoloe-11m-seg` repository revision and artifact
+  digest before download. Keep source, dependencies, weights, harness, and
+  results in `/tmp`; do not add a package, dependency, runtime registration,
+  or capability advertisement to Ainekio or MetaHuman.
+- Use YOLOE-11-M visual-prompt mode only. Derive one visual-prompt embedding
+  from the frozen first visible XGA frame and its previously fixed target box,
+  then run independent predictions over all 80 XGA frames. Report the prompt
+  source frame as diagnostic only and score the other 79 frames, so the human
+  seed cannot count as model success. Use no target name, color rule, phase
+  signal, tracker output, conversation context, or scene-specific
+  postprocessor.
+- Freeze the official input size and default confidence behavior before output.
+  Preserve every raw box, mask, class, and score. The existing semantic scorer
+  remains authoritative: a present frame requires exactly one
+  target-consistent accepted result; an absent frame requires no accepted
+  result; multiple or distractor-consistent results are ambiguous failures.
+  Do not tune the threshold after seeing the bottle sequence.
+- Run one deterministic lifecycle smoke before the full replay. At this screen
+  the RTX 4080 was occupied by a separate training process at 99-percent GPU
+  utilization, with 9,180 MiB used and 6,733 MiB free. Do not start inference
+  until that workload is idle or the owner explicitly authorizes sharing.
+- A failed smoke or frozen replay rejects YOLOE for the V1 verifier role. A
+  pass nominates it for a separate held-out multi-scene screen; it does not set
+  `identity_gate_validated`, authorize movement, or register Active View.
+
+Isolation and rollback:
+
+- This entry changes documentation only. Removing
+  `/tmp/rom19-yoloe-source` and `/tmp/rom19-odtrack-source` removes the two
+  clean read-only source checkouts. No model weight or Python dependency was
+  downloaded, no camera command was sent, and no robot action occurred.
+- Removing this entry is the complete tracked rollback. Active View remains
+  unregistered, `identity_gate_validated` remains false, and fine-turn
+  calibration remains false.
+
+### 2026-08-06 - ROM-19 evidence AB - Freeze selected YOLOE artifact and replay contract
+
+Status: exact research artifact and pre-output contract validated; inference
+is deferred while the owner training workload occupies the GPU.
+
+Artifact preparation:
+
+- The official Hugging Face metadata pins `jameslahm/yoloe-11m-seg` at
+  revision `ebab2db7c4617f6a5fba63f7f824a02d87c88ba0`, reports AGPL-3.0,
+  29,950,323 FP32 parameters, and 119,885,160 bytes of model storage. The
+  repository is public and ungated.
+- Downloaded only `model.safetensors`, `config.json`, and `README.md` at that
+  exact revision into `/tmp/rom19-yoloe-model`. Their SHA-256 digests are
+  respectively
+  `a82a56113b075bd3d9fbb9df77da05b8759b21115f142bcb04ee044229ac0d43`,
+  `8f01d959a1898de5bc543e42084c0ac54c95a1c5fd4f1c70fa13eb26b4145329`,
+  and
+  `2036cc3b8f87fd60071d0f12adf1ba279e429fa8e444449018ad127fa138f19e`.
+  The complete local model directory occupies 115 MiB. No alternate size,
+  export, text encoder, tracker, dataset, or training asset was downloaded.
+- This is an isolated research download, not production license acceptance.
+  The AGPL decision remains open before any maintained dependency or deployed
+  service can use the artifact.
+
+Frozen contract:
+
+- Created `/tmp/rom19-yoloe-harness/contract.json`, 83 lines with SHA-256
+  `e59dc0e4a0cc48c391095c7c5780046559588df3abcc4a5c2d3f9b3d54384c0d`.
+  JSON validation passes. It binds the exact source revision and five reviewed
+  source-file digests, exact model revision and three artifact digests, and the
+  previously frozen XGA input contract SHA-256
+  `b335e216613655453f4144826bfee531402bcf287c9c19308d80ac514b73b49a`.
+- The visual prompt uses previously reviewed phase-one frame 10,
+  `frame-0010-0000000014-snapshot.jpg`, whose SHA-256 is
+  `24f1d0b9638429abf2459c0815a7b1e0c79cc343f8fcd747b6de113d786505f3`.
+  Original-resolution review before YOLOE output froze the tight bottle box
+  `[182, 78, 331, 519]` in XGA `xyxy` pixels. This is evaluator seed geometry,
+  not runtime scene hard-coding.
+- The contract permits only the official cross-image
+  `YOLOEVPSegPredictor`, image size 640, FP32, and the official prediction
+  default confidence 0.25. It supplies class `object0` only and explicitly
+  prohibits target text, phase input, tracker input, networking, and
+  post-output threshold tuning.
+- All 80 frames receive raw predictions, but the one human-seeded source frame
+  is diagnostic and cannot count toward acceptance. The other 79 frames are
+  scored with the existing 0.12 center tolerance. Present frames require
+  exactly one target-consistent accepted `object0`; absent frames require zero;
+  multiple or distractor-consistent results fail as ambiguous. The existing
+  one-second p95 and 14-GiB CUDA ceilings remain.
+
+Pre-inference validation:
+
+- With `CUDA_VISIBLE_DEVICES` empty, Hugging Face offline mode enabled, the
+  pinned YOLOE source on `PYTHONPATH`, and no package installation, the existing
+  isolated ComfyUI Python runtime loaded the model only from
+  `/tmp/rom19-yoloe-model`. Construction completed in 2.56 seconds, returned
+  the official `YOLOESegModel` on CPU, exposed 29,894,806 PyTorch parameters,
+  and used 1,107,576 KiB maximum RSS. No prediction or GPU allocation occurred.
+- Added a 259-line contract/input/scoring module and a 171-line pure unittest
+  module under `/tmp/rom19-yoloe-harness`. Their SHA-256 digests are
+  `0054bd63829d98904325b71bc9f83eaca6ebdaadeefd8d036fd4a5922f2f6890`
+  and
+  `b0612ddec7e7fe8e7d24aa366cc78819ade42fe70f64ddbe28dbbb48330e7099`.
+  Neither file contains a line longer than 100 characters.
+- Python compilation and all 11 tests pass. Coverage includes exact source,
+  model, input-contract, phase-manifest, and 80-frame digest validation;
+  monotonic capture identity; exclusion of the prompt seed; strict success;
+  false presence; missing presence; multiple-result ambiguity; distractor
+  localization; latency; CUDA; lifecycle; reordered output; and immutable
+  inference settings. No untested inference runner has been added yet.
+
+Current execution gate and rollback:
+
+- After the download, the RTX 4080 still reported 9,182 MiB used, 6,731 MiB
+  free, and 100-percent utilization from the separate training workload. The
+  only model construction was the CUDA-hidden CPU load above; no CUDA-visible
+  construction, CUDA allocation, or inference was attempted.
+- No Python dependency was installed, no Ainekio or MetaHuman runtime file was
+  changed, no camera operation occurred, and no physical action was issued.
+  Active View remains unregistered, `identity_gate_validated` remains false,
+  and fine-turn calibration remains false.
+- Removing `/tmp/rom19-yoloe-model` and `/tmp/rom19-yoloe-harness` removes the
+  artifact and contract. Removing this entry is the complete tracked rollback.
+
+### 2026-08-06 - ROM-19 evidence AC - CPU YOLOE visual-prompt replay
+
+Status: frozen CPU replay complete; visible acquisition, true absence, and
+return passed, but partial-cover continuity failed. YOLOE is rejected as a
+standalone V1 verifier and remains unregistered.
+
+Final pre-output contract and validation:
+
+- Before the first YOLOE prediction, the evidence-AB contract was strengthened
+  to bind a distinct phase-one probe frame and require an exact repeated
+  prediction. This changed the contract SHA-256 from the initial pre-inference
+  value recorded in evidence AB to
+  `7a09ba51baaed1c665583d2adcde8be8a145ea0bbfc53a64f2192b707303791d`.
+  The model, source, prompt frame, prompt box, image size, confidence,
+  acceptance rules, and input sequence did not change, and no model output
+  existed when the probe binding was added.
+- The final temporary harness contains an 88-line contract, a 266-line
+  validator/scorer, a 271-line offline runner, and 248 lines of tests. Their
+  respective SHA-256 digests are
+  `7a09ba51baaed1c665583d2adcde8be8a145ea0bbfc53a64f2192b707303791d`,
+  `1547ac0189633877721f5837de2e9e8ee6605b43297730ad6f8b2bd8228cc673`,
+  `d797e6771024b908d7fae809573cf57f3d7d84490e74fa9b7d00cab8a1f6c704`,
+  `b4695d23ad9e470c3f3b077a0c088375387f208f23efe3b1a664f04949c8ef85`,
+  and
+  `2a31dc047d444b455c0f943f2f075c8d5575aae370c3f78037e7b9a680b39f27`.
+  Python compilation passes and all 13 contract, scorer, serialization, and
+  deterministic-repeat tests pass in 0.458 seconds.
+- The runner forced Hugging Face and Transformers offline modes, put the pinned
+  source first on `PYTHONPATH`, hid CUDA, loaded the exact local model revision,
+  verified every source, model, contract, phase, and frame digest, and retained
+  raw boxes, confidences, classes, masks, and mask digests. No dependency was
+  installed and no inference parameter was tuned after output.
+
+CPU probe:
+
+- The bound probe produced exactly one `object0` detection with confidence
+  0.977572, XGA box `[173.846,80.641,303.258,515.435]`, and mask SHA-256
+  `304216bc7b004725b7065249cf07adf2c51409f4156b040012a1b67c01092dec`.
+  Its exact repeat produced the same box, confidence, mask size, and mask
+  digest. First and repeated prediction latency were 667.927 and 438.458
+  milliseconds.
+- Model load took 383.020 milliseconds and one-time prompt construction took
+  3,105.477 milliseconds. The complete probe process used 1,227,780 KiB peak
+  RSS, zero CUDA bytes, no network messages, and completed cleanup. Probe JSON
+  and mask-artifact SHA-256 digests are
+  `2b64eebb2700fd7e35ef069032df0fa2780cfec7ec1ffc4e7b06650c28eb6638`
+  and
+  `0c7aa89626caac7fd6278f3263a745f19a37dbe3042c730549aa4e94990e3b73`.
+
+Frozen 80-frame result:
+
+- The full process completed in 41.89 seconds of wall time, used 1,287,004 KiB
+  peak RSS, allocated zero CUDA bytes, sent or received no network messages,
+  and completed cleanup. Model load was 379.862 milliseconds, one-time prompt
+  construction was 1,855.709 milliseconds, and independent-frame CPU p95 was
+  455.428 milliseconds, passing the frozen one-second diagnostic latency gate.
+- The human-seeded frame remained diagnostic. Of the other 79 frames, the
+  scorer accepted 59: 19 of 19 fully visible target-plus-distractor frames, 20
+  of 20 target-absent frames, and 20 of 20 target-returned frames. There were no
+  false presences, distractor boxes, multiple-result ambiguities, or return
+  misses under the frozen 0.25 confidence behavior.
+- YOLOE emitted no detection for any of the 20 partially covered frames. Those
+  are genuine missing-presence failures under the predeclared contract; they
+  are not reinterpreted using lower confidence, color, shape, phase, previous
+  frames, or tracker output. Perception and overall acceptance therefore fail.
+- Result JSON and compressed raw-mask artifact SHA-256 digests are
+  `31e1868cf2057b908e3b628104a76a9a8af4df46a58696a163e6b4f39f9da655`
+  and
+  `68ace0ea02ab54730097b9b6e4441f59e41142cea414cf0b9bec681183c6881d`.
+
+Decision and next bounded step:
+
+- Reject YOLOE-11-M visual-prompt mode as a standalone V1 identity verifier.
+  Its independent-frame role did, however, pass visible acquisition, true
+  absence, and displaced return without confusing the gray-cup distractor.
+  The failed responsibility is continuity through partial cover, not semantic
+  acquisition or target-loss detection.
+- This result satisfies the evidence-AA prerequisite for exactly one Cutie VGA
+  640-by-480, 5-fps continuity-control replay. That replay may test whether an
+  established temporal owner preserves the seeded instance across partial
+  cover and reports loss without drifting to the cup. It may not use Cutie to
+  authorize presence by itself, weaken the YOLOE absence result, or combine
+  post-output scores into a new identity heuristic.
+- A composition is eligible for a new held-out multi-scene screen only if each
+  owner passes its declared responsibility and their handoff has an explicit
+  loss/ambiguity contract. This replay alone cannot set
+  `identity_gate_validated`, authorize motion, or establish production license
+  acceptance for AGPL-licensed YOLOE.
+- No camera command, robot action, maintained dependency, Ainekio source edit,
+  MetaHuman runtime edit, adapter registration, or capability advertisement
+  occurred. Active View remains unregistered, `identity_gate_validated` remains
+  false, and fine-turn calibration remains false.
+- Removing `/tmp/rom19-yoloe-source`, `/tmp/rom19-yoloe-model`, and
+  `/tmp/rom19-yoloe-harness` removes every source, artifact, harness, and result
+  used here. Removing this entry is the complete tracked rollback.
+
+### 2026-08-06 - ROM-19/ROM-08 evidence AD - Selected perception composition
+
+Status: V1 component selection and isolated CPU worker lifecycle validated;
+held-out identity, license, fine-turn, registration, and physical gates remain
+closed.
+
+Decision:
+
+- Close the V1 model search. The selected experimental composition is YOLOE-
+  11-M plus MobileCLIP for semantic target ownership and Cutie Base Mega for
+  frame-to-frame continuity. Do not spend more V1 time comparing SAM 3.1,
+  Florence, Grounding DINO, MIL/HSV, EdgeTAM, BootsTAPIR, ODTrack, SAMURAI, or
+  other modes unless a later revision opens a new, explicitly bounded
+  selection cycle.
+- Normal MetaHuman `inspect` requests provide a bounded semantic query and do
+  not invent a target box. YOLOE text prompting therefore owns the first
+  query-to-box bootstrap. That result creates YOLOE's visual prompt, which owns
+  subsequent independent verification, target absence, and reacquisition.
+- Cutie receives only the verifier mask and owns temporal continuity between
+  semantic checks. Its output carries confidence `0.0`, cannot report
+  completion, and cannot replace a missing semantic verification. It may guide
+  only the controller's already bounded view-orientation recovery while YOLOE
+  reacquires.
+- This is a component and owner-boundary decision, not a production-readiness
+  decision. YOLOE remains AGPL-3.0, so distribution or deployed-service use
+  requires an explicit license decision before it becomes a maintained
+  dependency.
+
+Architecture changes:
+
+- Added `active_view/perception.py` as the small composition boundary and
+  `active_view/model_providers.py` as the concrete local-model provider owner.
+  The former contains only provider protocols, normalized observations, and
+  YOLOE/Cutie responsibility composition. The latter owns JPEG decode, pinned
+  local model construction, official inference calls, masks, and geometry.
+- Replaced the experimental Grounding-DINO/MIL/HSV worker internals with one
+  selected offline JSON-line worker. It requires explicit source, weight, and
+  ResNet paths plus `HF_HUB_OFFLINE=1`; runtime downloading is not an allowed
+  fallback. Third-party model diagnostics are redirected to stderr so stdout
+  remains exclusively correlated JSON responses.
+- Updated the controller's existing post-action phase to call Cutie continuity
+  and YOLOE semantic verification on the same fresh frame. YOLOE output owns
+  progress and completion when present. If YOLOE is temporarily absent, a
+  non-centered Cutie box can preserve at most the existing bounded recovery
+  budget; a centered Cutie-only result forces a fresh semantic frame and can
+  never become `reached`.
+- Changed the isolated controller confidence floor from `0.50` to the frozen
+  official YOLOE prediction behavior `0.25`. A focused regression proves an
+  estimate below `0.25` queues no action. This changes no registered capability
+  because both availability gates remain false.
+
+Pinned local research assets:
+
+- YOLOE source remains official commit
+  `40cd606cabdbe2b566d6f14a6b162c89206e9a1b`; the model remains revision
+  `ebab2db7c4617f6a5fba63f7f824a02d87c88ba0` with the evidence-AB digests.
+- MobileCLIP-B(LT) is the official text-bootstrap dependency at
+  `/tmp/rom19-yoloe-text/mobileclip_blt.pt`: 599,214,572 bytes, SHA-256
+  `670844f7a886dd6eff7a9285adfc53f3d3c889c03bfc8354010cb5c6bf27441a`.
+  A pre-integration CPU probe produced one correct `dark bottle` detection at
+  confidence 0.635230 and XGA box approximately
+  `[174.790,83.200,303.346,514.210]`.
+- Cutie remains official commit
+  `ec5cdd4cf16f75c73ad785a2f96fb97dbad4125a`, with Base Mega SHA-256
+  `9c05402ee36d3a356fb72715d263ba7e1ea06ad3bada48c1306491792da43023`.
+  Its required local ResNet-18 and ResNet-50 files retain SHA-256 values
+  `5c106cde386e87d4033832f2996f5493238eda96ccf559d1d62760c4de0613f8`
+  and
+  `19c8e3572231adff6824a2da93fd67b5986919a2e65f8b6007eab4edee220097`.
+
+Measured selected-worker smoke:
+
+- One real JSON-line process used CPU explicitly, hid CUDA, disabled Hugging
+  Face and Transformers networking, and loaded only the pinned local assets.
+  Health became ready in 7,182.907 milliseconds after both providers loaded.
+  Peak child RSS was 2,934,424 KiB. This process never opened the camera and
+  received only two previously recorded XGA JPEGs.
+- Text bootstrap plus same-frame visual-prompt installation took 1,817.226
+  milliseconds. YOLOE returned one bottle at confidence 0.635230 and
+  normalized center x approximately 0.2335; the staged gray cup center was
+  approximately 0.6191.
+- Cutie processed the next chronological frame in 428.748 milliseconds and
+  retained a normalized center x approximately 0.2349. Its protocol result
+  deliberately reported confidence `0.0` and stated that it had no identity
+  authority.
+- YOLOE independently verified that next frame in 727.430 milliseconds at
+  confidence 0.446245 and center x approximately 0.2321. Reset completed in
+  0.152 milliseconds, shutdown responded in 0.099 milliseconds, and the worker
+  exited with code zero after 11.022 seconds total.
+- These are single lifecycle measurements, not throughput percentiles. On CPU,
+  one Cutie frame is already slower than the 200-millisecond interval of a
+  5-fps feed, and the measured continuity-plus-verification pair took about
+  1.156 seconds. CPU is suitable for deterministic qualification and a low-
+  cadence fallback, not a 5-fps control claim. A later live deployment may use
+  the validated GPU execution path, but hardware scheduling remains a separate
+  integration decision.
+
+Validation:
+
+- The focused Active View controller, worker lifecycle, action-indexed replay,
+  replay-manifest, feature-absence, and responsibility-separation set passed 32
+  of 32 tests. New cases prove that continuity can guide bounded recovery but
+  cannot complete, paired seed evidence is enforced, and noisy third-party
+  output cannot corrupt worker stdout.
+- The related Environment Adapter, Gateway service, camera-lease manager, and
+  dashboard regression set passed 80 of 80 tests when localhost sockets were
+  permitted. The same run inside the restricted workspace failed only at
+  socket construction with `PermissionError`; the permitted rerun was green.
+- All Active View source and test files compile, contain no lines over 100
+  characters, and pass the explicit trailing-whitespace screen at this
+  checkpoint. The tracked progress document separately passes
+  `git diff --check`.
+- No source registration, `inspect` translation, capability advertisement,
+  launcher composition, persistent configuration, installed dependency,
+  firmware, camera command, robot action, or physical motion was added or
+  attempted. The adapter's optional frame bridge remains inert unless injected.
+
+Rollback manifest extension:
+
+- New selected-provider files are
+  `Ainekio/Master/gateway/environment_adapter/active_view/perception.py` and
+  `model_providers.py`.
+- Feature-owned files changed for the composition are `controller.py`,
+  `contracts.py`, `worker.py`, and
+  `Ainekio/Emulator/tests/test_active_view.py`. The existing action-indexed
+  replay and manifest files remain part of the earlier isolated experiment.
+- A composition-only rollback removes the two provider files and restores those
+  four feature-owned files to evidence AC. A complete rollback still follows
+  the ROM-22 and later frame-bridge manifests: restore the optional tracked
+  adapter bridge points, then delete the unregistered Active View package,
+  tests, fixtures, and ignored recordings. No model asset or captured media is
+  committed.
+
+Remaining gates:
+
+- Do not set `identity_gate_validated` from this one staged scene. Run the
+  frozen YOLOE/Cutie composition on held-out rooms, lighting, low-texture and
+  same-class distractors, target movement, partial cover, full loss, and return.
+  Freeze the sequence labels and acceptance rules before output.
+- Do not register Active View until the owner accepts the YOLOE license, the
+  production model environment and resource schedule are explicit, and the
+  selected providers pass clean startup, cancellation, reset, and shutdown in
+  that environment.
+- Do not advertise or physically dispatch orientation correction until two
+  named fine-turn assets exist, are calibrated on the attached robot under a
+  separately authorized test, and the controller-plus-camera replay passes
+  with those exact semantic commands. Until then, `identity_gate_validated` and
+  `fine_turn_calibrated` remain false and the live `inspect` action remains
+  absent.
+
+### 2026-08-06 - ROM-11/ROM-13/ROM-19 evidence AE - Selected GPU qualification
+
+Status: selected-stack GPU runtime, cadence, resource, reset, and shutdown gates
+validated on existing recorded fixtures; the identity and live-integration gates
+remain false.
+
+Frozen qualification:
+
+- Before GPU output, created a 127-line contract at
+  `/tmp/rom19-selected-gpu/contract.json`, SHA-256
+  `2b29ea03166a958f372f7819d5c86c3d60bdc74198149f78445238cc4026712f`.
+  It binds the three selected-provider source digests, six model-asset digests,
+  exact YOLOE and Cutie revisions, eight phase-manifest digests, 80 XGA stills,
+  96 QVGA preview frames, device `cuda:0`, image size 640, confidence 0.25,
+  Cutie internal size 480, and all runtime thresholds.
+- The contract explicitly closes model search, prohibits inference-parameter
+  tuning after output, prohibits camera or motion commands and runtime
+  registration, and states that this known-scene qualification cannot change
+  `identity_gate_validated`.
+- The 549-line temporary runner has SHA-256
+  `f7695953374945533d1866ec50415cfcd2275607dd7297bcf402b062fd468caf`.
+  Its validation-only pass verified every source, asset, manifest, and frame
+  digest before launching inference. It uses the selected JSON-line worker
+  rather than a parallel provider implementation.
+
+Execution and lifecycle:
+
+- The first attempt inside the restricted workspace failed before health with
+  `RuntimeError: No CUDA GPUs are available`; PyTorch could not see the GPU
+  inside that sandbox. The identical frozen command then ran with local GPU
+  permission. This was an execution-environment correction, not a code,
+  threshold, model, or input change.
+- The worker became healthy in 7,424.389 milliseconds, used 1,768 MiB peak
+  process VRAM and 2,924,008 KiB peak process RSS, processed both suites, reset
+  twice, returned a clean shutdown response in 0.112 milliseconds, and exited
+  with code zero. The complete process took 13.730 seconds.
+- XGA semantic p95 was 35.083 milliseconds with a 35.216-millisecond mean. The
+  QVGA Cutie continuity p95 was 26.043 milliseconds with a 22.368-millisecond
+  mean. The two QVGA semantic operations took 119.422 and 30.819 milliseconds.
+  Startup, 14-GiB process VRAM, 200-millisecond QVGA continuity, one-second XGA
+  semantic, reset, clean-JSON, and shutdown gates all passed.
+- A post-run process check confirmed that the qualification worker released its
+  VRAM. No camera, adapter, Gateway, firmware, robot, or physical action was
+  contacted during the replay.
+
+Known-scene behavior:
+
+- On the 80 XGA stills, YOLOE returned the correct bottle and no gray-cup switch
+  for 20 of 20 fully visible frames, no target for 20 of 20 partially covered
+  frames, no target for 20 of 20 truly absent frames, and the correct displaced
+  bottle for 20 of 20 return frames. This exactly reproduces the frozen CPU
+  semantic behavior at substantially lower latency.
+- On the chronological 96-frame QVGA lane, text bootstrap localized the bottle
+  rather than the cup. Cutie retained a target for all 24 visible and all 24
+  partially covered frames, returned official background for all 24 full-loss
+  frames, and retained the correct returned target for 23 subsequent frames.
+  It never switched to the gray cup.
+- Strict predeclared two-dimensional target-center geometry passed 24 of 24
+  visible, 11 of 24 partially covered, zero applicable full-loss, and 23 of 24
+  return frames. The first return semantic check was correctly rejected as
+  ambiguous because YOLOE returned multiple candidates; continuity recovered
+  the correct target on the following frame but remained non-authoritative.
+- A post-result diagnostic found that all 24 partially covered Cutie boxes kept
+  horizontal center error below 0.12, with 0.0274 p95, despite the failed 2D
+  mask-geometry score. That is useful for the controller's current horizontal
+  orientation responsibility, but it was not a frozen identity acceptance rule
+  and therefore does not convert the failed 2D frames into passes.
+
+Decision and architecture consequence:
+
+- The selected providers fit the RTX 4080 resource and cadence budgets; the CPU
+  performance limitation is not a reason to reopen model selection. Preserve
+  the CPU path for deterministic diagnosis and a low-cadence fallback.
+- Keep `identity_gate_validated` false. One staged room/object sequence cannot
+  establish general instance identity, partial-cover mask geometry remains
+  imperfect, and one return frame was semantically ambiguous. The next
+  perception gate is one frozen multi-scene held-out composition replay, not
+  another candidate or mode comparison.
+- `ROM-13` is implemented but not validated. The provider exposes a real
+  append-one-frame continuity operation, but the isolated controller currently
+  consumes one fresh post-action mailbox frame rather than pumping every
+  admitted preview frame through Cutie. Batch 4 must add that stream consumption
+  inside the same adapter-owned Active View runtime; it must not create another
+  camera owner, queue, cognitive node, or LLM loop.
+- Keep the feature unregistered until the held-out identity, AGPL license,
+  continuous-frame controller, simulator fine-turn, cancellation, and exact
+  physical calibration gates pass. GPU qualification authorizes none of those
+  steps by itself.
+
+Artifacts and rollback:
+
+- The complete result is
+  `/tmp/rom19-selected-gpu/result.json`, SHA-256
+  `e879313f17c52f382829c530b22f59875d24d34a7f1d5efae974786a6c891bae`.
+  Removing `/tmp/rom19-selected-gpu` removes the contract, runner, result, and
+  temporary bytecode without affecting Ainekio or MetaHuman runtime state.
+- This checkpoint changes only the two maintained roadmap/progress documents.
+  The selected Ainekio provider source remains isolated and unregistered under
+  the evidence-AD and ROM-22 rollback manifests. No dependency, model weight,
+  captured frame, service, configuration, cache requirement, capability,
+  adapter composition, or persistent state was added to either repository.
+
+### 2026-08-06 - ROM-21 evidence AF - Body-neutral locomotion boundary correction
+
+Status: controller/backend seam implemented and validated in isolation; no live
+integration, capability advertisement, or physical motion is authorized or
+proven.
+
+Mismatch found:
+
+- A reread of the Intended Intelligent-Pet Operating Model and the 2026-08-06
+  body-seam decision found that the isolated Active View controller did not yet
+  satisfy their locomotion boundary. It selected `left_orientation_asset` or
+  `right_orientation_asset` from controller configuration and directly called
+  Gateway `queue_intent("emote", {"asset": ...})`.
+- That implementation remained unregistered and gated, so the mismatch had not
+  reached the live adapter or robot. Held-out perception capture and all further
+  integration work stopped while the boundary was corrected.
+
+Correction:
+
+- Added `active_view/locomotion.py` as the removable owner of a bounded
+  `BodyMotionCommand`, frame-derived `RobotStateSnapshot`, typed
+  `LocomotionStepResult`, and replaceable `LocomotionBackend` protocol.
+- Active View now requests only a signed, deadline-bounded yaw change through
+  the injected backend. Its controller and generic contracts contain no asset
+  names, `emote` intent, `queue_intent`, or terminal-wait dispatch.
+- `V1NamedAssetLocomotionBackend` is the only feature component that maps the
+  body-neutral yaw sign to current V1 left/right assets and calls the existing
+  Gateway intent/terminal owners. Calibration, deadline, and measured-direction
+  conflicts fail before dispatch.
+- The existing action-indexed Body Emulator replay now composes that V1 backend
+  explicitly. It still exercises the canonical `BodySession`, camera lease,
+  post-action image, and terminal lifecycle; no parallel queue, adapter, camera
+  owner, safety system, or protocol was introduced.
+
+Validation:
+
+- A source-boundary search returns no quadruped asset, `emote`, `queue_intent`,
+  or terminal-wait dependency in `active_view/controller.py` or
+  `active_view/contracts.py`. Those dependencies appear only in the V1 backend
+  and its focused expectations.
+- Python compilation and the explicit 100-character line screen pass for the
+  Active View package and affected tests.
+- The focused controller, locomotion, action-indexed replay, and replay-manifest
+  set passes 35 of 35 tests. New cases prove that the controller emits a
+  body-neutral yaw command, that a replaceable recording backend receives it,
+  and that uncalibrated, expired, or direction-conflicting V1 requests dispatch
+  no asset.
+- The broader Active View, Environment Adapter, Gateway service, camera-lease,
+  and dashboard set passes 115 of 115 tests. The feature-absence regression
+  still proves that the live adapter advertises neither `inspect` nor
+  `activeView` and has no Active View frame bridge.
+- No robot command or physical motion was issued. This checkpoint is
+  implemented and automated-test validated only; it has no simulator fine-turn
+  calibration or physical proof.
+
+Scope, rollback, and remaining gates:
+
+- The Ainekio feature remains isolated under
+  `Master/gateway/environment_adapter/active_view/`. This checkpoint adds only
+  `locomotion.py` and changes the feature-owned `__init__.py`, `contracts.py`,
+  `controller.py`, `Emulator/tests/test_active_view.py`, and
+  `test_active_view_replay.py`. Reverting those six feature-owned changes is the
+  checkpoint rollback; deleting the still-untracked Active View package and
+  tests remains the complete feature rollback.
+- No maintained Gateway, adapter server, Environment Bridge, MetaHuman graph,
+  queue, memory, Robot Operator, safety, manual-motion, firmware, model, or
+  persistent configuration owner changed.
+- `inspect` remains limited to a target already visible in its source frame. A
+  bounded scan/investigation skill is still required for object search such as
+  `find a cat`; safe approach remains later and capability-dependent.
+- `identity_gate_validated` remains false. The V1 backend calibration gate
+  remains false in production because no named fine-turn assets are registered
+  or physically calibrated. Held-out multi-scene identity, continuous frame
+  consumption, AGPL acceptance, simulator calibration, cancellation, safety,
+  registration, and authorized physical acceptance remain before any live
+  advertisement or dispatch.
+
+### 2026-08-06 - ROM-19 evidence AG - Held-out policy freeze and empty-scene preflight
+
+Status: held-out acceptance policy frozen; scene capture is awaiting visible
+physical targets. No model inference, registration, capability advertisement,
+robot command, or physical motion occurred.
+
+Policy freeze:
+
+- Created `/tmp/rom19-heldout/acceptance-policy.json`, 129 lines with SHA-256
+  `7487a778e1ea6a7aa56581ff6cffa01c926b0d81e47ea7ee7778f33450abd224`.
+  JSON validation passes.
+- The policy closes model search and binds only the already selected YOLOE plus
+  MobileCLIP semantic owner and Cutie continuity owner. It preserves image size
+  640, YOLOE confidence 0.25, Cutie internal size 480, startup, GPU-memory,
+  latency, reset, clean-channel, offline, repeat, and shutdown thresholds.
+- Identity may pass only if two genuinely new scenes pass independently. Each
+  scene requires a previously untested physical target, a visible distractor,
+  24 or more VGA preview frames plus one XGA annotation still in each of
+  visible, partial-cover, absent, and returned phases. The returned target must
+  occupy a materially different image position, and at least one scene must use
+  a same-class distractor.
+- Before inference, a separate scene binding must freeze the exact ordered frame
+  hashes, target query and descriptions, phase-manifest hashes, original-frame
+  target/distractor boxes, and true-absence labels. Annotations must be reviewed
+  without model output. Output cannot change annotations, thresholds, or scene
+  exemptions.
+- Each scene requires correct first-frame text bootstrap, at least 90-percent
+  visible semantic target rate, at least 90-percent horizontal continuity rate,
+  zero distractor switches, zero semantic or continuity presence during full
+  absence, semantic return reacquisition within three frames, and at least
+  90-percent post-reacquisition target/continuity rates. Cutie remains unable to
+  establish identity or skill completion by itself.
+
+Camera preflight:
+
+- Two isolated, non-overwriting camera-only probes used the existing physical
+  Gateway camera owner. Each produced 24 fresh VGA previews, one XGA still, a
+  correlated camera-off acknowledgement, and `physicalMotion: false`.
+- The first manifest SHA-256 is
+  `1152b148c0150ae4c7735f4377bd9560b07db9d53b8a992d310124cd54417909`;
+  its XGA still SHA-256 is
+  `3b868eda8a539bc2350e369ebda87dc857af454776beb1f6223816d88e9dbfbe`.
+- The second manifest SHA-256 is
+  `520f66d3d00ed67997f881970108fff31f9df00cb55e7e06423c052912331944`;
+  its XGA still SHA-256 is
+  `8b6eefb8d11540832643d55e26951927e96182e2d21b63e84b6517a9c1fe9c3f`.
+- Original-resolution review found only a very dark carpet/furniture view and no
+  identifiable staged target/distractor in either probe. Both directories stay
+  explicitly labeled `scene-probe-unlabeled`; they are rejected from scoring
+  and cannot be relabeled as held-out evidence after model output.
+- A third unscored probe after staging clearly showed a blue creature, a large
+  white plastic bottle, a silver bottle, and a yellow canister. Its manifest
+  SHA-256 is
+  `3484c5f4ec95621f7df861617ab5e359eb8ae804ca61ae3fb42df0c86e6a24da`;
+  its XGA still SHA-256 is
+  `bcca12603cec4368633b4a6baef5f5183a518a9a517da4658df9e3ee68370785`.
+  Original-frame comparison confirmed that the blue creature is the same
+  physical figure used in the 2026-08-05 model-selection fixture. The directory
+  remains `scene-probe-03-blue-creature-unscored`; the creature cannot satisfy
+  the frozen previously-untested-target rule and received no model output.
+
+Remaining:
+
+- Stage two visible, previously untested objects for scene one and name the
+  target and distractor. Capture and freeze all four phases before any selected-
+  stack output, then repeat with a different target instance and scene.
+- A failed scene keeps `identity_gate_validated` false. Even a two-scene pass
+  would not resolve AGPL acceptance, continuous controller frame consumption,
+  V1 fine-turn calibration, safety, cancellation, registration, or physical
+  motion acceptance.
+
+### 2026-08-06 - ROM-19 evidence AH - Held-out scene one captured and bound
+
+Status: first of two required held-out scenes captured, reviewed, frozen, and
+mechanically validated; it remains unscored and model-blind.
+
+Scene contract:
+
+- The new target is a tall silver metal bottle; the same-class distractor is a
+  large white plastic bottle. The target is neither the dark bottle nor the blue
+  creature used during model selection. The query is frozen as `silver metal
+  bottle`.
+- Captured visible, partial-cover, absent, and returned phases under
+  `/home/greggles/Ainekio/recordings/active-view/20260806-heldout-scene-01-silver-white`.
+  Each phase contains 24 ordered VGA previews and one XGA annotation still,
+  reports `physicalMotion: false`, and ends with a correlated camera-off
+  acknowledgement. The complete scene contains 100 frames.
+- The silver target moved from normalized horizontal center 0.8564453125 in the
+  visible phase to 0.42626953125 in the returned phase, a 0.43017578125 image-
+  width displacement. It was completely absent in phase three. The white
+  distractor remained centered near 0.58. The blue creature moved during return
+  staging and is explicitly recorded as unscored scene clutter.
+
+Frozen binding:
+
+- Created `/tmp/rom19-heldout/scene-01-binding.json`, 124 lines with SHA-256
+  `5861e9d9e72a8e50863e0421b966f094087b6504e75beb5cc384657ce6b1d3c0`.
+  It binds acceptance-policy SHA-256
+  `7487a778e1ea6a7aa56581ff6cffa01c926b0d81e47ea7ee7778f33450abd224`,
+  exact phase-manifest and ordered-frame digests, counters, snapshot hashes,
+  original-XGA target/distractor boxes, target absence, and return displacement.
+- The four phase-manifest SHA-256 values are, in order,
+  `aca59c9c16f24bf0b08a6e8b2e83c754a5ab0b84e8c2daa9b8b7e06219ae9057`,
+  `4a8f77b121373a200f1dcec9b7b45caf80866f37d20aae64be3b16810077cee5`,
+  `a91b679e65d649ea2743af1d6a059ccdbdee205ad777967db2fcfdf298c3cd5c`,
+  and `d4c8914b6795aa38998e71bb2ade6491f55833afd7f8ff0e31fff7529d3fdd53`.
+- Added `/tmp/rom19-heldout/validate_binding.py` as a read-only binding
+  validator. It verifies the policy, manifests, ordered frame hashes, snapshots,
+  labels, counts, counters, camera-off results, boxes, normalized centers,
+  absence, and displacement. Compilation and the explicit 100-character line
+  screen pass. Validation reports four phases, 100 frames, 0.43017578125 target
+  displacement, `physicalMotion: false`, and `inferenceRun: false`.
+
+Remaining:
+
+- Capture and bind a second scene with a different previously untested target
+  instance and a materially different background, viewpoint, or lighting before
+  launching the selected worker. The two scene bindings must then be combined
+  into one final pre-output contract.
+- No selected-stack inference may run until scene two annotations and hashes are
+  frozen. Scene one cannot be exempted or relabeled after output.
+
+### 2026-08-06 - ROM-19 evidence AI - Held-out scenes and final contract frozen
+
+Status: both required held-out scenes are captured, manually reviewed, frozen,
+and mechanically validated; the selected-stack evaluation is authorized but
+has not started because unrelated active Ollama workloads occupy the GPU.
+
+Second scene:
+
+- The second new target is a pink and silver soda can; the fixed distractor is a
+  red hand tool on tan backing. This is a different target instance and a
+  substantially different low floor-level scene from held-out scene one.
+- Captured visible, partial-cover, absent, and returned phases under
+  `/home/greggles/Ainekio/recordings/active-view/20260806-heldout-scene-02-soda-red-tool`.
+  Every phase contains 24 ordered VGA previews and one XGA annotation still,
+  reports `physicalMotion: false`, and ends with a correlated camera-off
+  acknowledgement. The complete scene contains 100 frames.
+- The same can moved from normalized horizontal center 0.189453125 to
+  0.92919921875, a 0.73974609375 image-width displacement. Original-resolution
+  review confirms partial cover by the white box, complete absence in phase
+  three, and a fully visible return to the right of the stationary red tool.
+
+Frozen evidence:
+
+- Created `/tmp/rom19-heldout/scene-02-binding.json`, SHA-256
+  `42c70e06781abc455c73eb7e36c6023ad0171ac0d21cbb5a3b3a0eac2d13d800`.
+  It binds the unchanged acceptance policy, exact manifests and ordered frames,
+  counters, XGA stills, manually reviewed target/distractor boxes, true absence,
+  and return displacement before any model output.
+- Generalized only the temporary binding validator's scene-label consistency
+  check; it no longer embeds scene-one object names. SHA-256 is
+  `9676a9645959ff22cb4882048c38538cb3fcd0136caed4c3eb8913181c063285`.
+  It revalidates scene one's unchanged binding SHA-256 and validates scene two;
+  together they bind eight phases and 200 captured frames.
+- Added `/tmp/rom19-heldout/run.py` as an evaluation-only harness. It reuses the
+  selected JSON-line worker and provider composition, validates all bindings and
+  source/model assets before worker startup, keeps YOLOE as identity owner,
+  tests Cutie only as continuity, excludes annotation and seed frames from rate
+  scoring, resets between passes/scenes, and repeats the complete decision path
+  twice. It contains no perception implementation or runtime integration.
+- Created `/tmp/rom19-heldout/final-contract.json`, SHA-256
+  `76273e831487ef3938596277a9495826ee3b97ec82048ad669690c1f2a16b32e`.
+  The contract freezes both scene bindings, policy, selected provider and model
+  digests, selected qualification artifacts, evaluation harness and validator,
+  image size 640, confidence 0.25, Cutie internal size 480, offline CUDA, and
+  the no-post-output-tuning/annotation rule.
+- The final no-model validation passes with two scene bindings and 192 scored
+  previews. No selected-stack inference, camera operation, robot command,
+  physical motion, registration, or capability advertisement occurred during
+  this freeze step.
+
+Architecture review:
+
+- This checkpoint remains within the Intended Intelligent-Pet Operating Model.
+  It evaluates a prospective Ainekio local perception/action component and does
+  not add LLM calls, MetaHuman semantic intentions, Environment Mode skills,
+  queues, bridges, camera owners, motion owners, or parallel runtime services.
+- The evaluation does not claim object search or live approach. `inspect`
+  remains limited to an already visible target; bounded search/investigation,
+  continuous local frame consumption, locomotion calibration, and safe approach
+  remain separate later gates.
+
+Remaining:
+
+- The locked evaluation requires an uncontended GPU. At this checkpoint,
+  `qwen3.5:0.8b`, `qwen3.5:9b`, and
+  `environment-action-selector-0.8b:v1` together used about 12.6 GiB and the GPU
+  reported 92-percent utilization. The run was intentionally not started, so
+  timing and VRAM evidence were not contaminated and no output has affected the
+  frozen annotations.
+- Run the frozen contract when those workloads are stopped, score each scene
+  independently, and leave `identity_gate_validated` false unless both scene
+  decisions and every runtime gate pass. Registration, licensing, continuous
+  frames, fine-turn calibration, safety, cancellation, and authorized physical
+  acceptance remain separate even if identity passes.
+
+### 2026-08-06 - ROM-19 evidence AJ - Held-out identity gate rejected
+
+Status: the frozen YOLOE/Cutie composition passes every runtime/lifecycle gate
+but fails both independent held-out scenes. `identity_gate_validated` remains
+false; runtime registration and capability advertisement remain forbidden.
+
+Execution integrity:
+
+- MetaHuman was stopped through the canonical repository `stop.sh`, its three
+  Ollama residents were unloaded, and the valid run began with no GPU compute
+  process and about 15.1 GiB free. No robot command, camera operation, or
+  physical motion was issued.
+- The first restricted-shell launch exited before the worker's first health
+  response because that environment could not access the NVIDIA driver. It
+  wrote no result and saw no scene output. The identical frozen command was
+  rerun with direct local GPU access; no query, threshold, annotation, source,
+  asset, runner, policy, or binding changed.
+- The result contract SHA-256 is
+  `76273e831487ef3938596277a9495826ee3b97ec82048ad669690c1f2a16b32e`.
+  `/tmp/rom19-heldout/result.json` has SHA-256
+  `697c0ee8a21fdef55a2962261b71b1cf124757a0eb7849400826bcbcd17df9e1`.
+  Worker return code is zero; the evaluation command returns one only because
+  the frozen identity decision failed.
+
+Identity result:
+
+- Scene one (`silver metal bottle`) fails first-frame text bootstrap. YOLOE
+  returned multiple candidates on 93 of 96 semantic frames in each repeat, so
+  the provider correctly classified the result as ambiguous and never seeded
+  Cutie. Three single detections occurred only while the true target was absent;
+  all were far from the fixed distractor and were scored as ambiguous rather
+  than target presence under the frozen policy.
+- Scene two (`soda can`) also fails first-frame text bootstrap. YOLOE returned no
+  verified target on all 96 semantic frames in each repeat. Cutie again received
+  no identity-authorized seed.
+- Both scenes therefore report zero visible semantic rate, zero visible and
+  partial-cover continuity rates, no semantic return reacquisition, and no
+  post-reacquisition continuity result. These are acquisition failures; they
+  are not evidence that Cutie switched identity. Both absence gates and the
+  zero-distractor-switch gate pass because the composition safely withheld an
+  identity claim.
+- The complete decision path repeated identically. The failed held-out frames
+  are now diagnostic evidence and cannot be reused as unseen acceptance data
+  for a corrected candidate.
+
+Runtime result:
+
+- All frozen runtime gates pass: 7.611-second startup, 45.904 ms semantic p95,
+  1.313 ms tracking p95, 1,766 MiB peak process VRAM, clean JSON, offline mode,
+  12 successful resets, deterministic repeat, and clean shutdown.
+- The two repeats issued 484 semantic requests and 284 tracking requests in
+  29.174 seconds. Runtime speed and lifecycle readiness therefore remain
+  proven separately from the failed semantic identity gate.
+
+Architecture and lifecycle:
+
+- The result does not authorize integration. The isolated worker and Active
+  View package remain unregistered and unadvertised; Cutie remains continuity-
+  only and cannot establish identity, task completion, or motion authority.
+- MetaHuman was restarted through canonical `start.sh` after evaluation. The
+  production server listened on `127.0.0.1:4321`, and a direct request returned
+  `HTTP/1.1 200 OK`.
+- No maintained queue, Environment Bridge, Robot Operator, camera owner,
+  locomotion owner, safety system, workflow graph, model registry, or capability
+  changed. Other agents' existing worktree edits were preserved.
+
+Next evidence boundary:
+
+- Do not lower confidence, alter the held-out annotations, add prompt-specific
+  special cases, or retry these scenes as if they remained held out. Analyze
+  semantic-bootstrap ownership using the failure artifacts, then define a new
+  pre-output acquisition contract from established open-vocabulary detection
+  or candidate-arbitration practice. Any corrected composition requires new,
+  genuinely unseen acceptance scenes.
+- `inspect` still means a target already visible in the initiating frame. A
+  bounded local search/investigation skill, continuous frame consumption,
+  obstacle evidence, calibrated locomotion, cancellation, licensing, safety,
+  registration, and authorized physical acceptance remain separate work.
 
 ## Future Progress Entry Template
 
