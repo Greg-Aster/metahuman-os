@@ -6,14 +6,17 @@ import {
   ACTIVITY_STATE_FILE,
   acquireLock,
   audit,
+  buildRobotOperatorInstruction,
   getOperatorMode,
   getCurrentlyActiveUser,
   initGlobalLogger,
   isBoredomMovementEnabled,
   isRobotObserverEnabled,
+  isSleepRuntimeActive,
   loadRobotOperatorConfig,
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
+  SLEEP_RUNTIME_FILE,
   systemPaths,
 } from '@metahuman/core'
 import { submitCoordinatorWork } from '@metahuman/core/queue'
@@ -71,13 +74,15 @@ function armChild(child: RobotChild, reason: string, minimumDelayMs = 1_000): vo
   if (shuttingDown) return
   const config = loadRobotOperatorConfig()
   const mode = getOperatorMode()
-  if (!config.enabled || mode === 'reactive' || !childEnabled(child)) {
+  if (!config.enabled || mode === 'reactive' || !childEnabled(child) || isSleepRuntimeActive()) {
     console.log(
       `[${SERVICE_ID}] ${child} dormant (${!config.enabled
         ? 'Robot Operator disabled'
         : mode === 'reactive'
           ? 'Active Operator is reactive'
-          : 'child agent disabled'})`,
+          : !childEnabled(child)
+            ? 'child agent disabled'
+            : 'sleep workflow active'})`,
     )
     return
   }
@@ -85,7 +90,11 @@ function armChild(child: RobotChild, reason: string, minimumDelayMs = 1_000): vo
   const schedule = schedules[child]
   schedule.armedIdleMs = randomizedChildIdleMs(child)
   const lastActivityAt = readSystemActivityTimestamp() ?? 0
-  const baseAt = Math.max(activeSince, lastActivityAt, schedule.lastAdmittedAt)
+  // Semi autonomy is idle-timer driven. Full autonomy keeps selecting work
+  // between bounded cooldowns even when the user has recently been active.
+  const baseAt = mode === 'full'
+    ? Math.max(activeSince, schedule.lastAdmittedAt)
+    : Math.max(activeSince, lastActivityAt, schedule.lastAdmittedAt)
   const dueAt = Math.max(Date.now() + minimumDelayMs, baseAt + schedule.armedIdleMs)
   schedule.timer = setTimeout(() => void onDeadline(child), dueAt - Date.now())
   console.log(
@@ -103,17 +112,20 @@ async function onDeadline(child: RobotChild): Promise<void> {
   schedule.timer = null
   if (shuttingDown) return
   const mode = getOperatorMode()
+  if (isSleepRuntimeActive()) return
   if (mode === 'reactive') {
     armChild(child, 'mode-reactive')
     return
   }
 
   const config = loadRobotOperatorConfig()
-  const lastActivityAt = readSystemActivityTimestamp() ?? 0
-  const inactivityBase = Math.max(activeSince, lastActivityAt, schedule.lastAdmittedAt)
-  if (Date.now() - inactivityBase < schedule.armedIdleMs) {
-    armChild(child, 'activity-reset')
-    return
+  if (mode === 'semi') {
+    const lastActivityAt = readSystemActivityTimestamp() ?? 0
+    const inactivityBase = Math.max(activeSince, lastActivityAt, schedule.lastAdmittedAt)
+    if (Date.now() - inactivityBase < schedule.armedIdleMs) {
+      armChild(child, 'activity-reset')
+      return
+    }
   }
 
   const admittedAt = Date.now()
@@ -134,6 +146,7 @@ async function onDeadline(child: RobotChild): Promise<void> {
       cognitiveMode: 'environment',
       input: {
         agentId: child,
+        operatorInstruction: buildRobotOperatorInstruction(child),
         triggeredBy: SERVICE_ID,
         sessionId: config.sessionId,
       },
@@ -182,6 +195,7 @@ export async function run(): Promise<void> {
 
   const watchers = [
     watchFile(ACTIVITY_STATE_FILE, () => armAll('system-activity')),
+    watchFile(SLEEP_RUNTIME_FILE, () => armAll('sleep-state')),
     watchFile(SERVICES_CONFIG, () => armAll('service-config')),
     watchFile(AGENTS_CONFIG, () => armAll('agent-config')),
     watchFile(ACTIVE_OPERATOR_CONFIG, () => {

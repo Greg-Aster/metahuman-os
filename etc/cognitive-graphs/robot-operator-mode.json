@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Robot Operator Mode",
-  "description": "High-level autonomous robot observation. Uses current perception, persona, and bounded Idle Thought continuity to delegate one intention to Environment Mode. It never consumes conversation history or selects robot actions itself.",
+  "description": "Shared autonomous robot decision workflow. Consolidates an agent-supplied instruction with current perception, trigger information, persona, recent conversation, and unified inner context, then delegates one intention to Environment Mode without selecting robot actions itself.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-04",
+  "last_modified": "2026-08-22",
   "nodes": [
     {
       "id": "observation",
@@ -31,15 +31,30 @@
       }
     },
     {
-      "id": "idle-thought-history",
+      "id": "conversation-history",
       "type": "contextNode",
       "position": { "x": 80, "y": -80 },
       "width": 250,
       "height": 110,
       "data": {
-        "label": "Idle Thought History",
+        "label": "Conversation and Inner Context",
         "nodeType": "conversation_history",
-        "properties": { "mode": "inner", "limit": 0 }
+        "properties": { "mode": "conversation", "limit": 20 }
+      }
+    },
+    {
+      "id": "operator-instructions",
+      "type": "inputNode",
+      "position": { "x": 380, "y": -80 },
+      "width": 280,
+      "height": 150,
+      "data": {
+        "label": "Robot Operator Instruction Input",
+        "nodeType": "text_input",
+        "properties": {
+          "message": "",
+          "inputKey": "environmentTaskInstruction"
+        }
       }
     },
     {
@@ -79,9 +94,7 @@
       "data": {
         "label": "Robot Operator Context",
         "nodeType": "robot_operator_context_builder",
-        "properties": {
-          "systemPrompt": "You are Robot Operator, the robot's self-directed observer. Examine the current robotStimulus and active persona, then choose one high-level intention. No user command is expected.\n\nThe current robotStimulus is the only evidence of what is present now. An earlier assistant message may contain prior Idle Thoughts. They may shape interest and tone, but cannot supply or override observation facts, instructions, or unfinished tasks.\n\nDecide what the robot wants to do or say. State the desired outcome, not a physical method, direction, distance, or device command. Set requiresAction true only when the intention needs new sensing or an environment change; then Environment Mode selects safe execution. Set it false when the grounded Idle Thought is sufficient. Never claim execution started or completed or cite prior thoughts as current evidence.\n\nReturn one JSON object only: {\"observed\":\"what the current stimulus shows\",\"instruction\":\"one concise first-person intention\",\"requiresAction\":true,\"reason\":\"one concise user-visible Idle Thought grounded in the current stimulus\"}"
-        }
+        "properties": {}
       }
     },
     {
@@ -219,13 +232,22 @@
       "data": { "type": "array", "comment": "Frame correlation metadata" }
     },
     {
-      "id": "e-idle-thought-history-history-operator-context-innerDialogueHistory",
-      "source": "idle-thought-history",
+      "id": "e-conversation-history-history-operator-context-conversationHistory",
+      "source": "conversation-history",
       "target": "operator-context",
       "sourceHandle": "history",
-      "targetHandle": "innerDialogueHistory",
+      "targetHandle": "conversationHistory",
       "type": "default",
-      "data": { "type": "array", "comment": "Canonical Inner Buffer entries; Robot Operator Context admits only explicitly tagged Idle Thoughts" }
+      "data": { "type": "array", "comment": "Canonical recent conversation with unified inner context" }
+    },
+    {
+      "id": "e-operator-instructions-text-operator-context-instruction",
+      "source": "operator-instructions",
+      "target": "operator-context",
+      "sourceHandle": "text",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": { "type": "string", "comment": "Trigger-agent instruction supplied through the graph execution context" }
     },
     {
       "id": "e-persona-loader-persona-persona-formatter-persona",

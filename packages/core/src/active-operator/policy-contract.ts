@@ -17,9 +17,6 @@ export const AUTONOMOUS_PROPOSALS: Record<string, ProposalTemplate> = {
   'agent.reflector': { type: 'reflect', handler: 'agent.reflector', input: { agentId: 'reflector' } },
   'agent.curiosity-service': { type: 'curiosity', handler: 'agent.curiosity-service', input: { agentId: 'curiosity' } },
   'agent.inner-curiosity': { type: 'inner_curiosity', handler: 'agent.inner-curiosity', input: { agentId: 'inner-curiosity' } },
-  'agent.dreamer': { type: 'dream', handler: 'agent.dreamer', input: { agentId: 'dreamer' } },
-  'agent.organizer': { type: 'memory_curate', handler: 'agent.organizer', input: { agentId: 'organizer' } },
-  'agent.desire-generator': { type: 'desire_generate', handler: 'agent.desire-generator', input: { agentId: 'desire-generator' } },
 };
 
 export function parsePolicyDecision(value: unknown): OperatorPolicyDecision | null {

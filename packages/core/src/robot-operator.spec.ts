@@ -6,13 +6,11 @@ import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
   beginEnvironmentPerceptionCycle,
-  chooseBoredomMovementCommand,
-  eligibleBoredomMovementCommands,
+  buildRobotOperatorInstruction,
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotObserverEnabled,
   randomizedRobotOperatorIdleMs,
-  readBoredomMovementCycle,
   readRobotObserverCycle,
   robotObserverSourceAllowed,
   loadRobotOperatorConfig,
@@ -74,39 +72,39 @@ test('robot audio perception reuses the finite observer counter without dependin
   assert.equal(nextRobotObserverCycle(cycle!)?.step, 2)
 })
 
-test('Boredom Movement metadata owns its specialized graph and selected safe command', () => {
-  const cycle = readBoredomMovementCycle({
+test('Boredom Movement uses the shared Robot Operator cycle with its own runtime instruction', () => {
+  const instruction = buildRobotOperatorInstruction('boredom-movement')
+  const cycle = readRobotObserverCycle({
     metadata: {
-      boredomMovement: {
+      robotObserver: {
         cycleId: 'boredom-1',
+        step: 1,
+        maxSteps: 8,
         triggerSource: 'autonomy',
         requestedBy: 'boredom-movement',
-        graph: 'boredom-movement',
-        selectedCommand: 'wave',
+        graph: 'robot-operator',
+        instruction,
       },
     },
   })
   assert.deepEqual(cycle, {
     cycleId: 'boredom-1',
+    step: 1,
+    maxSteps: 8,
     triggerSource: 'autonomy',
     requestedBy: 'boredom-movement',
-    graph: 'boredom-movement',
-    selectedCommand: 'wave',
+    graph: 'robot-operator',
+    instruction,
   })
-  assert.equal(readBoredomMovementCycle({
-    metadata: { boredomMovement: { ...cycle, selectedCommand: 'walk' } },
-  }), null)
-})
+  assert.match(instruction, /boredom and engagement opportunity/i)
+  assert.match(instruction, /Do not default to a generic movement/i)
+  assert.match(instruction, /Environment Mode selects safe execution/i)
+  assert.doesNotMatch(instruction, /selectedCommand|allowlist/i)
 
-test('Boredom Movement selects only safe commands also advertised by the robot', () => {
-  const eligible = eligibleBoredomMovementCommands(
-    ['walk', 'wave', 'rest', 'stop'],
-    ['wave', 'walk', 'rest', 'stop', 'WAVE'],
-  )
-  assert.deepEqual(eligible, ['wave', 'rest'])
-  assert.equal(chooseBoredomMovementCommand(eligible, () => 0), 'wave')
-  assert.equal(chooseBoredomMovementCommand(eligible, () => 0.999), 'rest')
-  assert.equal(chooseBoredomMovementCommand([], () => 0.5), null)
+  const observerInstruction = buildRobotOperatorInstruction('robot-observer')
+  assert.match(observerInstruction, /routine observation opportunity/i)
+  assert.notEqual(observerInstruction, instruction)
+  assert.match(observerInstruction, /"observed".*"instruction".*"requiresAction".*"reason"/i)
 })
 
 test('Robot Operator owns inactivity timing while Robot Observer owns finite observation work', () => {
@@ -134,12 +132,20 @@ test('Robot Operator owns inactivity timing while Robot Observer owns finite obs
   assert.equal(variables.find(variable => variable.key === 'boredomMovementJitterMs')?.value, 120_000)
   assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 8)
   assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'robot-operator')
-  assert.equal(variables.find(variable => variable.key === 'boredomGraph')?.value, 'boredom-movement')
+  assert.equal(variables.some(variable => variable.key === 'boredomGraph'), false)
   assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
   const config = loadRobotOperatorConfig()
   assert.equal(config.graph, 'robot-operator')
-  assert.equal(config.boredomGraph, 'boredom-movement')
   assert.equal(config.environmentGraph, 'environment')
+
+  const engine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8')
+  const observerHandler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-observer-handler.ts'), 'utf8')
+  assert.equal(fs.existsSync(path.join(ROOT, 'packages/core/src/queue/boredom-movement-handler.ts')), false)
+  assert.match(engine, /workflow\.boredom-movement[\s\S]*executeRobotObserverWork/)
+  assert.match(observerHandler, /task\.handler === 'workflow\.boredom-movement'/)
+  assert.match(observerHandler, /instruction: suppliedInstruction \|\| buildRobotOperatorInstruction\(agentId\)/)
+  assert.match(observerHandler, /type: 'captureImage'/)
+  assert.doesNotMatch(observerHandler, /type: 'robotCommand'|chooseBoredomMovementCommand/)
 })
 
 test('structured captureImage remains available and capability gated', async () => {

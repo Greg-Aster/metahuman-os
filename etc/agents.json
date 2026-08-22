@@ -46,17 +46,17 @@
     "organizer": {
       "id": "organizer",
       "enabled": true,
-      "type": "activity",
+      "type": "manual",
       "priority": "high",
       "agentPath": "organizer.ts",
       "usesLLM": true,
-      "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 3,
-      "comment": "Runs after 10 minutes of inactivity to avoid competing with user for VRAM",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.organizer",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -65,17 +65,17 @@
     "curator": {
       "id": "curator",
       "enabled": true,
-      "type": "activity",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "curator/index.ts",
       "usesLLM": true,
-      "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 2,
-      "comment": "LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity, loops every 10 minutes while inactive (uses 30B model with 5-minute timeout)",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.curator",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -90,7 +90,7 @@
       "usesLLM": true,
       "schedule": "02:00",
       "maxRetries": 1,
-      "comment": "Queues bounded dream and persona-review children through the work coordinator.",
+      "comment": "Sole automatic owner of the sequential memory organization, curation, desire, dreaming, persona-review, and indexing pipeline.",
       "lifecycle": "workflow",
       "handler": "workflow.sleep",
       "allowedModes": [
@@ -122,7 +122,7 @@
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Chooses one safe stationary movement, captures a fresh image after completion, and reflects through Boredom Movement Mode.",
+      "description": "Requests a current robot image and sends a boredom and engagement instruction to Robot Operator Mode.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -137,7 +137,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Manual finite agent. It intersects its dedicated safe-command allowlist with robot-advertised commands, queues one random movement, then routes the correlated image to its own graph."
+      "comment": "Manual finite trigger agent. It supplies a boredom-specific runtime instruction to the shared Robot Operator workflow; Environment Mode decides whether and how to act."
     },
     "reflector": {
       "id": "reflector",
@@ -161,8 +161,7 @@
       "lifecycle": "scheduled-work",
       "handler": "agent.reflector",
       "allowedModes": [
-        "semi",
-        "full"
+        "semi"
       ],
       "startupPolicy": "skip"
     },
@@ -180,8 +179,7 @@
       "lifecycle": "scheduled-work",
       "handler": "agent.curiosity-service",
       "allowedModes": [
-        "semi",
-        "full"
+        "semi"
       ],
       "startupPolicy": "skip"
     },
@@ -198,8 +196,7 @@
       "lifecycle": "scheduled-work",
       "handler": "agent.curiosity-researcher",
       "allowedModes": [
-        "semi",
-        "full"
+        "semi"
       ],
       "startupPolicy": "skip"
     },
@@ -217,8 +214,7 @@
       "lifecycle": "scheduled-work",
       "handler": "agent.inner-curiosity",
       "allowedModes": [
-        "semi",
-        "full"
+        "semi"
       ],
       "startupPolicy": "skip"
     },
@@ -243,17 +239,17 @@
     "desire-generator": {
       "id": "desire-generator",
       "enabled": true,
-      "type": "activity",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "desire-generator.ts",
       "usesLLM": true,
-      "inactivityThreshold": 600,
       "pauseCategory": "background",
       "maxRetries": 2,
-      "comment": "Agency: Synthesizes desires from persona goals, tasks, memories, and conversation patterns. Reinforces existing desires when user expresses similar wants. Runs after 10 min of inactivity to process recent conversations.",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-generator",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -262,16 +258,16 @@
     "desire-explorer": {
       "id": "desire-explorer",
       "enabled": true,
-      "type": "interval",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "desire-explorer/run.ts",
       "usesLLM": true,
-      "interval": 120,
       "maxRetries": 2,
-      "comment": "Agency: Explores desires before planning - researches feasibility, generates smart context-aware questions. Runs every 2 minutes to process desires that crossed threshold.",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-explorer",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -280,16 +276,16 @@
     "desire-executor": {
       "id": "desire-executor",
       "enabled": true,
-      "type": "interval",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "desire-executor.ts",
       "usesLLM": true,
-      "interval": 300,
       "maxRetries": 2,
-      "comment": "Agency: Executes approved desires through the operator system. Runs every 5 minutes.",
+      "comment": "Sleep Workflow child. Existing trust and approval checks remain authoritative; there is no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-executor",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -298,16 +294,16 @@
     "desire-planner": {
       "id": "desire-planner",
       "enabled": true,
-      "type": "interval",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "desire-planner.ts",
       "usesLLM": true,
-      "interval": 300,
       "maxRetries": 2,
-      "comment": "Agency: Generates plans for desires in 'planning' status using cognitive graphs. Runs every 5 minutes.",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-planner",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -316,16 +312,16 @@
     "desire-outcome-reviewer": {
       "id": "desire-outcome-reviewer",
       "enabled": true,
-      "type": "interval",
+      "type": "manual",
       "priority": "normal",
       "agentPath": "desire-outcome-reviewer.ts",
       "usesLLM": true,
-      "interval": 600,
       "maxRetries": 2,
-      "comment": "Agency: Reviews completed/failed desires to determine next action (complete, retry, continue, escalate, abandon). Handles recurring/achievable/aspirational desire types differently. Runs every 10 minutes.",
+      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-outcome-reviewer",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -394,16 +390,16 @@
     "auto-indexer": {
       "id": "auto-indexer",
       "enabled": true,
-      "type": "time-of-day",
+      "type": "manual",
       "priority": "low",
       "agentPath": "auto-indexer.ts",
       "usesLLM": false,
-      "schedule": "03:00",
       "maxRetries": 1,
-      "comment": "Nightly vector index rebuild using Qwen3 embeddings. Runs on CPU via local-model-service (parallel to GPU backends). Skips rebuild if index is < 24 hours old.",
+      "comment": "Final Sleep Workflow child. It can still be run manually and skips a recent index, but has no independent nightly timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.auto-indexer",
       "allowedModes": [
+        "reactive",
         "semi",
         "full"
       ],
@@ -425,8 +421,7 @@
       "lifecycle": "scheduled-work",
       "handler": "agent.daydreamer",
       "allowedModes": [
-        "semi",
-        "full"
+        "semi"
       ],
       "startupPolicy": "skip"
     }

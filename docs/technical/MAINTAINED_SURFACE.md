@@ -31,6 +31,21 @@ It is the input for architecture checks, audits, and refactor planning.
   live-applied scheduling configuration in system `etc/agents.json`.
 - TriggerManager may admit finite work to the coordinator; it may not execute
   an agent directly or supervise a persistent process.
+- Semi autonomy owns timer- and idle-triggered awake work. Full autonomy owns
+  completion/cooldown-driven awake proposals through Active Operator policy;
+  scheduled awake triggers must not run in both modes. The scheduled Sleep
+  Workflow is the deliberate exception because it is a system-state boundary,
+  not an awake action.
+- `packages/core/src/queue/sleep-workflow.ts` is the sole automatic owner for
+  Organizer, Curator, Desire Generator, Desire Explorer, Desire Planner,
+  Desire Executor, Desire Outcome Reviewer, Dreamer, Psychoanalyzer, and Auto
+  Indexer. It admits one sequential child at a time. `sleep-runtime.ts` owns the
+  durable sleep phase and review state; user activity cancels the remaining
+  sleep chain before awake automation resumes.
+- Robot Observer, Boredom Movement, TriggerManager awake schedules, and Full
+  autonomy policy must remain dormant while Sleep Workflow is active. Sleep
+  schedule editing belongs to Trigger Manager; live sleep progress and cycle
+  review belong to Dashboard -> Sleep.
 - Agent Monitor plus the shared process runner own persistent services and
   `etc/services.json`. Agent Monitor and agent-control authorization consume the
   Agent Catalog rather than a second hard-coded allowlist. Maintenance Service

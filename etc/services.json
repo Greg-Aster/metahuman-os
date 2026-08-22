@@ -33,9 +33,8 @@
       "boredomMovementJitterMs": 120000,
       "maxCycleSteps": 8,
       "graph": "robot-operator",
-      "boredomGraph": "boredom-movement",
       "environmentGraph": "environment",
-      "comment": "Robot autonomy timer owner. Robot Observer uses Robot Operator Mode; Boredom Movement uses its dedicated post-movement vision graph."
+      "comment": "Robot autonomy timer owner. Robot Observer and Boredom Movement supply trigger-specific instructions to the shared Robot Operator Mode decision graph."
     },
     "maintenance-service": {
       "id": "maintenance-service",

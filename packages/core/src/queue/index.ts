@@ -45,6 +45,13 @@ export {
 } from './agent-work-catalog.js';
 export type { AgentLifecycleClass, TriggerStartupPolicy } from './agent-work-catalog.js';
 export { RemoteDispatcher } from './remote-dispatcher.js';
+export {
+  SLEEP_WORKFLOW_STAGES,
+  SLEEP_WORKFLOW_HANDLERS,
+  advanceSleepWorkflow,
+  beginSleepWorkflow,
+  markSleepStageRunning,
+} from './sleep-workflow.js';
 
 // Facade
 export { QueueSystem, ensureQueueSystemStarted, getQueueSystem, resetQueueSystem } from './queue-system.js';

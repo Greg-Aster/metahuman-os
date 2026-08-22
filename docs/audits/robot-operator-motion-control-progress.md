@@ -1232,19 +1232,20 @@ Batch 4 integration remains gated.
 | `ROM-08` | `in_progress` | Establish the adapter-owned Embodied Skill Runtime seam and implement an active-view skill within it. | One admitted request owns acquisition, view improvement, semantic verification, bounded reacquisition, milestones, cancellation, and one terminal result. Camera leases and optional bounded frame routing are validated; live controller composition and capability registration remain gated. |
 | `ROM-09` | `in_progress` | Keep the independent interruption and body-safety monitor subordinate to the goal controller. | Cancellation, stale evidence, and body faults can interrupt immediately, while ordinary uncertainty enters bounded active reacquisition instead of becoming the controller's default result. |
 | `ROM-10` | `not_started` | Validate simulator, controlled physical tests, interruption, and recovery. | Automated contracts pass and physical evidence demonstrates stop, target loss, no-progress, interruption, and bounded success/failure behavior. |
-| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | V1 perception selection is closed: YOLOE plus MobileCLIP owns semantic bootstrap and independent verification; Cutie owns continuity only. The locked GPU runtime gate passes. The AGPL decision, multi-scene held-out identity evidence, control calibration, and later safety/navigation/manipulation selections remain. |
+| `ROM-11` | `in_progress` | Research and select maintained perception, tracking, skill-execution, control, safety, navigation, and manipulation components for the actual Ainekio hardware. | The earlier YOLOE-11-M/Cutie composition is rejected by held-out semantic bootstrap. One bounded YOLOE-26x text-mode diagnostic now passes top-five acquisition on four burned VGA/XGA frames, so typed candidate/ambiguity design is justified but perception selection is not closed. Cutie remains continuity only. Licensing, new unseen identity evidence, control calibration, and later safety/navigation/manipulation selections remain. |
 | `ROM-12` | `not_started` | Add typed multi-object observations and capability discovery without changing the current action queue. | Contracts distinguish class hypothesis, short-lived track identity, durable object identity, frame binding, and optional calibrated pose. |
-| `ROM-13` | `implemented` | Integrate the selected detector and tracker behind the adapter-owned perception interface. | The isolated offline worker composes YOLOE semantic verification with non-authoritative Cutie continuity and passes real CPU and GPU lifecycles. GPU latency and memory gates pass. Held-out multi-scene association, occlusion/loss/reacquisition, continuous controller frame consumption, and live registration remain unvalidated. |
+| `ROM-13` | `implemented` | Integrate the selected detector and tracker behind the adapter-owned perception interface. | The isolated provider seam composes semantic acquisition/verification with non-authoritative Cutie continuity and passes real CPU and GPU lifecycles. The currently wired YOLOE-11-M provider is rejected by held-out bootstrap; YOLOE-26x has only diagnostic acquisition evidence and is not wired. Candidate association, occlusion/loss/reacquisition, continuous controller frame consumption, and live registration remain unvalidated. |
 | `ROM-14` | `in_progress` | Add a bounded `inspect` object skill using the new perception contract. | MetaHuman now has exact-frame `inspect` admission behind a truthful `activeView` capability and its Bridge Out allowlist. The adapter-owned acquisition/tracking/control implementation and end-to-end evidence remain. |
 | `ROM-15` | `not_started` | Integrate a local obstacle/clearance representation below object skills. | Fresh range, depth, point-cloud, or conservative visual evidence can independently slow or stop motion; missing evidence never becomes assumed free space. |
 | `ROM-16` | `not_started` | Replace generic physical `interact` claims with advertised object-interaction verbs, prerequisites, limits, and results. | Unsupported verbs are rejected at admission; supported verbs reference a current object identity and define how success is physically verified. |
 | `ROM-17` | `not_started` | Integrate the first hardware-supported bounded contact or manipulation skill. | Simulator and controlled physical evidence cover reachability, collision/workspace checks, interruption, controller feedback, fresh visual/contact verification, and terminal failure. |
 | `ROM-18` | `deferred` | Add full localization, mapped navigation, and manipulation-planner bridges when sensors and body hardware justify them. | Navigation or manipulation is advertised only after the required state estimate, world model, planner, controller feedback, and safety layer pass their own acceptance. |
-| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | QVGA and XGA suites reject the earlier sole-owner candidates. YOLOE/Cutie passes isolated runtime gates but fails both frozen held-out scenes at semantic bootstrap, so the identity gate remains false and runtime registration is forbidden. |
+| `ROM-19` | `in_progress` | Add perception/control replay fixtures, metrics, and regression thresholds. | QVGA and XGA suites reject the earlier sole-owner candidates. YOLOE-11-M/Cutie fails both frozen held-out scenes at semantic bootstrap. A later one-model YOLOE-26x smoke passes top-five acquisition on the four burned first-visible VGA/XGA frames, but cannot change the false identity gate. Typed candidate/ambiguity tests and genuinely unseen acceptance scenes remain; runtime registration is forbidden. |
 | `ROM-20` | `in_progress` | Retire the robot-skill evaluator/refiner/requeue pipeline after the local skill cutover. | Robot investigations use no Visual Evidence Assessor, Task Refiner, Workflow Command retry, or Movement Generator locomotion; retained admission, correlation, cancellation, stable objective, and terminal-result contracts pass focused tests and the same objective records materially lower model calls, tokens, and wall time. |
 | `ROM-21` | `in_progress` | Preserve the current V1 robot behind a replaceable locomotion-backend and learned-policy seam. | The isolated Active View controller now emits bounded `BodyMotionCommand` values with frame-derived `RobotStateSnapshot` input through an injected `LocomotionBackend`; only the V1 backend maps them to named assets. Versioned manifests, broader body state, logging, learned-backend fallback, simulator calibration, and authorized physical acceptance remain. |
 | `ROM-22` | `validated` | Establish the isolated active-view hygiene gate before integration. | Existing Ainekio runtime owners remain unchanged; valid timestamp, cancellation, subprocess shutdown, feature-absence, calibration-gate, and identity-gate tests pass with a complete removal manifest. |
 | `ROM-23` | `validated` | Couple the active-view controller to action-indexed frames through the existing Body Emulator lifecycle. | A semantic orientation command passes through `BodySession`, unlocks its correlated replay frame, emits the normal post-action snapshot before `done`, and lets the controller verify measured image improvement without an LLM, live adapter, or physical robot. |
+| `ROM-24` | `validated` | Preserve bounded semantic candidate sets and resolve identity only from frame-bound evidence. | The isolated provider, composition, JSON-line transport, client, and controller preserve up to five stable candidates and select only from explicit frame-bound evidence. Fifty-four focused tests prove ambiguity, truncation, ties, malformed/weak/mismatched/stale evidence, and continuity disagreement authorize no new target motion. Live registration and physical acceptance remain forbidden. |
 
 ## Recommended Implementation Order
 
@@ -6305,6 +6306,422 @@ Next evidence boundary:
   bounded local search/investigation skill, continuous frame consumption,
   obstacle evidence, calibrated locomotion, cancellation, licensing, safety,
   registration, and authorized physical acceptance remain separate work.
+
+### 2026-08-06 - ROM-19 evidence AK - XGA does not repair semantic bootstrap
+
+Status: post-rejection causal diagnostic complete; resolution-only correction
+rejected. This evidence cannot change the failed held-out identity gate.
+
+Contract and scope:
+
+- Froze `/tmp/rom19-xga-diagnostic/contract.json` before diagnostic output with
+  SHA-256
+  `3f5b2a70186a20a715d40a254a847dbbf57dba18fe889a7ae8935b4f3303f3ce`.
+  It binds the rejected held-out result, both unchanged scene bindings, the
+  selected source/model artifacts, the diagnostic runner, unchanged queries,
+  image size 640, confidence 0.25, CPU/offline execution, and exactly one
+  already-bound XGA annotation still per phase.
+- The two held-out scenes were already burned by evidence AJ. This diagnostic
+  is permitted only to distinguish source-resolution failure from semantic-
+  acquisition failure. It cannot reopen model selection, change an annotation,
+  authorize registration, or become new acceptance evidence.
+
+Result:
+
+- `/tmp/rom19-xga-diagnostic/result.json` has SHA-256
+  `a5c5466a469964f70a17e6a8eddd6533154268e5076b9b34e95426711c00d65f`.
+  Both complete repeats are deterministic; worker startup, resets, shutdown,
+  offline operation, and return code pass.
+- Scene one remains `YOLOE returned multiple target candidates` on the XGA
+  visible, partial-cover, absent, and returned stills. Scene two remains
+  `YOLOE did not verify the target` on all four XGA stills.
+- CPU semantic p95 is 555.397 ms, total elapsed time is 13.399 seconds, and peak
+  child RSS is 2,925,740 KiB. No GPU, camera, Gateway, adapter, or robot action
+  was used.
+
+Decision:
+
+- Higher-resolution semantic snapshots remain architecturally useful, but XGA
+  alone does not fix this provider. Scene one requires a bounded candidate-set
+  and principled association/ambiguity owner; scene two requires better
+  semantic concept coverage. Cutie remains the continuity owner and is not the
+  cause of either bootstrap failure.
+- Do not patch the current provider with object names, prompt synonyms,
+  confidence changes, phase rules, or an arbitrary top-one choice. Any next
+  acquisition candidate must be chosen from public task evidence, screened in
+  one bounded cycle, and validated on genuinely new scenes after component
+  development.
+
+### 2026-08-06 - Owner pause and resumption handoff
+
+Status: paused by owner for approximately one week. No further download,
+inference, capture, implementation, integration, registration, advertisement,
+or physical work is authorized until the owner explicitly resumes this lane.
+
+- Current status, architecture boundaries, artifacts, rollback, failure result,
+  research position, and first safe resumption step are consolidated in
+  `robot-active-operator-where-we-are-now.md`.
+- MetaHuman was restored through canonical `start.sh` after the held-out GPU
+  evaluation and returned `HTTP/1.1 200 OK` on `127.0.0.1:4321`.
+- Other agents' dirty-tree edits remain untouched. The pause authorizes no
+  cleanup, reset, commit, publication, service stop, model download, or robot
+  action.
+
+### 2026-08-22 - ROM-11/ROM-19 evidence AL - Bounded YOLOE-26x candidate smoke
+
+Status: diagnostic acquisition candidate passed; identity, licensing,
+integration, registration, and physical gates remain false or unresolved.
+
+Scope and pre-output contract:
+
+- The owner resumed the lane and authorized the next bounded step. This was one
+  preselected official `YOLOE-26x-seg` text-mode smoke, not an equal-weight
+  model bakeoff. No other mode or model was tested.
+- The final frozen contract at
+  `/tmp/rom19-yoloe26x-smoke/contract.json` has SHA-256
+  `4fb8e9982f1c259e8fc65e25f7d8234b28ca28010d346b63c1a76b08dca1fd9`.
+  It binds exactly four already-burned first-visible frames: one VGA preview
+  and one XGA still from each held-out scene; the unchanged text queries;
+  manually reviewed target and distractor geometry; image size 640;
+  confidence 0.25; top five; two repeats; offline execution; latency, VRAM,
+  asset, runtime-source, dependency, and runner digests; and a stop-after-this-
+  candidate rule.
+- A candidate counted only when its normalized center was within 0.12 of the
+  target center and nearer the target than the staged distractor. Every
+  returned candidate, confidence, box, mask digest, and score is preserved.
+  Top one has no special authority.
+- The official model artifact is 171,640,453 bytes with SHA-256
+  `d08d390a08f98195f7c87807839fe4ff93a5491645fef1bc3bf0700efafdd639`.
+  The required official `mobileclip2_b.ts` text encoder is 253,794,476 bytes
+  with SHA-256
+  `35d7f213e4d75f38514e4656ad3cb91158bd33e3805d8ac349f23b186f66982f`.
+  Both came from the Ultralytics `v8.4.0` release.
+- Ultralytics 8.4.36 also requires its official `CLIP` helper for tokenization.
+  The first launch stopped before image inference when that package was absent.
+  Official source commit `68dce32140994dfcb645a1320c4ebdc034fc19fd` was then
+  pinned and hash-bound under the removable temporary root. The shared
+  ComfyUI environment was not modified, and the contract was re-frozen before
+  any image output.
+- The runner has SHA-256
+  `333f4a2288ff605d1988013a77444bd64bbe6245c59bb84d406212ed71bb49bc`.
+  Five focused pure scorer tests have SHA-256
+  `9cc834d14ad941e38bfa5eee46156d7a1ad6e52fe88e95673e6678e51529a264`
+  and pass before contract validation. Model and helper code are AGPL-3.0; the
+  production licensing decision remains unresolved.
+
+Result:
+
+- `/tmp/rom19-yoloe26x-smoke/result.json` has SHA-256
+  `b4ccb51d3240ea636b62661277e05f6fd625e36021cc6bfd9375562415766437`
+  and binds the final contract hash. All four frames pass on both repeats, the
+  complete candidate output is deterministic, and
+  `identityGateChanged` is false.
+- Scene-one VGA returns three candidates. The true silver bottle is rank two at
+  confidence 0.412419; an unrelated small can is rank one at 0.457449. This is
+  measured evidence that silently choosing top one would select the wrong
+  object.
+- Scene-one XGA returns three candidates and places the true bottle at rank one
+  with confidence 0.459955. Scene-two VGA returns two candidates and places the
+  soda can at rank one with confidence 0.387128. Scene-two XGA returns one
+  candidate, the soda can, at confidence 0.341583.
+- Model load is 247.735 ms, joint two-query text embedding is 365.731 ms, total
+  wall time is 2.356 seconds, and peak process VRAM is 1,238 MiB. Reported
+  first-batch inference is 46.615 ms per image and steady inference is 14.710
+  to 14.875 ms per image. The run began with 7,057 MiB free while the owner's
+  Ollama model remained resident, confirming that an uncontended full-card
+  shutdown was unnecessary for this diagnostic.
+- The process enforced offline network denial, exited cleanly, released its
+  VRAM, accessed no camera/Gateway/adapter/robot path, issued no motion, and
+  left MetaHuman returning `HTTP/1.1 200 OK` on `127.0.0.1:4321`.
+
+Decision:
+
+- Nominate YOLOE-26x for a typed candidate-oriented acquisition component. Do
+  not integrate or advertise it yet, and do not reinterpret this burned-frame
+  diagnostic as held-out identity proof.
+- The next work is contract design, not more model testing: expose a bounded
+  scored candidate set; select only when generic evidence is sufficient; and
+  return typed ambiguity for bounded active viewing or clarification. The
+  scene-one rank-two result is the concrete regression fixture for this rule.
+- Cutie remains continuity only after an identity-authorized seed. It cannot
+  create identity, arbitrate semantic candidates, or declare completion.
+- After the candidate/ambiguity owner and focused component tests pass, capture
+  genuinely unseen multi-scene fixtures for identity, absence, partial cover,
+  loss, return, and ambiguity acceptance. Licensing, continuous frame
+  consumption, obstacle/safety evidence, calibrated locomotion, cancellation,
+  live registration, and separately authorized physical acceptance remain
+  required.
+
+### 2026-08-22 - ROM-24 evidence AM - Typed acquisition-candidate and ambiguity contract
+
+Status: contract designed from current owner/source truth; not implemented.
+
+Existing owner trace:
+
+- `YoloeSemanticProvider._observation` receives the full model result, but
+  count zero becomes missing and any count other than one becomes only
+  `ambiguous=true`. In the multi-candidate case it discards every candidate
+  box, confidence, and mask.
+- `PerceptionObservation.worker_result`, `ActiveViewEstimate`, and
+  `estimate_from_worker` carry only one optional box. The JSON-line transport
+  therefore cannot preserve or correlate alternatives even though the model
+  produced them.
+- `SelectedPerception` is already the correct composition owner: it keeps
+  semantic identity separate from Cutie continuity and owns when a semantic
+  result may seed Cutie. No new workflow, queue, LLM loop, or identity store is
+  needed.
+- `inspectionTarget.seedBox` and `seedConfidence` already provide optional
+  evidence bound to the exact initiating frame. The controller also obtains a
+  Cutie estimate and an independent semantic result from the same post-action
+  frame. These are the two legitimate generic association seams.
+- The controller currently maps an unusable ambiguous estimate to terminal
+  `blocked` before locomotion. That is safe, but because the candidates were
+  discarded it cannot report useful uncertainty or support later bounded
+  active disambiguation.
+
+Required contract shape:
+
+- Add one immutable `PerceptionCandidate` value in the existing perception
+  owner. It carries normalized box, normalized semantic confidence, and an
+  internal optional mask. Candidate identifiers are ephemeral and frame-bound;
+  they are never durable physical-object identity.
+- Replace the contradictory `found` plus `ambiguous` interpretation with one
+  explicit acquisition state: `selected`, `missing`, or `ambiguous`.
+  `selected` names exactly one candidate index and derived box/confidence;
+  `missing` has no selected candidate; `ambiguous` preserves alternatives and
+  has no selected candidate.
+- Bound semantic output to at most five candidates in stable descending
+  confidence/geometry order. The worker response includes state, candidate
+  count, candidate boxes/confidences, selected index when present, evidence
+  kind, and a truncation/total-count indication. Masks remain worker-local and
+  only the selected mask may seed Cutie.
+- Keep selection policy inside `SelectedPerception`, not inside the YOLOE
+  provider or controller. The model provider reports candidates; the
+  composition owner applies generic evidence; the controller consumes only a
+  selected estimate or a typed non-selection.
+- A single above-threshold semantic candidate may be selected as
+  `semantic_unique`. With multiple candidates, same-frame seed evidence may
+  select only one candidate that has sufficient overlap and a clear margin
+  from every other candidate. No match or a tied match remains ambiguous.
+- During reacquisition, a Cutie box may support selection only when an
+  independently returned semantic candidate uniquely overlaps it on the same
+  frame. Record this as `semantic_continuity_agreement`. Cutie alone never
+  creates identity, chooses a semantic candidate, seeds itself, or authorizes
+  completion.
+- A selected candidate is the only state that may initialize visual prompting,
+  seed Cutie, emit target geometry to locomotion, or satisfy semantic
+  verification. Missing and ambiguous states authorize no target motion.
+
+Bounded active assistance:
+
+- `inspect` continues to mean a target visible in the exact initiating frame.
+  If query-only acquisition is ambiguous and no legitimate seed exists, it
+  must return the bounded candidate set and a typed request for better evidence
+  or clarification; it must not pretend that arbitrary movement is progress.
+- The contract reserves an `active_disambiguation` transition for evaluating a
+  bounded list of candidate hypotheses using fresh same-frame semantic results
+  after view changes. This is local embodied-skill work, not an LLM call per
+  frame. It cannot dispatch until fine-yaw calibration, cancellation, and
+  obstacle/safety gates pass.
+- Complete object search remains a separate skill. Candidate exploration must
+  not silently turn `inspect` into “find an object somewhere in the room.”
+
+Focused implementation tests required before provider replacement:
+
+- five candidates survive provider, worker JSON, client validation, and reset
+  in stable order; a sixth candidate is explicitly reported as truncated;
+- the smoke regression shape is represented generically: a higher-confidence
+  distractor plus a lower-confidence target, with same-frame seed overlap
+  selecting the target rather than rank one;
+- the same multi-candidate result without seed evidence remains ambiguous and
+  causes zero locomotion calls;
+- overlapping/tied, low-confidence, malformed, stale-frame, and mismatched
+  seed evidence never selects a candidate;
+- one unique semantic candidate selects and only its mask seeds Cutie;
+- continuity-only output cannot select, complete, or reseed identity;
+- one semantic candidate uniquely agreeing with the same-frame continuity box
+  may reacquire, while disagreement remains ambiguous;
+- worker shutdown, offline operation, candidate bounds, cancellation, feature
+  absence, identity gate, and body-neutral controller tests continue to pass.
+
+Implementation boundary:
+
+- The minimal source owners are the isolated Ainekio Active View
+  `perception.py`, `model_providers.py`, `contracts.py`, `worker_client.py`, and
+  their focused tests. `controller.py` should require only the new selected
+  state and expose bounded ambiguity metadata; it should not absorb model
+  scoring or provider logic.
+- Do not touch `server.py`, capability advertisement, the live frame bridge,
+  MetaHuman Environment Mode, locomotion assets, or physical dispatch in this
+  change. YOLOE-26x provisioning and licensing remain a separate removable
+  runtime decision after the pure contract/provider tests pass.
+
+### 2026-08-22 - ROM-24 evidence AN - Candidate association implementation
+
+Status: validated as an isolated component; unregistered and physically
+unproven.
+
+Implemented owner corrections:
+
+- `PerceptionCandidate` and `PerceptionObservation` now preserve a bounded,
+  immutable candidate set with exactly one state: `selected`, `missing`, or
+  `ambiguous`. A selected result identifies one candidate index and evidence
+  kind; unresolved results cannot expose target geometry through the derived
+  single-target fields.
+- `YoloeSemanticProvider` now converts all returned detections into normalized
+  candidates, sorts them deterministically by confidence and geometry, retains
+  at most five, and reports the original total plus explicit truncation. Masks
+  remain worker-local.
+- `SelectedPerception` remains the sole association owner. Query-only output
+  selects only when semantically unique. Supplied exact-frame seed evidence
+  must be paired, above the configured confidence floor when it is a frame
+  seed, overlap one candidate sufficiently, and have a clear margin over every
+  alternative. A supplied seed must agree even when the semantic provider
+  returns only one candidate.
+- The internal visual-prompt seed cannot be supplied by a worker client.
+  Post-action Cutie geometry may support selection only when an independent
+  semantic result on that same frame uniquely agrees. Cutie-only output cannot
+  initialize identity, pass semantic usability, declare completion, or reseed
+  itself.
+- The JSON-line worker/client contract now transports bounded candidates,
+  selected index, evidence kind, total count, and truncation. Client validation
+  rejects oversized, contradictory, malformed, and non-finite results.
+- The controller consumes only an evidenced semantic selection for ordinary
+  target motion or completion and includes the bounded candidate state in its
+  progress result. Initial ambiguity returns `blocked` with zero locomotion.
+  Post-action ambiguity cannot fall back to Cutie-only motion; only semantic
+  absence may use the already bounded continuity-recovery behavior while a
+  fresh semantic result is sought.
+
+Focused regression evidence:
+
+- A generic form of the burned silver-bottle failure is locked in: a
+  higher-confidence distractor remains rank one, while same-frame overlap
+  selects the lower-confidence target and only its mask seeds continuity.
+- Five candidates survive provider conversion, JSON serialization, client
+  validation, and reset in stable order; a sixth is reported as truncated.
+- No-seed ambiguity, truncated alternatives, tied overlap, malformed or weak
+  frame seeds, spatial mismatch, non-finite geometry, stale source frames,
+  mismatched frame timestamps, and semantic/continuity disagreement never
+  select a target.
+- Initial ambiguity and continuity-only input produce zero locomotion calls.
+  A semantic ambiguity after one measured action produces no second action.
+- Unique semantic acquisition, semantic-plus-continuity agreement, bounded
+  continuity recovery, cancellation, graceful and forced worker shutdown,
+  feature absence, identity/calibration gates, body-neutral locomotion, and the
+  action-indexed Body Emulator replay remain green.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=Emulator:Master:Slave/software:.`
+  `python3 -m unittest Emulator.tests.test_active_view`
+  `Emulator.tests.test_active_view_replay`
+  `Emulator.tests.test_active_view_replay_manifest` passes 54 of 54 tests in
+  0.359 seconds on the final run.
+- An explicit 88-character screen returns no findings for the affected Active
+  View source, focused tests, and worker fixture. MetaHuman `git diff --check`
+  passes. The locally installed `black` launcher is unusable because its Python
+  module is absent; this is recorded as tool state, not claimed as formatter
+  validation.
+- A source-boundary search finds no `emote`, `queue_intent`, terminal-wait,
+  named-turn asset, or quadruped dependency in the generic controller,
+  contracts, perception, provider, worker, or worker-client owners.
+- A live-owner search finds no Active View import, translation, registration,
+  or capability advertisement in the adapter, Gateway, or dashboard. The
+  existing feature-absence regression passes within the 54-test set.
+- No model inference, download, live camera access, Gateway command, robot
+  action, server restart, capability change, or physical motion occurred.
+
+Rollback and boundary:
+
+- This checkpoint changes only the still-untracked Active View package and its
+  still-untracked focused tests/fixture. The package remains removable by the
+  established ROM-22/ROM-23 manifests. A ROM-24-only rollback restores
+  `perception.py`, `model_providers.py`, `contracts.py`, `worker_client.py`,
+  `controller.py`, `__init__.py`, `test_active_view.py`,
+  `test_active_view_replay.py`, and the worker fixture to evidence AM.
+- No existing Ainekio live owner or MetaHuman runtime owner was changed for
+  ROM-24. Other agents' tracked and untracked work remains untouched.
+- `identity_gate_validated` remains false. The provider remains unregistered,
+  YOLOE-26x production licensing remains unresolved, and the V1 fine-yaw and
+  obstacle/safety gates remain physically unproven.
+- The next evidence must come from genuinely unseen, frozen multi-scene
+  fixtures covering identity, absence, partial cover, loss, return, and
+  ambiguity. The four smoke frames are burned diagnostics and cannot become
+  acceptance data. Calibrated local active disambiguation is later work, after
+  those identity fixtures and the existing motion/safety gates pass.
+
+### 2026-08-22 - ROM-19/ROM-24 evidence AO - Removable live perception probe
+
+Status: source and recorded-worker lifecycle validated; no live camera or
+physical robot run performed.
+
+Purpose and boundary:
+
+- A separate process cannot attach to the canonical Gateway service object
+  already running inside `gateway.server` without changing a production owner.
+  The test surface therefore does not add a server route, adapter injection,
+  capability, graph node, dashboard control, or global service registry.
+- `active_view/live_probe.py` temporarily composes the existing public
+  `GatewayService` on the normal robot protocol endpoint, requests exactly one
+  canonical `snap`, passes that correlated frame to the existing JSON-line
+  perception client, prints one bounded result, and exits.
+- The probe imports no locomotion backend, named asset, Environment Adapter,
+  translation owner, or action dispatch. Its result always records
+  `motionDispatched: false` and `identityGateChanged: false`.
+- The probe must run instead of, never beside, the production Gateway on the
+  selected port. Stopping it and restarting the original Gateway restores the
+  original runtime; deleting the probe files restores the original source
+  surface.
+
+Isolated acquisition worker:
+
+- `active_view/yoloe26_worker.py` is an acquisition-only JSON-line worker for
+  the already nominated official YOLOE-26x checkpoint. It accepts a text query
+  and one JPEG, returns at most five stable candidates through the ROM-24
+  contract, and explicitly advertises no tracking or completion authority.
+- It requires the official local checkpoint, official `mobileclip2_b.ts`, the
+  pinned official Ultralytics CLIP helper, and all offline guards. It has no
+  download fallback and accepts no seed evidence.
+- Candidate extraction is not duplicated: the old provider and this worker now
+  share `yoloe_result_observation` in the existing isolated
+  `model_providers.py` owner.
+
+Validation:
+
+- The focused Active View probe, YOLOE-26 worker, candidate/controller,
+  lifecycle, replay, and replay-manifest command passes 59 of 59 tests in 0.416
+  seconds. New tests prove one snapshot returns candidate metadata with zero
+  motion, unavailable/rejected lifecycles close cleanly before inference, the
+  worker command is parsed as bounded JSON data rather than a shell command,
+  and the probe source contains no motion or live-registration owner.
+- The real YOLOE-26 worker then ran one offline CPU lifecycle against the
+  already burned scene-one VGA frame. It loaded, returned healthy, emitted
+  three typed candidates, shut down with exit code zero, and released after
+  11.989 seconds wall time. This was recorded-media evidence only: no Gateway,
+  camera, robot, network download, or motion path was used.
+- The affected source and tests contain no lines over 88 characters. Boundary
+  searches return no live-owner reference to the probe or worker and no motion,
+  Environment Adapter, translation, or named-asset dependency inside them.
+  MetaHuman `git diff --check` passes.
+
+Rollback and remaining gates:
+
+- Probe-only rollback deletes `active_view/live_probe.py`,
+  `active_view/yoloe26_worker.py`, `test_active_view_live_probe.py`, and
+  `test_active_view_yoloe26_worker.py`, then inlines the shared result converter
+  back into `YoloeSemanticProvider._observation`. No production file, database,
+  configuration, model installation, firmware, capability, or robot state must
+  be restored.
+- Complete Active View rollback remains deletion of the still-untracked package
+  and its still-untracked tests/fixtures under the established manifest. The
+  original Gateway, adapter, Environment Bridge, queue, graph, memory,
+  Robot Operator, manual-motion, and safety owners remain unchanged.
+- This probe makes live camera plus candidate acquisition testable. It does not
+  make the closed-loop controller live. Identity validation on genuinely unseen
+  scenes, production-license acceptance, fine-yaw calibration, obstacle/safety
+  evidence, and separately authorized physical motion remain required before a
+  motion-capable test entrypoint is honest.
 
 ## Future Progress Entry Template
 

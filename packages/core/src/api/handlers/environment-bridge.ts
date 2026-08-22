@@ -36,7 +36,7 @@ import {
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
 import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
-import { readBoredomMovementCycle, readRobotObserverCycle } from '../../robot-operator.js';
+import { readRobotObserverCycle } from '../../robot-operator.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -98,9 +98,8 @@ export function environmentObservationNeedsCognition(
   const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
   const hasFeedback = Boolean(observation.feedback?.length);
   const robotObserver = readRobotObserverCycle(observation);
-  const boredomMovement = readBoredomMovementCycle(observation);
   const autonomousCaptureEndedWithoutVisual = Boolean(
-    (robotObserver?.requestedBy === 'robot-observer' || boredomMovement)
+    (robotObserver?.requestedBy === 'robot-observer' || robotObserver?.requestedBy === 'boredom-movement')
     && !hasVisual
     && observation.feedback?.some(feedback => (
       feedback.type === 'completed'
@@ -113,7 +112,6 @@ export function environmentObservationNeedsCognition(
   if (!hasText && autonomousCaptureEndedWithoutVisual) return false;
   const hasPerceptionMetadata = Boolean(
     observation.metadata?.robotObserver
-    || observation.metadata?.boredomMovement
     || observation.metadata?.perceptionEvent,
   );
   if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
@@ -420,7 +418,6 @@ export async function handleEnvironmentBridgeActionResult(
     return successResponse({
       success: true,
       action: result.action,
-      postActionObservation: result.postActionObservation,
       robotBufferPersisted: true,
     });
   } catch (error) {

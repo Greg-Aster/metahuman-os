@@ -33,6 +33,12 @@ import {
 } from './queue-persister.js';
 import { isWorkCoordinatorOwner } from './work-submission.js';
 import { agentHandlerId, agentTaskType } from './agent-work-catalog.js';
+import { SLEEP_WORKFLOW_HANDLERS } from './sleep-workflow.js';
+import {
+  readSleepRuntimeState,
+  reconcileSleepRuntime,
+  wakeSleepSession,
+} from '../sleep-runtime.js';
 
 interface QueueSystemConfig {
   enabled: boolean;
@@ -115,6 +121,20 @@ export class QueueSystem extends EventEmitter {
       }
     }
     this.triggerManager.applyConfig(read);
+    this.cancelLegacySleepAdmissions();
+  }
+
+  private cancelLegacySleepAdmissions(): void {
+    for (const task of this.queueManager.getAllTasks()) {
+      const admittedByAwakeAutonomy = task.source === 'timer' || task.source === 'autonomy';
+      if (
+        admittedByAwakeAutonomy
+        && SLEEP_WORKFLOW_HANDLERS.has(task.handler)
+        && !task.input?.sleepWorkflow
+      ) {
+        this.queueManager.cancel(task.id, 'Automatic ownership moved to Sleep Workflow');
+      }
+    }
   }
 
   private get configPath(): string {
@@ -177,6 +197,8 @@ export class QueueSystem extends EventEmitter {
           );
         }
       }
+      this.cancelLegacySleepAdmissions();
+      reconcileSleepRuntime(this.queueManager.getAllTasks());
 
       const onPersistenceError = (error: Error) => {
         this.setLifecycle('degraded', error.message);
@@ -301,6 +323,7 @@ export class QueueSystem extends EventEmitter {
   }
 
   triggerAgent(agentId: string, username?: string, args: string[] = []): string | null {
+    if (agentId !== 'sleep-workflow') this.recordActivity(username);
     return this.triggerManager.triggerManual(agentId, username, args);
   }
 
@@ -322,6 +345,15 @@ export class QueueSystem extends EventEmitter {
 
   recordActivity(username?: string): void {
     this.triggerManager.recordActivity(username);
+    const sleep = readSleepRuntimeState().currentSession;
+    if (!sleep) return;
+    const reason = username ? `User activity resumed for ${username}` : 'User activity resumed';
+    for (const task of this.queueManager.getAllTasks()) {
+      if (task.id === sleep.parentTaskId || task.input?.sleepWorkflow?.sessionId === sleep.id) {
+        this.queueManager.cancel(task.id, reason);
+      }
+    }
+    wakeSleepSession(reason);
   }
 
   getStats() {

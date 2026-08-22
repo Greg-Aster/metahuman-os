@@ -79,6 +79,14 @@ Robot Observer is a finite, separately registered agent. Robot Operator may invo
 - Removed Boredom-specific timing and metadata handling from Robot Operator context and dispatch. Robot Observer observation-only decisions now stop after their grounded Idle Thought instead of paying for a second Environment Mode run that has no action to perform.
 - Environment Bridge and Work Coordinator remain the shared transport and execution owners. No second queue, bridge, robot controller, scheduler, memory store, or TTS path was added.
 
+### 2026-08-22 — Shared trigger-agent instruction workflow
+
+- Superseded the 2026-08-04 split: Robot Observer and Boredom Movement now supply distinct runtime instructions to the same Robot Operator Mode graph.
+- Converted the graph's Robot Operator Instruction node into a generic Text Input reading `environmentTaskInstruction`; the graph no longer stores trigger-specific policy text.
+- Reused the Robot Observer correlated image-acquisition handler for both trigger agents. Boredom Movement no longer chooses or queues a random command before the LLM sees the current context.
+- Kept Robot Operator Mode as the high-level intention owner and Environment Mode as the execution owner.
+- Removed the Boredom-only graph, context builder, parser, handler, allowlist configuration, typed metadata branch, and automatic post-movement recapture hook.
+
 ## Validation log
 
 ### 2026-07-17 — Contract and build validation

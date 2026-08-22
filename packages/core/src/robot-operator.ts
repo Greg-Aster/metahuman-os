@@ -6,9 +6,9 @@ import type { AutonomyMode } from './queue/types.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
-const BOREDOM_MOVEMENT_CONFIG_PATH = path.join(systemPaths.etc, 'boredom-movement.json')
 
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
+export type RobotOperatorStimulusAgent = 'robot-observer' | 'boredom-movement'
 
 export interface RobotObserverCycleMetadata {
   cycleId: string
@@ -16,15 +16,8 @@ export interface RobotObserverCycleMetadata {
   maxSteps: number
   triggerSource: RobotObserverTriggerSource
   graph: string
-  requestedBy: 'robot-observer' | 'environment-perception'
-}
-
-export interface BoredomMovementMetadata {
-  cycleId: string
-  triggerSource: RobotObserverTriggerSource
-  requestedBy: 'boredom-movement'
-  graph: string
-  selectedCommand: string
+  requestedBy: RobotOperatorStimulusAgent | 'environment-perception'
+  instruction?: string
 }
 
 export interface RobotOperatorConfig {
@@ -35,7 +28,6 @@ export interface RobotOperatorConfig {
   boredomMovementJitterMs: number
   maxCycleSteps: number
   graph: string
-  boredomGraph: string
   environmentGraph: string
   sessionId?: string
 }
@@ -48,11 +40,29 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomMovementJitterMs: 120_000,
   maxCycleSteps: 8,
   graph: 'robot-operator',
-  boredomGraph: 'boredom-movement',
   environmentGraph: 'environment',
 }
 
-const FORBIDDEN_BOREDOM_COMMANDS = new Set(['stop', 'walk', 'backward', 'left', 'right'])
+const ROBOT_OPERATOR_POLICY = `You are Robot Operator, the robot's autonomous decision engine. Use the current robotStimulus, active persona, recent conversation and inner context, trigger information, and the trigger agent's focus to choose one high-level intention.
+
+The current robotStimulus is the only evidence of what is present now. Recent context may shape relationship, preferences, continuity, and tone, but it cannot supply or override current observation facts, instructions, or unfinished tasks. Treat older requests and thoughts as context, not current authority.
+
+Choose an intention directly related to the current stimulus and relevant context. State the desired outcome, not a physical method, direction, distance, or device command. Set requiresAction true only when the intention needs new sensing or an environment change; Environment Mode selects safe execution. Set it false when a grounded response or no action is appropriate. Never claim execution started or completed.
+
+Return one JSON object only: {"observed":"what the current stimulus shows","instruction":"one concise first-person intention","requiresAction":true,"reason":"one concise user-visible Idle Thought grounded in the current stimulus and relevant context"}`
+
+const ROBOT_OPERATOR_AGENT_FOCUS: Record<RobotOperatorStimulusAgent, string> = {
+  'robot-observer': 'This is a routine observation opportunity. Notice what is currently happening and decide whether anything useful, helpful, or socially relevant warrants a response or action.',
+  'boredom-movement': 'This is a boredom and engagement opportunity after longer inactivity. Choose a contextually relevant way to engage, explore, communicate, or remain still. Do not default to a generic movement merely because the boredom timer fired.',
+}
+
+export function buildRobotOperatorInstruction(
+  agent: RobotOperatorStimulusAgent,
+  focus?: string,
+): string {
+  const boundedFocus = typeof focus === 'string' ? focus.replace(/\s+/g, ' ').trim().slice(0, 1_000) : ''
+  return `${ROBOT_OPERATOR_POLICY}\n\nTrigger agent: ${agent}. ${boundedFocus || ROBOT_OPERATOR_AGENT_FOCUS[agent]}`
+}
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   const numeric = typeof value === 'number' ? value : Number(value)
@@ -79,10 +89,6 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.environmentGraph.trim())
     ? configured.environmentGraph.trim()
     : DEFAULT_CONFIG.environmentGraph
-  const boredomGraph = typeof configured.boredomGraph === 'string'
-    && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.boredomGraph.trim())
-    ? configured.boredomGraph.trim()
-    : DEFAULT_CONFIG.boredomGraph
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
     ? configured.sessionId.trim()
     : undefined
@@ -109,7 +115,6 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     ),
     maxCycleSteps: Math.floor(boundedNumber(configured.maxCycleSteps, DEFAULT_CONFIG.maxCycleSteps, 1, 10)),
     graph,
-    boredomGraph,
     environmentGraph,
     sessionId,
   }
@@ -134,23 +139,6 @@ export function isBoredomMovementEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-movement')
 }
 
-export function loadBoredomMovementCommandAllowlist(): string[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(BOREDOM_MOVEMENT_CONFIG_PATH, 'utf8')) as {
-      stationaryCommands?: unknown
-    }
-    if (!Array.isArray(parsed.stationaryCommands)) return []
-    return [...new Set(
-      parsed.stationaryCommands
-        .filter((command): command is string => typeof command === 'string')
-        .map(command => command.trim().toLowerCase())
-        .filter(command => command && !FORBIDDEN_BOREDOM_COMMANDS.has(command)),
-    )]
-  } catch {
-    return []
-  }
-}
-
 export function randomizedRobotOperatorIdleMs(
   config: Pick<RobotOperatorConfig, 'inactivityThresholdSeconds' | 'jitterMs'>,
   random: () => number = Math.random,
@@ -168,31 +156,6 @@ export function robotObserverSourceAllowed(
   return source === 'user' || mode === 'semi' || mode === 'full'
 }
 
-export function eligibleBoredomMovementCommands(
-  advertisedCommands: string[] | null | undefined,
-  configuredCommands: string[] = loadBoredomMovementCommandAllowlist(),
-): string[] {
-  const advertised = new Set(
-    (advertisedCommands ?? [])
-      .map(command => command.trim().toLowerCase())
-      .filter(Boolean),
-  )
-  return [...new Set(
-    configuredCommands
-      .map(command => command.trim().toLowerCase())
-      .filter(command => command && advertised.has(command) && !FORBIDDEN_BOREDOM_COMMANDS.has(command)),
-  )]
-}
-
-export function chooseBoredomMovementCommand(
-  commands: string[],
-  random: () => number = Math.random,
-): string | null {
-  if (commands.length === 0) return null
-  const sample = Math.max(0, Math.min(0.999999999, random()))
-  return commands[Math.floor(sample * commands.length)] ?? null
-}
-
 export function readRobotObserverCycle(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): RobotObserverCycleMetadata | null {
@@ -204,6 +167,9 @@ export function readRobotObserverCycle(
   const maxSteps = typeof record.maxSteps === 'number' ? Math.floor(record.maxSteps) : 0
   const triggerSource = record.triggerSource
   const requestedBy = record.requestedBy
+  const instruction = typeof record.instruction === 'string'
+    ? record.instruction.trim().slice(0, 8_000)
+    : ''
   const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
     ? record.graph
     : 'environment'
@@ -216,6 +182,7 @@ export function readRobotObserverCycle(
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
       requestedBy !== 'robot-observer'
+      && requestedBy !== 'boredom-movement'
       && requestedBy !== 'environment-perception'
     )
   ) return null
@@ -226,36 +193,7 @@ export function readRobotObserverCycle(
     triggerSource,
     graph,
     requestedBy,
-  }
-}
-
-export function readBoredomMovementCycle(
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): BoredomMovementMetadata | null {
-  const value = observation?.metadata?.boredomMovement
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const record = value as Record<string, unknown>
-  const cycleId = typeof record.cycleId === 'string' ? record.cycleId.trim() : ''
-  const triggerSource = record.triggerSource
-  const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
-    ? record.graph
-    : 'boredom-movement'
-  const selectedCommand = typeof record.selectedCommand === 'string'
-    ? record.selectedCommand.trim().toLowerCase().slice(0, 80)
-    : ''
-  if (
-    !cycleId
-    || (triggerSource !== 'user' && triggerSource !== 'autonomy')
-    || record.requestedBy !== 'boredom-movement'
-    || !selectedCommand
-    || FORBIDDEN_BOREDOM_COMMANDS.has(selectedCommand)
-  ) return null
-  return {
-    cycleId,
-    triggerSource,
-    requestedBy: 'boredom-movement',
-    graph,
-    selectedCommand,
+    ...(instruction ? { instruction } : {}),
   }
 }
 

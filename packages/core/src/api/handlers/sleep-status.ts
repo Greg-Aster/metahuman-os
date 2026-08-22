@@ -11,10 +11,16 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { storageClient } from '../../storage-client.js';
 import { isLocked } from '../../locks.js';
+import { loadSleepConfig } from '../../sleep-config.js';
+import { readSleepRuntimeState, type SleepSessionRuntime } from '../../sleep-runtime.js';
+import { SLEEP_WORKFLOW_STAGES } from '../../queue/sleep-workflow.js';
+import { getQueueManager } from '../../queue/unified-queue-manager.js';
 
 type SleepState = 'awake' | 'sleeping' | 'dreaming';
 
-function determineState(): SleepState {
+function determineState(session?: SleepSessionRuntime): SleepState {
+  if (session?.currentStageId === 'dream') return 'dreaming';
+  if (session) return 'sleeping';
   if (isLocked('agent-dreamer')) return 'dreaming';
   if (isLocked('service-sleep')) return 'sleeping';
   return 'awake';
@@ -27,7 +33,33 @@ export async function handleGetSleepStatus(req: UnifiedRequest): Promise<Unified
   const { user } = req;
 
   try {
-    const status = determineState();
+    const runtime = readSleepRuntimeState();
+    const visibleCurrent = runtime.currentSession
+      && (user.role === 'owner' || runtime.currentSession.username === user.username)
+      ? runtime.currentSession
+      : undefined;
+    const recentSessions = user.isAuthenticated
+      ? runtime.recentSessions.filter(session => user.role === 'owner' || session.username === user.username)
+      : [];
+    const queue = getQueueManager();
+    const currentSession = visibleCurrent ? {
+      ...visibleCurrent,
+      stages: visibleCurrent.stages.map(stage => {
+        const task = stage.taskId ? queue.getTask(stage.taskId) : null;
+        return {
+          ...stage,
+          state: task?.state === 'leased' ? 'running' : stage.state,
+          queueState: task?.state,
+          attempt: task?.attempt,
+          maxAttempts: task?.maxAttempts,
+        };
+      }),
+    } : null;
+    const configuredStages = SLEEP_WORKFLOW_STAGES.map(stage => ({
+      id: stage.id,
+      displayName: stage.displayName,
+      handler: stage.handler,
+    }));
     let learningsFile: string | null = null;
     let learningsContent: string | null = null;
 
@@ -61,7 +93,12 @@ export async function handleGetSleepStatus(req: UnifiedRequest): Promise<Unified
     }
 
     return successResponse({
-      status,
+      status: determineState(visibleCurrent),
+      phase: visibleCurrent ? runtime.phase : 'awake',
+      config: loadSleepConfig(user.isAuthenticated ? user.username : undefined),
+      currentSession,
+      recentSessions,
+      configuredStages,
       learningsFile,
       learningsContent,
       lastChecked: new Date().toISOString(),

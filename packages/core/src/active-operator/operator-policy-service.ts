@@ -2,6 +2,7 @@ import type { QueueEvent, QueuedTask, WorkCognitiveMode } from '../queue/types.j
 import { getQueueManager, getQueueSystem } from '../queue/index.js';
 import { loadCognitiveMode } from '../cognitive-mode.js';
 import { readSystemActivityTimestamp } from '../system-activity.js';
+import { isSleepRuntimeActive } from '../sleep-runtime.js';
 
 export interface OperatorPolicyLimits {
   cooldownMs: number;
@@ -108,6 +109,10 @@ export class OperatorPolicyService {
 
   private maybeEnqueuePolicy(): void {
     if (!this.running) return;
+    if (isSleepRuntimeActive()) {
+      this.schedule(this.limits.cooldownMs);
+      return;
+    }
     const manager = getQueueManager();
     if (manager.getAllTasks().length > 0 || !getQueueSystem().isRunning()) return;
     const now = Date.now();

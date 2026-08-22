@@ -169,6 +169,9 @@
         case 'ActiveOperatorDashboard':
           module = await import('./ActiveOperatorDashboard.svelte');
           break;
+        case 'SleepDashboard':
+          module = await import('./SleepDashboard.svelte');
+          break;
         case 'TriggerManagerDashboard':
           module = await import('./TriggerManagerDashboard.svelte');
           break;
@@ -662,6 +665,7 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button {$dashboardSection === 'tasks' ? 'active' : ''}" on:click={() => dashboardSection.set('tasks')}>Tasks</button>
           <button class="tab-button {$dashboardSection === 'approvals' ? 'active' : ''}" on:click={() => dashboardSection.set('approvals')}>Approvals</button>
           <button class="tab-button {$dashboardSection === 'operator' ? 'active' : ''}" on:click={() => dashboardSection.set('operator')}>Active Operator</button>
+          <button class="tab-button {$dashboardSection === 'sleep' ? 'active' : ''}" on:click={() => dashboardSection.set('sleep')}>Sleep</button>
           <button class="tab-button {$dashboardSection === 'agent-catalog' ? 'active' : ''}" on:click={() => dashboardSection.set('agent-catalog')}>Agent Catalog</button>
           <button class="tab-button {$dashboardSection === 'trigger-manager' ? 'active' : ''}" on:click={() => dashboardSection.set('trigger-manager')}>Trigger Manager</button>
         </div>
@@ -689,6 +693,12 @@ async function loadMemoryContent(relPath: string) {
           {:then Component}
               <svelte:component this={Component} />
             {/await}
+        {:else if $dashboardSection === 'sleep'}
+          {#await loadComponent('SleepDashboard')}
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading Sleep…</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
         {:else if $dashboardSection === 'agent-catalog'}
           {#await loadComponent('AgentCatalogDashboard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading Agent Catalog…</div>

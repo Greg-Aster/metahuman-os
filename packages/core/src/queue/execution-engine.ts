@@ -14,9 +14,14 @@ import { systemPaths } from '../path-builder.js';
 import { readSystemActivityTimestamp } from '../system-activity.js';
 import { loadSleepConfig } from '../sleep-config.js';
 import {
+  advanceSleepWorkflow,
+  beginSleepWorkflow,
+  markSleepStageRunning,
+} from './sleep-workflow.js';
+import { wakeSleepSession } from '../sleep-runtime.js';
+import {
   beginEnvironmentPerceptionCycle,
   loadRobotOperatorConfig,
-  readBoredomMovementCycle,
   readRobotObserverCycle,
 } from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
@@ -165,7 +170,6 @@ export class ExecutionEngine {
     this.registerHandler('environment.observation', async (task, context) => {
       let observation = task.input.observation ?? task.input;
       let robotObserver = readRobotObserverCycle(observation);
-      const boredomMovement = readBoredomMovementCycle(observation);
       if (
         !robotObserver
         && observation?.metadata?.perceptionEvent === 'audio_utterance'
@@ -187,10 +191,9 @@ export class ExecutionEngine {
           };
         }
       }
-      // Each autonomous robot workflow carries its own graph owner. Returned
-      // images therefore route to the specialized observer or boredom graph
-      // without relying on the bridge's generic Environment graph header.
-      const graphName = robotObserver?.graph || boredomMovement?.graph || task.input.graph;
+      // Autonomous stimulus agents carry the shared Robot Operator graph owner
+      // and their runtime instruction with the returned observation.
+      const graphName = robotObserver?.graph || task.input.graph;
       if (!graphName || task.username === 'system') {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
       }
@@ -220,15 +223,14 @@ export class ExecutionEngine {
       const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
         ? observation.metadata.originatingInstruction.trim()
         : '';
-      const taskInstruction = originatingInstruction || text || (boredomMovement
-        ? `Inspect the fresh image captured after the robot performed ${boredomMovement.selectedCommand}. Briefly reflect on what is visible now without requesting another action.`
-        : robotObserver
-        ? robotObserver.step === 1
-          ? 'Inspect the current robot camera image after inactivity. Briefly describe anything worth responding to, and choose at most one useful semantic robot action or another camera observation only if needed.'
-          : 'Inspect the returned robot camera image after the previous action. Briefly describe what changed, and choose at most one next semantic action or another camera observation only if it is still useful.'
+      const taskInstruction = originatingInstruction || text || (robotObserver?.instruction
+        || (robotObserver
+          ? robotObserver.step === 1
+            ? 'Inspect the current robot camera image and choose one contextually useful high-level intention, or remain still when no response is warranted.'
+            : 'Inspect the returned robot camera image and choose one contextually useful next intention only if it is still warranted.'
         : observation.visual || observation.visuals?.length
           ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
-          : 'Review the returned environment state and choose the next semantic action if one is needed.');
+          : 'Review the returned environment state and choose the next semantic action if one is needed.'));
       const robotOperatorConfig = loadRobotOperatorConfig();
       const graphState = await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
@@ -251,9 +253,8 @@ export class ExecutionEngine {
             environment: 'server',
             environmentObservation: observation,
             environmentTaskInstruction: taskInstruction,
-            environmentActionSource: robotObserver?.triggerSource ?? boredomMovement?.triggerSource,
+            environmentActionSource: robotObserver?.triggerSource,
             robotObserver,
-            boredomMovement,
             robotOperatorEnvironmentGraph: graphName === robotOperatorConfig.graph
               ? robotOperatorConfig.environmentGraph
               : undefined,
@@ -271,7 +272,6 @@ export class ExecutionEngine {
         graphExecuted: true,
         graph: graphName,
         robotObserver,
-        boredomMovement,
       };
     });
     this.registerHandler('workflow.robot-observer', async (task, context) => {
@@ -279,8 +279,8 @@ export class ExecutionEngine {
       return executeRobotObserverWork(task, context);
     });
     this.registerHandler('workflow.boredom-movement', async (task, context) => {
-      const { executeBoredomMovementWork } = await import('./boredom-movement-handler.js');
-      return executeBoredomMovementWork(task, context);
+      const { executeRobotObserverWork } = await import('./robot-observer-handler.js');
+      return executeRobotObserverWork(task, context);
     });
 
     this.registerHandler('workflow.sleep', async (task, context) => {
@@ -297,33 +297,7 @@ export class ExecutionEngine {
         return { skipped: true, reason: 'system_active' };
       }
 
-      const date = new Date().toISOString().slice(0, 10);
-      const children = [
-        context.enqueue({
-          type: 'dream',
-          handler: 'agent.dreamer',
-          source: task.source,
-          username: task.username,
-          priority: 'background',
-          input: { triggeredBy: 'sleep-workflow' },
-          parentTaskId: task.id,
-          idempotencyKey: `sleep:${date}:dream`,
-        }),
-        context.enqueue({
-          type: 'psychoanalyze',
-          handler: 'agent.psychoanalyzer',
-          source: task.source,
-          username: task.username,
-          priority: 'background',
-          input: { triggeredBy: 'sleep-workflow' },
-          parentTaskId: task.id,
-          idempotencyKey: `sleep:${date}:psychoanalyze`,
-        }),
-      ];
-      return {
-        children: children.map(child => child.id),
-        note: 'Audio processing and LoRA training remain explicit owner-triggered workflows.',
-      };
+      return beginSleepWorkflow(task, context.enqueue);
     });
 
     this.registerHandler('generic', async (task) => ({ accepted: true, input: task.input }));
@@ -352,6 +326,12 @@ export class ExecutionEngine {
   }
 
   private onQueueEvent(event: QueueEvent): void {
+    if (event.taskId && (event.type === 'task_cancelled' || event.type === 'task_expired')) {
+      const task = this.queueManager.getTask(event.taskId);
+      if (task?.input?.sleepWorkflow?.sessionId) {
+        wakeSleepSession(`Sleep stage ${task.handler} ${event.type.replace('task_', '')}`);
+      }
+    }
     if (event.type === 'task_enqueued' && event.taskId) {
       const incoming = this.queueManager.getTask(event.taskId);
       if (incoming?.type === 'user_message' && incoming.priority === 'critical') {
@@ -426,6 +406,7 @@ export class ExecutionEngine {
     const controller = new AbortController();
     this.abortControllers.set(task.id, controller);
     const startedAt = Date.now();
+    markSleepStageRunning(task);
 
     try {
       const result = await handler(task, {
@@ -441,6 +422,11 @@ export class ExecutionEngine {
 
       const normalizedResult = result && typeof result === 'object' ? result : {};
       this.queueManager.complete(task.id, true, normalizedResult);
+      try {
+        advanceSleepWorkflow(this.queueManager, task, 'completed');
+      } catch (sleepError) {
+        this.options.onError?.(sleepError instanceof Error ? sleepError : new Error(String(sleepError)), task);
+      }
       this.options.onTaskComplete?.(task, true, normalizedResult);
       audit({
         category: 'action',
@@ -466,6 +452,13 @@ export class ExecutionEngine {
         message: normalized.message,
         retryable: true,
       });
+      if (!retried) {
+        try {
+          advanceSleepWorkflow(this.queueManager, task, 'failed', normalized.message);
+        } catch (sleepError) {
+          this.options.onError?.(sleepError instanceof Error ? sleepError : new Error(String(sleepError)), task);
+        }
+      }
       this.options.onError?.(normalized, task);
       this.options.onTaskComplete?.(task, false, { error: normalized.message });
       audit({

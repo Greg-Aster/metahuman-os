@@ -71,6 +71,31 @@ test('a new instruction does not admit an incidental correlated camera frame', a
   assert.equal(prepared.taskState.phase, 'new');
 });
 
+test('a Robot Operator action handoff admits its current image and requires one executable selection', async () => {
+  clearEnvironmentTaskFrameCache();
+  const current = frame('knife-scene', 'operator-cycle');
+  const prepared = await prepare(observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      correlationId: 'operator-cycle',
+      originatingInstruction: 'I will scan the room for any other hazards.',
+      robotOperatorDecision: {
+        observed: 'A knife and wires are on the floor.',
+        instruction: 'I will scan the room for any other hazards.',
+        requiresAction: true,
+        reason: 'The visible hazard needs further assessment.',
+      },
+    },
+  }), 'I will scan the room for any other hazards.');
+
+  assert.equal(prepared.routingAnalysis.needsAction, true);
+  assert.equal(prepared.routingAnalysis.needsVision, true);
+  assert.equal(prepared.visuals.at(-1)?.id, 'knife-scene');
+  assert.match(String(prepared.instruction), /requires one new sensing or environment action/);
+  assert.equal(prepared.taskState.objective, 'I will scan the room for any other hazards.');
+});
+
 test('a current user instruction starts a new objective instead of inheriting stale task state', async () => {
   const prior = await prepare(observation(), 'Please wave');
   const queued = await reduce({
@@ -268,57 +293,80 @@ test('a bounded visual objective closes only when the selector cites the admitte
   assert.equal(completed.decision.completionBasis, 'visual_observation');
 });
 
-test('matching completed action_result closes deterministically even when continuation was bounded', async () => {
+test('a bounded exploratory action inspects the correlated result before deciding the objective is complete', async () => {
   clearEnvironmentTaskFrameCache();
-  const initial = await prepare(observation(), 'Please wave');
+  const before = frame('room-before', 'operator-input');
+  const initialObservation = observation({ visual: before, visuals: [before] });
+  const initial = await prepare(initialObservation, 'Scan the rest of the room for anything needing attention');
   const queued = await reduce({
-    observation: observation(),
-    instruction: 'Please wave',
+    observation: initialObservation,
+    instruction: 'Scan the rest of the room for anything needing attention',
     taskState: initial.taskState,
-    actions: [{ type: 'robotCommand', command: 'wave', sessionId: 'robot-1' }],
-    response: "I'll wave for you.",
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: 'I will turn to inspect the rest of the room.',
     taskDecision: {
       outcome: 'act',
       objectiveComplete: false,
-      reason: 'Wave once.',
+      reason: 'The new view still needs to be inspected.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
     },
   });
+  const after = frame('room-after', 'cycle-scan', 'action-scan');
   const terminal = observation({
+    visual: after,
+    visuals: [after],
     metadata: {
-      actionId: 'action-wave',
-      correlationId: 'cycle-wave',
+      actionId: 'action-scan',
+      correlationId: 'cycle-scan',
       originatingInstruction: queued.taskInstruction,
     },
     feedback: [{
-      id: 'feedback-wave',
-      actionId: 'action-wave',
+      id: 'feedback-scan',
+      actionId: 'action-scan',
       timestamp: '2026-08-06T03:00:01.000Z',
       type: 'completed',
       message: 'done',
-      data: { command: 'wave' },
+      data: { command: 'turn_right_90' },
     }],
   });
 
   const preparedTerminal = await prepare(terminal);
-  assert.equal(preparedTerminal.deterministicComplete, true);
-  assert.match(String(preparedTerminal.precomputedResponse), /"completionBasis":"action_result"/);
-  assert.match(String(preparedTerminal.precomputedResponse), /done/);
+  assert.equal(preparedTerminal.deterministicComplete, false);
+  assert.equal(preparedTerminal.precomputedResponse, '');
+  assert.equal(preparedTerminal.routingAnalysis.needsVision, true);
+  assert.equal(preparedTerminal.taskState.phase, 'evaluating_evidence');
+  assert.deepEqual(
+    preparedTerminal.visuals.map((value: EnvironmentVisualFrame) => value.id),
+    ['room-before', 'room-after'],
+  );
+  assert.match(String(preparedTerminal.instruction), /proves only that step/);
 
   const closed = await reduce({
     observation: terminal,
     instruction: preparedTerminal.instruction,
     taskState: preparedTerminal.taskState,
+    frames: preparedTerminal.visuals,
     actions: [],
-    response: JSON.parse(preparedTerminal.precomputedResponse).response,
-    taskDecision: JSON.parse(preparedTerminal.precomputedResponse).taskDecision,
+    response: 'The new view shows a clear, quiet room with nothing that needs further attention.',
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The fresh correlated image contains no object or activity requiring another action.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      completionBasis: 'visual_observation',
+      completionEvidence: 'Frame room-after shows no situation requiring attention.',
+      visualEvidenceMode: 'single',
+      motionClass: 'body_local',
+    },
   });
   assert.equal(closed.complete, true);
   assert.deepEqual(closed.actions, []);
-  assert.equal(closed.response, 'Objective completed.');
-  assert.equal(closed.decision.actionId, 'action-wave');
+  assert.equal(closed.response, 'The new view shows a clear, quiet room with nothing that needs further attention.');
+  assert.equal(closed.decision.completionBasis, 'visual_observation');
+  assert.equal(closed.decision.actionId, 'action-scan');
 });
 
 test('a generic adapter command label cannot hide matching terminal feedback', async () => {
@@ -356,7 +404,8 @@ test('a generic adapter command label cannot hide matching terminal feedback', a
 
   const prepared = await prepare(adapterResult);
   assert.equal(prepared.deterministicComplete, true);
-  assert.match(String(prepared.precomputedResponse), /Objective completed/);
+  assert.match(String(prepared.precomputedResponse), /wave action finished successfully/);
+  assert.doesNotMatch(String(prepared.precomputedResponse), /Objective completed/);
 });
 
 test('terminal feedback for a different action id cannot close the selected action', async () => {

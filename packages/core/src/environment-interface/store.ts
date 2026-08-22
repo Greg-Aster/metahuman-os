@@ -28,10 +28,6 @@ import {
   normalizeEnvironmentVisualInspectionTarget,
   normalizeEnvironmentVisualTarget,
 } from './visual-approach.js';
-import {
-  readBoredomMovementCycle,
-} from '../robot-operator.js';
-
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
 const STALE_AFTER_MS = 45_000;
 const FUTURE_CLOCK_SKEW_MS = 5_000;
@@ -111,12 +107,6 @@ function sessionStatus(session: EnvironmentSessionState, now = Date.now()): Envi
   const lastSeen = sessionLastSeenMs(session);
   if (!lastSeen || lastSeen - now > FUTURE_CLOCK_SKEW_MS || now - lastSeen > STALE_AFTER_MS) return 'stale';
   return session.status;
-}
-
-function environmentTasks(): QueuedTask[] {
-  const manager = getQueueManager();
-  return [...manager.getAllTasks(), ...manager.getHistory()]
-    .filter(task => task.type === 'environment_command');
 }
 
 function commandStatus(task: QueuedTask): EnvironmentCommandWork['status'] {
@@ -221,9 +211,6 @@ export function attachEnvironmentActionContext(
     : null;
   if (!isRecord(metadata.robotObserver) && isRecord(taskInputMetadata?.robotObserver)) {
     metadata.robotObserver = taskInputMetadata.robotObserver;
-  }
-  if (!isRecord(metadata.boredomMovement) && isRecord(taskInputMetadata?.boredomMovement)) {
-    metadata.boredomMovement = taskInputMetadata.boredomMovement;
   }
   if (!isRecord(metadata.motionControl) && isRecord(taskInputMetadata?.motionControl)) {
     metadata.motionControl = taskInputMetadata.motionControl;
@@ -393,7 +380,6 @@ export function publishEnvironmentObservation(
       producer: 'environment-bridge',
       sessionId: contextualObservation.sessionId,
       robotObserver: contextualObservation.metadata?.robotObserver,
-      boredomMovement: contextualObservation.metadata?.boredomMovement,
     },
   });
   return { summary, workId: work.id };
@@ -646,34 +632,6 @@ export interface RecordedEnvironmentActionResult {
   action: EnvironmentCommandWork;
   feedback: EnvironmentFeedback;
   username: string;
-  postActionObservation?: EnvironmentCommandWork;
-}
-
-function enqueueBoredomPostMovementObservation(task: QueuedTask): EnvironmentCommandWork | undefined {
-  if (task.input.type === 'captureImage') return undefined;
-  const cycle = readBoredomMovementCycle({ metadata: task.input.metadata });
-  if (!cycle) return undefined;
-
-  const alreadyQueued = environmentTasks().some(candidate => {
-    if (candidate.input.type !== 'captureImage') return false;
-    return readBoredomMovementCycle({ metadata: candidate.input.metadata })?.cycleId === cycle.cycleId;
-  });
-  if (alreadyQueued) return undefined;
-
-  return enqueueEnvironmentAction(
-    {
-      type: 'captureImage',
-      sessionId: String(task.input.sessionId || ''),
-      metadata: { boredomMovement: cycle },
-    },
-    {
-      username: task.username,
-      source: cycle.triggerSource,
-      correlationId: cycle.cycleId,
-      idempotencyKey: `boredom-movement:${cycle.cycleId}:post-movement-image`,
-      allowedActions: ['captureImage'],
-    },
-  );
 }
 
 export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): RecordedEnvironmentActionResult | undefined {
@@ -699,14 +657,10 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     if (feedback.type === 'expired') manager.expire(task.id);
   }
   const current = manager.getTask(task.id) || task;
-  const postActionObservation = feedback.type === 'completed'
-    ? enqueueBoredomPostMovementObservation(current)
-    : undefined;
   return {
     action: commandView(current),
     feedback,
     username: current.username,
-    ...(postActionObservation ? { postActionObservation } : {}),
   };
 }
 

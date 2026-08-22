@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { validateEnvironmentSelectorOutput } from '@metahuman/core'
-import { environmentActionParserNode } from '../../../packages/core/src/nodes/environment/action-parser.node.js'
+import { environmentActionParserNode } from '@metahuman/core/nodes'
 
 import { loadPriorEvaluationEvidence } from './corpus.js'
 import { ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES } from './development-cases.js'

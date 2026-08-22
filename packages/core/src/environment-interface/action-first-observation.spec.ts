@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { getQueueManager } from '../queue/index.js'
-import { readBoredomMovementCycle } from '../robot-operator.js'
 import { environmentObservationNeedsCognition } from '../api/handlers/environment-bridge.js'
 import {
   attachEnvironmentActionContext,
@@ -39,64 +38,7 @@ test('image acquisition has a longer dispatch window without weakening control e
   }
 })
 
-test('Boredom Movement queues exactly one correlated image after its movement completes', () => {
-  const manager = getQueueManager()
-  const originalState = manager.exportState()
-  try {
-    manager.clear()
-    const action = enqueueEnvironmentAction({
-      type: 'robotCommand',
-      command: 'model-authored-command',
-      sessionId: 'robot-1',
-      metadata: {
-        boredomMovement: {
-          cycleId: 'boredom-cycle',
-          triggerSource: 'autonomy',
-          graph: 'boredom-movement',
-          requestedBy: 'boredom-movement',
-          selectedCommand: 'wave',
-        },
-      },
-    }, {
-      username: 'owner',
-      source: 'autonomy',
-      correlationId: 'boredom-cycle',
-    })
-    manager.claim(action.id, 'environment-adapter:robot-1')
-
-    const completed = recordEnvironmentActionResult({
-      id: 'action-complete',
-      timestamp: new Date().toISOString(),
-      type: 'completed',
-      message: 'done',
-      actionId: action.id,
-    })
-    assert.equal(completed?.postActionObservation?.type, 'captureImage')
-    assert.equal(completed?.postActionObservation?.correlationId, 'boredom-cycle')
-    const captureCycle = readBoredomMovementCycle({
-      metadata: completed?.postActionObservation?.metadata,
-    })
-    assert.equal(captureCycle?.graph, 'boredom-movement')
-    assert.equal(captureCycle?.selectedCommand, 'wave')
-
-    const repeated = recordEnvironmentActionResult({
-      id: 'action-complete-repeat',
-      timestamp: new Date().toISOString(),
-      type: 'completed',
-      message: 'done',
-      actionId: action.id,
-    })
-    assert.equal(repeated?.postActionObservation, undefined)
-    assert.equal(
-      manager.getAllTasks().filter(task => task.input.type === 'captureImage').length,
-      1,
-    )
-  } finally {
-    manager.importState(originalState)
-  }
-})
-
-test('Robot Observer movement relies on the gateway post-action image instead of queueing a duplicate capture', () => {
+test('completed robot actions do not synthesize a workflow-specific recapture', () => {
   const manager = getQueueManager()
   const originalState = manager.exportState()
   try {
@@ -125,7 +67,7 @@ test('Robot Observer movement relies on the gateway post-action image instead of
       message: 'done',
       actionId: action.id,
     })
-    assert.equal(completed?.postActionObservation, undefined)
+    assert.equal('postActionObservation' in (completed ?? {}), false)
     assert.equal(manager.getAllTasks().some(task => task.input.type === 'captureImage'), false)
   } finally {
     manager.importState(originalState)
@@ -179,7 +121,7 @@ test('completed motion carries cycle-owned control state into the correlated obs
   }
 })
 
-test('a failed Boredom Movement capture remains lifecycle telemetry instead of invoking its graph', () => {
+test('a failed Boredom Movement stimulus capture remains lifecycle telemetry instead of invoking its graph', () => {
   const manager = getQueueManager()
   const originalState = manager.exportState()
   try {
@@ -188,12 +130,14 @@ test('a failed Boredom Movement capture remains lifecycle telemetry instead of i
       type: 'captureImage',
       sessionId: 'robot-1',
       metadata: {
-        boredomMovement: {
+        robotObserver: {
           cycleId: 'boredom-failed-capture',
+          step: 1,
+          maxSteps: 8,
           triggerSource: 'autonomy',
           requestedBy: 'boredom-movement',
-          graph: 'boredom-movement',
-          selectedCommand: 'wave',
+          graph: 'robot-operator',
+          instruction: 'Choose a contextually relevant boredom response.',
         },
       },
     }, {
@@ -215,7 +159,6 @@ test('a failed Boredom Movement capture remains lifecycle telemetry instead of i
         actionId: capture.id,
       }],
     })
-    assert.equal(readBoredomMovementCycle(observation)?.cycleId, 'boredom-failed-capture')
     assert.equal(environmentObservationNeedsCognition(observation), false)
   } finally {
     manager.importState(originalState)

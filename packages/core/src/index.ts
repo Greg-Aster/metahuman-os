@@ -110,6 +110,7 @@ export * from './locks';
 export * from './logging';
 export * from './runtime-mode';
 export * from './sleep-config';
+export * from './sleep-runtime';
 export * from './transcription';
 export * from './adapters';
 // Skills - exclude queueForApproval and getPendingApprovals (conflicts with policy)

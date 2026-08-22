@@ -19,22 +19,35 @@ export const TextInputNode: NodeDefinition = defineNode({
   ],
   properties: {
     message: '',
+    inputKey: '',
   },
   propertySchemas: {
     message: {
-      type: 'string',
+      type: 'text_multiline',
       default: '',
       label: 'Message',
       description: 'Text to output (editable in flow editor)',
       placeholder: 'Enter text...',
-      multiline: true,
+      rows: 18,
+    },
+    inputKey: {
+      type: 'text',
+      default: '',
+      label: 'Runtime Input Key',
+      description: 'Optional execution-context field to read before the editable fallback message.',
+      placeholder: 'For example: environmentTaskInstruction',
     },
   },
-  description: 'Text input node - editable in flow editor, outputs to connected nodes',
+  description: 'Outputs a named runtime text value, an editable fallback message, or the current user message.',
 
   execute: async (inputs, context, properties) => {
-    // Priority: node property > context.userMessage (allows flow editor override)
-    const text = properties?.message || context.userMessage || '';
+    const inputKey = typeof properties?.inputKey === 'string'
+      ? properties.inputKey.trim()
+      : '';
+    const runtimeText = inputKey && typeof context[inputKey] === 'string'
+      ? context[inputKey].trim()
+      : '';
+    const text = runtimeText || properties?.message || context.userMessage || '';
     const hasTextInput = !!text;
 
     return {

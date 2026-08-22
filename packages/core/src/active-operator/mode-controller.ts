@@ -74,9 +74,7 @@ export class ModeController extends EventEmitter {
           const robotAutonomyWork = task.handler === 'workflow.robot-observer'
             || task.handler === 'workflow.boredom-movement'
             || Boolean(task.input?.metadata?.robotObserver)
-            || Boolean(task.input?.metadata?.boredomMovement)
             || Boolean(task.input?.observation?.metadata?.robotObserver)
-            || Boolean(task.input?.observation?.metadata?.boredomMovement)
           if (task.source === 'autonomy' && robotAutonomyWork) {
             getQueueManager().cancel(task.id, 'Robot Operator disabled by Active Operator reactive mode')
           }

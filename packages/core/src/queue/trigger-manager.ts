@@ -22,6 +22,7 @@ import {
 } from './trigger-config-service.js';
 import type { AutonomyMode, QueueEvent, QueuedTask, TaskInput } from './types.js';
 import { UnifiedQueueManager } from './unified-queue-manager.js';
+import { isSleepRuntimeActive } from '../sleep-runtime.js';
 
 export type { AgentTriggerConfig, TriggerManagerConfig, TriggerType } from './trigger-config-service.js';
 
@@ -32,6 +33,7 @@ export type TriggerSuppressionReason =
   | 'mode:not-allowed'
   | 'global-pause'
   | 'quiet-hours'
+  | 'sleep-active'
   | 'condition'
   | 'probability'
   | 'duplicate'
@@ -511,11 +513,16 @@ export class TriggerManager extends EventEmitter {
     if (!this.running && triggerType !== 'manual') return this.suppress(agentId, state, 'queue-unavailable', dueKey);
     if (!state.config.enabled) return this.suppress(agentId, state, 'disabled', dueKey);
     if (state.config.lifecycle === 'service') return this.suppress(agentId, state, 'service-owned', dueKey);
-    if (!state.config.allowedModes.includes(this.autonomyMode)) {
+    if (triggerType !== 'manual' && !state.config.allowedModes.includes(this.autonomyMode)) {
       return this.suppress(agentId, state, this.autonomyMode === 'reactive' ? 'mode:reactive' : 'mode:not-allowed', dueKey);
     }
     if (this.config.globalSettings.pauseAll) return this.suppress(agentId, state, 'global-pause', dueKey);
-    if (triggerType !== 'manual' && !fireContext.idleReset && this.isQuietHours()) return this.suppress(agentId, state, 'quiet-hours', dueKey);
+    if (triggerType !== 'manual' && agentId !== 'sleep-workflow' && isSleepRuntimeActive()) {
+      return this.suppress(agentId, state, 'sleep-active', dueKey);
+    }
+    if (triggerType !== 'manual' && agentId !== 'sleep-workflow' && !fireContext.idleReset && this.isQuietHours()) {
+      return this.suppress(agentId, state, 'quiet-hours', dueKey);
+    }
     if (triggerType !== 'manual' && !fireContext.idleReset && !this.checkConditions(state.config)) return this.suppress(agentId, state, 'condition', dueKey);
     if (triggerType !== 'manual' && !fireContext.idleReset && Math.random() > (state.config.probability ?? 1)) {
       return this.suppress(agentId, state, 'probability', dueKey);
@@ -662,7 +669,7 @@ export class TriggerManager extends EventEmitter {
   }
 
   private checkConditions(config: AgentTriggerConfig): boolean {
-    if (config.conditions?.requiresSleepMode) return false;
+    if (config.conditions?.requiresSleepMode) return isSleepRuntimeActive();
     return true;
   }
 

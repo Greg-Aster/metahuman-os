@@ -10,6 +10,7 @@ import { loadRobotOperatorConfig, readRobotObserverCycle } from '../../robot-ope
 import {
   encodeEnvironmentTaskState,
   environmentTaskStateFromObservation,
+  robotOperatorActionRequirement,
   type EnvironmentCompletionBasis,
   type EnvironmentTaskDecision,
   type EnvironmentTaskFrameRef,
@@ -152,18 +153,26 @@ function terminalCommand(feedback: EnvironmentFeedback | null): string {
 }
 
 function completionResponse(state: EnvironmentTaskState, terminal: EnvironmentFeedback): string {
+  const action = cleanText(
+    state.selectedAction?.command || state.selectedAction?.type,
+    200,
+  ).replace(/_/g, ' ');
+  const objective = cleanText(state.objective, 500);
+  const evidence = cleanText(terminal.message, 500) || 'The correlated robot action completed.';
   return JSON.stringify({
-    response: 'Objective completed.',
+    response: action
+      ? `The ${action} action finished successfully, which satisfies the one-step objective: ${objective}`
+      : `The requested one-step action finished successfully, which satisfies the objective: ${objective}`,
     actions: [],
     movementRequest: null,
     taskDecision: {
       outcome: 'complete',
-      reason: 'The exact correlated robot action completed.',
+      reason: `The exact correlated action result is sufficient for this one-step objective: ${evidence}`,
       objectiveComplete: true,
       continuationPolicy: state.continuationPolicy,
       requiredCompletionBasis: 'action_result',
       completionBasis: 'action_result',
-      completionEvidence: cleanText(terminal.message, 500) || 'The correlated robot action completed.',
+      completionEvidence: evidence,
       ...(state.motionClass ? { motionClass: state.motionClass } : {}),
     },
   });
@@ -173,10 +182,21 @@ function feedbackInstruction(
   state: EnvironmentTaskState,
   terminal: EnvironmentFeedback,
   visuals: EnvironmentVisualFrame[],
+  hasCurrentCorrelatedVisual: boolean,
 ): string {
   const command = terminalCommand(terminal) || state.selectedAction?.command || state.selectedAction?.type || 'unknown';
   const visualMode = state.visualEvidenceMode ?? 'single';
-  const evidenceInstruction = state.requiredCompletionBasis === 'visual_observation'
+  const boundedActionResult = terminal.type === 'completed'
+    && state.continuationPolicy === 'bounded'
+    && state.requiredCompletionBasis === 'action_result';
+  const requiredEvidenceInstruction = boundedActionResult
+    ? 'The prior bounded step recorded action_result, but that can prove only the completed step. Select the evidence basis that can prove the whole objective in this response.'
+    : `Required whole-objective evidence: ${state.requiredCompletionBasis}.`;
+  const evidenceInstruction = boundedActionResult
+    ? hasCurrentCorrelatedVisual
+      ? 'The completed action proves only that step, not the bounded objective. A fresh correlated robot-camera image is attached. Inspect it, then either select the next action or explain why suitable whole-objective evidence shows that no further attention is necessary.'
+      : 'The completed action proves only that step, not the bounded objective. No fresh correlated robot-camera image is available. Select captureImage if current visual evidence is necessary, or select another suitable advertised action.'
+    : state.requiredCompletionBasis === 'visual_observation'
     ? visualMode === 'comparison'
       ? visuals.length >= 2
         ? 'Two images are attached in chronological order: the baseline before the action, then the current correlated result. Compare them directly.'
@@ -188,7 +208,7 @@ function feedbackInstruction(
   return [
     `Original objective: ${state.objective}`,
     `Exact terminal feedback: type=${terminal.type}; actionId=${terminal.actionId}; command=${command}; message=${cleanText(terminal.message, 500)}`,
-    `Required whole-objective evidence: ${state.requiredCompletionBasis}.`,
+    requiredEvidenceInstruction,
     evidenceInstruction,
     terminal.type === 'completed'
       ? 'Decide whether the original objective is complete from the required evidence. If it is incomplete, select the next advertised action directly in this response.'
@@ -316,14 +336,19 @@ export const environmentTaskStateNode = defineNode({
         .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
         .filter((frame, index, all) => all.findIndex(candidate => candidate.id === frame.id) === index);
       const feedbackPass = Boolean(terminal && persisted);
+      const operatorActionRequired = feedbackPass
+        ? null
+        : robotOperatorActionRequirement(observation);
       const needsMemory = Boolean(!feedbackPass && cleanText(context.userMessage, 4_000));
       const needsVision = feedbackPass
         ? state.requiredCompletionBasis === 'visual_observation'
-        : false;
+          || Boolean(terminal?.type === 'completed' && state.continuationPolicy === 'bounded')
+        : operatorActionRequired === true && Boolean(current);
       const preparedState: EnvironmentTaskState = feedbackPass
         ? {
             ...state,
             phase: state.requiredCompletionBasis === 'action_result'
+              && state.continuationPolicy === 'none'
               ? 'awaiting_action'
               : 'evaluating_evidence',
           }
@@ -331,12 +356,18 @@ export const environmentTaskStateNode = defineNode({
       const deterministicComplete = Boolean(
         terminal?.type === 'completed'
         && preparedState.requiredCompletionBasis === 'action_result'
+        && preparedState.continuationPolicy === 'none'
       );
       return {
         taskState: preparedState,
         instruction: terminal
-          ? feedbackInstruction(preparedState, terminal, visuals)
-          : instruction,
+          ? feedbackInstruction(preparedState, terminal, visuals, Boolean(current))
+          : operatorActionRequired === true
+            ? [
+                instruction,
+                'Robot Operator delegated this intention because it requires one new sensing or environment action. Select one safe advertised action that advances the intention now. If no advertised action can do so safely, explain that limitation instead of returning an empty result.',
+              ].filter(Boolean).join('\n\n')
+            : instruction,
         routingAnalysis: {
           needsMemory,
           memoryTier: 'hot',
@@ -344,8 +375,8 @@ export const environmentTaskStateNode = defineNode({
           memoryTypes: [],
           needsEnvironment: true,
           needsVision,
-          needsAction: false,
-          actionType: 'none',
+          needsAction: operatorActionRequired === true,
+          actionType: operatorActionRequired === true ? 'environment_action' : 'none',
           actionParams: {
             continuationPolicy: preparedState.continuationPolicy,
             requiredCompletionBasis: preparedState.requiredCompletionBasis,
@@ -382,7 +413,12 @@ export const environmentTaskStateNode = defineNode({
       ? inputs.taskState as unknown as EnvironmentTaskState
       : environmentTaskStateFromObservation(observation) ?? initialTaskState(instruction, observation);
     const terminal = matchingEnvironmentTerminalFeedback(observation);
-    if (terminal?.type === 'completed' && preparedState.requiredCompletionBasis === 'action_result') {
+    if (
+      terminal?.type === 'completed'
+      && preparedState.requiredCompletionBasis === 'action_result'
+      && preparedState.continuationPolicy === 'none'
+    ) {
+      const exactResponse = completionResponse(preparedState, terminal);
       const completeState: EnvironmentTaskState = { ...preparedState, phase: 'complete' };
       return {
         taskState: completeState,
@@ -393,7 +429,7 @@ export const environmentTaskStateNode = defineNode({
         precomputedResponse: '',
         actions: [],
         movementRequest: null,
-        response: cleanText(inputs.response, 4_000) || 'Objective completed.',
+        response: cleanText(inputs.response, 4_000) || JSON.parse(exactResponse).response,
         decision: lifecycleDecision(completeState, {
           complete: true,
           completionBasis: 'action_result',
@@ -424,8 +460,10 @@ export const environmentTaskStateNode = defineNode({
     const taskDecisionError = cleanText(inputs.taskDecisionError, 500);
     const generatedResponse = cleanText(inputs.generatedResponse, 2_000);
     const modelResponse = cleanText(inputs.response, 4_000) || generatedResponse;
+    const operatorActionRequired = robotOperatorActionRequirement(observation) === true;
     const persistedPass = Boolean(terminal && environmentTaskStateFromObservation(observation));
-    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = persistedPass
+    const boundedFeedbackPass = Boolean(persistedPass && preparedState.continuationPolicy === 'bounded');
+    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = persistedPass && !boundedFeedbackPass
       ? preparedState.requiredCompletionBasis
       : taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
         ? taskDecision.requiredCompletionBasis
@@ -433,7 +471,7 @@ export const environmentTaskStateNode = defineNode({
           ? 'action_result'
           : 'response';
     if (action && requiredCompletionBasis === 'response') requiredCompletionBasis = 'action_result';
-    const continuationPolicy = persistedPass
+    const continuationPolicy = persistedPass && !boundedFeedbackPass
       ? preparedState.continuationPolicy
       : taskDecision?.continuationPolicy ?? (requiredCompletionBasis === 'action_result' ? 'none' : 'bounded');
     const motionClass = taskDecision?.motionClass ?? preparedState.motionClass;
@@ -528,9 +566,11 @@ export const environmentTaskStateNode = defineNode({
           ? `I received the request, but the Environment LLM returned an invalid task decision: ${taskDecisionError}`
           : modelResponse
             ? modelResponse
-            : terminal
-              ? 'The robot result arrived, but I could not determine a usable completion or next action.'
-              : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.';
+            : operatorActionRequired
+              ? 'I could not select a safe supported action for this Robot Operator intention, so I stopped rather than guessing.'
+              : terminal
+                ? 'The robot result arrived, but I could not determine a usable completion or next action.'
+                : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.';
     return {
       taskState: finalState,
       instruction,
