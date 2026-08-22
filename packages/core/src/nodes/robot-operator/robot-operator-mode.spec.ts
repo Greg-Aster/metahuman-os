@@ -469,6 +469,8 @@ test('Robot Operator graph publishes one grounded Idle Thought before Environmen
     assert.match(String(prompt), /Environment Mode selects safe execution/i);
     assert.match(String(prompt), /Set requiresAction true only when the intention needs/i);
     assert.match(String(prompt), /desired outcome, not a physical method/i);
+    assert.match(String(prompt), /Complete when/i);
+    assert.match(String(prompt), /never delegate an open-ended scan, search, or investigation/i);
     assert.match(String(prompt), /Never claim execution started or completed/i);
     assert.match(String(prompt), /user-visible Idle Thought/i);
     assert.match(String(prompt), /"observed".*"instruction".*"requiresAction".*"reason"/i);

@@ -208,8 +208,10 @@ function feedbackInstruction(
   return [
     `Original objective: ${state.objective}`,
     `Exact terminal feedback: type=${terminal.type}; actionId=${terminal.actionId}; command=${command}; message=${cleanText(terminal.message, 500)}`,
+    `Action budget: ${state.step} of ${state.maxSteps} used. This is a safety ceiling, not a success condition.`,
     requiredEvidenceInstruction,
     evidenceInstruction,
+    'Evaluate the objective\'s observable stopping condition. Do not continue merely because unseen areas might still exist or certainty could be improved indefinitely. For a broad survey without a finite stopping condition, report what the bounded current evidence supports and stop rather than inventing perpetual coverage.',
     terminal.type === 'completed'
       ? 'Decide whether the original objective is complete from the required evidence. If it is incomplete, select the next advertised action directly in this response.'
       : 'The action did not complete successfully. Decide whether to select a different advertised action now or report the limitation honestly.',

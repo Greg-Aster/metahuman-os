@@ -342,6 +342,8 @@ test('a bounded exploratory action inspects the correlated result before decidin
     ['room-before', 'room-after'],
   );
   assert.match(String(preparedTerminal.instruction), /proves only that step/);
+  assert.match(String(preparedTerminal.instruction), /safety ceiling, not a success condition/);
+  assert.match(String(preparedTerminal.instruction), /Do not continue merely because unseen areas might still exist/);
 
   const closed = await reduce({
     observation: terminal,
