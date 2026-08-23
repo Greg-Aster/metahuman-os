@@ -16,8 +16,51 @@ RN_DIR="$(dirname "$SCRIPT_DIR")"
 SITE_DIR="$RN_DIR/../site"
 ROOT_DIR="$RN_DIR/../.."
 NODEJS_PROJECT="$RN_DIR/nodejs-assets/nodejs-project"
-RELEASES_DIR="$ROOT_DIR/apps/mobile/releases"
+GENERATED_DIR="$RN_DIR/generated"
+TEMP_WWW="$GENERATED_DIR/www"
+RELEASES_DIR="$RN_DIR/releases"
 VERSION_FILE="$RELEASES_DIR/version.json"
+
+resolve_java_home() {
+    if [ -x "${JAVA_HOME:-}/bin/java" ]; then
+        return
+    fi
+
+    if [ -n "${ANDROID_STUDIO_JBR:-}" ] && [ -x "$ANDROID_STUDIO_JBR/bin/java" ]; then
+        export JAVA_HOME="$ANDROID_STUDIO_JBR"
+    elif [ -x "$HOME/android-studio/jbr/bin/java" ]; then
+        export JAVA_HOME="$HOME/android-studio/jbr"
+    elif command -v java >/dev/null 2>&1; then
+        JAVA_BIN="$(readlink -f "$(command -v java)")"
+        export JAVA_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+    else
+        echo "Error: No usable Java installation found. Set JAVA_HOME to a JDK directory."
+        exit 1
+    fi
+}
+
+resolve_android_home() {
+    local candidate
+    for candidate in \
+        "${ANDROID_HOME:-}" \
+        "${ANDROID_SDK_ROOT:-}" \
+        "$HOME/Android/Sdk" \
+        "$HOME/Android/sdk" \
+        "/opt/android-sdk" \
+        "/usr/lib/android-sdk"; do
+        if [ -n "$candidate" ] && [ -d "$candidate/platforms" ]; then
+            export ANDROID_HOME="$candidate"
+            export ANDROID_SDK_ROOT="$candidate"
+            return
+        fi
+    done
+
+    echo "Error: No usable Android SDK found. Set ANDROID_HOME to an SDK directory."
+    exit 1
+}
+
+resolve_java_home
+resolve_android_home
 
 echo "=========================================="
 echo "  MetaHuman Mobile Build (React Native)"
@@ -81,9 +124,9 @@ echo ""
 # Step 1: Build Svelte UI with mobile config
 echo "[1/5] Building web UI with mobile config..."
 
-# The output will go to apps/mobile/www via astro.config.mobile.mjs
-# We'll then copy it to React Native assets
-TEMP_WWW="$RN_DIR/../mobile/www"
+# The output goes to apps/react-native/generated/www via astro.config.mobile.mjs.
+# It is copied into the embedded Node.js project and then discarded.
+rm -rf "$GENERATED_DIR"
 
 cd "$SITE_DIR"
 
@@ -174,6 +217,7 @@ if [ -d "$TEMP_WWW" ]; then
     rm -rf "$NODEJS_WWW/downloads" 2>/dev/null || true
     echo "  Copied $(find "$NODEJS_WWW" -type f | wc -l) files to nodejs-project/www/"
     echo "  Node.js will serve these via HTTP (same as Astro web server)"
+    rm -rf "$GENERATED_DIR"
 else
     echo "Error: Mobile build output not found at $TEMP_WWW"
     exit 1
@@ -209,8 +253,6 @@ echo ""
 echo "[5/5] Building APK..."
 cd "$RN_DIR/android"
 
-# Use bundled JDK from Android Studio
-export JAVA_HOME="${JAVA_HOME:-${ANDROID_STUDIO_JBR:-$HOME/android-studio/jbr}}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 ./gradlew assembleDebug

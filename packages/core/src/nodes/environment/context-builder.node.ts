@@ -197,9 +197,10 @@ export const environmentContextBuilderNode = defineNode({
     const robotObserver = readRobotObserverCycle(effectiveObservation);
     // environment-perception metadata is attached to ordinary correlated audio
     // so later work can retain lifecycle identity. It is not, by itself, a request
-    // to inspect the camera. Only an explicit Robot Observer run bypasses typed
+    // to inspect the camera. Only an explicit boredom observation run bypasses typed
     // vision admission; ordinary audio remains owned by needsVision.
-    const observerVisualEvidence = robotObserver?.requestedBy === 'robot-observer';
+    const observerVisualEvidence = robotObserver?.requestedBy === 'robot-observer'
+      || robotObserver?.requestedBy === 'boredom-observer';
     const visualRequiredByTask = taskContract?.requiredCompletionBasis === 'visual_observation';
     const useImages = correlatedVisual && (
       !hasTypedContextAdmission

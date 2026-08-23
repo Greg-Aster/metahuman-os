@@ -61,7 +61,9 @@ async function getAllMemoriesForUser(username: string): Promise<Array<{ file: st
 }
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
-  const username = context.userId;
+  const username = typeof context.username === 'string' && context.username.trim()
+    ? context.username.trim()
+    : context.userId;
   const sampleSize = properties?.sampleSize || 5;
   const decayFactor = properties?.decayFactor || 14;
 

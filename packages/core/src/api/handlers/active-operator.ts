@@ -17,8 +17,9 @@ import {
   getPendingApprovals,
   resolveApproval,
 } from '../../active-operator/index.js';
-import { getQueueManager, getQueueSystem } from '../../queue/index.js';
+import { getQueueManager } from '../../queue/index.js';
 import type { AutonomyMode } from '../../queue/types.js';
+import { readRobotOperatorRuntimeState } from '../../robot-operator.js';
 
 type ControlAction = 'start' | 'stop' | 'set-mode' | 'emergency-stop' | 'reset';
 
@@ -45,8 +46,58 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
     const controller = getModeController();
     const modeStatus = controller.getStatus();
     const manager = getQueueManager();
-    const system = getQueueSystem();
     const activeWork = manager.getAllTasks();
+    const boredomHandlers = new Set([
+      'workflow.boredom-observer',
+      'workflow.boredom-movement',
+      'workflow.boredom-reflection',
+      'workflow.robot-observer',
+    ]);
+    const allWork = [...activeWork, ...manager.getHistory()];
+    const boredomEpisodes = allWork
+      .filter(task => boredomHandlers.has(task.handler))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, 12)
+      .map(task => {
+        const reportedChild = task.metadata?.childAgent || task.input?.agentId;
+        const child = reportedChild === 'boredom-movement' || reportedChild === 'boredom-reflection'
+          ? reportedChild
+          : 'boredom-observer';
+        const cycleId = typeof task.result?.cycle?.cycleId === 'string'
+          ? task.result.cycle.cycleId
+          : typeof task.input?.cycleId === 'string'
+            ? task.input.cycleId
+            : undefined;
+        const related = allWork
+          .filter(candidate => candidate.id !== task.id && (
+            candidate.parentTaskId === task.id
+            || Boolean(cycleId && candidate.correlationId === cycleId)
+          ))
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+        const activeRelated = related.find(candidate => ['queued', 'leased', 'waiting'].includes(candidate.state));
+        const failedRelated = related.find(candidate => candidate.state === 'failed' || candidate.state === 'cancelled');
+        const latestRelated = related[0];
+        const state = activeRelated?.state || failedRelated?.state || latestRelated?.state || task.state;
+        const outcome = task.error?.message
+          || task.result?.reason
+          || failedRelated?.error?.message
+          || failedRelated?.cancellationReason
+          || (activeRelated ? `${activeRelated.handler} ${activeRelated.state}` : undefined)
+          || (latestRelated ? `completed through ${latestRelated.handler}` : undefined)
+          || (task.result?.queued ? 'stimulus queued' : task.state);
+        return {
+          id: task.id,
+          child,
+          handler: task.handler,
+          state,
+          source: task.source,
+          createdAt: task.createdAt,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+          downstreamCount: related.length,
+          outcome: typeof outcome === 'string' ? outcome.slice(0, 500) : task.state,
+        };
+      });
 
     return {
       status: 200,
@@ -58,6 +109,10 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
         health: modeStatus.health,
         healthMessage: modeStatus.healthMessage,
         policy: modeStatus.policy,
+        robotOperator: {
+          runtime: readRobotOperatorRuntimeState(),
+          episodes: boredomEpisodes,
+        },
         queue: {
           length: activeWork.length,
           tasks: activeWork.slice(0, 10).map(task => ({

@@ -138,6 +138,7 @@ test('Robot Operator context consolidates separate instructions, conversation, i
       },
     ],
     personaText: '## Personality Traits\n- curious: high\n- pragmatic: medium',
+    memoryContext: [{ content: 'A past afternoon walk inspired a playful stretch.', timestamp: '2026-07-01T12:00:00.000Z' }],
     images: [{ type: 'image_url', image_url: { url: observation.visual.dataUrl } }],
     frames: [observation.visual],
   }, {}, {});
@@ -147,6 +148,7 @@ test('Robot Operator context consolidates separate instructions, conversation, i
   assert.equal(result.context.recentContextCount, 2);
   assert.equal(result.context.innerContextCount, 1);
   assert.equal(result.context.personaIncluded, true);
+  assert.equal(result.context.memoryContextCount, 1);
   assert.equal(result.messages[0]?.content, instruction);
   assert.doesNotMatch(String(result.messages[0]?.content), /curious: high|blue ball/i);
   assert.equal(result.messages[1]?.role, 'assistant');
@@ -154,6 +156,9 @@ test('Robot Operator context consolidates separate instructions, conversation, i
   assert.match(String(result.messages[1]?.content), /curious: high/);
   assert.match(String(result.messages[1]?.content), /blue ball belongs/);
   assert.match(String(result.messages[1]?.content), /curious about how the light/);
+  assert.match(String(result.messages[1]?.content), /historical_memory_inspiration/);
+  assert.match(String(result.messages[1]?.content), /currentEvidence\":false/);
+  assert.match(String(result.messages[1]?.content), /past afternoon walk/);
   const userContent = result.messages[2]?.content as Array<{ type: string; text?: string }>;
   assert.equal(Array.isArray(userContent), true);
   assert.equal(userContent.length, 2);
@@ -257,6 +262,12 @@ test('Robot Operator parser accepts only complete grounded observation decisions
   }, {});
   assert.equal(incomplete.valid, false);
   assert.equal(incomplete.decision, null);
+
+  const movementWithoutAction = await robotOperatorDecisionParserNode.execute({
+    response: '{"observed":"A movement opportunity is available.","instruction":"I will remain still.","requiresAction":false,"reason":"Stillness feels appropriate."}',
+  }, {}, { requireAction: true });
+  assert.equal(movementWithoutAction.valid, false);
+  assert.match(movementWithoutAction.error, /requires an Environment Mode action intention/i);
 });
 
 test('Robot Operator dispatches required work and stops observation-only decisions locally', async () => {
@@ -361,149 +372,91 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   assert.equal(queued, true);
 });
 
-test('Robot Operator graph publishes one grounded Idle Thought before Environment dispatch', () => {
-  const graph = JSON.parse(fs.readFileSync(
+test('specialized boredom graphs keep trigger deliberation private and delegate outward behavior', () => {
+  const legacy = JSON.parse(fs.readFileSync(
     path.join(ROOT, 'etc/cognitive-graphs/robot-operator-mode.json'),
     'utf8',
   ));
-  const nodeTypes = new Set(graph.nodes.map((node: any) => node.data?.nodeType));
-  for (const forbidden of [
-    'environment_action_parser',
-    'environment_task_validator',
-    'movement_generator',
-    'environment_send_action',
-    'conversation_buffer',
-    'robot_buffer',
-    'memory_capture',
-  ]) {
-    assert.equal(nodeTypes.has(forbidden), false, `Robot Operator Mode must not contain ${forbidden}`);
+  const legacyNodeTypes = legacy.nodes.map((node: any) => node.data?.nodeType);
+  assert.equal(legacyNodeTypes.includes('conversation_history'), false);
+  assert.equal(legacyNodeTypes.includes('tts'), false);
+  assert.equal(legacyNodeTypes.includes('environment_send_action'), false);
+
+  const graphs = Object.fromEntries([
+    'boredom-observer',
+    'boredom-movement',
+    'boredom-reflection',
+  ].map(id => [id, JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'etc/cognitive-graphs', `${id}-mode.json`),
+    'utf8',
+  ))]));
+
+  for (const [id, graph] of Object.entries(graphs) as Array<[string, any]>) {
+    const nodeTypes = graph.nodes.map((node: any) => node.data?.nodeType);
+    assert.equal(nodeTypes.includes('conversation_history'), false, `${id} must not inherit stale conversation authority`);
+    assert.equal(nodeTypes.includes('tts'), false, `${id} trigger must not speak directly`);
+    assert.equal(nodeTypes.includes('environment_send_action'), false, `${id} trigger must not execute hardware actions`);
+    assert.equal(nodeTypes.includes('robot_operator_context_builder'), true);
+    assert.equal(nodeTypes.includes('robot_operator_decision_parser'), true);
+    assert.equal(nodeTypes.includes('robot_operator_environment_dispatch'), true);
+    const inner = graph.nodes.find((node: any) => node.data?.nodeType === 'inner_dialogue_buffer');
+    assert.equal(inner?.data?.properties?.dialogueSource, id);
+    assert.equal(inner?.data?.properties?.captureMemory, false);
+    assert.ok(graph.edges.some((edge: any) => (
+      edge.source === inner.id
+      && edge.sourceHandle === 'passthrough'
+      && edge.target === 'environment-dispatch'
+      && edge.targetHandle === 'decision'
+    )));
   }
-  assert.equal(nodeTypes.has('robot_operator_context_builder'), true);
-  assert.equal(nodeTypes.has('robot_operator_decision_parser'), true);
-  assert.equal(nodeTypes.has('robot_operator_environment_dispatch'), true);
-  const historyNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'conversation_history');
-  assert.equal(historyNodes.length, 1, 'Robot Operator Mode must have one canonical buffer history reader');
-  assert.equal(historyNodes[0]?.id, 'conversation-history');
-  assert.equal(historyNodes[0]?.data?.properties?.mode, 'conversation');
-  assert.equal(historyNodes[0]?.data?.properties?.limit, 20);
-  assert.ok(graph.edges.some((edge: any) => (
-    edge.source === 'conversation-history'
-    && edge.sourceHandle === 'history'
-    && edge.target === 'operator-context'
-    && edge.targetHandle === 'conversationHistory'
-  )), 'canonical Conversation Buffer history must enter the Robot Operator context collector');
-  assert.equal(graph.edges.some((edge: any) => edge.targetHandle === 'innerDialogueHistory'), false);
-  const instructionNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'text_input');
-  assert.equal(instructionNodes.length, 1, 'Robot Operator Mode must have one runtime instruction input');
-  assert.equal(instructionNodes[0]?.id, 'operator-instructions');
-  assert.equal(instructionNodes[0]?.data?.properties?.message, '');
-  assert.equal(instructionNodes[0]?.data?.properties?.inputKey, 'environmentTaskInstruction');
-  assert.equal(TextInputNode.propertySchemas?.message?.type, 'text_multiline');
-  assert.equal(TextInputNode.propertySchemas?.inputKey?.type, 'text');
-  assert.ok(
-    Number(TextInputNode.propertySchemas?.message?.rows) >= 12,
-    'Robot Operator instructions need a comfortably sized multiline property editor',
+
+  assert.equal(
+    graphs['boredom-observer'].nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'),
+    true,
   );
-  assert.ok(graph.edges.some((edge: any) => (
-    edge.source === 'operator-instructions'
-    && edge.sourceHandle === 'text'
-    && edge.target === 'operator-context'
-    && edge.targetHandle === 'instruction'
-  )), 'Robot Operator instructions must enter context through the dedicated text input');
-  const contextNode = graph.nodes.find((node: any) => node.data?.nodeType === 'robot_operator_context_builder');
-  assert.deepEqual(contextNode?.data?.properties, {}, 'Robot Operator Context must not own LLM instruction text');
-  const ttsNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'tts');
-  assert.equal(ttsNodes.length, 1, 'Robot Operator Mode must contain one standard TTS Output node');
-  assert.equal(ttsNodes[0]?.id, 'idle-thought-tts');
-  assert.equal(ttsNodes[0]?.data?.properties?.source, 'robot-operator-mode');
-  assert.equal(ttsNodes[0]?.data?.properties?.defaultMode, 'inner');
-  const innerNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'inner_dialogue_buffer');
-  assert.equal(innerNodes.length, 1);
-  const reasonNode = innerNodes.find((node: any) => node.id === 'reason-inner-dialogue');
-  assert.equal(reasonNode?.data?.properties?.captureMemory, false);
-  assert.equal(reasonNode?.data?.properties?.role, 'reflection');
-  assert.equal(reasonNode?.data?.properties?.dialogueSource, 'robot-operator-mode');
-  assert.equal(reasonNode?.data?.properties?.tags?.includes('idle-thought'), true);
-  const reasonEdge = graph.edges.find((edge: any) => (
-    edge.source === 'decision-parser'
-    && edge.sourceHandle === 'reason'
-    && edge.target === 'reason-inner-dialogue'
-    && edge.targetHandle === 'text'
-  ));
-  assert.ok(reasonEdge, 'grounded decision rationale must enter the canonical Inner Dialogue Buffer as an idle thought');
-  const ttsEdge = graph.edges.find((edge: any) => (
-    edge.source === 'reason-inner-dialogue'
-    && edge.sourceHandle === 'text'
-    && edge.target === 'idle-thought-tts'
-    && edge.targetHandle === 'innerDialogue'
-  ));
-  assert.ok(ttsEdge, 'standard TTS must consume only text admitted by the canonical Inner Dialogue Buffer');
-  assert.equal(graph.edges.some((edge: any) => (
-    edge.source === 'decision-parser'
-    && edge.target === 'idle-thought-tts'
-  )), false, 'decision parsing must not bypass Inner Dialogue admission to trigger speech');
-  assert.equal(graph.nodes.some((node: any) => node.id === 'intention-inner-dialogue'), false);
-  assert.equal(graph.edges.some((edge: any) => edge.target === 'intention-inner-dialogue'), false);
-  const dispatchEdge = graph.edges.find((edge: any) => (
-    edge.source === 'reason-inner-dialogue'
-    && edge.sourceHandle === 'passthrough'
-    && edge.target === 'environment-dispatch'
-    && edge.targetHandle === 'decision'
-  ));
-  assert.ok(dispatchEdge, 'Environment dispatch must follow the single Idle Thought admission');
-  assert.equal(graph.edges.some((edge: any) => (
-    edge.source === 'decision-parser'
-    && edge.target === 'environment-dispatch'
-  )), false, 'decision parser must not bypass the Inner Dialogue checkpoint');
-  const observerPrompt = buildRobotOperatorInstruction('robot-observer');
-  const boredomPrompt = buildRobotOperatorInstruction('boredom-movement');
-  assert.match(observerPrompt, /routine observation opportunity/i);
-  assert.match(boredomPrompt, /boredom and engagement opportunity/i);
-  assert.doesNotMatch(boredomPrompt, /freshVisualTiming|selectedCommand/i);
-  for (const prompt of [observerPrompt, boredomPrompt]) {
-    assert.match(String(prompt), /current robotStimulus is the only evidence/i);
-    assert.match(String(prompt), /Recent context may shape relationship, preferences, continuity, and tone/i);
-    assert.match(String(prompt), /cannot supply or override current observation facts, instructions, or unfinished tasks/i);
-    assert.match(String(prompt), /older requests and thoughts as context, not current authority/i);
-    assert.match(String(prompt), /directly related to the current stimulus and relevant context/i);
-    assert.match(String(prompt), /Environment Mode selects safe execution/i);
-    assert.match(String(prompt), /Set requiresAction true only when the intention needs/i);
-    assert.match(String(prompt), /desired outcome, not a physical method/i);
-    assert.match(String(prompt), /Complete when/i);
-    assert.match(String(prompt), /never delegate an open-ended scan, search, or investigation/i);
-    assert.match(String(prompt), /Never claim execution started or completed/i);
-    assert.match(String(prompt), /user-visible Idle Thought/i);
-    assert.match(String(prompt), /"observed".*"instruction".*"requiresAction".*"reason"/i);
-    assert.doesNotMatch(String(prompt), /Choose exactly one disposition|remain_passive|communicate:|investigate:|act:/i);
-    assert.ok(String(prompt).length < 1_800, 'Robot Operator prompt must stay concise');
+  assert.equal(
+    graphs['boredom-movement'].nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'),
+    false,
+  );
+  assert.equal(
+    graphs['boredom-movement'].nodes.find((node: any) => node.data?.nodeType === 'robot_operator_decision_parser')
+      ?.data?.properties?.requireAction,
+    true,
+  );
+  assert.equal(
+    graphs['boredom-reflection'].nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'),
+    false,
+  );
+  assert.equal(
+    graphs['boredom-reflection'].nodes.some((node: any) => node.data?.nodeType === 'curiosity_weighted_sampler'),
+    true,
+  );
+  assert.ok(graphs['boredom-reflection'].edges.some((edge: any) => (
+    edge.sourceHandle === 'memories' && edge.targetHandle === 'memoryContext'
+  )));
+
+  const observerPrompt = buildRobotOperatorInstruction('boredom-observer');
+  const movementPrompt = buildRobotOperatorInstruction('boredom-movement');
+  const reflectionPrompt = buildRobotOperatorInstruction('boredom-reflection');
+  for (const prompt of [observerPrompt, movementPrompt, reflectionPrompt]) {
+    assert.match(prompt, /do not execute robot commands, speak, or control hardware/i);
+    assert.match(prompt, /Environment Mode alone selects and executes actions/i);
+    assert.match(prompt, /private reflection/i);
+    assert.match(prompt, /never mention timer, boredom trigger, service, agent, workflow/i);
+    assert.match(prompt, /Complete when/i);
   }
+  assert.match(observerPrompt, /single current camera observation/i);
+  assert.match(movementPrompt, /movement opportunity first/i);
+  assert.match(reflectionPrompt, /historical inspiration/i);
 
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/services.json'), 'utf8'));
-  const agents = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/agents.json'), 'utf8'));
-  assert.equal(services.services['robot-operator'].graph, 'robot-operator');
-  assert.equal('boredomGraph' in services.services['robot-operator'], false);
-  assert.equal(services.services['robot-operator'].environmentGraph, 'environment');
-  assert.equal(agents.agents['boredom-movement'].handler, 'workflow.boredom-movement');
+  const service = services.services['robot-operator'];
+  assert.equal(service.boredomObserverGraph, 'boredom-observer');
+  assert.equal(service.boredomMovementGraph, 'boredom-movement');
+  assert.equal(service.boredomReflectionGraph, 'boredom-reflection');
 
-  const observer = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-observer-handler.ts'), 'utf8');
-  const executionEngine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8');
-  assert.doesNotMatch(observer, /callLLM|model-router/);
-  assert.match(observer, /buildRobotOperatorInstruction\(agentId\)/);
-  assert.doesNotMatch(observer, /type: 'robotCommand'|chooseBoredomMovementCommand/);
-  assert.match(executionEngine, /workflow\.boredom-movement/);
-  assert.match(executionEngine, /robotObserver\?\.graph \|\| task\.input\.graph/);
-  assert.match(executionEngine, /workflow\.boredom-movement[\s\S]*executeRobotObserverWork/);
-  assert.match(executionEngine, /robotOperatorEnvironmentGraph/);
-  assert.equal(fs.existsSync(path.join(ROOT, 'etc/cognitive-graphs/boredom-movement-mode.json')), false);
-  const contextBuilder = fs.readFileSync(path.join(
-    ROOT,
-    'packages/core/src/nodes/robot-operator/context-builder.node.ts',
-  ), 'utf8');
-  const environmentDispatch = fs.readFileSync(path.join(
-    ROOT,
-    'packages/core/src/nodes/robot-operator/environment-dispatch.node.ts',
-  ), 'utf8');
-  assert.doesNotMatch(contextBuilder, /BoredomMovement|readBoredom|freshVisualTiming/);
-  assert.doesNotMatch(contextBuilder, /systemPrompt|innerDialogueHistory|admittedIdleThoughts/);
-  assert.doesNotMatch(environmentDispatch, /BoredomMovement|readBoredom|observationTiming/);
+  const handler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-autonomy-trigger-handler.ts'), 'utf8');
+  assert.match(handler, /agentId === 'boredom-observer'[\s\S]*type: 'captureImage'/);
+  assert.match(handler, /buildRobotAutonomyStimulus\(session\.latestObservation, cycle, agentId\)/);
+  assert.doesNotMatch(handler, /type: 'robotCommand'|chooseBoredomMovementCommand/);
 });

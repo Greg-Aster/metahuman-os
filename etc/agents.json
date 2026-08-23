@@ -1,12 +1,12 @@
 {
   "$schema": "https://metahuman.dev/schemas/agents.json",
   "version": "1.1.0",
-  "revision": 6,
+  "revision": 7,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
-  "description": "Canonical Trigger Manager configuration for finite work",
+  "description": "Canonical finite-agent registry. Trigger Manager manages its own entries; robot-operator-owned workflows remain outside Trigger Manager runtime.",
   "globalSettings": {
     "pauseAll": false,
     "timezone": "America/Los_Angeles",
@@ -99,16 +99,17 @@
       ],
       "startupPolicy": "skip"
     },
-    "robot-observer": {
-      "id": "robot-observer",
-      "displayName": "Robot Observer",
-      "description": "Requests a current robot camera image and sends the correlated observation to Robot Operator Mode.",
+    "boredom-observer": {
+      "id": "boredom-observer",
+      "displayName": "Boredom Observer",
+      "description": "Requests one current robot camera image and supplies it as an autonomous stimulus to its specialized deliberation graph.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
-      "handler": "workflow.robot-observer",
+      "runtimeOwner": "robot-operator",
+      "handler": "workflow.boredom-observer",
       "priority": "low",
-      "agentPath": "coordinator:workflow.robot-observer",
+      "agentPath": "coordinator:workflow.boredom-observer",
       "usesLLM": true,
       "allowedModes": [
         "reactive",
@@ -117,15 +118,16 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Manual finite agent. Robot Operator may also submit it with autonomy source after its own inactivity conditions pass."
+      "comment": "Finite autonomy trigger owned and scheduled by Robot Operator. It captures once, deliberates, and delegates any requested speech or action to Environment Mode."
     },
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Requests a current robot image and sends a boredom and engagement instruction to Robot Operator Mode.",
+      "description": "Creates a bounded movement opportunity without issuing a robot command itself.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
+      "runtimeOwner": "robot-operator",
       "handler": "workflow.boredom-movement",
       "priority": "low",
       "agentPath": "coordinator:workflow.boredom-movement",
@@ -137,7 +139,28 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Manual finite trigger agent. It supplies a boredom-specific runtime instruction to the shared Robot Operator workflow; Environment Mode decides whether and how to act."
+      "comment": "Finite autonomy trigger owned and scheduled by Robot Operator. Its specialized graph chooses one movement intention; Environment Mode executes and evaluates it."
+    },
+    "boredom-reflection": {
+      "id": "boredom-reflection",
+      "displayName": "Boredom Reflection",
+      "description": "Samples historical memory as inspiration for a private reflection or one bounded Environment Mode request.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "runtimeOwner": "robot-operator",
+      "handler": "workflow.boredom-reflection",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.boredom-reflection",
+      "usesLLM": true,
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Robot-side autonomy trigger kept separate from the conversational Reflector. Memories are historical inspiration, never current-world evidence, and all outward behavior is delegated to Environment Mode."
     },
     "reflector": {
       "id": "reflector",

@@ -29,6 +29,14 @@ const snapshot = manager.getSnapshot();
 assert.equal(snapshot.config.persistedRevision, snapshot.config.runtimeRevision);
 assert.deepEqual(snapshot.healthFindings, [], `trigger catalog health findings: ${snapshot.healthFindings.join(', ')}`);
 assert.equal(snapshot.triggers.some(trigger => trigger.lifecycle === 'service'), false);
+for (const child of ['boredom-observer', 'boredom-movement', 'boredom-reflection']) {
+  assert.equal(
+    snapshot.triggers.some(trigger => trigger.id === child),
+    false,
+    `${child} is owned by Robot Operator and must not enter Trigger Manager runtime`,
+  );
+  assert.equal(read.config.agents[child]?.runtimeOwner, 'robot-operator');
+}
 
 const audio = snapshot.triggers.find(trigger => trigger.id === 'audio-organizer');
 assert.ok(audio, 'Audio Organizer must remain explicitly user-runnable');
@@ -46,7 +54,7 @@ assert.deepEqual(
     .filter(([, service]) => service.startOnSystemBoot)
     .map(([id]) => id)
     .sort(),
-  ['environment-bridge', 'maintenance-service'],
+  ['environment-bridge', 'maintenance-service', 'robot-operator'],
 );
 
 manager.dispose();

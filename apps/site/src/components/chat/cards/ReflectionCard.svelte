@@ -23,6 +23,12 @@
         return { label: 'Execution Report', icon: '⚡' };
       case 'agency-executor':
         return { label: 'Agency Execution', icon: '🎯' };
+      case 'boredom-observer':
+        return { label: 'Boredom Observer', icon: '👀' };
+      case 'boredom-movement':
+        return { label: 'Boredom Movement', icon: '🐾' };
+      case 'boredom-reflection':
+        return { label: 'Boredom Reflection', icon: '💭' };
       default:
         return { label: 'Idle Thought', icon: '💭' };
     }

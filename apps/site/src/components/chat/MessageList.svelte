@@ -7,6 +7,7 @@
   import { createEventDispatcher } from 'svelte';
   import Thinking from '../Thinking.svelte';
   import type { ChatMessage, ReasoningStage } from '../../lib/client/composables/useMessages';
+  import { personaNameStore } from '../../stores/navigation';
   import { getCardComponent, isVisibleInMode } from './message-discriminator';
   import { cardComponents } from './cards/index';
 
@@ -114,7 +115,7 @@
     <div class="typing-wrapper">
       <div class="typing-indicator">
         <div class="typing-header">
-          <span class="typing-role">MetaHuman</span>
+          <span class="typing-role">{$personaNameStore}</span>
         </div>
         <div class="typing-dots">
           <span class="dot"></span>

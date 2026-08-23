@@ -12,6 +12,31 @@
     createdAt: string;
   }
 
+  type BoredomChildId = 'boredom-observer' | 'boredom-movement' | 'boredom-reflection';
+
+  interface BoredomChildRuntime {
+    id: BoredomChildId;
+    enabled: boolean;
+    handler: string;
+    graph: string;
+    nextRunAt?: string;
+    lastAdmittedAt?: string;
+    lastTaskId?: string;
+    lastOutcome?: string;
+  }
+
+  interface BoredomEpisode {
+    id: string;
+    child: BoredomChildId;
+    handler: string;
+    state: string;
+    source: string;
+    createdAt: string;
+    completedAt?: string;
+    downstreamCount: number;
+    outcome: string;
+  }
+
   interface OperatorStatus {
     mode: 'reactive' | 'semi' | 'full';
     health: string;
@@ -25,11 +50,35 @@
       pauseUntil?: string;
     };
     queue: { length: number; tasks: WorkSummary[] };
+    robotOperator: {
+      runtime: {
+        updatedAt: string;
+        mode: 'reactive' | 'semi' | 'full';
+        lifecycle: string;
+        reason: string;
+        fullCooldownMs?: number;
+        children: Record<BoredomChildId, BoredomChildRuntime>;
+      } | null;
+      episodes: BoredomEpisode[];
+    };
   }
 
   let status: OperatorStatus | null = null;
   let error = '';
   let timer: ReturnType<typeof setInterval> | undefined;
+
+  const childOrder: BoredomChildId[] = ['boredom-observer', 'boredom-movement', 'boredom-reflection'];
+  const childLabels: Record<BoredomChildId, string> = {
+    'boredom-observer': 'Boredom Observer',
+    'boredom-movement': 'Boredom Movement',
+    'boredom-reflection': 'Boredom Reflection',
+  };
+
+  function localTime(value?: string): string {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  }
 
   async function refresh() {
     try {
@@ -85,6 +134,66 @@
     {#if status.healthMessage}
       <div class="mb-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">{status.healthMessage}</div>
     {/if}
+
+    <section class="mb-4 rounded border border-gray-200 dark:border-gray-800">
+      <div class="border-b border-gray-200 p-3 dark:border-gray-800">
+        <div class="font-semibold text-gray-900 dark:text-gray-100">Robot Operator</div>
+        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Robot-side autonomy scheduler. Child triggers deliberate; Environment Mode owns speech and physical execution.
+        </div>
+      </div>
+      {#if !status.robotOperator.runtime}
+        <div class="p-4 text-gray-500 dark:text-gray-400">No Robot Operator runtime state has been published yet.</div>
+      {:else}
+        <div class="border-b border-gray-200 p-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+          <span class="font-medium text-gray-800 dark:text-gray-200">{status.robotOperator.runtime.lifecycle}</span>
+          · {status.robotOperator.runtime.reason}
+          {#if status.robotOperator.runtime.mode === 'full' && status.robotOperator.runtime.fullCooldownMs}
+            · continuous rotation every {Math.round(status.robotOperator.runtime.fullCooldownMs / 1000)}s cooldown
+          {:else if status.robotOperator.runtime.mode === 'semi'}
+            · independent idle timers
+          {/if}
+        </div>
+        <div class="grid gap-0 divide-y divide-gray-200 dark:divide-gray-800 lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+          {#each childOrder as childId}
+            {@const child = status.robotOperator.runtime.children[childId]}
+            <div class="p-3">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-medium text-gray-900 dark:text-gray-100">{childLabels[childId]}</span>
+                <span class={child.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}>
+                  {child.enabled ? 'enabled' : 'disabled'}
+                </span>
+              </div>
+              <div class="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                <div>Graph: {child.graph}</div>
+                <div>Next: {localTime(child.nextRunAt)}</div>
+                <div>Last admitted: {localTime(child.lastAdmittedAt)}</div>
+                <div>Outcome: {child.lastOutcome || '—'}</div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="border-t border-gray-200 p-3 font-medium text-gray-900 dark:border-gray-800 dark:text-gray-100">Recent boredom episodes</div>
+      {#if status.robotOperator.episodes.length === 0}
+        <div class="border-t border-gray-200 p-4 text-gray-500 dark:border-gray-800 dark:text-gray-400">No boredom episodes recorded.</div>
+      {:else}
+        <div class="divide-y divide-gray-200 border-t border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+          {#each status.robotOperator.episodes as episode}
+            <div class="p-3">
+              <div class="flex justify-between gap-3">
+                <span class="font-medium text-gray-900 dark:text-gray-100">{childLabels[episode.child] || episode.child}</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{episode.state}</span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {localTime(episode.createdAt)} · {episode.source} · {episode.downstreamCount} downstream · {episode.outcome}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
 
     <section class="rounded border border-gray-200 dark:border-gray-800">
       <div class="border-b border-gray-200 p-3 font-semibold text-gray-900 dark:border-gray-800 dark:text-gray-100">Coordinator work</div>

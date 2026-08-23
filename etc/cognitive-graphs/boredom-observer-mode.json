@@ -1,0 +1,118 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Boredom Observer Mode",
+  "description": "Processes one correlated current camera image as a robot-autonomy stimulus. It records a private thought and delegates any speech, sensing, or physical response to Environment Mode.",
+  "cognitiveMode": "environment",
+  "last_modified": "2026-08-23",
+  "nodes": [
+    {
+      "id": "observation",
+      "type": "environmentNode",
+      "position": { "x": 60, "y": 180 },
+      "data": { "label": "Current Robot Observation", "nodeType": "environment_observation", "properties": {} }
+    },
+    {
+      "id": "image-input",
+      "type": "environmentNode",
+      "position": { "x": 350, "y": 330 },
+      "data": { "label": "Correlated Current Image", "nodeType": "environment_image_input", "properties": {} }
+    },
+    {
+      "id": "instructions",
+      "type": "inputNode",
+      "position": { "x": 350, "y": -60 },
+      "data": {
+        "label": "Observer Policy",
+        "nodeType": "text_input",
+        "properties": { "message": "", "inputKey": "environmentTaskInstruction" }
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": { "x": 60, "y": 500 },
+      "data": { "label": "Persona Loader", "nodeType": "persona_loader", "properties": {} }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": { "x": 350, "y": 500 },
+      "data": {
+        "label": "Persona Formatter",
+        "nodeType": "persona_formatter",
+        "properties": { "includeValues": true, "includeGoals": true, "includePersonality": true }
+      }
+    },
+    {
+      "id": "context",
+      "type": "operatorNode",
+      "position": { "x": 700, "y": 170 },
+      "data": { "label": "Observer Context", "nodeType": "robot_operator_context_builder", "properties": {} }
+    },
+    {
+      "id": "llm",
+      "type": "llmNode",
+      "position": { "x": 1060, "y": 170 },
+      "data": {
+        "label": "Observer Deliberation",
+        "nodeType": "model_router",
+        "properties": { "role": "persona", "maxTokens": 640, "temperature": 0.55 }
+      }
+    },
+    {
+      "id": "stripper",
+      "type": "outputNode",
+      "position": { "x": 1350, "y": 170 },
+      "data": { "label": "Thinking Stripper", "nodeType": "thinking_stripper", "properties": {} }
+    },
+    {
+      "id": "parser",
+      "type": "operatorNode",
+      "position": { "x": 1640, "y": 170 },
+      "data": { "label": "Observer Decision", "nodeType": "robot_operator_decision_parser", "properties": {} }
+    },
+    {
+      "id": "private-thought",
+      "type": "outputNode",
+      "position": { "x": 1960, "y": 420 },
+      "data": {
+        "label": "Record Private Observation",
+        "nodeType": "inner_dialogue_buffer",
+        "properties": {
+          "tags": ["robot-operator", "boredom-observer", "autonomy-trigger", "inner"],
+          "dialogueSource": "boredom-observer",
+          "role": "reflection",
+          "captureMemory": false
+        }
+      }
+    },
+    {
+      "id": "environment-dispatch",
+      "type": "operatorNode",
+      "position": { "x": 2300, "y": 170 },
+      "data": {
+        "label": "Delegate to Environment Mode",
+        "nodeType": "robot_operator_environment_dispatch",
+        "properties": { "graph": "environment", "maxSteps": 4 }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e-observation-image", "source": "observation", "target": "image-input", "sourceHandle": "visual", "targetHandle": "visual", "type": "default", "data": { "type": "object" } },
+    { "id": "e-observations-images", "source": "observation", "target": "image-input", "sourceHandle": "visuals", "targetHandle": "visuals", "type": "default", "data": { "type": "array" } },
+    { "id": "e-observation-context", "source": "observation", "target": "context", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
+    { "id": "e-images-context", "source": "image-input", "target": "context", "sourceHandle": "images", "targetHandle": "images", "type": "default", "data": { "type": "array" } },
+    { "id": "e-frames-context", "source": "image-input", "target": "context", "sourceHandle": "frames", "targetHandle": "frames", "type": "default", "data": { "type": "array" } },
+    { "id": "e-instructions-context", "source": "instructions", "target": "context", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } },
+    { "id": "e-persona-format", "source": "persona-loader", "target": "persona-formatter", "sourceHandle": "persona", "targetHandle": "persona", "type": "default", "data": { "type": "object" } },
+    { "id": "e-persona-context", "source": "persona-formatter", "target": "context", "sourceHandle": "formatted", "targetHandle": "personaText", "type": "default", "data": { "type": "string" } },
+    { "id": "e-context-llm", "source": "context", "target": "llm", "sourceHandle": "messages", "targetHandle": "messages", "type": "default", "data": { "type": "array" } },
+    { "id": "e-llm-stripper", "source": "llm", "target": "stripper", "sourceHandle": "response", "targetHandle": "response", "type": "default", "data": { "type": "llm_response" } },
+    { "id": "e-stripper-parser", "source": "stripper", "target": "parser", "sourceHandle": "stripped", "targetHandle": "response", "type": "default", "data": { "type": "string" } },
+    { "id": "e-parser-thought", "source": "parser", "target": "private-thought", "sourceHandle": "reason", "targetHandle": "text", "type": "default", "data": { "type": "string" } },
+    { "id": "e-parser-passthrough", "source": "parser", "target": "private-thought", "sourceHandle": "decision", "targetHandle": "passthrough", "type": "default", "data": { "type": "object" } },
+    { "id": "e-thought-dispatch", "source": "private-thought", "target": "environment-dispatch", "sourceHandle": "passthrough", "targetHandle": "decision", "type": "default", "data": { "type": "object" } },
+    { "id": "e-observation-dispatch", "source": "observation", "target": "environment-dispatch", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } }
+  ]
+}

@@ -137,10 +137,6 @@ dist/
 build/
 
 # Mobile build artifacts (large binary files - regenerate with build-mobile.sh)
-apps/mobile/android/app/libs/
-apps/mobile/android/app/src/main/assets/
-apps/mobile/www/
-apps/mobile/releases/
 *mobile-build-backup*
 
 # APK downloads (built artifacts, too large for git)
@@ -148,6 +144,8 @@ apps/site/public/downloads/*.apk
 
 # React Native build artifacts
 apps/react-native/node_modules/
+apps/react-native/generated/
+apps/react-native/releases/
 apps/react-native/android/app/debug.keystore
 apps/react-native/android/app/build/
 apps/react-native/android/app/src/main/assets/index.android.bundle
@@ -163,10 +161,6 @@ apps/react-native/ios/Pods/
 apps/react-native/ios/build/
 apps/react-native/.bundle/
 apps/react-native/*.jsbundle
-
-# Capacitor (deprecated - archived to archive/capacitor-mobile branch)
-# Ignore if recreated by accidental builds
-apps/mobile/
 
 # ============================================
 # ENVIRONMENT & SECRETS

@@ -1,7 +1,12 @@
 #!/usr/bin/env tsx
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  isMaintainedSourcePath,
+  loadMaintainedSourcePolicy,
+  MAINTAINED_SURFACE_DOCUMENT,
+} from './maintained-source-policy.js';
 
 type AuditItem = {
   path: string;
@@ -12,9 +17,14 @@ type AuditItem = {
 };
 
 const ROOT = process.cwd();
+const args = process.argv.slice(2);
+const unknownArgs = args.filter(arg => arg !== '--dry-run');
+if (unknownArgs.length > 0) throw new Error(`Unknown argument: ${unknownArgs[0]}`);
+const DRY_RUN = args.includes('--dry-run');
 const OUT_DIR = path.join(ROOT, 'docs/audits');
 const JSON_OUT = path.join(OUT_DIR, 'maintained-source-inventory.json');
 const MD_OUT = path.join(OUT_DIR, 'maintained-source-inventory.md');
+const maintainedPolicy = loadMaintainedSourcePolicy(ROOT);
 
 function gitLsFiles(): string[] {
   return execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
@@ -24,34 +34,25 @@ function gitLsFiles(): string[] {
 }
 
 function isMaintained(file: string): boolean {
-  if (!existsSync(path.join(ROOT, file))) return false;
-  if (file.startsWith('apps/code-oss/')) return false;
-  if (file.startsWith('apps/mobile/')) return false;
-  if (file.startsWith('vendor/')) return false;
-  if (file.startsWith('external/')) return false;
-  if (file.startsWith('data/user-data/')) return false;
-  if (file.startsWith('logs/')) return false;
-  if (file.startsWith('out/')) return false;
-  if (file.startsWith('memory/')) return false;
-  if (file.startsWith('metahuman-runs/')) return false;
-  if (file.startsWith('profiles/') && file !== 'profiles/README.md') return false;
-  if (file === 'audit-state.json' || file === 'docs/audit-scratchpad.md') return false;
-  if (file === 'report.json' || file.endsWith('.log')) return false;
-  if (/\.(gguf|ggml|safetensors|pth|pt|onnx|apk|png|jpg|jpeg|gif|webp|ico)$/i.test(file)) return false;
-  return true;
+  return existsSync(path.join(ROOT, file)) && isMaintainedSourcePath(file, maintainedPolicy);
 }
 
 function areaFor(file: string): string {
   if (file.startsWith('packages/core/')) return 'core-engine';
   if (file.startsWith('apps/site/')) return 'web-interface';
+  if (file.startsWith('apps/robot-friend/')) return 'robot-interface';
   if (file.startsWith('brain/agents/')) return 'agents';
   if (file.startsWith('brain/services/')) return 'brain-services';
   if (file.startsWith('brain/training/')) return 'training';
+  if (file.startsWith('brain/scripts/')) return 'brain-scripts';
+  if (file === 'brain/mobile-agents.ts' || file === 'brain/mobile-handlers.ts') return 'mobile-runtime';
+  if (file.startsWith('brain/policies/') || file.startsWith('brain/rules/')) return 'brain-policy';
   if (file.startsWith('packages/cli/')) return 'cli';
   if (file.startsWith('packages/agent-runtime/')) return 'agent-runtime';
   if (file.startsWith('packages/server/')) return 'server-package';
   if (file.startsWith('packages/local-model-service/')) return 'local-model-service';
   if (file.startsWith('apps/react-native/')) return 'mobile-interface';
+  if (file.startsWith('external/')) return 'external-integration';
   if (file.startsWith('scripts/')) return 'scripts';
   if (file.startsWith('bin/')) return 'bin';
   if (file.startsWith('tests/')) return 'tests';
@@ -61,7 +62,7 @@ function areaFor(file: string): string {
 }
 
 function kindFor(file: string): string {
-  if (/\.(ts|tsx|js|jsx|mjs|svelte|astro)$/.test(file)) return 'code';
+  if (/\.(ts|tsx|js|jsx|mjs|svelte|astro|py)$/.test(file)) return 'code';
   if (/\.md$/.test(file)) return 'docs';
   if (/\.json$/.test(file)) return 'json';
   if (/\.ya?ml$/.test(file)) return 'yaml';
@@ -79,10 +80,9 @@ function priorityFor(area: string, kind: string): number {
 }
 
 function lineCount(file: string): number | undefined {
-  if (!/\.(ts|tsx|js|jsx|mjs|svelte|astro|md|json|sh)$/.test(file)) return undefined;
+  if (!/\.(ts|tsx|js|jsx|mjs|svelte|astro|py|md|json|ya?ml|sh)$/.test(file)) return undefined;
   try {
-    const output = execFileSync('wc', ['-l', file], { cwd: ROOT, encoding: 'utf8' }).trim();
-    return Number(output.split(/\s+/)[0]);
+    return readFileSync(path.join(ROOT, file), 'utf8').split('\n').length - 1;
   } catch {
     return undefined;
   }
@@ -120,9 +120,6 @@ const oversized = codeItems
   .filter((item) => (item.lineCount ?? 0) >= 800)
   .sort((a, b) => (b.lineCount ?? 0) - (a.lineCount ?? 0));
 
-mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(JSON_OUT, `${JSON.stringify({ generatedAt, total: items.length, byArea: Object.fromEntries(byArea), byKind: Object.fromEntries(byKind), items }, null, 2)}\n`);
-
 const md: string[] = [];
 md.push('# Maintained Source Inventory');
 md.push('');
@@ -130,6 +127,7 @@ md.push(`Generated: ${generatedAt}`);
 md.push('');
 md.push(`Total maintained files: ${items.length}`);
 md.push(`Code files: ${codeItems.length}`);
+md.push(`Policy: \`${MAINTAINED_SURFACE_DOCUMENT}\``);
 md.push('');
 md.push('## By Area');
 md.push('');
@@ -160,9 +158,14 @@ md.push('');
 md.push('Full machine-readable inventory: `docs/audits/maintained-source-inventory.json`.');
 md.push('');
 
-writeFileSync(MD_OUT, md.join('\n'));
-
-console.log(`Wrote ${path.relative(ROOT, JSON_OUT)}`);
-console.log(`Wrote ${path.relative(ROOT, MD_OUT)}`);
+if (DRY_RUN) {
+  console.log(`Validated maintained source policy: ${MAINTAINED_SURFACE_DOCUMENT}`);
+} else {
+  mkdirSync(OUT_DIR, { recursive: true });
+  writeFileSync(JSON_OUT, `${JSON.stringify({ generatedAt, total: items.length, byArea: Object.fromEntries(byArea), byKind: Object.fromEntries(byKind), items }, null, 2)}\n`);
+  writeFileSync(MD_OUT, md.join('\n'));
+  console.log(`Wrote ${path.relative(ROOT, JSON_OUT)}`);
+  console.log(`Wrote ${path.relative(ROOT, MD_OUT)}`);
+}
 console.log(`Maintained files: ${items.length}`);
 console.log(`Code files: ${codeItems.length}`);

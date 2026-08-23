@@ -5,7 +5,7 @@
 # This script:
 # 1. Auto-increments versionCode (and optionally version string)
 # 2. Builds the APK using build-mobile.sh
-# 3. Copies APK to apps/mobile/releases/ with correct naming
+# 3. Copies APK to apps/react-native/releases/ with correct naming
 # 4. Updates version.json for server-side version checks
 #
 # Usage:
@@ -19,7 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RN_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$RN_DIR/../.."
-RELEASES_DIR="$ROOT_DIR/apps/mobile/releases"
+RELEASES_DIR="$RN_DIR/releases"
 VERSION_FILE="$RELEASES_DIR/version.json"
 
 # Parse arguments

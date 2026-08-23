@@ -1,6 +1,7 @@
 {
 	"name": "metahuman",
 	"version": "1.0.0",
+	"private": true,
 	"description": "An autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality—operating 24/7 as a seamless extension of yourself",
 	"keywords": [
 		"ai",
@@ -65,16 +66,11 @@
 		"typecheck:core": "pnpm --dir packages/core exec tsc --noEmit",
 		"typecheck:cli": "pnpm --dir packages/cli exec tsc --noEmit",
 		"typecheck:site": "cd apps/site && pnpm exec astro check",
-		"dev": "NODE_OPTIONS='--max-old-space-size=4096' cd apps/site && pnpm dev",
+		"dev": "cd apps/site && NODE_OPTIONS='--max-old-space-size=4096' pnpm dev",
 		"build": "pnpm check:architecture && pnpm validate:user-agnostic && pnpm validate:graphs && pnpm validate:tts-node-ownership && pnpm validate:tts-delivery-queue && pnpm validate:voice-service-ownership && cd apps/site && pnpm build",
 		"start": "cd apps/site && pnpm preview",
-		"mobile:dev": "cd apps/mobile && ./scripts/dev.sh",
-		"mobile:sync": "cd apps/mobile && npx cap sync",
-		"mobile:open": "cd apps/mobile && npx cap open android",
-		"studio": "cd apps/code-oss && ./launch.sh",
-		"studio:dev": "cd apps/code-oss && ./launch-dev.sh",
-		"studio:build": "cd apps/code-oss && ./build.sh",
-		"studio:watch": "cd apps/code-oss && bash -c 'source ~/.nvm/nvm.sh && nvm use && npm run watchd'"
+		"mobile:dev": "pnpm --dir apps/react-native dev",
+		"mobile:build": "pnpm --dir apps/react-native build"
 	},
 	"dependencies": {
 		"dotenv": "^17.2.3",

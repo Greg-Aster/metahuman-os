@@ -2,7 +2,7 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Robot Operator Mode",
-  "description": "Shared autonomous robot decision workflow. Consolidates an agent-supplied instruction with current perception, trigger information, persona, recent conversation, and unified inner context, then delegates one intention to Environment Mode without selecting robot actions itself.",
+  "description": "Deprecated compatibility graph for already-admitted legacy Robot Observer cycles. It uses only the current correlated observation, records a private thought, and delegates outward behavior to Environment Mode.",
   "cognitiveMode": "environment",
   "last_modified": "2026-08-22",
   "nodes": [
@@ -28,18 +28,6 @@
         "label": "Correlated Robot Image",
         "nodeType": "environment_image_input",
         "properties": {}
-      }
-    },
-    {
-      "id": "conversation-history",
-      "type": "contextNode",
-      "position": { "x": 80, "y": -80 },
-      "width": 250,
-      "height": 110,
-      "data": {
-        "label": "Conversation and Inner Context",
-        "nodeType": "conversation_history",
-        "properties": { "mode": "conversation", "limit": 20 }
       }
     },
     {
@@ -159,28 +147,13 @@
       "width": 280,
       "height": 150,
       "data": {
-        "label": "Publish Operator Idle Thought",
+        "label": "Record Private Compatibility Thought",
         "nodeType": "inner_dialogue_buffer",
         "properties": {
-          "tags": ["robot-operator", "observation", "decision-rationale", "idle-thought", "inner"],
+          "tags": ["robot-operator", "legacy-observer", "autonomy-trigger", "inner"],
           "dialogueSource": "robot-operator-mode",
           "role": "reflection",
           "captureMemory": false
-        }
-      }
-    },
-    {
-      "id": "idle-thought-tts",
-      "type": "outputNode",
-      "position": { "x": 2380, "y": 560 },
-      "width": 280,
-      "height": 140,
-      "data": {
-        "label": "Speak Visible Idle Thought",
-        "nodeType": "tts",
-        "properties": {
-          "source": "robot-operator-mode",
-          "defaultMode": "inner"
         }
       }
     }
@@ -230,15 +203,6 @@
       "targetHandle": "frames",
       "type": "default",
       "data": { "type": "array", "comment": "Frame correlation metadata" }
-    },
-    {
-      "id": "e-conversation-history-history-operator-context-conversationHistory",
-      "source": "conversation-history",
-      "target": "operator-context",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": { "type": "array", "comment": "Canonical recent conversation with unified inner context" }
     },
     {
       "id": "e-operator-instructions-text-operator-context-instruction",
@@ -311,15 +275,6 @@
       "targetHandle": "text",
       "type": "default",
       "data": { "type": "string", "comment": "Publish the concise visual observation and decision rationale as an idle thought" }
-    },
-    {
-      "id": "e-reason-inner-dialogue-text-idle-thought-tts-innerDialogue",
-      "source": "reason-inner-dialogue",
-      "target": "idle-thought-tts",
-      "sourceHandle": "text",
-      "targetHandle": "innerDialogue",
-      "type": "default",
-      "data": { "type": "string", "comment": "Send only canonical Inner Dialogue Buffer-admitted text to the standard TTS Output node" }
     },
     {
       "id": "e-reason-inner-dialogue-passthrough-environment-dispatch-decision",

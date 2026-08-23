@@ -27,14 +27,19 @@
       "startOnSystemBoot": true,
       "autoRestart": true,
       "maxRetries": 3,
-      "inactivityThreshold": 300,
-      "jitterMs": 60000,
+      "boredomObserverInactivityThreshold": 300,
+      "boredomObserverJitterMs": 60000,
       "boredomMovementInactivityThreshold": 600,
       "boredomMovementJitterMs": 120000,
+      "boredomReflectionInactivityThreshold": 900,
+      "boredomReflectionJitterMs": 180000,
       "maxCycleSteps": 8,
       "graph": "robot-operator",
+      "boredomObserverGraph": "boredom-observer",
+      "boredomMovementGraph": "boredom-movement",
+      "boredomReflectionGraph": "boredom-reflection",
       "environmentGraph": "environment",
-      "comment": "Robot autonomy timer owner. Robot Observer and Boredom Movement supply trigger-specific instructions to the shared Robot Operator Mode decision graph."
+      "comment": "Robot-autonomy scheduler. Semi mode uses independent idle timers; full mode rotates continuously across Boredom Observer, Movement, and Reflection between the Active Operator cooldown. Child triggers deliberate in specialized graphs and delegate all speech and physical behavior to Environment Mode."
     },
     "maintenance-service": {
       "id": "maintenance-service",

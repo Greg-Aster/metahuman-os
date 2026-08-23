@@ -19,6 +19,18 @@ const config: TriggerManagerConfig = {
     quietHours: { enabled: false, start: '22:00', end: '08:00' },
   },
   agents: {
+    'boredom-observer': {
+      id: 'boredom-observer',
+      enabled: true,
+      type: 'manual',
+      lifecycle: 'workflow',
+      runtimeOwner: 'robot-operator',
+      handler: 'workflow.boredom-observer',
+      priority: 'low',
+      allowedModes: ['reactive', 'semi', 'full'],
+      startupPolicy: 'skip',
+      maxRetries: 1,
+    },
     organizer: {
       id: 'organizer',
       enabled: true,
@@ -112,6 +124,15 @@ try {
   assert.equal(initial.scope, 'system');
   assert.equal(manager.getSnapshot().config.runtimeRevision, 1);
   assert.equal(manager.getSnapshot().timezone, 'UTC');
+  assert.equal(manager.getSnapshot().triggers.some(trigger => trigger.id === 'boredom-observer'), false);
+  assert.throws(
+    () => service.update({ agents: { 'boredom-observer': { enabled: false } } }, 'owner'),
+    /owned by Robot Operator/i,
+  );
+  assert.throws(
+    () => service.unregisterAgent('boredom-observer', 'owner'),
+    /owned by Robot Operator/i,
+  );
 
   manager.start();
   assert.equal(manager.getSnapshot().lifecycle, 'running');

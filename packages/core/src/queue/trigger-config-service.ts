@@ -19,6 +19,7 @@ export interface AgentTriggerConfig {
   enabled: boolean;
   type: TriggerType;
   lifecycle: AgentLifecycleClass;
+  runtimeOwner?: 'trigger-manager' | 'robot-operator';
   handler: string;
   priority: 'low' | 'normal' | 'high';
   resource?: WorkResource;
@@ -77,6 +78,7 @@ const AGENT_PATCH_FIELDS = new Set([
   'enabled',
   'type',
   'lifecycle',
+  'runtimeOwner',
   'handler',
   'priority',
   'resource',
@@ -189,6 +191,9 @@ function normalizeAgent(agentId: string, raw: Record<string, any>): AgentTrigger
   }
   if (lifecycle === 'service') {
     throw new Error(`agents.${agentId} is a persistent service and belongs in services.json`);
+  }
+  if (raw.runtimeOwner !== undefined && !['trigger-manager', 'robot-operator'].includes(raw.runtimeOwner)) {
+    throw new Error(`agents.${agentId}.runtimeOwner is invalid`);
   }
   const priority = raw.priority ?? 'normal';
   if (!['low', 'normal', 'high'].includes(priority)) throw new Error(`agents.${agentId}.priority is invalid`);
@@ -365,6 +370,9 @@ export class TriggerConfigService {
     const mergedAgents: Record<string, Record<string, unknown>> = { ...current.config.agents };
     for (const [agentId, values] of Object.entries(patch.agents || {})) {
       if (!mergedAgents[agentId]) throw new Error(`Unknown trigger: ${agentId}`);
+      if (mergedAgents[agentId]?.runtimeOwner === 'robot-operator') {
+        throw new Error(`${agentId} is owned by Robot Operator, not Trigger Manager`);
+      }
       const merged = { ...mergedAgents[agentId] };
       for (const [field, value] of Object.entries(values)) {
         // JSON PATCH callers use null to clear type-specific fields. Keeping an
@@ -388,6 +396,9 @@ export class TriggerConfigService {
 
   registerAgent(agentId: string, config: Record<string, unknown>, actor: string): TriggerConfigRead {
     assertAgentId(agentId);
+    if (config.runtimeOwner === 'robot-operator') {
+      throw new Error('Robot Operator children cannot be registered through Trigger Manager');
+    }
     const current = this.load(false);
     if (current.config.agents[agentId]) throw new Error(`Trigger already registered: ${agentId}`);
     return this.commit(current, {
@@ -403,6 +414,9 @@ export class TriggerConfigService {
     assertAgentId(agentId);
     const current = this.load(false);
     if (!current.config.agents[agentId]) throw new Error(`Trigger is not registered: ${agentId}`);
+    if (current.config.agents[agentId]?.runtimeOwner === 'robot-operator') {
+      throw new Error(`${agentId} is owned by Robot Operator, not Trigger Manager`);
+    }
     const agents = { ...current.config.agents };
     delete agents[agentId];
     return this.commit(current, {

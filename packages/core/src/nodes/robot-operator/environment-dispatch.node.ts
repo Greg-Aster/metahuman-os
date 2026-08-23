@@ -99,7 +99,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       step: 1,
     },
   },
-  description: 'Admits only Robot Observer decisions that require environment work; observation-only decisions stop after the Idle Thought.',
+  description: 'Admits only boredom-trigger decisions that require outward work; private reflections stop before Environment Mode.',
   async execute(inputs, context, properties) {
     const decision = isRecord(inputs.decision)
       ? inputs.decision as unknown as RobotOperatorDecision

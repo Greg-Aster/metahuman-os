@@ -6,9 +6,17 @@ import type { AutonomyMode } from './queue/types.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
+export const ROBOT_OPERATOR_RUNTIME_FILE = path.join(systemPaths.logs, 'run', 'robot-operator-state.json')
 
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
-export type RobotOperatorStimulusAgent = 'robot-observer' | 'boredom-movement'
+export type RobotOperatorStimulusAgent =
+  | 'boredom-observer'
+  | 'boredom-movement'
+  | 'boredom-reflection'
+export type RobotOperatorCycleRequester =
+  | RobotOperatorStimulusAgent
+  | 'robot-observer'
+  | 'environment-perception'
 
 export interface RobotObserverCycleMetadata {
   cycleId: string
@@ -16,52 +24,92 @@ export interface RobotObserverCycleMetadata {
   maxSteps: number
   triggerSource: RobotObserverTriggerSource
   graph: string
-  requestedBy: RobotOperatorStimulusAgent | 'environment-perception'
+  requestedBy: RobotOperatorCycleRequester
   instruction?: string
 }
 
 export interface RobotOperatorConfig {
   enabled: boolean
-  inactivityThresholdSeconds: number
-  jitterMs: number
+  boredomObserverInactivityThresholdSeconds: number
+  boredomObserverJitterMs: number
   boredomMovementInactivityThresholdSeconds: number
   boredomMovementJitterMs: number
+  boredomReflectionInactivityThresholdSeconds: number
+  boredomReflectionJitterMs: number
   maxCycleSteps: number
   graph: string
+  boredomObserverGraph: string
+  boredomMovementGraph: string
+  boredomReflectionGraph: string
   environmentGraph: string
   sessionId?: string
 }
 
+export interface RobotOperatorChildRuntimeState {
+  id: RobotOperatorStimulusAgent
+  enabled: boolean
+  handler: string
+  graph: string
+  nextRunAt?: string
+  lastAdmittedAt?: string
+  lastTaskId?: string
+  lastOutcome?: string
+}
+
+export interface RobotOperatorRuntimeState {
+  version: 1
+  serviceId: 'robot-operator'
+  updatedAt: string
+  mode: AutonomyMode
+  lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped'
+  reason: string
+  fullCooldownMs?: number
+  children: Record<RobotOperatorStimulusAgent, RobotOperatorChildRuntimeState>
+}
+
 const DEFAULT_CONFIG: RobotOperatorConfig = {
   enabled: true,
-  inactivityThresholdSeconds: 300,
-  jitterMs: 60_000,
+  boredomObserverInactivityThresholdSeconds: 300,
+  boredomObserverJitterMs: 60_000,
   boredomMovementInactivityThresholdSeconds: 600,
   boredomMovementJitterMs: 120_000,
+  boredomReflectionInactivityThresholdSeconds: 900,
+  boredomReflectionJitterMs: 180_000,
   maxCycleSteps: 8,
   graph: 'robot-operator',
+  boredomObserverGraph: 'boredom-observer',
+  boredomMovementGraph: 'boredom-movement',
+  boredomReflectionGraph: 'boredom-reflection',
   environmentGraph: 'environment',
 }
 
-const ROBOT_OPERATOR_POLICY = `You are Robot Operator, the robot's autonomous decision engine. Use the current robotStimulus, active persona, recent conversation and inner context, trigger information, and the trigger agent's focus to choose one high-level intention.
+const ROBOT_OPERATOR_POLICY = `You are a child autonomy trigger owned and scheduled by Robot Operator. You deliberate about one bounded opportunity; you do not execute robot commands, speak, or control hardware yourself.
 
-The current robotStimulus is the only evidence of what is present now. Recent context may shape relationship, preferences, continuity, and tone, but it cannot supply or override current observation facts, instructions, or unfinished tasks. Treat older requests and thoughts as context, not current authority.
+The current robotStimulus is the only evidence of what is present now. A sampled memory is historical inspiration only and is never evidence of the robot's current surroundings. Do not infer unseen obstacles, clearance, or people.
 
-Choose one intention directly related to the current stimulus and relevant context. State the desired outcome, not a physical method, and include one finite, observable stopping condition in the form "Complete when ..." that Environment Mode can test from available evidence. Environment Mode selects safe execution. For exploration or assessment, say what bounded evidence is sufficient; never delegate an open-ended scan, search, or investigation. Set requiresAction true only when the intention needs new sensing or an environment change. Otherwise set it false. Never claim execution started or completed.
+Choose at most one intention. If speech, sensing, or physical behavior is warranted, set requiresAction true and describe the desired outcome plus a finite stopping condition in the form "Complete when ...". Environment Mode alone selects and executes actions. Never delegate an open-ended scan, walk, search, survey, or investigation. If only a private reflection is warranted, set requiresAction false. Never claim execution started or completed, and never mention timer, boredom trigger, service, agent, workflow, or implementation details in the reason.
 
-Return one JSON object only: {"observed":"what the current stimulus shows","instruction":"one concise first-person intention","requiresAction":true,"reason":"one concise user-visible Idle Thought grounded in the current stimulus and relevant context"}`
+Return one JSON object only: {"observed":"what the supplied stimulus establishes","instruction":"one concise first-person intention or private reflection","requiresAction":true,"reason":"one concise private thought grounded in the supplied stimulus"}`
 
 const ROBOT_OPERATOR_AGENT_FOCUS: Record<RobotOperatorStimulusAgent, string> = {
-  'robot-observer': 'This is a routine observation opportunity. Notice what is currently happening and decide whether anything useful, helpful, or socially relevant warrants a response or action.',
-  'boredom-movement': 'This is a boredom and engagement opportunity after longer inactivity. Choose a contextually relevant way to engage, explore, communicate, or remain still. Do not default to a generic movement merely because the boredom timer fired.',
+  'boredom-observer': 'Use the single current camera observation. You may privately reflect, request a bounded closer inspection, request speech, or request one other bounded response through Environment Mode. Remaining still is valid. Do not turn a vague desire for more context into repeated movement.',
+  'boredom-movement': 'Choose one safe, bounded movement opportunity first, such as a posture change, stretch, expressive motion, or small reorientation supported by current capabilities. Environment Mode must execute it and assess the returned observation. Do not request open-ended locomotion or a room survey.',
+  'boredom-reflection': 'Use the sampled memory as historical inspiration. You may privately reflect, request speech, or request one bounded physical response through Environment Mode. The memory does not establish anything about the current environment.',
 }
 
 export function buildRobotOperatorInstruction(
-  agent: RobotOperatorStimulusAgent,
+  agent: RobotOperatorStimulusAgent | 'robot-observer',
   focus?: string,
 ): string {
+  const normalizedAgent = agent === 'robot-observer' ? 'boredom-observer' : agent
   const boundedFocus = typeof focus === 'string' ? focus.replace(/\s+/g, ' ').trim().slice(0, 1_000) : ''
-  return `${ROBOT_OPERATOR_POLICY}\n\nTrigger agent: ${agent}. ${boundedFocus || ROBOT_OPERATOR_AGENT_FOCUS[agent]}`
+  return `${ROBOT_OPERATOR_POLICY}\n\nTrigger agent: ${normalizedAgent}. ${boundedFocus || ROBOT_OPERATOR_AGENT_FOCUS[normalizedAgent]}`
+}
+
+function configuredGraph(value: unknown, fallback: string): string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim())
+    ? value.trim()
+    : fallback
 }
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -82,25 +130,25 @@ function serviceConfig(): Record<string, unknown> {
 
 export function loadRobotOperatorConfig(): RobotOperatorConfig {
   const configured = serviceConfig()
-  const graph = typeof configured.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.graph.trim())
-    ? configured.graph.trim()
-    : DEFAULT_CONFIG.graph
-  const environmentGraph = typeof configured.environmentGraph === 'string'
-    && /^[a-zA-Z0-9_-]{1,80}$/.test(configured.environmentGraph.trim())
-    ? configured.environmentGraph.trim()
-    : DEFAULT_CONFIG.environmentGraph
+  const graph = configuredGraph(configured.graph, DEFAULT_CONFIG.graph)
+  const environmentGraph = configuredGraph(configured.environmentGraph, DEFAULT_CONFIG.environmentGraph)
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
     ? configured.sessionId.trim()
     : undefined
   return {
     enabled: typeof configured.enabled === 'boolean' ? configured.enabled : DEFAULT_CONFIG.enabled,
-    inactivityThresholdSeconds: boundedNumber(
-      configured.inactivityThreshold,
-      DEFAULT_CONFIG.inactivityThresholdSeconds,
+    boredomObserverInactivityThresholdSeconds: boundedNumber(
+      configured.boredomObserverInactivityThreshold ?? configured.inactivityThreshold,
+      DEFAULT_CONFIG.boredomObserverInactivityThresholdSeconds,
       1,
       86_400,
     ),
-    jitterMs: boundedNumber(configured.jitterMs, DEFAULT_CONFIG.jitterMs, 0, 3_600_000),
+    boredomObserverJitterMs: boundedNumber(
+      configured.boredomObserverJitterMs ?? configured.jitterMs,
+      DEFAULT_CONFIG.boredomObserverJitterMs,
+      0,
+      3_600_000,
+    ),
     boredomMovementInactivityThresholdSeconds: boundedNumber(
       configured.boredomMovementInactivityThreshold,
       DEFAULT_CONFIG.boredomMovementInactivityThresholdSeconds,
@@ -113,8 +161,23 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       0,
       3_600_000,
     ),
+    boredomReflectionInactivityThresholdSeconds: boundedNumber(
+      configured.boredomReflectionInactivityThreshold,
+      DEFAULT_CONFIG.boredomReflectionInactivityThresholdSeconds,
+      1,
+      86_400,
+    ),
+    boredomReflectionJitterMs: boundedNumber(
+      configured.boredomReflectionJitterMs,
+      DEFAULT_CONFIG.boredomReflectionJitterMs,
+      0,
+      3_600_000,
+    ),
     maxCycleSteps: Math.floor(boundedNumber(configured.maxCycleSteps, DEFAULT_CONFIG.maxCycleSteps, 1, 10)),
     graph,
+    boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
+    boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
+    boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),
     environmentGraph,
     sessionId,
   }
@@ -131,22 +194,137 @@ function isConfiguredAgentEnabled(id: string): boolean {
   }
 }
 
-export function isRobotObserverEnabled(): boolean {
-  return isConfiguredAgentEnabled('robot-observer')
+export function isBoredomObserverEnabled(): boolean {
+  return isConfiguredAgentEnabled('boredom-observer')
 }
 
 export function isBoredomMovementEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-movement')
 }
 
+export function isBoredomReflectionEnabled(): boolean {
+  return isConfiguredAgentEnabled('boredom-reflection')
+}
+
+/** Compatibility for callers that still use the former child name. */
+export function isRobotObserverEnabled(): boolean {
+  return isBoredomObserverEnabled() || isConfiguredAgentEnabled('robot-observer')
+}
+
+export function isRobotOperatorChildEnabled(agent: RobotOperatorStimulusAgent): boolean {
+  if (agent === 'boredom-observer') return isBoredomObserverEnabled()
+  if (agent === 'boredom-movement') return isBoredomMovementEnabled()
+  return isBoredomReflectionEnabled()
+}
+
+export function robotOperatorChildGraph(
+  config: RobotOperatorConfig,
+  agent: RobotOperatorStimulusAgent,
+): string {
+  if (agent === 'boredom-observer') return config.boredomObserverGraph
+  if (agent === 'boredom-movement') return config.boredomMovementGraph
+  return config.boredomReflectionGraph
+}
+
+export function robotOperatorChildMaxSteps(
+  config: RobotOperatorConfig,
+  agent: RobotOperatorStimulusAgent,
+): number {
+  const childLimit = agent === 'boredom-observer' ? 4 : 3
+  return Math.max(1, Math.min(config.maxCycleSteps, childLimit))
+}
+
+export function nextRobotOperatorFullChild(
+  enabled: RobotOperatorStimulusAgent[],
+  cursor: number,
+): RobotOperatorStimulusAgent | null {
+  if (enabled.length === 0) return null
+  const normalizedCursor = Number.isFinite(cursor) ? Math.max(0, Math.floor(cursor)) : 0
+  return enabled[normalizedCursor % enabled.length] ?? null
+}
+
+export function robotOperatorFullDueAt(
+  now: number,
+  lastAdmittedAt: number,
+  cooldownMs: number,
+  minimumDelayMs = 1_000,
+): number {
+  return Math.max(
+    now + Math.max(1_000, minimumDelayMs),
+    Math.max(0, lastAdmittedAt) + Math.max(1_000, cooldownMs),
+  )
+}
+
 export function randomizedRobotOperatorIdleMs(
-  config: Pick<RobotOperatorConfig, 'inactivityThresholdSeconds' | 'jitterMs'>,
+  config: { inactivityThresholdSeconds: number; jitterMs: number },
   random: () => number = Math.random,
 ): number {
   const centerMs = Math.max(1_000, config.inactivityThresholdSeconds * 1_000)
   const jitterMs = Math.max(0, config.jitterMs)
   const sample = Math.max(0, Math.min(1, random()))
   return Math.max(1_000, Math.round(centerMs - jitterMs + sample * jitterMs * 2))
+}
+
+export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ROBOT_OPERATOR_RUNTIME_FILE, 'utf8')) as Record<string, any>
+    if (parsed?.version !== 1 || parsed.serviceId !== 'robot-operator') return null
+    if (!['reactive', 'semi', 'full'].includes(parsed.mode)) return null
+    if (!['starting', 'armed', 'dormant', 'admitting', 'stopped'].includes(parsed.lifecycle)) return null
+    const childIds: RobotOperatorStimulusAgent[] = [
+      'boredom-observer',
+      'boredom-movement',
+      'boredom-reflection',
+    ]
+    const children = {} as Record<RobotOperatorStimulusAgent, RobotOperatorChildRuntimeState>
+    for (const id of childIds) {
+      const child = parsed.children?.[id]
+      if (!child || typeof child !== 'object' || Array.isArray(child)) return null
+      const optionalText = (value: unknown, maxLength: number): string | undefined => (
+        typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : undefined
+      )
+      children[id] = {
+        id,
+        enabled: child.enabled === true,
+        handler: optionalText(child.handler, 100) ?? `workflow.${id}`,
+        graph: configuredGraph(child.graph, robotOperatorChildGraph(DEFAULT_CONFIG, id)),
+        ...(optionalText(child.nextRunAt, 50) ? { nextRunAt: optionalText(child.nextRunAt, 50) } : {}),
+        ...(optionalText(child.lastAdmittedAt, 50) ? { lastAdmittedAt: optionalText(child.lastAdmittedAt, 50) } : {}),
+        ...(optionalText(child.lastTaskId, 200) ? { lastTaskId: optionalText(child.lastTaskId, 200) } : {}),
+        ...(optionalText(child.lastOutcome, 500) ? { lastOutcome: optionalText(child.lastOutcome, 500) } : {}),
+      }
+    }
+    return {
+      version: 1,
+      serviceId: 'robot-operator',
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt.slice(0, 50) : '',
+      mode: parsed.mode,
+      lifecycle: parsed.lifecycle,
+      reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 200) : '',
+      ...(typeof parsed.fullCooldownMs === 'number'
+        ? { fullCooldownMs: boundedNumber(parsed.fullCooldownMs, 30_000, 1_000, 3_600_000) }
+        : {}),
+      children,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function writeRobotOperatorRuntimeState(
+  state: Omit<RobotOperatorRuntimeState, 'version' | 'serviceId' | 'updatedAt'>,
+): RobotOperatorRuntimeState {
+  const next: RobotOperatorRuntimeState = {
+    version: 1,
+    serviceId: 'robot-operator',
+    updatedAt: new Date().toISOString(),
+    ...state,
+  }
+  fs.mkdirSync(path.dirname(ROBOT_OPERATOR_RUNTIME_FILE), { recursive: true })
+  const temporary = `${ROBOT_OPERATOR_RUNTIME_FILE}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`)
+  fs.renameSync(temporary, ROBOT_OPERATOR_RUNTIME_FILE)
+  return next
 }
 
 export function robotObserverSourceAllowed(
@@ -182,7 +360,9 @@ export function readRobotObserverCycle(
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
       requestedBy !== 'robot-observer'
+      && requestedBy !== 'boredom-observer'
       && requestedBy !== 'boredom-movement'
+      && requestedBy !== 'boredom-reflection'
       && requestedBy !== 'environment-perception'
     )
   ) return null

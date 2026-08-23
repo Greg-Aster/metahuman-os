@@ -25,7 +25,10 @@
     if (roleLabel) return roleLabel;
     // Otherwise fall back to role-based defaults
     if (message.role === 'user' || message.role === 'thought') return $userDisplayNameStore;
-    if (message.role === 'assistant') return $personaNameStore;
+    if (message.role === 'assistant') {
+      const facet = message.meta?.facet;
+      return facet ? `${$personaNameStore} (${facet})` : $personaNameStore;
+    }
     // For other roles, derive from role
     return message.role;
   })();

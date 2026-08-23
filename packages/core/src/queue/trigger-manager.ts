@@ -232,6 +232,7 @@ export class TriggerManager extends EventEmitter {
     this.config = config;
     this.triggers.clear();
     for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+      if (agentConfig.runtimeOwner && agentConfig.runtimeOwner !== 'trigger-manager') continue;
       const prior = previous.get(agentId);
       this.triggers.set(agentId, {
         config: { ...agentConfig, id: agentConfig.id || agentId },

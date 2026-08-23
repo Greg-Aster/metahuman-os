@@ -149,6 +149,7 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Canonical recent conversation with unified inner context when enabled' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
+    { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
   ],
   outputs: [
     { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
@@ -183,6 +184,9 @@ export const robotOperatorContextBuilderNode = defineNode({
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
+    const memoryContext = Array.isArray(inputs.memoryContext)
+      ? inputs.memoryContext.slice(0, 5).map(memory => boundedObject(memory, 4_000))
+      : [];
     const images = selectedImageParts(observation, inputs.images, inputs.frames);
     const frames = [observation.visual, ...(observation.visuals ?? [])]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
@@ -207,7 +211,7 @@ export const robotOperatorContextBuilderNode = defineNode({
     const userContent = images.length > 0
       ? [{ type: 'text', text: stimulusText }, ...images]
       : stimulusText;
-    const supportingContext = personaText || recentContext.length > 0
+    const supportingContext = personaText || recentContext.length > 0 || memoryContext.length > 0
       ? {
           role: 'assistant',
           content: JSON.stringify({
@@ -217,6 +221,11 @@ export const robotOperatorContextBuilderNode = defineNode({
                 provenance: 'canonical_conversation_history',
                 includesUnifiedInnerContext: innerContextCount > 0,
                 entries: recentContext,
+              },
+              sampledMemories: {
+                provenance: 'historical_memory_inspiration',
+                currentEvidence: false,
+                entries: memoryContext,
               },
               currentEvidence: false,
             },
@@ -237,6 +246,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         personaIncluded: Boolean(personaText),
         recentContextCount: recentContext.length,
         innerContextCount,
+        memoryContextCount: memoryContext.length,
         imageCount: images.length,
       },
       valid: true,

@@ -72,7 +72,9 @@ export class ModeController extends EventEmitter {
       if (mode === 'reactive') {
         for (const task of getQueueManager().getAllTasks()) {
           const robotAutonomyWork = task.handler === 'workflow.robot-observer'
+            || task.handler === 'workflow.boredom-observer'
             || task.handler === 'workflow.boredom-movement'
+            || task.handler === 'workflow.boredom-reflection'
             || Boolean(task.input?.metadata?.robotObserver)
             || Boolean(task.input?.observation?.metadata?.robotObserver)
           if (task.source === 'autonomy' && robotAutonomyWork) {

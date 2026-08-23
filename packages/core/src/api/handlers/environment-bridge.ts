@@ -99,7 +99,12 @@ export function environmentObservationNeedsCognition(
   const hasFeedback = Boolean(observation.feedback?.length);
   const robotObserver = readRobotObserverCycle(observation);
   const autonomousCaptureEndedWithoutVisual = Boolean(
-    (robotObserver?.requestedBy === 'robot-observer' || robotObserver?.requestedBy === 'boredom-movement')
+    (
+      robotObserver?.requestedBy === 'robot-observer'
+      || robotObserver?.requestedBy === 'boredom-observer'
+      || robotObserver?.requestedBy === 'boredom-movement'
+      || robotObserver?.requestedBy === 'boredom-reflection'
+    )
     && !hasVisual
     && observation.feedback?.some(feedback => (
       feedback.type === 'completed'

@@ -67,10 +67,17 @@ export const robotOperatorDecisionParserNode = defineNode({
     { name: 'valid', type: 'boolean', description: 'Whether the model response satisfied the graph contract' },
     { name: 'error', type: 'string', description: 'Parsing or contract error' },
   ],
-  properties: {},
-  propertySchemas: {},
+  properties: { requireAction: false },
+  propertySchemas: {
+    requireAction: {
+      type: 'toggle',
+      default: false,
+      label: 'Require Environment Action',
+      description: 'Reject observation-only decisions when this graph represents an action-first trigger.',
+    },
+  },
   description: 'Validates one grounded observation and free-form intention without classifying or inventing robot behavior.',
-  async execute(inputs) {
+  async execute(inputs, _context, properties) {
     const raw = typeof inputs.response === 'string'
       ? inputs.response
       : typeof inputs.response?.content === 'string'
@@ -95,6 +102,9 @@ export const robotOperatorDecisionParserNode = defineNode({
     if (!instruction) return invalid('Environment delegation requires a high-level intention.');
     if (typeof parsed.requiresAction !== 'boolean') {
       return invalid('Robot Operator decision requires an explicit requiresAction boolean.');
+    }
+    if (properties?.requireAction === true && parsed.requiresAction !== true) {
+      return invalid('This Robot Operator trigger requires an Environment Mode action intention.');
     }
     const decision: RobotOperatorDecision = {
       observed,

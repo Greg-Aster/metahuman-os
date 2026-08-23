@@ -1,11 +1,11 @@
 /**
- * Astro Configuration for Mobile (Capacitor) Builds
+ * Astro configuration for the React Native WebView build.
  *
  * This config creates a static build that can be bundled into the APK.
  * Key differences from the server config:
  * - output: 'static' - Pre-renders all pages
  * - No Node adapter - Works without a server
- * - API routes excluded - Mobile uses remote API
+ * - API routes excluded - the embedded Node.js runtime owns the API
  */
 
 import { defineConfig } from 'astro/config';
@@ -58,9 +58,9 @@ export default defineConfig({
   // with file:///android_asset/www/index.html
   base: './',
 
-  // Output directly to mobile/www folder (separation of concerns)
-  // This way the mobile build never touches the server's dist folder
-  outDir: '../mobile/www',
+  // Keep generated mobile UI inside the active React Native application.
+  // The build script copies this into nodejs-assets and removes it afterwards.
+  outDir: '../react-native/generated/www',
 
   // Build configuration
   build: {

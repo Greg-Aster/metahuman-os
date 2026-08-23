@@ -11,17 +11,12 @@
   // Parse thinking blocks from content
   $: parsed = parseThinkBlocks(message.content);
   $: hasThinking = parsed.thinking.length > 0;
-
-  // Build role label with facet if present
-  $: facet = message.meta?.facet;
-  $: roleLabel = facet ? `MetaHuman (${facet})` : 'MetaHuman';
 </script>
 
 <BaseMessageCard
   {message}
   {index}
   {isSelected}
-  {roleLabel}
   roleIcon=""
   accentColor={message.meta?.displayColor}
   on:messageClick

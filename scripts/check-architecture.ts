@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import {
+  isMaintainedSourcePath,
+  loadMaintainedSourcePolicy,
+  MAINTAINED_SURFACE_DOCUMENT,
+} from './maintained-source-policy.js';
 
 type Violation = {
   id: string;
@@ -118,16 +123,6 @@ function readText(file: string): string | null {
 
 function isSource(file: string): boolean {
   return /\.(ts|tsx|js|jsx|mjs|svelte|astro)$/.test(file);
-}
-
-function isIgnoredSource(file: string): boolean {
-  const segments = file.split('/');
-  return file.startsWith('apps/code-oss/')
-    || segments.includes('node_modules')
-    || segments.includes('dist')
-    || segments.includes('build')
-    || file.startsWith('vendor/')
-    || file.startsWith('external/');
 }
 
 function fail(message: string): never {
@@ -256,7 +251,7 @@ function resolveImportPath(file: string, specifier: string): string | null {
   return resolved.startsWith('../') ? null : resolved;
 }
 
-function collectViolations(files: string[]): Violation[] {
+function collectViolations(files: string[], maintainedFiles: string[]): Violation[] {
   const violations: Violation[] = [];
   const seen = new Set<string>();
 
@@ -290,7 +285,7 @@ function collectViolations(files: string[]): Violation[] {
     }
   }
 
-  const sourceFiles = files.filter((file) => isSource(file) && !isIgnoredSource(file));
+  const sourceFiles = maintainedFiles.filter(isSource);
 
   for (const file of sourceFiles) {
     const content = readText(file);
@@ -332,18 +327,18 @@ function collectViolations(files: string[]): Violation[] {
     }
   }
 
-  const agentDirs = files
+  const agentDirs = maintainedFiles
     .filter((file) => file.startsWith('brain/agents/') && file.split('/').length >= 3)
     .map((file) => file.split('/')[2])
     .filter((name, index, all) => all.indexOf(name) === index);
 
   for (const dir of agentDirs) {
     const prefix = `brain/agents/${dir}/`;
-    const dirFiles = files.filter((file) => file.startsWith(prefix));
+    const dirFiles = maintainedFiles.filter((file) => file.startsWith(prefix));
     if (dirFiles.length === 0) continue;
-    const hasCore = files.includes(`${prefix}core.ts`);
-    const hasCli = files.includes(`${prefix}cli.ts`);
-    const hasIndex = files.includes(`${prefix}index.ts`);
+    const hasCore = maintainedFiles.includes(`${prefix}core.ts`);
+    const hasCli = maintainedFiles.includes(`${prefix}cli.ts`);
+    const hasIndex = maintainedFiles.includes(`${prefix}index.ts`);
     if (!hasCore || !hasCli || !hasIndex) {
       add(
         violations,
@@ -435,7 +430,11 @@ function writeBaseline(baselinePath: string, violations: Violation[]): void {
 
 const options = parseArgs(process.argv.slice(2));
 const files = gitLsFiles();
-const violations = collectViolations(files);
+const maintainedPolicy = loadMaintainedSourcePolicy(ROOT);
+const maintainedFiles = files.filter(file => (
+  existsSync(path.join(ROOT, file)) && isMaintainedSourcePath(file, maintainedPolicy)
+));
+const violations = collectViolations(files, maintainedFiles);
 
 if (options.updateBaseline) {
   writeBaseline(options.baselinePath, violations);
@@ -452,6 +451,7 @@ const newViolations = violations.filter((violation) => !baselineIds.has(violatio
 const resolvedViolations = baselineViolations.filter((violation) => !currentIds.has(violation.id));
 
 console.log(`Architecture baseline: ${repoRelative(options.baselinePath)}`);
+console.log(`Maintained source policy: ${MAINTAINED_SURFACE_DOCUMENT} (${maintainedFiles.length}/${files.length} tracked files)`);
 printSummary('Current architecture violations', violations);
 if (resolvedViolations.length > 0) {
   printSummary('Stale baseline violations', resolvedViolations);

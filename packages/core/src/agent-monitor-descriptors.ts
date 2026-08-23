@@ -53,8 +53,15 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'graph',
   'environmentGraph',
   'jitterMs',
+  'boredomObserverInactivityThreshold',
+  'boredomObserverJitterMs',
   'boredomMovementInactivityThreshold',
   'boredomMovementJitterMs',
+  'boredomReflectionInactivityThreshold',
+  'boredomReflectionJitterMs',
+  'boredomObserverGraph',
+  'boredomMovementGraph',
+  'boredomReflectionGraph',
   'maxCycleSteps',
   'sessionId',
 ]);
@@ -261,6 +268,28 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
   if (id === 'robot-operator') {
     variables.push(
       {
+        key: 'boredomObserverInactivityThreshold',
+        label: 'Boredom Observer Idle Seconds',
+        type: 'number',
+        value: typeof effective.boredomObserverInactivityThreshold === 'number'
+          ? effective.boredomObserverInactivityThreshold
+          : 300,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Semi-autonomous idle threshold for one current camera observation.',
+      },
+      {
+        key: 'boredomObserverJitterMs',
+        label: 'Boredom Observer Jitter Milliseconds',
+        type: 'number',
+        value: typeof effective.boredomObserverJitterMs === 'number'
+          ? effective.boredomObserverJitterMs
+          : 60000,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Random variation around the observation idle threshold.',
+      },
+      {
         key: 'boredomMovementInactivityThreshold',
         label: 'Boredom Movement Idle Seconds',
         type: 'number',
@@ -283,13 +312,59 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         description: 'Random variation around the boredom and engagement stimulus threshold.',
       },
       {
+        key: 'boredomReflectionInactivityThreshold',
+        label: 'Boredom Reflection Idle Seconds',
+        type: 'number',
+        value: typeof effective.boredomReflectionInactivityThreshold === 'number'
+          ? effective.boredomReflectionInactivityThreshold
+          : 900,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Semi-autonomous idle threshold for a memory-inspired robot reflection.',
+      },
+      {
+        key: 'boredomReflectionJitterMs',
+        label: 'Boredom Reflection Jitter Milliseconds',
+        type: 'number',
+        value: typeof effective.boredomReflectionJitterMs === 'number'
+          ? effective.boredomReflectionJitterMs
+          : 180000,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Random variation around the reflection idle threshold.',
+      },
+      {
         key: 'graph',
-        label: 'Decision Graph',
+        label: 'Legacy Perception Graph',
         type: 'text',
         value: typeof effective.graph === 'string' ? effective.graph : 'robot-operator',
         applyMode: 'restart',
         writable: true,
-        description: 'High-level graph used after an autonomous robot stimulus is collected.',
+        description: 'Compatibility graph name retained for older perception cycles.',
+      },
+      {
+        key: 'boredomObserverGraph',
+        label: 'Boredom Observer Graph',
+        type: 'text',
+        value: typeof effective.boredomObserverGraph === 'string' ? effective.boredomObserverGraph : 'boredom-observer',
+        applyMode: 'restart',
+        writable: true,
+      },
+      {
+        key: 'boredomMovementGraph',
+        label: 'Boredom Movement Graph',
+        type: 'text',
+        value: typeof effective.boredomMovementGraph === 'string' ? effective.boredomMovementGraph : 'boredom-movement',
+        applyMode: 'restart',
+        writable: true,
+      },
+      {
+        key: 'boredomReflectionGraph',
+        label: 'Boredom Reflection Graph',
+        type: 'text',
+        value: typeof effective.boredomReflectionGraph === 'string' ? effective.boredomReflectionGraph : 'boredom-reflection',
+        applyMode: 'restart',
+        writable: true,
       },
       {
         key: 'environmentGraph',

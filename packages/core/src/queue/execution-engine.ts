@@ -178,7 +178,9 @@ export class ExecutionEngine {
         const config = loadRobotOperatorConfig();
         robotObserver = beginEnvironmentPerceptionCycle(
           observation.metadata.correlationId,
-          typeof task.input.graph === 'string' ? task.input.graph : config.graph,
+          typeof task.input.graph === 'string' && task.input.graph !== 'robot-operator'
+            ? task.input.graph
+            : config.environmentGraph,
           config.maxCycleSteps,
         );
         if (robotObserver) {
@@ -255,7 +257,12 @@ export class ExecutionEngine {
             environmentTaskInstruction: taskInstruction,
             environmentActionSource: robotObserver?.triggerSource,
             robotObserver,
-            robotOperatorEnvironmentGraph: graphName === robotOperatorConfig.graph
+            robotOperatorEnvironmentGraph: [
+              robotOperatorConfig.graph,
+              robotOperatorConfig.boredomObserverGraph,
+              robotOperatorConfig.boredomMovementGraph,
+              robotOperatorConfig.boredomReflectionGraph,
+            ].includes(graphName)
               ? robotOperatorConfig.environmentGraph
               : undefined,
             abortSignal: context.signal,
@@ -275,13 +282,19 @@ export class ExecutionEngine {
       };
     });
     this.registerHandler('workflow.robot-observer', async (task, context) => {
-      const { executeRobotObserverWork } = await import('./robot-observer-handler.js');
-      return executeRobotObserverWork(task, context);
+      const { executeRobotAutonomyTriggerWork } = await import('./robot-autonomy-trigger-handler.js');
+      return executeRobotAutonomyTriggerWork(task, context);
     });
-    this.registerHandler('workflow.boredom-movement', async (task, context) => {
-      const { executeRobotObserverWork } = await import('./robot-observer-handler.js');
-      return executeRobotObserverWork(task, context);
-    });
+    for (const handler of [
+      'workflow.boredom-observer',
+      'workflow.boredom-movement',
+      'workflow.boredom-reflection',
+    ]) {
+      this.registerHandler(handler, async (task, context) => {
+        const { executeRobotAutonomyTriggerWork } = await import('./robot-autonomy-trigger-handler.js');
+        return executeRobotAutonomyTriggerWork(task, context);
+      });
+    }
 
     this.registerHandler('workflow.sleep', async (task, context) => {
       const config = loadSleepConfig(task.username);

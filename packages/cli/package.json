@@ -4,12 +4,11 @@
   "private": true,
   "type": "module",
   "bin": {
-    "mh": "./src/mh-new.ts"
+    "mh": "./src/entry.ts"
   },
   "scripts": {
-    "dev": "tsx src/mh-new.ts",
-    "mh": "tsx src/mh-new.ts",
-    "mh:old": "tsx src/mh.ts"
+    "dev": "tsx src/entry.ts",
+    "mh": "tsx src/entry.ts"
   },
   "dependencies": {
     "@metahuman/core": "workspace:*",
