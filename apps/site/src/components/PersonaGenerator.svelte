@@ -775,7 +775,7 @@
               }
             }}
             class="w-full bg-gray-900 border border-gray-700 rounded-md p-3 text-gray-200 text-sm resize-y mb-3 focus:outline-none focus:border-blue-500 placeholder:text-gray-500"
-          />
+          ></textarea>
           <div class="flex gap-3">
             <button class="btn-primary" on:click={submitAnswer} disabled={loading || !currentAnswer.trim()}>
               {loading ? 'Submitting...' : 'Submit Answer'}

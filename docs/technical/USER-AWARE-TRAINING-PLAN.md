@@ -74,7 +74,7 @@ Functions:
 
 ### 5. Update Training Orchestrators
 
-**Files**: `brain/agents/full-cycle-local.ts`, `brain/agents/full-cycle.ts` (TODO)
+**Files**: `brain/training/full-cycle-local.ts`, `brain/training/full-cycle.ts` (TODO)
 
 **Changes**:
 - Accept `--username <name>` CLI argument (required)
@@ -274,8 +274,8 @@ mh train greggles
 
 ### Modified:
 - ⏳ `brain/agents/adapter-builder.ts` - User-aware, curator-integrated dataset building
-- ⏳ `brain/agents/full-cycle-local.ts` - User context wrapper for local training
-- ⏳ `brain/agents/full-cycle.ts` - User context wrapper for remote training
+- ⏳ `brain/training/full-cycle-local.ts` - User context wrapper for local training
+- ⏳ `brain/training/full-cycle.ts` - User context wrapper for remote training
 - ⏳ `packages/cli/src/index.ts` - Training CLI commands
 - ⏳ `packages/core/package.json` - Export new modules
 

@@ -8,8 +8,8 @@
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
   // FlowEditorLayout is loaded dynamically to avoid bundling @xyflow/svelte in client
-  import type { SvelteComponent } from 'svelte';
-  let FlowEditorLayoutComponent: typeof SvelteComponent | null = null;
+  type FlowEditorLayoutComponentType = typeof import('./flow-editor/FlowEditorLayout.svelte').default;
+  let FlowEditorLayoutComponent: FlowEditorLayoutComponentType | null = null;
   let flowEditorLoading = false;
 
   // Sidebar visibility state - mobile-first defaults
@@ -652,14 +652,13 @@
 
     <!-- Backdrop for mobile -->
     {#if leftSidebarOpen && isMobile}
-      <div
+      <button
+        type="button"
         class="fixed inset-0 bg-black/50 z-20"
         on:click={toggleLeftSidebar}
         on:keydown={(e) => e.key === 'Escape' && toggleLeftSidebar()}
-        role="button"
-        tabindex="0"
         aria-label="Close sidebar"
-      />
+      ></button>
     {/if}
 
     <!-- Center Chat Area -->
@@ -675,9 +674,12 @@
         class:resizing={isResizingRightSidebar}
         on:mousedown={startRightSidebarResize}
         on:touchstart={startRightSidebarResize}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize sidebar"
+        role="slider"
+        aria-orientation="horizontal"
+        aria-label="Sidebar width"
+        aria-valuemin="200"
+        aria-valuemax="600"
+        aria-valuenow={rightSidebarWidth}
         tabindex="0"
         on:keydown={(e) => {
           if (e.key === 'ArrowLeft') { rightSidebarWidth = Math.min(600, rightSidebarWidth + 20); }
@@ -696,14 +698,13 @@
 
     <!-- Backdrop for mobile (right sidebar) -->
     {#if rightSidebarOpen && isMobile}
-      <div
+      <button
+        type="button"
         class="fixed inset-0 bg-black/50 z-20"
         on:click={toggleRightSidebar}
         on:keydown={(e) => e.key === 'Escape' && toggleRightSidebar()}
-        role="button"
-        tabindex="0"
         aria-label="Close sidebar"
-      />
+      ></button>
     {/if}
   </div>
 </div>

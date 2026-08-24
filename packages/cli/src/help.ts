@@ -10,7 +10,6 @@ Core Commands:
   status              Show system status and identity summary
   start               Start background services (organizer, boredom)
   chat                Converse with your digital personality extension (persona-aware)
-  sync                Sync state and update models
 
 Memory & Capture:
   capture "text"      Capture an observation or event

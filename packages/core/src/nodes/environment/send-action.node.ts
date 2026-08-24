@@ -12,10 +12,35 @@ import {
   nextRobotObserverCycle,
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
+import { getQueueManager } from '../../queue/unified-queue-manager.js';
 
 const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'];
 const BODY_ACTIONS = new Set<EnvironmentActionType>(ACTION_OPTIONS.filter(action => action !== 'sendText'));
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
+const ROBOT_OPERATOR_SOURCES = new Set([
+  'boredom-observer',
+  'boredom-movement',
+  'boredom-reflection',
+]);
+
+function configuredGraph(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
+function robotOperatorSource(
+  context: Record<string, any>,
+  cycle: RobotObserverCycleMetadata | null,
+): string {
+  const observationSource = context.environmentObservation?.metadata?.autonomousStimulus;
+  if (typeof observationSource === 'string' && ROBOT_OPERATOR_SOURCES.has(observationSource)) {
+    return observationSource;
+  }
+  return cycle && ROBOT_OPERATOR_SOURCES.has(cycle.requestedBy)
+    ? cycle.requestedBy
+    : 'environment-mode';
+}
 
 function selectedActions(value: unknown): EnvironmentActionType[] {
   if (!Array.isArray(value)) {
@@ -36,8 +61,12 @@ export const environmentSendActionNode = defineNode({
   inputs: [
     { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
     { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
+    { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
+    { name: 'presentation', type: 'string', optional: true, description: 'Private or conversational output admission' },
+    { name: 'privateResponse', type: 'string', optional: true, description: 'Private reflection text for autonomous output' },
+    { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
     { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
   ],
   outputs: [
@@ -51,6 +80,10 @@ export const environmentSendActionNode = defineNode({
     { name: 'reason', type: 'string', description: 'Machine-readable bridge status reason' },
     { name: 'message', type: 'string', description: 'Human-readable bridge status message' },
     { name: 'response', type: 'string', description: 'Visible chat warning when the bridge cannot receive the command' },
+    { name: 'conversationResponse', type: 'string', description: 'Response admitted to conversation and TTS' },
+    { name: 'privateResponse', type: 'string', description: 'Response admitted only to inner dialogue' },
+    { name: 'presentationMetadata', type: 'object', description: 'Origin metadata for conversation or inner-dialogue presentation' },
+    { name: 'familiarityTaskId', type: 'string', description: 'Asynchronous familiarity search work item, when queued' },
     { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
     { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
     { name: 'adapterReady', type: 'boolean', description: 'Whether the target adapter subscriber is connected' },
@@ -63,6 +96,7 @@ export const environmentSendActionNode = defineNode({
     allowedActions: ACTION_OPTIONS,
     maxDurationMs: 1500,
     defaultDurationMs: 0,
+    feedbackGraph: '',
   },
   propertySchemas: {
     allowedActions: {
@@ -88,11 +122,19 @@ export const environmentSendActionNode = defineNode({
       step: 50,
       description: 'Optional fallback duration for move/look actions. Leave 0 to require explicit durationMs.',
     },
+    feedbackGraph: {
+      type: 'text',
+      default: '',
+      label: 'Feedback Workflow',
+      description: 'Optional graph that receives the correlated action result. Leave empty to continue the current workflow.',
+      placeholder: 'For example: environment',
+    },
   },
   description: 'Queues one or more movement/control actions and reports whether an environment adapter can receive them.',
   async execute(inputs, context, properties) {
     const requestedActions = [
       ...(Array.isArray(inputs.actions) ? inputs.actions : []),
+      ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
     const existingCycle = context.robotObserver && typeof context.robotObserver === 'object'
@@ -125,13 +167,41 @@ export const environmentSendActionNode = defineNode({
       ? beginEnvironmentPerceptionCycle(
           `environment-task-${randomUUID()}`,
           cycleConfig.environmentGraph,
-          cycleConfig.maxCycleSteps,
         )
       : null;
     const actionCycle = existingCycle ?? startedCycle;
-    const nextObserverStep = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
+    const continuedCycle = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
+    const feedbackGraph = configuredGraph(properties?.feedbackGraph);
+    const nextObserverStep = continuedCycle && feedbackGraph
+      ? {
+          ...continuedCycle,
+          graph: feedbackGraph,
+        }
+      : continuedCycle;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
+    const requestedPresentation = inputs.presentation === 'private' || inputs.presentation === 'conversation'
+      ? inputs.presentation
+      : undefined;
+    const autonomous = existingCycle?.triggerSource === 'autonomy'
+      || context.environmentActionSource === 'autonomy';
+    const presentation = requestedPresentation ?? (autonomous ? 'private' : 'conversation');
+    const dialogueSource = robotOperatorSource(context, existingCycle);
+    const presentationMetadata = autonomous
+      ? {
+          dialogueSource,
+          correlationId: existingCycle?.cycleId ?? null,
+          tags: dialogueSource === 'environment-mode'
+            ? ['environment', 'autonomy']
+            : ['robot-operator', dialogueSource, 'autonomy-trigger'],
+        }
+      : {};
+    const privateInput = typeof inputs.privateResponse === 'string'
+      ? inputs.privateResponse.trim()
+      : '';
+    const familiarityQuery = typeof inputs.familiarityQuery === 'string'
+      ? inputs.familiarityQuery.replace(/\s+/g, ' ').trim().slice(0, 300)
+      : '';
     const commands = [];
     const rejectedActions = [];
     const options = {
@@ -176,10 +246,6 @@ export const environmentSendActionNode = defineNode({
       status = 'no_actions';
       reason = 'no_actions';
       message = 'No environment action was produced from this message, so nothing was sent to the robot bridge.';
-    } else if (actionCycle && !nextObserverStep) {
-      status = 'rejected';
-      reason = 'robot_observer_step_limit';
-      message = `The bounded robot interaction reached its ${actionCycle.maxSteps}-step limit, so no further robot action was queued.`;
     } else if (!bridgeSummary.enabled) {
       status = 'bridge_disabled';
       reason = 'environment_bridge_disabled';
@@ -290,6 +356,29 @@ export const environmentSendActionNode = defineNode({
     const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
       ? 'Camera request queued; waiting for a fresh image.'
       : visibleResponse;
+    const response = ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
+      ? message
+      : status === 'coordinated_for_adapter' ? queuedResponse : visibleResponse;
+    const actionPending = autonomous && commands.length > 0;
+    const presentedResponse = actionPending ? '' : response;
+    let familiarityTaskId = '';
+    if (autonomous && familiarityQuery && context.username) {
+      const familiarityTask = getQueueManager().enqueue({
+        type: 'semantic_search',
+        handler: 'vector.semantic-search',
+        resource: 'vector-index',
+        source: 'autonomy',
+        priority: 'background',
+        input: { query: familiarityQuery, limit: 5, purpose: 'environment-familiarity' },
+        username: context.username,
+        cognitiveMode: 'environment',
+        correlationId: actionCycle?.cycleId ?? context.sessionId,
+        idempotencyKey: `environment-familiarity:${actionCycle?.cycleId ?? context.sessionId ?? 'unknown'}:${actionCycle?.step ?? 0}`,
+        maxAttempts: 1,
+        metadata: { producer: 'environment-mode', purpose: 'familiarity-match' },
+      });
+      familiarityTaskId = familiarityTask.id;
+    }
     return {
       commands,
       rejectedActions,
@@ -300,9 +389,13 @@ export const environmentSendActionNode = defineNode({
       status,
       reason,
       message,
-      response: ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
-        ? message
-        : status === 'coordinated_for_adapter' ? queuedResponse : visibleResponse,
+      response,
+      conversationResponse: presentation === 'conversation' ? presentedResponse : '',
+      privateResponse: presentation === 'private' && !actionPending
+        ? privateInput || response
+        : '',
+      presentationMetadata,
+      familiarityTaskId,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,
       adapterReady,

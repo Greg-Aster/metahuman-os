@@ -102,7 +102,7 @@
     "boredom-observer": {
       "id": "boredom-observer",
       "displayName": "Boredom Observer",
-      "description": "Requests one current robot camera image and supplies it as an autonomous stimulus to its specialized deliberation graph.",
+      "description": "Triggers the editable Boredom Observer workflow, which requests one current camera image and routes the result to Boredom Autonomy.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -118,12 +118,12 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite autonomy trigger owned and scheduled by Robot Operator. It captures once, deliberates, and delegates any requested speech or action to Environment Mode."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. The named workflow contains the camera request and editable observation stimulus; Boredom Autonomy makes the semantic decision."
     },
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Creates a bounded movement opportunity without issuing a robot command itself.",
+      "description": "Triggers the editable Boredom Movement workflow, which prompts Boredom Autonomy to select one advertised movement.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -139,12 +139,12 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite autonomy trigger owned and scheduled by Robot Operator. Its specialized graph chooses one movement intention; Environment Mode executes and evaluates it."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains the editable movement policy; Boredom Autonomy selects and evaluates the consequence through canonical execution nodes."
     },
     "boredom-reflection": {
       "id": "boredom-reflection",
       "displayName": "Boredom Reflection",
-      "description": "Samples historical memory as inspiration for a private reflection or one bounded Environment Mode request.",
+      "description": "Triggers the editable Boredom Reflection workflow, which samples memory and prompts Boredom Autonomy for a meaningful consequence.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -160,7 +160,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Robot-side autonomy trigger kept separate from the conversational Reflector. Memories are historical inspiration, never current-world evidence, and all outward behavior is delegated to Environment Mode."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains memory sampling and the editable reflection stimulus; Boredom Autonomy owns the semantic consequence."
     },
     "reflector": {
       "id": "reflector",

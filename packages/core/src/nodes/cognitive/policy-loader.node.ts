@@ -4,12 +4,12 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { loadDecisionRules } from '../../identity.js';
 
 const execute: NodeExecutor = async (_inputs, _context, properties) => {
   const include = properties?.include ?? ['decision-rules', 'hard-rules'];
 
   try {
-    const { loadDecisionRules } = await import('../../identity.js');
     const rules = loadDecisionRules();
 
     const sections: string[] = [];
@@ -17,15 +17,15 @@ const execute: NodeExecutor = async (_inputs, _context, properties) => {
     // Format hard rules
     if (include.includes('hard-rules') && rules.hardRules?.length > 0) {
       const hardRulesList = rules.hardRules
-        .map((rule: string) => `- ${rule}`)
+        .map(rule => `- ${rule.description}`)
         .join('\n');
       sections.push(`## Hard Rules (Must Follow)\n${hardRulesList}`);
     }
 
     // Format decision rules / soft preferences
-    if (include.includes('decision-rules') && rules.softPreferences?.length > 0) {
+    if ((include.includes('decision-rules') || include.includes('soft-preferences')) && rules.softPreferences?.length > 0) {
       const prefsList = rules.softPreferences
-        .map((pref: string) => `- ${pref}`)
+        .map(preference => `- ${preference.description}`)
         .join('\n');
       sections.push(`## Preferences (Should Follow)\n${prefsList}`);
     }

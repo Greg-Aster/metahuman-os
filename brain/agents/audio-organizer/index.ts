@@ -1,14 +1,19 @@
-import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
+/** Agent-runtime module boundary for in-process execution. */
+
+import type { AgentMeta, AgentModule } from '@metahuman/agent-runtime';
 import { run } from './core.js';
 
 export const meta: AgentMeta = {
-  id: 'audio-organizer', name: 'Audio Organizer',
-  description: 'Converts transcripts into episodic memories with LLM-extracted metadata',
-  usesLLM: true, priority: 'low', defaultInterval: 900,
-  tags: ['audio', 'memory', 'llm', 'background'],
+  id: 'audio-organizer',
+  name: 'Audio Organizer',
+  description: 'Converts completed audio transcripts into episodic memories when explicitly requested',
+  usesLLM: true,
+  priority: 'normal',
+  tags: ['audio', 'memory', 'llm'],
 };
 
 const agent: AgentModule = { meta, run };
+
 export default agent;
 
-export { runCycle, type AudioOrganizerOptions, type AudioOrganizerResult } from './core.js';
+export { runCycle, type AudioOrganizerResult } from './core.js';

@@ -1,7 +1,7 @@
 /**
  * Canonical Buffer History Node
  *
- * Retrieves recent entries from the selected persisted conversation or inner buffer.
+ * Retrieves recent entries from a selected persisted canonical buffer.
  * Supports unified consciousness mode - merges inner dialogue into context
  */
 
@@ -12,7 +12,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
   name: 'Buffer History',
   category: 'context',
   inputs: [
-    { name: 'mode', type: 'string', optional: true, description: 'Canonical buffer mode: conversation or inner' },
+    { name: 'mode', type: 'string', optional: true, description: 'Canonical buffer mode: conversation, inner, or robot' },
   ],
   outputs: [
     { name: 'history', type: 'array', description: 'Selected canonical buffer entries' },
@@ -27,7 +27,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       default: 'conversation',
       label: 'Buffer Mode',
       description: 'Canonical per-user buffer to read',
-      options: ['conversation', 'inner'],
+      options: ['conversation', 'inner', 'robot'],
     },
     limit: {
       type: 'slider',
@@ -39,7 +39,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       step: 1,
     },
   },
-  description: 'Retrieves recent entries from one canonical per-user conversation or inner buffer.',
+  description: 'Retrieves recent entries from one canonical per-user conversation, inner, or robot buffer.',
 
   execute: async (inputs, context, properties) => {
     const startTime = Date.now();
@@ -52,7 +52,9 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       ?? context.dialogueType
       ?? context.mode
       ?? 'conversation';
-    const mode = requestedMode === 'inner' ? 'inner' : 'conversation';
+    const mode = requestedMode === 'inner' || requestedMode === 'robot'
+      ? requestedMode
+      : 'conversation';
     const username = context.username;
 
     let messages = mode === 'conversation' ? context.conversationHistory || [] : [];

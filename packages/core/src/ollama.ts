@@ -110,7 +110,7 @@ export interface OllamaChatOptions {
   mirostat?: number
   mirostat_eta?: number
   mirostat_tau?: number
-  format?: string
+  format?: string | Record<string, unknown>
   keep_alive?: string | number
   think?: boolean
 }

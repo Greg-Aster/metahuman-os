@@ -25,10 +25,9 @@ import CuriosityCard from './CuriosityCard.svelte';
 import ReasoningCard from './ReasoningCard.svelte';
 import SystemMessageCard from './SystemMessageCard.svelte';
 
-import type { CardComponent } from '../card-types';
-import type { SvelteComponent } from 'svelte';
+import type { BaseCardProps, CardComponent } from '../card-types';
 
-export const cardComponents: Record<CardComponent, typeof SvelteComponent> = {
+export const cardComponents = {
   UserMessageCard,
   AssistantMessageCard,
   ReflectionCard,
@@ -38,4 +37,4 @@ export const cardComponents: Record<CardComponent, typeof SvelteComponent> = {
   CuriosityCard,
   ReasoningCard,
   SystemMessageCard,
-};
+} satisfies Record<CardComponent, (props: BaseCardProps) => unknown>;

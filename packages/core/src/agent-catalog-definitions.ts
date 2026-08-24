@@ -233,7 +233,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'boredom-observer': {
     id: 'boredom-observer',
     displayName: 'Boredom Observer',
-    description: 'Requests one correlated camera image and routes it to a specialized observation graph for high-level deliberation.',
+    description: 'Triggers an editable workflow that requests one correlated camera image and sends the result to Boredom Autonomy.',
     lifecycle: 'workflow',
     handler: 'workflow.boredom-observer',
     taskType: 'generic',
@@ -247,7 +247,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'boredom-movement': {
     id: 'boredom-movement',
     displayName: 'Boredom Movement',
-    description: 'Creates one bounded movement opportunity and delegates its selected intention to Environment Mode.',
+    description: 'Triggers an editable movement policy that asks Boredom Autonomy to select one advertised robot command.',
     lifecycle: 'workflow',
     handler: 'workflow.boredom-movement',
     taskType: 'generic',
@@ -261,7 +261,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'boredom-reflection': {
     id: 'boredom-reflection',
     displayName: 'Boredom Reflection',
-    description: 'Uses a sampled historical memory as inspiration for private reflection or one bounded Environment Mode request.',
+    description: 'Triggers an editable workflow that samples historical memory and asks Boredom Autonomy for one meaningful consequence.',
     lifecycle: 'workflow',
     handler: 'workflow.boredom-reflection',
     taskType: 'generic',

@@ -43,11 +43,7 @@ function externalizeMetahumanCoreForClient() {
 export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: true }),
-    svelte({
-      compilerOptions: {
-        hydratable: true,
-      },
-    })
+    svelte()
   ],
 
   // Static output for mobile - no server required

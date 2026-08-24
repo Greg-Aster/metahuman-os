@@ -571,19 +571,19 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
       description: 'Instruction map used to specialize responses by card type',
     },
     bigBrotherPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE,
       label: 'Big Brother Prompt Template',
       description: 'Prompt template sent to Big Brother; supports {{instructions}}, {{desireContext}}, {{cardContext}}, and {{message}}',
     },
     localSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
       label: 'Local System Prompt Template',
       description: 'Fallback local LLM system prompt template',
     },
     localUserPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
       label: 'Local User Prompt Template',
       description: 'Fallback local LLM user prompt template',

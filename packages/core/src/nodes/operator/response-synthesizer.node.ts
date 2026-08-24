@@ -913,7 +913,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       options: ['default', 'strict', 'summary'],
     },
     personaVoiceSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE,
       label: 'Persona Voice Prompt',
       description: 'System prompt used when re-voicing generated content through the persona',
@@ -945,13 +945,13 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       description: 'Temperature for persona re-voice calls',
     },
     contextFactsFirstSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_CONTEXT_FACTS_FIRST_SYSTEM_PROMPT_TEMPLATE,
       label: 'Context Facts-First Prompt',
       description: 'System prompt used when relevant memories should take priority over persona style',
     },
     contextPersonaFirstSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_CONTEXT_PERSONA_FIRST_SYSTEM_PROMPT_TEMPLATE,
       label: 'Context Persona-First Prompt',
       description: 'System prompt used when no direct factual memories are available',
@@ -1000,7 +1000,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       description: 'Temperature when no direct factual memories are present',
     },
     legacyGuidanceSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_LEGACY_GUIDANCE_SYSTEM_PROMPT_TEMPLATE,
       label: 'Legacy Guidance Prompt',
       description: 'System prompt for legacy orchestrator guidance responses',
@@ -1050,7 +1050,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       description: 'Temperature when legacy response style is concise',
     },
     delegatedWorkPersonaPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_DELEGATED_WORK_PERSONA_PROMPT_TEMPLATE,
       label: 'Delegated Work Persona Prompt',
       description: 'System prompt used when summarizing delegated autonomous work in persona voice',
@@ -1082,7 +1082,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       description: 'Temperature for delegated work persona synthesis',
     },
     unknownResponseSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_UNKNOWN_RESPONSE_SYSTEM_PROMPT_TEMPLATE,
       label: 'Unknown Response Prompt',
       description: 'System prompt used when no relevant memories are found',
@@ -1114,13 +1114,13 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
       description: 'Temperature for unknown-memory responses',
     },
     scratchpadSystemPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_SCRATCHPAD_SYSTEM_PROMPT_TEMPLATE,
       label: 'Scratchpad System Prompt',
       description: 'System prompt used when synthesizing from task execution observations',
     },
     scratchpadUserPromptTemplate: {
-      type: 'textarea',
+      type: 'text_multiline',
       default: DEFAULT_SCRATCHPAD_USER_PROMPT_TEMPLATE,
       label: 'Scratchpad User Prompt',
       description: 'User prompt template used when synthesizing from task execution observations',

@@ -309,9 +309,9 @@ kill_repo_process_pattern "start.sh" "Startup Wrapper"
 kill_repo_process_pattern "bin/start-services --background" "Background Services Launcher"
 kill_repo_process_pattern "bin/start-services" "Terminal Services Launcher"
 kill_repo_process_pattern "mh start --no-restart" "MetaHuman Start Command"
-kill_repo_process_pattern "src/mh-new.ts start --no-restart" "MetaHuman Start Command Launcher"
+kill_repo_process_pattern "src/entry.ts start --no-restart" "MetaHuman Start Command Launcher"
 kill_repo_process_pattern "mh vllm start" "vLLM Start Command"
-kill_repo_process_pattern "src/mh-new.ts vllm start" "vLLM Start Command Launcher"
+kill_repo_process_pattern "src/entry.ts vllm start" "vLLM Start Command Launcher"
 
 # New launchers use a kernel flock, which is released automatically when their
 # process exits. Remove only the legacy PID-directory format after shutdown.

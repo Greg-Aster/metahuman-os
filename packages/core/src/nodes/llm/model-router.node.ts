@@ -6,6 +6,7 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { ENVIRONMENT_SELECTOR_JSON_SCHEMA } from '../environment/helpers.js';
 
 export const ModelRouterNode: NodeDefinition = defineNode({
   id: 'model_router',
@@ -14,6 +15,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'messages', type: 'array', description: 'Messages to send' },
     { name: 'role', type: 'string', optional: true, description: 'Model role' },
+    { name: 'jsonSchema', type: 'object', optional: true, description: 'Capability-bound structured output contract' },
     { name: 'precomputedResponse', type: 'string', optional: true, description: 'Exact deterministic result that bypasses model inference' },
   ],
   outputs: [
@@ -66,6 +68,11 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     }
     const messages = inputs.messages || inputs[0] || [];
     const role = inputs.role || inputs[1] || properties?.role || 'persona';
+    const jsonSchema = inputs.jsonSchema
+      && typeof inputs.jsonSchema === 'object'
+      && !Array.isArray(inputs.jsonSchema)
+      ? inputs.jsonSchema as Record<string, unknown>
+      : null;
     const username = context.userId || context.username;
 
     try {
@@ -79,6 +86,9 @@ export const ModelRouterNode: NodeDefinition = defineNode({
           repeatPenalty: properties?.repeatPenalty || 1.15,
           temperature: properties?.temperature || 0.7,
           format: properties?.format === 'json' ? 'json' : undefined,
+          jsonSchema: role === 'environmentActionSelector'
+            ? jsonSchema ?? ENVIRONMENT_SELECTOR_JSON_SCHEMA
+            : undefined,
         },
         onProgress: context.emitProgress,
       });

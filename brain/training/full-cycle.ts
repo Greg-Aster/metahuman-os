@@ -9,7 +9,7 @@
  * 5) If failed: Write summary and exit with error
  *
  * Usage:
- *   npx tsx brain/agents/full-cycle.ts --username <username>
+ *   pnpm exec tsx brain/training/full-cycle.ts --username <username>
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -893,8 +893,8 @@ async function main() {
 
   if (!username) {
     console.error('[full-cycle] ERROR: --username <name> is required');
-    console.error('\nUsage: npx tsx brain/agents/full-cycle.ts --username <username>');
-    console.error('\nExample: npx tsx brain/agents/full-cycle.ts --username greggles');
+    console.error('\nUsage: pnpm exec tsx brain/training/full-cycle.ts --username <username>');
+    console.error('\nExample: pnpm exec tsx brain/training/full-cycle.ts --username greggles');
     process.exit(1);
   }
 

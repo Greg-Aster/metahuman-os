@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Boredom Movement Mode",
-  "description": "Creates one bounded movement intention before observation. The trigger records a private thought; Environment Mode alone selects, executes, and evaluates robot actions.",
+  "description": "Supplies a physical activation stimulus to Boredom Autonomy, which authors the purpose, selects from the advertised catalog, and revises its intention after feedback.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-23",
+  "last_modified": "2026-08-24",
   "nodes": [
     {
       "id": "observation",
@@ -19,90 +19,31 @@
       "data": {
         "label": "Movement Policy",
         "nodeType": "text_input",
-        "properties": { "message": "", "inputKey": "environmentTaskInstruction" }
-      }
-    },
-    {
-      "id": "persona-loader",
-      "type": "personaNode",
-      "position": { "x": 60, "y": 460 },
-      "data": { "label": "Persona Loader", "nodeType": "persona_loader", "properties": {} }
-    },
-    {
-      "id": "persona-formatter",
-      "type": "personaNode",
-      "position": { "x": 340, "y": 460 },
-      "data": {
-        "label": "Persona Formatter",
-        "nodeType": "persona_formatter",
-        "properties": { "includeValues": true, "includeGoals": true, "includePersonality": true }
-      }
-    },
-    {
-      "id": "context",
-      "type": "operatorNode",
-      "position": { "x": 690, "y": 170 },
-      "data": { "label": "Movement Context", "nodeType": "robot_operator_context_builder", "properties": {} }
-    },
-    {
-      "id": "llm",
-      "type": "llmNode",
-      "position": { "x": 1040, "y": 170 },
-      "data": {
-        "label": "Movement Deliberation",
-        "nodeType": "model_router",
-        "properties": { "role": "persona", "maxTokens": 512, "temperature": 0.65 }
-      }
-    },
-    {
-      "id": "stripper",
-      "type": "outputNode",
-      "position": { "x": 1330, "y": 170 },
-      "data": { "label": "Thinking Stripper", "nodeType": "thinking_stripper", "properties": {} }
-    },
-    {
-      "id": "parser",
-      "type": "operatorNode",
-      "position": { "x": 1620, "y": 170 },
-      "data": { "label": "Movement Decision", "nodeType": "robot_operator_decision_parser", "properties": { "requireAction": true } }
-    },
-    {
-      "id": "private-thought",
-      "type": "outputNode",
-      "position": { "x": 1940, "y": 420 },
-      "data": {
-        "label": "Record Private Movement Thought",
-        "nodeType": "inner_dialogue_buffer",
         "properties": {
-          "tags": ["robot-operator", "boredom-movement", "autonomy-trigger", "inner"],
-          "dialogueSource": "boredom-movement",
-          "role": "reflection",
-          "captureMemory": false
+          "message": "Use movement as the first consequence of a self-directed boredom episode. Boredom Autonomy authors the intent and must choose exactly one safe robotCommand from the connected robot's complete advertised command catalog. This trigger has no preferred command or movement category. Do not combine commands or invent body parts. Preserve the self-authored intent, review the correlated result, and decide the next consequence from updated evidence.",
+          "inputKey": ""
         }
       }
     },
     {
       "id": "environment-dispatch",
       "type": "operatorNode",
-      "position": { "x": 2280, "y": 170 },
+      "position": { "x": 700, "y": 170 },
       "data": {
-        "label": "Delegate Movement to Environment Mode",
+        "label": "Delegate Movement to Boredom Autonomy",
         "nodeType": "robot_operator_environment_dispatch",
-        "properties": { "graph": "environment", "maxSteps": 3 }
+        "properties": {
+          "graph": "boredom-autonomy",
+          "requireAction": true,
+          "continuationPolicy": "bounded",
+          "requiredCompletionBasis": "visual_observation",
+          "visualEvidenceMode": "single"
+        }
       }
     }
   ],
   "edges": [
-    { "id": "e-observation-context", "source": "observation", "target": "context", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
-    { "id": "e-instructions-context", "source": "instructions", "target": "context", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } },
-    { "id": "e-persona-format", "source": "persona-loader", "target": "persona-formatter", "sourceHandle": "persona", "targetHandle": "persona", "type": "default", "data": { "type": "object" } },
-    { "id": "e-persona-context", "source": "persona-formatter", "target": "context", "sourceHandle": "formatted", "targetHandle": "personaText", "type": "default", "data": { "type": "string" } },
-    { "id": "e-context-llm", "source": "context", "target": "llm", "sourceHandle": "messages", "targetHandle": "messages", "type": "default", "data": { "type": "array" } },
-    { "id": "e-llm-stripper", "source": "llm", "target": "stripper", "sourceHandle": "response", "targetHandle": "response", "type": "default", "data": { "type": "llm_response" } },
-    { "id": "e-stripper-parser", "source": "stripper", "target": "parser", "sourceHandle": "stripped", "targetHandle": "response", "type": "default", "data": { "type": "string" } },
-    { "id": "e-parser-thought", "source": "parser", "target": "private-thought", "sourceHandle": "reason", "targetHandle": "text", "type": "default", "data": { "type": "string" } },
-    { "id": "e-parser-passthrough", "source": "parser", "target": "private-thought", "sourceHandle": "decision", "targetHandle": "passthrough", "type": "default", "data": { "type": "object" } },
-    { "id": "e-thought-dispatch", "source": "private-thought", "target": "environment-dispatch", "sourceHandle": "passthrough", "targetHandle": "decision", "type": "default", "data": { "type": "object" } },
-    { "id": "e-observation-dispatch", "source": "observation", "target": "environment-dispatch", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } }
+    { "id": "e-observation-dispatch", "source": "observation", "target": "environment-dispatch", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
+    { "id": "e-instructions-dispatch", "source": "instructions", "target": "environment-dispatch", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } }
   ]
 }

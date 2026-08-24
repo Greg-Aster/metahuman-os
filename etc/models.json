@@ -19,7 +19,7 @@
   "defaults": {
     "orchestrator": "default.orchestrator",
     "persona": "default.persona",
-    "environmentActionSelector": "ollama.environment-action-selector-0.8b:v1",
+    "environmentActionSelector": "default.orchestrator",
     "curator": "default.curator",
     "coder": "default.coder",
     "planner": "default.planner",
@@ -39,7 +39,12 @@
         "persona",
         "curator",
         "psychotherapist",
-        "summarizer"
+        "summarizer",
+        "environmentActionSelector"
+      ],
+      "capabilities": [
+        "text",
+        "image"
       ],
       "description": "Capable orchestrator using same model as persona for better intent routing",
       "options": {
@@ -328,32 +333,6 @@
         "purpose": "Semantic embeddings for memory search and vector indexing"
       }
     },
-    "ollama.environment-action-selector-0.8b:v1": {
-      "provider": "ollama",
-      "model": "environment-action-selector-0.8b:v1",
-      "adapters": [],
-      "roles": [
-        "environmentActionSelector"
-      ],
-      "capabilities": [
-        "text"
-      ],
-      "description": "System-owned fast Environment action selector using the complete Core model-output contract",
-      "options": {
-        "contextWindow": 2048,
-        "temperature": 0.1,
-        "topP": 0.9,
-        "repeatPenalty": 1.05,
-        "enableThinking": false
-      },
-      "metadata": {
-        "priority": "high",
-        "alwaysLoaded": true,
-        "estimatedLatency": "fast",
-        "purpose": "Environment intent and exact typed action selection",
-        "systemOwned": true
-      }
-    },
     "ollama.qwen3.5:9b": {
       "provider": "ollama",
       "model": "qwen3.5:9b",
@@ -380,7 +359,7 @@
       "persona.with-lora"
     ],
     "environmentActionSelector": [
-      "ollama.environment-action-selector-0.8b:v1"
+      "default.orchestrator"
     ],
     "curator": [
       "default.curator"
@@ -428,7 +407,7 @@
     },
     "environment": {
       "persona": "default.persona",
-      "environmentActionSelector": "ollama.environment-action-selector-0.8b:v1"
+      "environmentActionSelector": "default.orchestrator"
     }
   },
   "providers": {

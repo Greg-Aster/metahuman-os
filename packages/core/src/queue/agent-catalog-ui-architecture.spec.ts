@@ -15,6 +15,8 @@ assert.ok(execution.includes('AGENT_CATALOG_DEFINITIONS'), 'default executable h
 const agentHandler = read('packages/core/src/api/handlers/agent.ts');
 assert.ok(!agentHandler.includes('ALLOWED_AGENTS'), 'agent API must not keep a second hard-coded catalog');
 assert.ok(agentHandler.includes('getAgentCatalogService'), 'agent API authorization must use Agent Catalog');
+assert.ok(agentHandler.includes("catalogAgent.owner === 'robot-operator'"), 'Robot Operator children must use their owner-aware manual route');
+assert.ok(agentHandler.includes('enqueueRobotOperatorChild'), 'Robot Operator manual runs must enter the Work Coordinator without Trigger Manager');
 
 const monitor = read('apps/site/src/components/AgentMonitor.svelte');
 assert.ok(monitor.includes("apiFetch('/api/agents/run'"), 'Agent Monitor must use the catalog-aware finite/service run route');

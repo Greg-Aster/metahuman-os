@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { systemPaths } from './path-builder.js'
 import type { EnvironmentObservation } from './environment-interface/types.js'
-import type { AutonomyMode } from './queue/types.js'
+import type { AutonomyMode, QueuedTask } from './queue/types.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
@@ -18,14 +18,19 @@ export type RobotOperatorCycleRequester =
   | 'robot-observer'
   | 'environment-perception'
 
+const ROBOT_AUTONOMY_HANDLERS = new Set([
+  'workflow.robot-observer',
+  'workflow.boredom-observer',
+  'workflow.boredom-movement',
+  'workflow.boredom-reflection',
+])
+
 export interface RobotObserverCycleMetadata {
   cycleId: string
   step: number
-  maxSteps: number
   triggerSource: RobotObserverTriggerSource
   graph: string
   requestedBy: RobotOperatorCycleRequester
-  instruction?: string
 }
 
 export interface RobotOperatorConfig {
@@ -41,6 +46,7 @@ export interface RobotOperatorConfig {
   boredomObserverGraph: string
   boredomMovementGraph: string
   boredomReflectionGraph: string
+  autonomyGraph: string
   environmentGraph: string
   sessionId?: string
 }
@@ -80,30 +86,8 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
   boredomReflectionGraph: 'boredom-reflection',
+  autonomyGraph: 'boredom-autonomy',
   environmentGraph: 'environment',
-}
-
-const ROBOT_OPERATOR_POLICY = `You are a child autonomy trigger owned and scheduled by Robot Operator. You deliberate about one bounded opportunity; you do not execute robot commands, speak, or control hardware yourself.
-
-The current robotStimulus is the only evidence of what is present now. A sampled memory is historical inspiration only and is never evidence of the robot's current surroundings. Do not infer unseen obstacles, clearance, or people.
-
-Choose at most one intention. If speech, sensing, or physical behavior is warranted, set requiresAction true and describe the desired outcome plus a finite stopping condition in the form "Complete when ...". Environment Mode alone selects and executes actions. Never delegate an open-ended scan, walk, search, survey, or investigation. If only a private reflection is warranted, set requiresAction false. Never claim execution started or completed, and never mention timer, boredom trigger, service, agent, workflow, or implementation details in the reason.
-
-Return one JSON object only: {"observed":"what the supplied stimulus establishes","instruction":"one concise first-person intention or private reflection","requiresAction":true,"reason":"one concise private thought grounded in the supplied stimulus"}`
-
-const ROBOT_OPERATOR_AGENT_FOCUS: Record<RobotOperatorStimulusAgent, string> = {
-  'boredom-observer': 'Use the single current camera observation. You may privately reflect, request a bounded closer inspection, request speech, or request one other bounded response through Environment Mode. Remaining still is valid. Do not turn a vague desire for more context into repeated movement.',
-  'boredom-movement': 'Choose one safe, bounded movement opportunity first, such as a posture change, stretch, expressive motion, or small reorientation supported by current capabilities. Environment Mode must execute it and assess the returned observation. Do not request open-ended locomotion or a room survey.',
-  'boredom-reflection': 'Use the sampled memory as historical inspiration. You may privately reflect, request speech, or request one bounded physical response through Environment Mode. The memory does not establish anything about the current environment.',
-}
-
-export function buildRobotOperatorInstruction(
-  agent: RobotOperatorStimulusAgent | 'robot-observer',
-  focus?: string,
-): string {
-  const normalizedAgent = agent === 'robot-observer' ? 'boredom-observer' : agent
-  const boundedFocus = typeof focus === 'string' ? focus.replace(/\s+/g, ' ').trim().slice(0, 1_000) : ''
-  return `${ROBOT_OPERATOR_POLICY}\n\nTrigger agent: ${normalizedAgent}. ${boundedFocus || ROBOT_OPERATOR_AGENT_FOCUS[normalizedAgent]}`
 }
 
 function configuredGraph(value: unknown, fallback: string): string {
@@ -131,6 +115,7 @@ function serviceConfig(): Record<string, unknown> {
 export function loadRobotOperatorConfig(): RobotOperatorConfig {
   const configured = serviceConfig()
   const graph = configuredGraph(configured.graph, DEFAULT_CONFIG.graph)
+  const autonomyGraph = configuredGraph(configured.autonomyGraph, DEFAULT_CONFIG.autonomyGraph)
   const environmentGraph = configuredGraph(configured.environmentGraph, DEFAULT_CONFIG.environmentGraph)
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
     ? configured.sessionId.trim()
@@ -178,6 +163,7 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
     boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),
+    autonomyGraph,
     environmentGraph,
     sessionId,
   }
@@ -226,14 +212,6 @@ export function robotOperatorChildGraph(
   return config.boredomReflectionGraph
 }
 
-export function robotOperatorChildMaxSteps(
-  config: RobotOperatorConfig,
-  agent: RobotOperatorStimulusAgent,
-): number {
-  const childLimit = agent === 'boredom-observer' ? 4 : 3
-  return Math.max(1, Math.min(config.maxCycleSteps, childLimit))
-}
-
 export function nextRobotOperatorFullChild(
   enabled: RobotOperatorStimulusAgent[],
   cursor: number,
@@ -253,6 +231,30 @@ export function robotOperatorFullDueAt(
     now + Math.max(1_000, minimumDelayMs),
     Math.max(0, lastAdmittedAt) + Math.max(1_000, cooldownMs),
   )
+}
+
+function hasRobotObserverMetadata(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, any>
+  return Boolean(record.metadata?.robotObserver || record.observation?.metadata?.robotObserver)
+}
+
+export function isRobotAutonomyWorkItem(
+  task: Pick<QueuedTask, 'handler' | 'input'>,
+): boolean {
+  return ROBOT_AUTONOMY_HANDLERS.has(task.handler)
+    || hasRobotObserverMetadata(task.input)
+}
+
+export function hasActiveRobotAutonomyCycle(
+  tasks: Array<Pick<QueuedTask, 'id' | 'handler' | 'input' | 'state'>>,
+  ignoreTaskId?: string,
+): boolean {
+  return tasks.some(task => (
+    task.id !== ignoreTaskId
+    && (task.state === 'queued' || task.state === 'leased' || task.state === 'waiting')
+    && isRobotAutonomyWorkItem(task)
+  ))
 }
 
 export function randomizedRobotOperatorIdleMs(
@@ -342,21 +344,14 @@ export function readRobotObserverCycle(
   const record = value as Record<string, unknown>
   const cycleId = typeof record.cycleId === 'string' ? record.cycleId.trim() : ''
   const step = typeof record.step === 'number' ? Math.floor(record.step) : 0
-  const maxSteps = typeof record.maxSteps === 'number' ? Math.floor(record.maxSteps) : 0
   const triggerSource = record.triggerSource
   const requestedBy = record.requestedBy
-  const instruction = typeof record.instruction === 'string'
-    ? record.instruction.trim().slice(0, 8_000)
-    : ''
   const graph = typeof record.graph === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(record.graph)
     ? record.graph
     : 'environment'
   if (
     !cycleId
     || step < 1
-    || maxSteps < 1
-    || maxSteps > 10
-    || step > maxSteps
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
       requestedBy !== 'robot-observer'
@@ -369,27 +364,22 @@ export function readRobotObserverCycle(
   return {
     cycleId,
     step,
-    maxSteps,
     triggerSource,
     graph,
     requestedBy,
-    ...(instruction ? { instruction } : {}),
   }
 }
 
 export function beginEnvironmentPerceptionCycle(
   cycleId: string,
   graph: string,
-  maxSteps: number,
 ): RobotObserverCycleMetadata | null {
   const normalizedCycleId = cycleId.trim()
   const normalizedGraph = /^[a-zA-Z0-9_-]{1,80}$/.test(graph) ? graph : 'environment'
-  const boundedSteps = Math.floor(maxSteps)
-  if (!normalizedCycleId || boundedSteps < 1 || boundedSteps > 10) return null
+  if (!normalizedCycleId) return null
   return {
     cycleId: normalizedCycleId,
     step: 1,
-    maxSteps: boundedSteps,
     triggerSource: 'user',
     graph: normalizedGraph,
     requestedBy: 'environment-perception',
@@ -398,7 +388,6 @@ export function beginEnvironmentPerceptionCycle(
 
 export function nextRobotObserverCycle(
   current: RobotObserverCycleMetadata,
-): RobotObserverCycleMetadata | null {
-  if (current.step >= current.maxSteps) return null
+): RobotObserverCycleMetadata {
   return { ...current, step: current.step + 1 }
 }

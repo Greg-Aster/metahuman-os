@@ -15,7 +15,7 @@ All three use the **same training parameters** from [etc/training.json](../etc/t
 ## 🔄 Workflow Structure
 
 ### full-cycle.ts (Remote LoRA Training)
-**Location:** [brain/agents/full-cycle.ts](../brain/agents/full-cycle.ts)
+**Location:** [brain/training/full-cycle.ts](../brain/training/full-cycle.ts)
 
 **Pipeline:**
 ```
@@ -31,7 +31,7 @@ All three use the **same training parameters** from [etc/training.json](../etc/t
 **Single-file agent:** All logic in one file (~750 lines)
 
 ### full-cycle-local.ts (Local LoRA Training)
-**Location:** [brain/agents/full-cycle-local.ts](../brain/agents/full-cycle-local.ts)
+**Location:** [brain/training/full-cycle-local.ts](../brain/training/full-cycle-local.ts)
 
 **Pipeline:**
 ```
@@ -260,39 +260,39 @@ run-summary.json                         # Training summary
 ### full-cycle.ts (Remote)
 ```bash
 # LoRA training with advanced curation (default)
-pnpm tsx brain/agents/full-cycle.ts --username greggles
+pnpm exec tsx brain/training/full-cycle.ts --username greggles
 
 # With monthly training strategy
 export METAHUMAN_DAYS_RECENT=30
 export METAHUMAN_OLD_SAMPLES=3000
-pnpm tsx brain/agents/full-cycle.ts --username greggles
+pnpm exec tsx brain/training/full-cycle.ts --username greggles
 
 # With custom sample limit
 export METAHUMAN_MAX_SAMPLES=5000
-pnpm tsx brain/agents/full-cycle.ts --username greggles
+pnpm exec tsx brain/training/full-cycle.ts --username greggles
 
 # Use legacy simple curation (not recommended)
 export METAHUMAN_DATASET_BUILDER=classic
-pnpm tsx brain/agents/full-cycle.ts --username greggles
+pnpm exec tsx brain/training/full-cycle.ts --username greggles
 ```
 
 ### full-cycle-local.ts (Local)
 ```bash
 # Local LoRA training with advanced curation (default)
-pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+pnpm exec tsx brain/training/full-cycle-local.ts --username greggles
 
 # With monthly training strategy
 export METAHUMAN_DAYS_RECENT=30
 export METAHUMAN_OLD_SAMPLES=3000
-pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+pnpm exec tsx brain/training/full-cycle-local.ts --username greggles
 
 # With custom sample limit
 export METAHUMAN_MAX_SAMPLES=5000
-pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+pnpm exec tsx brain/training/full-cycle-local.ts --username greggles
 
 # Use legacy simple curation (not recommended)
 export METAHUMAN_DATASET_BUILDER=classic
-pnpm tsx brain/agents/full-cycle-local.ts --username greggles
+pnpm exec tsx brain/training/full-cycle-local.ts --username greggles
 
 # Setup local training environment (first time)
 ./bin/setup-local-training
@@ -321,7 +321,7 @@ pnpm tsx brain/agents/fine-tune-cycle.ts \\
 
 ### Modify Data Curation
 
-**full-cycle.ts:** Edit `buildDatasetFromJsonl()` function ([full-cycle.ts:176](../brain/agents/full-cycle.ts#L176))
+**full-cycle.ts:** Edit `buildDatasetFromJsonl()` function ([full-cycle.ts](../brain/training/full-cycle.ts))
 
 **fine-tune-cycle.ts:** Edit:
 - [memory-curator.ts](../brain/agents/memory-curator.ts) - Curation logic

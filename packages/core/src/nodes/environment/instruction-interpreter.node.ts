@@ -120,6 +120,7 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? rawObservation.metadata.originatingInstruction.trim()
       : '';
     const taskContract = environmentTaskContractFromObservation(rawObservation);
+    const robotObserver = readRobotObserverCycle(rawObservation);
     const originalObjective = taskContract?.objective || originatingInstruction;
     const taskContractInstruction = taskContract
       ? [
@@ -128,7 +129,6 @@ export const environmentInstructionInterpreterNode = defineNode({
           `Do not claim the objective complete from any other evidence basis.`,
         ].join(' ')
       : '';
-    const robotObserver = readRobotObserverCycle(rawObservation);
     const captureSatisfied = Boolean(
       !currentTaskEvent
       && robotObserver
@@ -145,8 +145,8 @@ export const environmentInstructionInterpreterNode = defineNode({
     const satisfiedCaptureInstruction = captureSatisfied
       ? [
           'A fresh correlated robot image has returned, so the visual acquisition for this interaction is complete.',
-          'Use the attached image to answer the original user goal now. Do not request another image in this continuation.',
-          originalObjective ? `Original user goal: ${originalObjective}` : '',
+          'Use the attached image to decide the current objective now. Do not request another image in this continuation.',
+          originalObjective ? `Current objective: ${originalObjective}` : '',
           taskContractInstruction,
         ].filter(Boolean).join('\n')
       : '';

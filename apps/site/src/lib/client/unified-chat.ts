@@ -277,20 +277,6 @@ export class UnifiedChat {
     this.conversationHistory = [...history];
   }
 
-  /**
-   * Get battery status for tier selection
-   */
-  private async getBatteryStatus(): Promise<{ level: number; charging: boolean }> {
-    if ('getBattery' in navigator) {
-      try {
-        const battery = await (navigator as any).getBattery();
-        return { level: battery.level, charging: battery.charging };
-      } catch {
-        // Fall through
-      }
-    }
-    return { level: 1, charging: true }; // Assume plugged in if no API
-  }
 }
 
 // Singleton instance

@@ -9,7 +9,6 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, streamResponse } from '../types.js';
 import {
   addScratchpadEntryToFolder,
-  executeDesireViaGraph,
   generatePlanId,
   loadDesire,
   moveDesire,
@@ -23,6 +22,7 @@ import {
   type DesireRisk,
   type OutcomeVerdict,
 } from '../../agency/index.js';
+import { executeDesireViaGraph } from '../../agency/executor.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';

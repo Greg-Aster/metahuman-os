@@ -121,7 +121,7 @@ test('the main speech disable state blocks server-owned robot synthesis', async 
   assert.equal(rendered, 0);
 });
 
-test('robot output does not create a second route for non-Environment TTS nodes', async () => {
+test('robot output rejects non-execution TTS nodes', async () => {
   let queued = 0;
   let rendered = 0;
   const result = await deliverTTSOutput(
@@ -144,9 +144,38 @@ test('robot output does not create a second route for non-Environment TTS nodes'
   );
 
   assert.equal(result.accepted, false);
-  assert.match(result.reason || '', /Environment Mode/);
+  assert.match(result.reason || '', /robot execution workflows/i);
   assert.equal(queued, 0);
   assert.equal(rendered, 0);
+});
+
+test('Boredom Autonomy reuses the canonical server-owned robot speech route', async () => {
+  let queued = 0;
+  let rendered = 0;
+  const result = await deliverTTSOutput(
+    { ...request, source: 'boredom-autonomy' },
+    {
+      getSettings: () => ({
+        provider: 'kokoro',
+        outputTarget: 'robot',
+        speechDisabled: false,
+      }),
+      queue: () => {
+        queued += 1;
+        return null;
+      },
+      createRequestId: () => 'tts-boredom-test',
+      renderRobot: async (options) => {
+        rendered += 1;
+        return { actionId: 'speech-action-boredom', requestId: options.requestId, totalChunks: 1 };
+      },
+    },
+  );
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.route, 'robot');
+  assert.equal(queued, 0);
+  assert.equal(rendered, 1);
 });
 
 test('Inner Dialogue speech remains local when outward speech targets the robot', async () => {

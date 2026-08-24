@@ -90,6 +90,7 @@ function namedAction(
       continuationPolicy: 'none',
       requiredCompletionBasis: 'action_result',
       motionClass,
+      actionPurpose: 'task_effect',
     },
   };
 }
@@ -106,6 +107,7 @@ function generatedMovement(description: string): EnvironmentModelOutput {
       continuationPolicy: 'none',
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
+      actionPurpose: 'expression',
     },
   };
 }
@@ -121,6 +123,7 @@ function capture(): EnvironmentModelOutput {
       objectiveComplete: false,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
+      actionPurpose: 'information_gain',
       visualEvidenceMode: 'single',
     },
   };
@@ -412,6 +415,7 @@ add('target-relative', 'high', ['Move closer to the selected visible target.', '
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: 'target_relative',
+    actionPurpose: 'task_effect',
     visualEvidenceMode: 'comparison',
   },
 }, { observation: targetObservation });
@@ -684,6 +688,7 @@ for (let fold = 0; fold < 4; fold += 1) {
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
       motionClass: 'target_relative',
+      actionPurpose: 'task_effect',
       visualEvidenceMode: 'comparison',
     },
   }, { fold, observation: visualTargetObservation });

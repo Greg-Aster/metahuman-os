@@ -3,6 +3,17 @@
 Status: Phase 1 and bounded Environment refinement implemented at code level;
 physical validation remains open, updated 2026-08-03
 
+Update 2026-08-24: the boredom-specific decision path in this plan is
+superseded by `docs/investigations/boredom-autonomy-workflow-scratchpad.md`.
+Environment Mode remains the reactive user-instruction workflow. Boredom
+Observer, Movement, and Reflection now feed the separate Boredom Autonomy graph,
+which reuses the canonical Environment Task State, execution nodes, and
+correlated feedback loop. Task State remains the sole objective lifecycle owner;
+there is no separate boredom episode store or self-instruction authority. The
+ownership, safety, coordinator, bridge, and buffer boundaries below still apply;
+statements making Environment Mode the only semantic robot executor are retained
+only as Phase 1 history.
+
 This document records the current understanding of the MetaHuman robot system
 and the intended boundary for the next Robot Operator implementation. It exists
 because the change crosses service admission, graph execution, conversation,

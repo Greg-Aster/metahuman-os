@@ -201,7 +201,6 @@
     isContinuousMode: micIsContinuousMode,
     interimTranscript: micInterimTranscript,
     isNativeMode: micIsNativeMode,
-    isWakeWordListening: micIsWakeWordListening,
     isConversationMode: micIsConversationMode,
   } = mic;
   let lastTTSPlayingForMic = false;
@@ -2646,7 +2645,6 @@
       selectedMessage={$selectedMessage}
       isRecording={$micIsRecording}
       isContinuousMode={$micIsContinuousMode}
-      isWakeWordListening={$micIsWakeWordListening}
       isConversationMode={$micIsConversationMode}
       ttsIsPlaying={$ttsIsPlaying}
       interimTranscript={$micInterimTranscript}
@@ -2655,11 +2653,6 @@
       on:keypress={(e) => handleKeyPress(e.detail.event)}
       on:micClick={() => {
         // Tap on mic: stop any active listening mode first
-        if ($micIsWakeWordListening) {
-          console.log('[chat-mic] Stopping wake word detection');
-          mic.stopWakeWordDetection();
-          return;
-        }
         if ($micIsConversationMode) {
           console.log('[chat-mic] Stopping conversation mode');
           mic.toggleConversationMode();

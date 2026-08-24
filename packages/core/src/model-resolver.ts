@@ -12,6 +12,7 @@ import { loadBackendConfig, type BackendType } from './llm-backend.js';
 import {
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID,
+  LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID,
   LEGACY_ENVIRONMENT_ROUTER_ROLE,
 } from './model-defaults.js';
 
@@ -91,8 +92,8 @@ export interface ModelRegistryMigrationResult {
 
 /**
  * Migrate the retired advisory Environment Router role to the one full-output
- * action-selector role. The old trained artifact is deliberately not reused:
- * it learned a different 14-field contract and is removed from runtime choice.
+ * action-selector role. The text-only 0.8B selector is also retired from this
+ * role because direct Environment observations require image input.
  */
 export function migrateModelRegistry(
   input: ModelRegistry,
@@ -101,35 +102,51 @@ export function migrateModelRegistry(
   const before = JSON.stringify(registry);
   const defaults = registry.defaults as Record<string, string>;
   delete defaults[LEGACY_ENVIRONMENT_ROUTER_ROLE];
-  defaults.environmentActionSelector ??= DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+  if (
+    !defaults.environmentActionSelector
+    || defaults.environmentActionSelector === LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID
+  ) defaults.environmentActionSelector = DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
 
   const mappings = registry.cognitiveModeMappings ?? {};
   for (const mapping of Object.values(mappings)) {
     delete mapping[LEGACY_ENVIRONMENT_ROUTER_ROLE];
   }
   mappings.environment ??= {};
-  mappings.environment.environmentActionSelector ??= DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+  if (
+    !mappings.environment.environmentActionSelector
+    || mappings.environment.environmentActionSelector === LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID
+  ) mappings.environment.environmentActionSelector = DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
   registry.cognitiveModeMappings = mappings;
 
   const hierarchy = (registry.roleHierarchy ?? {}) as Record<string, string[]>;
   delete hierarchy[LEGACY_ENVIRONMENT_ROUTER_ROLE];
-  hierarchy.environmentActionSelector ??= [DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID];
+  hierarchy.environmentActionSelector = Array.from(new Set(
+    (hierarchy.environmentActionSelector ?? [DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID])
+      .map(id => id === LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID
+        ? DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID
+        : id),
+  ));
   registry.roleHierarchy = hierarchy as ModelRegistry['roleHierarchy'];
 
   for (const [id, definition] of Object.entries(registry.models)) {
     const hadLegacyRole = definition.roles.includes(LEGACY_ENVIRONMENT_ROUTER_ROLE);
     definition.roles = Array.from(new Set(
-      definition.roles.filter(role => role !== LEGACY_ENVIRONMENT_ROUTER_ROLE),
+      definition.roles.filter(role => (
+        role !== LEGACY_ENVIRONMENT_ROUTER_ROLE
+        && !(id === LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID && role === 'environmentActionSelector')
+      )),
     ));
-    if (hadLegacyRole && definition.roles.length === 0) delete registry.models[id];
+    if ((hadLegacyRole || id === LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID) && definition.roles.length === 0) {
+      delete registry.models[id];
+    }
   }
   registry.models[DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID] ??= {
     provider: 'ollama',
     model: DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
     adapters: [],
     roles: ['environmentActionSelector'],
-    capabilities: ['text'],
-    description: 'System-owned fast Environment action selector using the complete Core model-output contract',
+    capabilities: ['text', 'image'],
+    description: 'Vision-capable orchestrator used by the universal Environment selector',
     options: {
       contextWindow: 2048,
       temperature: 0.1,
@@ -141,10 +158,20 @@ export function migrateModelRegistry(
       priority: 'high',
       alwaysLoaded: true,
       estimatedLatency: 'fast',
-      purpose: 'Environment intent and exact typed action selection',
+      purpose: 'Vision-grounded Environment intent and typed action selection',
       systemOwned: true,
     },
   };
+  const selectorDefinition = registry.models[DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID]!;
+  selectorDefinition.roles = Array.from(new Set([
+    ...selectorDefinition.roles,
+    'environmentActionSelector',
+  ]));
+  selectorDefinition.capabilities = Array.from(new Set([
+    ...(selectorDefinition.capabilities ?? []),
+    'text',
+    'image',
+  ]));
 
   return {
     registry,

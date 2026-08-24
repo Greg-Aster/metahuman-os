@@ -14,7 +14,6 @@
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
-import { healthStatus } from './server-health';
 import { getApiBaseUrlAsync } from './api-config';
 import { DEFAULT_OLLAMA_CHAT_MODEL } from './model-defaults';
 
@@ -330,7 +329,7 @@ export async function selectBestTier(
       return {
         selectedTier: config.manualTier,
         reason: 'Manual selection',
-        alternatives: getAlternatives(config.manualTier, statuses, device, requiredCapabilities),
+        alternatives: getAlternatives(config.manualTier, statuses, requiredCapabilities),
         deviceStatus: device,
         tierStatuses: statuses,
       };
@@ -392,7 +391,7 @@ export async function selectBestTier(
   return {
     selectedTier: selected,
     reason,
-    alternatives: getAlternatives(selected, statuses, device, requiredCapabilities),
+    alternatives: getAlternatives(selected, statuses, requiredCapabilities),
     deviceStatus: device,
     tierStatuses: statuses,
   };
@@ -486,7 +485,6 @@ function getAutoSelectReason(
 function getAlternatives(
   selected: TierType,
   statuses: Record<TierType, TierStatus>,
-  device: DeviceStatus,
   requiredCapabilities: TierCapability[]
 ): TierType[] {
   return (Object.keys(TIERS) as TierType[])

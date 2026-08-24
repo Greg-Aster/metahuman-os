@@ -2,9 +2,10 @@
 export const DEFAULT_OLLAMA_CHAT_MODEL = 'qwen3.5:9b';
 export const DEFAULT_VLLM_CHAT_MODEL = 'sanskar003/Qwen3.5-9B-AWQ';
 
-/** System-owned specialist that emits the full Environment model-output contract. */
-export const DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL = 'environment-action-selector-0.8b:v1';
-export const DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID = `ollama.${DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL}`;
+/** Vision-capable maintained model used by the universal Environment selector. */
+export const DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL = DEFAULT_OLLAMA_CHAT_MODEL;
+export const DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID = 'default.orchestrator';
+export const LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID = 'ollama.environment-action-selector-0.8b:v1';
 export const LEGACY_ENVIRONMENT_ROUTER_ROLE = 'environmentRouter';
 
 /** Maintained Qwen 3.5 training bases. */

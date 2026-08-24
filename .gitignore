@@ -133,6 +133,7 @@ profiles/*/etc/*.pem
 .astro/
 .turbo/
 *.tsbuildinfo
+*.cpuprofile
 dist/
 build/
 
@@ -203,7 +204,8 @@ Thumbs.db
 *.pid
 *.lock
 !pnpm-lock.yaml
-!package-lock.json
+package-lock.json
+yarn.lock
 
 # ============================================
 # SENSITIVE PATHS

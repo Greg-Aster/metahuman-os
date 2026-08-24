@@ -96,6 +96,289 @@ test('a Robot Operator action handoff admits its current image and requires one 
   assert.equal(prepared.taskState.objective, 'I will scan the room for any other hazards.');
 });
 
+test('autonomy revises its objective inside canonical Environment Task State', async () => {
+  const input = observation({
+    metadata: {
+      correlationId: 'self-authored-objective',
+      robotObserver: {
+        cycleId: 'self-authored-objective',
+        step: 1,
+        maxSteps: 8,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+  });
+  const result = await environmentTaskStateNode.execute({
+    observation: input,
+    instruction: 'Use this boredom stimulus as material for autonomous choice.',
+    taskState: {
+      version: 1,
+      objective: 'Use this boredom stimulus as material for autonomous choice.',
+      phase: 'new',
+      step: 0,
+      maxSteps: 8,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+    },
+    actions: [{ type: 'robotCommand', command: 'turn_right_90' }],
+    taskDecision: {
+      outcome: 'act',
+      reason: 'A new view can advance the objective.',
+      objective: 'Understand the unfamiliar object beside the charging station.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'open_loop_displacement',
+      actionPurpose: 'information_gain',
+      presentation: 'private',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.equal(result.taskState.objective, 'Understand the unfamiliar object beside the charging station.');
+  assert.match(result.taskInstruction, /Understand the unfamiliar object beside the charging station/);
+});
+
+test('action-required autonomy does not present future-action prose as executed work', async () => {
+  clearEnvironmentTaskFrameCache();
+  const instruction = 'Use one safe advertised movement, then react to the result.';
+  const operatorObservation = observation({
+    capabilities: {
+      actions: ['robotCommand', 'captureImage'],
+      robotCommands: ['stretch'],
+      motionClasses: ['body_local'],
+      visual: true,
+      movement: true,
+    },
+    metadata: {
+      correlationId: 'missing-action-cycle',
+      autonomousStimulus: 'boredom-movement',
+      robotOperatorDecision: {
+        observed: 'A safe expressive movement opportunity is available.',
+        instruction,
+        requiresAction: true,
+        reason: 'The trigger requires an embodied action.',
+        lifecycleContract: {
+          objective: instruction,
+          continuationPolicy: 'bounded',
+          requiredCompletionBasis: 'visual_observation',
+          visualEvidenceMode: 'single',
+        },
+      },
+    },
+  });
+  const prepared = await prepare(operatorObservation, instruction);
+  const reduced = await environmentTaskStateNode.execute({
+    observation: operatorObservation,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    actions: [],
+    response: 'I will initiate a slow, deliberate stretch.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'A stretch is appropriate.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+      presentation: 'private',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.deepEqual(reduced.actions, []);
+  assert.equal(reduced.complete, false);
+  assert.equal(reduced.decision.blockedReason, 'required_action_missing');
+  assert.match(reduced.response, /nothing was sent to the robot/i);
+  assert.doesNotMatch(reduced.response, /I will initiate/i);
+});
+
+test('Task State exposes one rejected movement generation instead of hiding it as a missing action', async () => {
+  clearEnvironmentTaskFrameCache();
+  const instruction = 'Perform one bounded body-local movement.';
+  const current = observation({
+    metadata: {
+      correlationId: 'generation-failure-cycle',
+      robotOperatorDecision: {
+        observed: 'A movement opportunity is available.',
+        instruction,
+        requiresAction: true,
+        reason: 'The autonomy trigger requires one embodied action.',
+      },
+    },
+  });
+  const prepared = await prepare(current, instruction);
+  const generatedResponse = 'Generated movement was rejected: joint R1 is outside 0..180 degrees.';
+  const reduced = await environmentTaskStateNode.execute({
+    observation: current,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    movementRequest: { description: 'perform a bounded pose change' },
+    generatedActions: [],
+    generatedResponse,
+    response: 'I will perform the movement.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'A movement was selected.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.deepEqual(reduced.actions, []);
+  assert.equal(reduced.response, generatedResponse);
+  assert.equal(reduced.decision.blockedReason, 'movement_generation_failed');
+});
+
+test('a trigger-authored movement contract requires a fresh reaction after the action result', async () => {
+  clearEnvironmentTaskFrameCache();
+  const instruction = 'I will turn once, then interpret the fresh view before deciding whether to react.';
+  const movementObservation = observation({
+    metadata: {
+      correlationId: 'movement-cycle',
+      autonomousStimulus: 'boredom-movement',
+      robotObserver: {
+        cycleId: 'movement-cycle',
+        step: 1,
+        maxSteps: 3,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'environment-perception',
+      },
+      robotOperatorDecision: {
+        observed: 'The robot is ready for a small movement.',
+        instruction,
+        requiresAction: true,
+        reason: 'Movement followed by observation supports embodied autonomy.',
+        lifecycleContract: {
+          objective: instruction,
+          continuationPolicy: 'bounded',
+          requiredCompletionBasis: 'visual_observation',
+          visualEvidenceMode: 'single',
+        },
+      },
+    },
+  });
+  const initial = await environmentTaskStateNode.execute({
+    observation: movementObservation,
+    instruction,
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'prepare' });
+
+  assert.equal(initial.taskState.phase, 'new');
+  assert.equal(initial.taskState.step, 0);
+  assert.equal(initial.taskState.continuationPolicy, 'bounded');
+  assert.equal(initial.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(initial.taskState.visualEvidenceMode, 'single');
+
+  const queued = await environmentTaskStateNode.execute({
+    observation: movementObservation,
+    instruction,
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: 'I will turn once and then take in the new view.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'A small reorientation is an expressive movement opportunity.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+      presentation: 'private',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.equal(queued.actions.length, 1);
+  assert.equal(queued.taskState.continuationPolicy, 'bounded');
+  assert.equal(queued.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(queued.taskState.visualEvidenceMode, 'single');
+
+  const freshView = frame('movement-after', 'movement-cycle', 'movement-action');
+  const terminal = observation({
+    visual: freshView,
+    visuals: [freshView],
+    metadata: {
+      actionId: 'movement-action',
+      correlationId: 'movement-cycle',
+      originatingInstruction: queued.taskInstruction,
+      robotObserver: {
+        cycleId: 'movement-cycle',
+        step: 2,
+        maxSteps: 3,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'environment-perception',
+      },
+    },
+    feedback: [{
+      id: 'movement-feedback',
+      actionId: 'movement-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'turn completed',
+      data: { command: 'turn_right_90' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  assert.equal(returned.deterministicComplete, false);
+  assert.equal(returned.precomputedResponse, '');
+  assert.equal(returned.routingAnalysis.needsVision, true);
+  assert.equal(returned.visuals.at(-1)?.id, 'movement-after');
+
+  const reacted = await environmentTaskStateNode.execute({
+    observation: terminal,
+    instruction: returned.instruction,
+    taskState: returned.taskState,
+    frames: returned.visuals,
+    actions: [],
+    response: 'That turn opened up a brighter patch of the room; I like how the light changed.',
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The fresh view inspired a specific persona-grounded reaction.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      completionBasis: 'visual_observation',
+      completionEvidence: 'Frame movement-after was interpreted after the turn.',
+      visualEvidenceMode: 'single',
+      presentation: 'conversation',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.equal(reacted.complete, true);
+  assert.equal(reacted.presentation, 'conversation');
+  assert.equal(reacted.privateResponse, '');
+  assert.match(reacted.response, /brighter patch of the room/);
+});
+
 test('a current user instruction starts a new objective instead of inheriting stale task state', async () => {
   const prior = await prepare(observation(), 'Please wave');
   const queued = await reduce({
@@ -311,6 +594,7 @@ test('a bounded exploratory action inspects the correlated result before decidin
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
+      actionPurpose: 'information_gain',
     },
   });
   const after = frame('room-after', 'cycle-scan', 'action-scan');
@@ -341,7 +625,7 @@ test('a bounded exploratory action inspects the correlated result before decidin
     preparedTerminal.visuals.map((value: EnvironmentVisualFrame) => value.id),
     ['room-before', 'room-after'],
   );
-  assert.match(String(preparedTerminal.instruction), /proves only that step/);
+  assert.match(String(preparedTerminal.instruction), /Required whole-objective evidence: visual_observation/);
   assert.match(String(preparedTerminal.instruction), /safety ceiling, not a success condition/);
   assert.match(String(preparedTerminal.instruction), /Do not continue merely because unseen areas might still exist/);
 
@@ -369,6 +653,272 @@ test('a bounded exploratory action inspects the correlated result before decidin
   assert.equal(closed.response, 'The new view shows a clear, quiet room with nothing that needs further attention.');
   assert.equal(closed.decision.completionBasis, 'visual_observation');
   assert.equal(closed.decision.actionId, 'action-scan');
+});
+
+test('any autonomous information-gain action preserves a visual contract through its lifecycle', async () => {
+  clearEnvironmentTaskFrameCache();
+  const before = frame('object-before', 'information-cycle');
+  const autonomousObservation = observation({
+    visual: before,
+    visuals: [before],
+    metadata: {
+      correlationId: 'information-cycle',
+      robotObserver: {
+        cycleId: 'information-cycle',
+        step: 1,
+        maxSteps: 4,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'boredom-observer',
+      },
+    },
+  });
+  const initial = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Perform one supported reorientation to gain another view of the current subject.',
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'prepare' });
+  const queued = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Perform one supported reorientation to gain another view of the current subject.',
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: 'Tilting once for a different view.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'The movement is intended to gain new visual information.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'information_gain',
+      observationSummary: 'An unfamiliar object is visible in the current frame.',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.equal(queued.actions.length, 1);
+  assert.equal(queued.taskState.actionPurpose, 'information_gain');
+  assert.equal(queued.taskState.continuationPolicy, 'bounded');
+  assert.equal(queued.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(queued.taskState.visualEvidenceMode, 'single');
+  assert.equal(queued.presentation, 'private');
+  assert.equal(queued.familiarityQuery, 'An unfamiliar object is visible in the current frame.');
+
+  const after = frame('object-after', 'information-cycle', 'information-action');
+  const terminal = observation({
+    visual: after,
+    visuals: [after],
+    metadata: {
+      actionId: 'information-action',
+      correlationId: 'information-cycle',
+      originatingInstruction: queued.taskInstruction,
+      robotObserver: {
+        cycleId: 'information-cycle',
+        step: 2,
+        maxSteps: 4,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'information-feedback',
+      actionId: 'information-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'reorientation completed',
+      data: { command: 'turn_right_90' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  assert.equal(returned.deterministicComplete, false);
+  assert.equal(returned.precomputedResponse, '');
+  assert.equal(returned.routingAnalysis.needsVision, true);
+  assert.equal(returned.taskState.actionPurpose, 'information_gain');
+  assert.equal(returned.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(returned.visuals.at(-1)?.id, 'object-after');
+});
+
+test('autonomous physical work without an action purpose fails closed', async () => {
+  const autonomousObservation = observation({
+    metadata: {
+      robotObserver: {
+        cycleId: 'purpose-cycle',
+        step: 1,
+        maxSteps: 4,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'boredom-observer',
+      },
+    },
+  });
+  const initial = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Consider one action.',
+  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'prepare' });
+  const result = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Consider one action.',
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'wave' }],
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'No purpose was declared.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+    },
+  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
+
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.decision.blockedReason, 'action_purpose_missing');
+});
+
+test('an autonomous observation can remain physically still while producing a meaningful private reflection', async () => {
+  const current = frame('quiet-current-view', 'quiet-cycle');
+  const autonomousObservation = observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      correlationId: 'quiet-cycle',
+      robotObserver: {
+        cycleId: 'quiet-cycle',
+        step: 1,
+        maxSteps: 4,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'boredom-observer',
+      },
+    },
+  });
+  const initial = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Review the current image and form one meaningful persona-grounded response.',
+  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'prepare' });
+  const result = await environmentTaskStateNode.execute({
+    observation: autonomousObservation,
+    instruction: 'Review the current image and form one meaningful persona-grounded response.',
+    taskState: initial.taskState,
+    actions: [],
+    movementRequest: null,
+    response: 'The quiet light makes this corner feel calm and familiar, so I want to take in the stillness.',
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The current scene supports a specific private reflection without requiring movement.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'visual_observation',
+      completionBasis: 'visual_observation',
+      completionEvidence: 'The fresh frame shows a quiet, softly lit corner.',
+      observationSummary: 'A quiet corner is softly lit in the current frame.',
+      presentation: 'private',
+    },
+  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.presentation, 'private');
+  assert.match(result.privateResponse, /quiet light makes this corner feel calm/);
+  assert.equal(result.familiarityQuery, 'A quiet corner is softly lit in the current frame.');
+  assert.equal(result.decision.completionBasis, 'visual_observation');
+});
+
+test('an observer bootstrap capture is input evidence, not terminal task feedback', async () => {
+  clearEnvironmentTaskFrameCache();
+  const current = frame('bootstrap-current-view', 'bootstrap-cycle', 'bootstrap-capture');
+  const captureObservation = observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      actionId: 'bootstrap-capture',
+      correlationId: 'bootstrap-cycle',
+      robotObserver: {
+        cycleId: 'bootstrap-cycle',
+        step: 1,
+        maxSteps: 4,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'bootstrap-feedback',
+      actionId: 'bootstrap-capture',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'done',
+      data: { command: 'captureImage' },
+    }],
+  });
+  const initial = await environmentTaskStateNode.execute({
+    observation: captureObservation,
+    instruction: 'Review the fresh autonomous image and decide whether useful work is warranted.',
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'prepare' });
+  const result = await environmentTaskStateNode.execute({
+    observation: captureObservation,
+    instruction: 'Review the fresh autonomous image and decide whether useful work is warranted.',
+    taskState: initial.taskState,
+    actions: [],
+    movementRequest: null,
+    response: '',
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The current view does not justify an external response or action.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'response',
+      completionBasis: 'response',
+      completionEvidence: 'The current view was evaluated.',
+      presentation: 'private',
+    },
+  }, {
+    userMessage: '',
+    username: 'greggles',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.presentation, 'private');
+  assert.equal(result.response, 'The current view does not justify an external response or action.');
+  assert.equal(result.privateResponse, 'The current view does not justify an external response or action.');
+  assert.equal(result.decision.terminalFeedback, null);
+  assert.equal(result.decision.blockedReason, '');
+});
+
+test('a user-started action cannot be hidden by a selector presentation hint', async () => {
+  const initial = await prepare(observation(), 'Please wave');
+  const result = await reduce({
+    observation: observation(),
+    instruction: 'Please wave',
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'wave' }],
+    response: 'Waving once.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'The user requested one advertised action.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+      presentation: 'private',
+    },
+  });
+
+  assert.equal(result.presentation, 'conversation');
+  assert.equal(result.privateResponse, '');
 });
 
 test('a generic adapter command label cannot hide matching terminal feedback', async () => {
@@ -406,7 +956,8 @@ test('a generic adapter command label cannot hide matching terminal feedback', a
 
   const prepared = await prepare(adapterResult);
   assert.equal(prepared.deterministicComplete, true);
-  assert.match(String(prepared.precomputedResponse), /wave action finished successfully/);
+  assert.match(String(prepared.precomputedResponse), /wave action is complete/);
+  assert.doesNotMatch(String(prepared.precomputedResponse), /Please wave/);
   assert.doesNotMatch(String(prepared.precomputedResponse), /Objective completed/);
 });
 
@@ -646,10 +1197,13 @@ test('action parser admits a new LLM-selected action on a failed feedback pass',
       movementRequest: null,
       taskDecision: {
         outcome: 'act',
+        reason: 'A different advertised command may recover from the failed action.',
         objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
+        actionPurpose: 'expression',
+        presentation: 'private',
       },
     }),
   }, {});
@@ -665,6 +1219,20 @@ test('Environment graph has one semantic LLM and no competing completion or refi
   const nodeTypes = graph.nodes.map((node: Record<string, any>) => node.data?.nodeType);
   assert.equal(nodeTypes.filter((type: string) => type === 'model_router').length, 1);
   assert.equal(nodeTypes.filter((type: string) => type === 'environment_task_state').length, 2);
+  assert.equal(nodeTypes.filter((type: string) => type === 'persona_loader').length, 1);
+  assert.equal(nodeTypes.filter((type: string) => type === 'persona_formatter').length, 1);
+  assert.ok(graph.edges.some((edge: Record<string, any>) => (
+    edge.source === 'persona-formatter'
+    && edge.sourceHandle === 'formatted'
+    && edge.target === '3'
+    && edge.targetHandle === 'personaText'
+  )), 'Environment selector must receive the active persona exactly once');
+  assert.ok(graph.edges.some((edge: Record<string, any>) => (
+    edge.source === '3'
+    && edge.sourceHandle === 'jsonSchema'
+    && edge.target === '4'
+    && edge.targetHandle === 'jsonSchema'
+  )), 'Environment selector must receive the current capability-bound output schema');
   for (const retired of [
     'orchestrator_llm',
     'search_interpreter',

@@ -208,14 +208,19 @@ export async function handleRunAgent(req: UnifiedRequest): Promise<UnifiedRespon
     if (!catalogAgent || !catalogAgent.sourceReady) {
       result = { success: false, agent, error: `Agent '${agent}' is not installed or its executable is missing` };
     } else if (!catalogAgent.canRun) {
-      result = { success: false, agent, error: catalogAgent.triggerRegistered || catalogAgent.serviceRegistered
-        ? `Agent '${agent}' is disabled in its lifecycle configuration`
-        : `Agent '${agent}' requires explicit Agent Catalog registration before it can run` };
+      result = { success: false, agent, error: catalogAgent.owner === 'robot-operator'
+        ? `Agent '${agent}' is disabled in Robot Operator configuration`
+        : catalogAgent.triggerRegistered || catalogAgent.serviceRegistered
+          ? `Agent '${agent}' is disabled in its lifecycle configuration`
+          : `Agent '${agent}' requires explicit Agent Catalog registration before it can run` };
     } else if (catalogAgent.lifecycle === 'service') {
       result = await runAllowedService(agent, args, req.user.username, req.user.username);
     } else {
       const system = await ensureQueueSystemStarted();
-      if (catalogAgent.triggerRegistered) {
+      if (catalogAgent.owner === 'robot-operator') {
+        const task = system.enqueueRobotOperatorChild(agent, req.user.username, args);
+        result = { success: true, agent, taskId: task.id, queued: true };
+      } else if (catalogAgent.triggerRegistered) {
         const taskId = system.triggerAgent(agent, req.user.username, args);
         result = taskId
           ? { success: true, agent, taskId, queued: true }

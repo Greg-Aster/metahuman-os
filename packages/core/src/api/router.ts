@@ -197,7 +197,6 @@ import {
 } from './handlers/agent-catalog.js';
 import { handleGetMoodSettings, handleUpdateMoodSettings } from './handlers/mood-settings.js';
 import { handleGetBigBrotherConfig, handleSetBigBrotherConfig } from './handlers/big-brother-config.js';
-import { handleGetCuriosityQuestions } from './handlers/curiosity-questions.js';
 import { handleGetPersonaToggle, handleSetPersonaToggle } from './handlers/persona-toggle.js';
 import { handleGetStorageStatus } from './handlers/storage-status.js';
 import { handleGetAgencyConfig, handleSetAgencyConfig } from './handlers/agency-config.js';
@@ -1013,9 +1012,6 @@ const routes: RouteDefinition[] = [
   // Big Brother Config
   { method: 'GET', pattern: '/api/big-brother-config', handler: handleGetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-config', handler: handleSetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
-
-  // Curiosity Questions (deprecated)
-  { method: 'GET', pattern: '/api/curiosity/questions', handler: handleGetCuriosityQuestions, requiresAuth: true },
 
   // Persona Toggle
   { method: 'GET', pattern: '/api/persona-toggle', handler: handleGetPersonaToggle },

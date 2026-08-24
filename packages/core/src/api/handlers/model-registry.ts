@@ -37,6 +37,7 @@ import path from 'node:path';
 export const isRetiredDevelopmentModelId = (modelId: string): boolean => (
   modelId.startsWith('environment-classifier.')
   || modelId.startsWith('ollama.environment-classifier')
+  || modelId === 'ollama.environment-action-selector-0.8b:v1'
 );
 
 export interface AvailableRegistryModel {

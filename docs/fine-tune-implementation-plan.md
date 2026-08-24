@@ -576,6 +576,6 @@ Add fine-tuned models to `etc/models.json`:
 ## References
 
 - [Master Specification](model-fine-tune-overview.md)
-- [Full-Cycle LoRA Pipeline](../brain/agents/full-cycle.ts)
+- [Full-Cycle LoRA Pipeline](../brain/training/full-cycle.ts)
 - [AI Dataset Builder](../brain/agents/ai-dataset-builder.ts)
 - [Model Router](../packages/core/src/model-router.ts)

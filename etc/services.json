@@ -36,10 +36,11 @@
       "maxCycleSteps": 8,
       "graph": "robot-operator",
       "boredomObserverGraph": "boredom-observer",
-      "boredomMovementGraph": "boredom-movement",
-      "boredomReflectionGraph": "boredom-reflection",
-      "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler. Semi mode uses independent idle timers; full mode rotates continuously across Boredom Observer, Movement, and Reflection between the Active Operator cooldown. Child triggers deliberate in specialized graphs and delegate all speech and physical behavior to Environment Mode."
+    "boredomMovementGraph": "boredom-movement",
+    "boredomReflectionGraph": "boredom-reflection",
+    "autonomyGraph": "boredom-autonomy",
+    "environmentGraph": "environment",
+    "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across the three named child workflows between cooldowns. Child workflows provide stimuli; Boredom Autonomy owns semantic idle decisions and reuses canonical robot execution nodes."
     },
     "maintenance-service": {
       "id": "maintenance-service",

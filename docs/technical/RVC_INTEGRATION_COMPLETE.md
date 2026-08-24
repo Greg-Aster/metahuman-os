@@ -62,7 +62,7 @@ A complete RVC (Retrieval-based Voice Conversion) integration for MetaHuman OS t
 |------|---------|
 | [bin/install-rvc.sh](bin/install-rvc.sh) | Bash script for automated RVC installation (NEW) |
 | [packages/cli/src/commands/rvc.ts](packages/cli/src/commands/rvc.ts) | CLI command implementation (NEW) |
-| [packages/cli/src/mh-new.ts](packages/cli/src/mh-new.ts) | Registered `mh rvc` command |
+| `packages/cli/src/main.ts` | Registers the `mh rvc` command |
 
 ### API Layer
 

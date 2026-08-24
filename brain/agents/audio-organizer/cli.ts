@@ -5,30 +5,21 @@
  * Organizes transcribed audio files into episodic memories.
  *
  * Usage:
- *   npx tsx brain/agents/audio-organizer/cli.ts [options]
- *
- * Options:
- *   --oneshot  Run once and exit
+ *   npx tsx brain/agents/audio-organizer/cli.ts
  */
 
 import { initGlobalLogger } from '@metahuman/core';
-import { runCycle, type AudioOrganizerOptions } from './core.js';
+import { runCycle } from './core.js';
 
 const LOG_PREFIX = '[audio-organizer]';
 
 async function main(): Promise<void> {
   initGlobalLogger('audio-organizer');
-  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
-
-  const options: AudioOrganizerOptions = {
-    oneShot: true,
-  };
-  console.log(`${LOG_PREFIX} Options: oneShot=${options.oneShot}`);
 
   try {
-    const result = await runCycle(options);
+    const result = await runCycle();
     console.log(`${LOG_PREFIX} Completed: ${result.transcriptsOrganized} organized, ${result.transcriptsFailed} failed`);
-    process.exit(result.success ? 0 : 1);
+    process.exit(result.transcriptsFailed === 0 ? 0 : 1);
   } catch (error) {
     console.error(`${LOG_PREFIX} Fatal error:`, error);
     process.exit(1);

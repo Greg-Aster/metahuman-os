@@ -394,7 +394,7 @@ Click trace entry to view:
 
 ### Built-in Graphs
 
-**Location:** `apps/site/src/lib/cognitive-nodes/templates/*.json`
+**Location:** `etc/cognitive-graphs/*.json`
 
 **Managed by:** MetaHuman core team
 

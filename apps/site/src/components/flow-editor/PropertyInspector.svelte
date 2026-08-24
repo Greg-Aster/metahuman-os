@@ -27,6 +27,13 @@
     placeholder?: string;
   }
 
+  interface PortSchema {
+    name: string;
+    type?: string;
+    optional?: boolean;
+    description?: string;
+  }
+
   let {
     selectedNode,
     onUpdateNodeData,
@@ -46,6 +53,10 @@
   // Get node info
   const nodeTitle = $derived(selectedNode?.data?.title || selectedNode?.data?.schema?.name || 'Node');
   const nodeDescription = $derived(selectedNode?.data?.schema?.description || '');
+  const nodeType = $derived(selectedNode?.data?.nodeType || selectedNode?.data?.schema?.id || selectedNode?.type || 'unknown');
+  const nodeCategory = $derived(selectedNode?.data?.schema?.category || '');
+  const nodeInputs = $derived((selectedNode?.data?.schema?.inputs || []) as PortSchema[]);
+  const nodeOutputs = $derived((selectedNode?.data?.schema?.outputs || []) as PortSchema[]);
 
   // Update a property value
   function updateProperty(key: string, value: any) {
@@ -101,11 +112,44 @@
     <div class="p-4 border-b border-slate-700 bg-slate-900">
       <h3 class="m-0 mb-1 text-base font-semibold text-slate-50">{nodeTitle}</h3>
       <span class="text-[11px] text-slate-500 font-mono">ID: {selectedNode.id}</span>
+      <span class="block mt-1 text-[11px] text-slate-400 font-mono">Type: {nodeType}{nodeCategory ? ` · ${nodeCategory}` : ''}</span>
     </div>
 
     {#if nodeDescription}
       <p class="py-3 px-4 m-0 text-xs text-slate-400 border-b border-slate-700 leading-relaxed">{nodeDescription}</p>
     {/if}
+
+    <div class="py-3 px-4 border-b border-slate-700">
+      <h4 class="m-0 mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Data Flow</h4>
+      <div class="grid grid-cols-1 gap-3">
+        <div>
+          <div class="mb-1 text-[11px] font-medium text-slate-500">Inputs</div>
+          {#if nodeInputs.length}
+            {#each nodeInputs as port}
+              <div class="mb-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5">
+                <div class="font-mono text-[11px] text-slate-200">{port.name} <span class="text-slate-500">· {port.type || 'any'}{port.optional ? ' · optional' : ''}</span></div>
+                {#if port.description}<div class="mt-1 text-[11px] leading-snug text-slate-500">{port.description}</div>{/if}
+              </div>
+            {/each}
+          {:else}
+            <div class="text-[11px] italic text-slate-600">No inputs</div>
+          {/if}
+        </div>
+        <div>
+          <div class="mb-1 text-[11px] font-medium text-slate-500">Outputs</div>
+          {#if nodeOutputs.length}
+            {#each nodeOutputs as port}
+              <div class="mb-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5">
+                <div class="font-mono text-[11px] text-slate-200">{port.name} <span class="text-slate-500">· {port.type || 'any'}</span></div>
+                {#if port.description}<div class="mt-1 text-[11px] leading-snug text-slate-500">{port.description}</div>{/if}
+              </div>
+            {/each}
+          {:else}
+            <div class="text-[11px] italic text-slate-600">No outputs</div>
+          {/if}
+        </div>
+      </div>
+    </div>
 
     <div class="p-4">
       {#each Object.entries(propertySchemas) as [key, schema]}
@@ -246,7 +290,7 @@
       {/each}
 
       {#if Object.keys(propertySchemas).length === 0}
-        <p class="text-slate-500 italic text-center p-5">No editable properties for this node.</p>
+        <p class="text-slate-500 italic text-center p-5">This node has no editable settings. Its data-flow contract is shown above.</p>
       {/if}
     </div>
   {:else}

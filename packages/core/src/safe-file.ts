@@ -91,7 +91,7 @@ function cleanupOldBackups(filePath: string): void {
 /**
  * Get list of available backups for a file
  */
-export function listBackups(filePath: string): Array<{ path: string; timestamp: Date; size: number }> {
+export function listFileBackups(filePath: string): Array<{ path: string; timestamp: Date; size: number }> {
   const backupDir = getBackupDir(filePath);
   const basename = path.basename(filePath);
 
@@ -115,7 +115,7 @@ export function listBackups(filePath: string): Array<{ path: string; timestamp: 
  * Restore a file from its most recent backup
  */
 export function restoreFromBackup(filePath: string): boolean {
-  const backups = listBackups(filePath);
+  const backups = listFileBackups(filePath);
 
   if (backups.length === 0) {
     console.error(`${LOG_PREFIX} No backups found for ${filePath}`);

@@ -1367,9 +1367,9 @@
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🚀 Full Cycle (RunPod - Remote GPU)</h4>
                 <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on RunPod cloud GPU. Best for full training runs.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
@@ -1377,9 +1377,9 @@
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🖥️ Full Cycle Local (Local GPU)</h4>
                 <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on your local GPU. Requires CUDA-capable GPU.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm tsx brain/agents/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>

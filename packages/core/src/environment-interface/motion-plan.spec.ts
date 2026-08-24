@@ -633,6 +633,35 @@ test('Movement Generator rejects target-relative requests even when robotMotionP
   assert.match(generated.error, /only an admitted body_local/i);
 });
 
+test('Movement Generator makes one inference attempt and surfaces an invalid plan', async () => {
+  let calls = 0;
+  const result = await movementGeneratorNode.execute({
+    movementRequest: { description: 'perform one body-local pose change', motionClass: 'body_local' },
+    instruction: 'Perform one body-local pose change.',
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'ainekio-sim-1',
+      timestamp: new Date().toISOString(),
+      capabilities: { actions: ['robotMotionPlan'] },
+    },
+    sessionId: 'ainekio-sim-1',
+  }, {
+    generateEnvironmentMotionPlan: async () => {
+      calls += 1;
+      return generatedResult({
+        frames: [{ durationMs: 400, targets: targets(-10) }],
+      });
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.rejected, true);
+  assert.match(result.response, /Generated movement was rejected/i);
+  assert.match(result.error, /outside 0\.\.180 degrees/i);
+});
+
 test('Movement Generator stops a repeated cycle-owned plan before physical dispatch', async () => {
   let calls = 0;
   const baseObservation: EnvironmentObservation = {

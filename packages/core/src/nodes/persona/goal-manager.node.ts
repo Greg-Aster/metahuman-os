@@ -4,16 +4,64 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import {
+  loadPersonaCore,
+  savePersonaCore,
+  type GoalEntry,
+  type GoalTier,
+} from '../../identity.js';
+
+const GOAL_TIERS = new Set<GoalTier>(['shortTerm', 'midTerm', 'longTerm']);
+
+export function getGoalTier(value: unknown): GoalTier {
+  return typeof value === 'string' && GOAL_TIERS.has(value as GoalTier)
+    ? value as GoalTier
+    : 'shortTerm';
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function goalRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function normalizeGoals(values: unknown): GoalEntry[] {
+  if (!Array.isArray(values)) return [];
+
+  return values.flatMap(value => {
+    const legacyGoal = nonEmptyString(value);
+    if (legacyGoal) return [{ goal: legacyGoal, status: 'active' }];
+
+    const record = goalRecord(value);
+    const goal = nonEmptyString(record?.goal);
+    if (!record || !goal) return [];
+
+    return [{
+      ...record,
+      goal,
+      status: nonEmptyString(record.status) || 'active',
+    } as GoalEntry];
+  });
+}
+
+export function matchesGoal(goal: GoalEntry, selector: Record<string, unknown>): boolean {
+  const id = nonEmptyString(selector.id);
+  const name = nonEmptyString(selector.goal);
+  return Boolean((id && goal.id === id) || (name && goal.goal === name));
+}
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
   const operation = properties?.operation || 'get';
-  const scope = properties?.scope || 'shortTerm';
-  const goalData = inputs[0];
+  const scope = getGoalTier(properties?.scope);
+  const goalData = goalRecord(inputs.goalData ?? inputs[0]);
 
   try {
-    const { loadPersonaCore, savePersonaCore } = await import('../../identity.js');
     const persona = loadPersonaCore();
-    const goals = persona.goals[scope] || [];
+    const goals = normalizeGoals(persona.goals[scope]);
 
     switch (operation) {
       case 'get':
@@ -25,13 +73,18 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
         };
 
       case 'add':
-        if (!goalData?.goal) {
+        const goal = nonEmptyString(goalData?.goal);
+        if (!goalData || !goal) {
           return {
             success: false,
             error: 'Goal data required for add operation',
           };
         }
-        goals.push(goalData);
+        goals.push({
+          ...goalData,
+          goal,
+          status: nonEmptyString(goalData.status) || 'active',
+        } as GoalEntry);
         persona.goals[scope] = goals;
         savePersonaCore(persona);
         return {
@@ -41,8 +94,8 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
         };
 
       case 'remove':
-        if (goalData?.goal) {
-          const filtered = goals.filter((g: any) => g.goal !== goalData.goal);
+        if (goalData && (nonEmptyString(goalData.id) || nonEmptyString(goalData.goal))) {
+          const filtered = goals.filter(goal => !matchesGoal(goal, goalData));
           persona.goals[scope] = filtered;
           savePersonaCore(persona);
           return {
@@ -57,15 +110,21 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
         };
 
       case 'update':
-        if (!goalData?.goal) {
+        if (!goalData || (!nonEmptyString(goalData.id) && !nonEmptyString(goalData.goal))) {
           return {
             success: false,
             error: 'Goal data required for update operation',
           };
         }
-        const index = goals.findIndex((g: any) => g.goal === goalData.goal);
+        const index = goals.findIndex(goal => matchesGoal(goal, goalData));
         if (index !== -1) {
-          goals[index] = { ...goals[index], ...goalData };
+          const updatedGoal = nonEmptyString(goalData.goal) || goals[index].goal;
+          goals[index] = {
+            ...goals[index],
+            ...goalData,
+            goal: updatedGoal,
+            status: nonEmptyString(goalData.status) || goals[index].status,
+          } as GoalEntry;
           persona.goals[scope] = goals;
           savePersonaCore(persona);
           return {
@@ -122,9 +181,9 @@ export const GoalManagerNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'shortTerm',
       label: 'Scope',
-      options: ['shortTerm', 'longTerm'],
+      options: ['shortTerm', 'midTerm', 'longTerm'],
     },
   },
-  description: 'Manages goals (short-term, long-term)',
+  description: 'Manages short-, mid-, and long-term goals',
   execute,
 });

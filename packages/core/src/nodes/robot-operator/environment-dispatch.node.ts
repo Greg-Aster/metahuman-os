@@ -28,6 +28,40 @@ function validGraph(value: unknown, fallback: string): string {
   return /^[a-zA-Z0-9_-]{1,80}$/.test(graph) ? graph : fallback;
 }
 
+function sampledMemoryContent(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(memory => (
+    typeof memory === 'string'
+      ? cleanText(memory, 800)
+      : isRecord(memory)
+        ? cleanText(memory.content, 800)
+        : ''
+  )).filter(Boolean))].slice(0, 3);
+}
+
+function lifecycleContract(
+  instruction: string,
+  properties: Record<string, unknown> | undefined,
+): Record<string, unknown> | null {
+  const continuationPolicy = properties?.continuationPolicy;
+  const requiredCompletionBasis = properties?.requiredCompletionBasis;
+  if (
+    (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
+    || !['response', 'action_result', 'visual_observation', 'environment_state', 'user_input']
+      .includes(String(requiredCompletionBasis))
+  ) return null;
+  const visualEvidenceMode = properties?.visualEvidenceMode;
+  return {
+    objective: instruction,
+    continuationPolicy,
+    requiredCompletionBasis,
+    ...(requiredCompletionBasis === 'visual_observation'
+      && (visualEvidenceMode === 'single' || visualEvidenceMode === 'comparison')
+      ? { visualEvidenceMode }
+      : {}),
+  };
+}
+
 function currentMode(context: Record<string, unknown>): AutonomyMode {
   const override = context.operatorMode;
   return override === 'reactive' || override === 'semi' || override === 'full'
@@ -43,21 +77,18 @@ function delegatedCycle(
   observation: EnvironmentObservation,
   source: RobotObserverTriggerSource,
   graph: string,
-  maxSteps: number,
 ): RobotObserverCycleMetadata {
   const existing = readRobotObserverCycle(observation);
   if (existing) {
     return {
       ...existing,
       graph,
-      requestedBy: 'environment-perception',
     };
   }
   return {
     cycleId: cleanText(observation.metadata?.correlationId, 200)
       || `robot-operator-${randomUUID()}`,
     step: 1,
-    maxSteps,
     triggerSource: source,
     graph,
     requestedBy: 'environment-perception',
@@ -70,6 +101,8 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
   category: 'operator',
   inputs: [
     { name: 'decision', type: 'object', optional: true, description: 'Validated Robot Operator decision' },
+    { name: 'instruction', type: 'string', optional: true, description: 'Graph-authored autonomy instruction that needs no preliminary LLM decision' },
+    { name: 'memories', type: 'array', optional: true, description: 'Sampled historical inspiration delegated once to Environment Mode' },
     { name: 'observation', type: 'object', optional: true, description: 'Original correlated robot observation' },
   ],
   outputs: [
@@ -81,7 +114,10 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
   ],
   properties: {
     graph: 'environment',
-    maxSteps: 8,
+    requireAction: false,
+    continuationPolicy: 'selector',
+    requiredCompletionBasis: 'selector',
+    visualEvidenceMode: 'single',
   },
   propertySchemas: {
     graph: {
@@ -90,16 +126,35 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       label: 'Environment Execution Graph',
       description: 'Graph that decides how to execute the delegated high-level intention.',
     },
-    maxSteps: {
-      type: 'slider',
-      default: 8,
-      label: 'Maximum Environment Steps',
-      min: 1,
-      max: 10,
-      step: 1,
+    requireAction: {
+      type: 'toggle',
+      default: false,
+      label: 'Require Environment Action',
+      description: 'Treat a direct graph instruction as an action-required autonomy trigger.',
+    },
+    continuationPolicy: {
+      type: 'select',
+      default: 'selector',
+      label: 'Continuation Contract',
+      options: ['selector', 'none', 'bounded'],
+      description: 'Optionally fixes the lifecycle policy supplied to Environment Task State.',
+    },
+    requiredCompletionBasis: {
+      type: 'select',
+      default: 'selector',
+      label: 'Completion Evidence',
+      options: ['selector', 'response', 'action_result', 'visual_observation', 'environment_state', 'user_input'],
+      description: 'Optionally fixes the whole-objective evidence required by Environment Task State.',
+    },
+    visualEvidenceMode: {
+      type: 'select',
+      default: 'single',
+      label: 'Visual Evidence Mode',
+      options: ['single', 'comparison'],
+      description: 'Whether a visual contract needs one fresh view or a before-and-after comparison.',
     },
   },
-  description: 'Admits only boredom-trigger decisions that require outward work; private reflections stop before Environment Mode.',
+  description: 'Delegates one autonomy instruction and optional historical inspiration to the configured execution graph; the trigger may require a physical action.',
   async execute(inputs, context, properties) {
     const decision = isRecord(inputs.decision)
       ? inputs.decision as unknown as RobotOperatorDecision
@@ -114,15 +169,23 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       instruction,
       result: { queued: false, status },
     });
-    if (!decision) return reject('no_decision');
-    const observed = cleanText(decision.observed, 500);
-    const instruction = cleanText(decision.instruction, 1_000);
-    const requiresAction = decision.requiresAction;
-    const reason = cleanText(decision.reason, 500);
+    const directInstruction = cleanText(inputs.instruction, 1_000);
+    const directTrigger = !decision && Boolean(directInstruction);
+    if (!decision && !directTrigger) return reject('no_decision');
+    const observed = decision
+      ? cleanText(decision.observed, 500)
+      : 'A bounded autonomous opportunity is available.';
+    const instruction = decision
+      ? cleanText(decision.instruction, 1_000)
+      : directInstruction;
+    const requiresAction = decision ? decision.requiresAction : properties?.requireAction === true;
+    const reason = decision
+      ? cleanText(decision.reason, 500)
+      : 'The trigger delegates one outcome choice to Environment Mode.';
     if (!observed || !instruction || typeof requiresAction !== 'boolean' || !reason) {
       return reject('invalid_decision');
     }
-    if (!requiresAction) return reject('observation_only', instruction);
+    if (decision && !requiresAction) return reject('observation_only', instruction);
     if (!observation?.sessionId) return reject('missing_observation_session', instruction);
 
     const source = triggerSource(observation);
@@ -134,11 +197,10 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       validGraph(properties?.graph, 'environment'),
     );
     if (graph === 'robot-operator') return reject('recursive_graph', instruction);
-    const maxSteps = Number.isInteger(properties?.maxSteps)
-      ? Math.max(1, Math.min(10, Number(properties?.maxSteps)))
-      : 8;
-    const cycle = delegatedCycle(observation, source, graph, maxSteps);
+    const cycle = delegatedCycle(observation, source, graph);
     const timestamp = new Date().toISOString();
+    const delegatedLifecycle = lifecycleContract(instruction, properties);
+    const delegatedMemories = sampledMemoryContent(inputs.memories);
     const nextObservation: EnvironmentObservation = {
       ...observation,
       timestamp,
@@ -155,7 +217,11 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
           requiresAction,
           reason,
           decidedAt: timestamp,
+          ...(delegatedLifecycle ? { lifecycleContract: delegatedLifecycle } : {}),
         },
+        ...(delegatedMemories.length > 0
+          ? { robotOperatorMemories: delegatedMemories }
+          : {}),
       },
     };
     delete nextObservation.metadata?.actionId;

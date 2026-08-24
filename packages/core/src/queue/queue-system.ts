@@ -78,6 +78,33 @@ function parseQueueConfig(value: unknown): QueueConfig {
   };
 }
 
+export function buildRobotOperatorManualTaskInput(
+  agentId: string,
+  config: TriggerConfigRead['config']['agents'][string] | undefined,
+  username: string,
+  args: string[] = [],
+): TaskInput & { handler: string } {
+  if (!config || config.runtimeOwner !== 'robot-operator') {
+    throw new Error(`Agent '${agentId}' is not owned by Robot Operator`);
+  }
+  if (!config.enabled) throw new Error(`Agent '${agentId}' is disabled in Robot Operator configuration`);
+  if (config.lifecycle !== 'workflow' || !config.handler.startsWith('workflow.')) {
+    throw new Error(`Agent '${agentId}' does not have a maintained Robot Operator workflow`);
+  }
+  return {
+    type: agentTaskType(agentId),
+    handler: config.handler,
+    resource: config.resource ?? 'system',
+    source: 'user',
+    username,
+    priority: config.priority,
+    cognitiveMode: 'environment',
+    input: { agentId, args, triggeredBy: 'manual' },
+    maxAttempts: Math.max(1, (config.maxRetries ?? 0) + 1),
+    metadata: { producer: 'robot-operator', childAgent: agentId, admission: 'manual' },
+  };
+}
+
 export class QueueSystem extends EventEmitter {
   private readonly config: QueueSystemConfig;
   private queueConfig: QueueConfig | null = null;
@@ -341,6 +368,25 @@ export class QueueSystem extends EventEmitter {
       input: { agentId, args, triggeredBy: 'manual' },
       metadata: { producer: 'manual-agent-control', agentId },
     });
+  }
+
+  enqueueRobotOperatorChild(agentId: string, username: string, args: string[] = []): QueuedTask {
+    const config = this.triggerConfig.load(false).config.agents[agentId];
+    const input = buildRobotOperatorManualTaskInput(agentId, config, username, args);
+    if (!this.executionEngine.hasHandler(input.handler)) {
+      throw new Error(`Robot Operator workflow handler is unavailable: ${input.handler}`);
+    }
+
+    const task = this.enqueue(input);
+    this.recordActivity(username);
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'robot_operator_child_manual_admitted',
+      actor: agentId,
+      details: { agent: agentId, taskId: task.id, handler: task.handler, requestedBy: username },
+    });
+    return task;
   }
 
   recordActivity(username?: string): void {

@@ -8,7 +8,7 @@
  * - At least 24GB VRAM for 20B models
  *
  * Usage:
- *   npx tsx brain/agents/full-cycle-local.ts --username <username>
+ *   pnpm exec tsx brain/training/full-cycle-local.ts --username <username>
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -711,8 +711,8 @@ async function main() {
 
   if (!username) {
     console.error('[full-cycle-local] ERROR: --username <name> is required');
-    console.error('\nUsage: npx tsx brain/agents/full-cycle-local.ts --username <username>');
-    console.error('\nExample: npx tsx brain/agents/full-cycle-local.ts --username greggles');
+    console.error('\nUsage: pnpm exec tsx brain/training/full-cycle-local.ts --username <username>');
+    console.error('\nExample: pnpm exec tsx brain/training/full-cycle-local.ts --username greggles');
     process.exit(1);
   }
 

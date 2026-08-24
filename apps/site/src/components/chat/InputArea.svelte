@@ -35,7 +35,6 @@
   export let selectedMessage: ChatMessage | null = null;
   export let isRecording: boolean = false;
   export let isContinuousMode: boolean = false;
-  export let isWakeWordListening: boolean = false; // Wake word detection active (mobile)
   export let isConversationMode: boolean = false; // Conversation mode active (mobile long-press)
   export let ttsIsPlaying: boolean = false;
   export let interimTranscript: string = ''; // Real-time transcript preview
@@ -205,7 +204,7 @@
       placeholder={composeTarget === 'inner' ? 'Add an unvoiced thought...' : 'Message your MetaHuman...'}
       rows="1"
       class="chat-input {loading ? 'queuing' : ''}"
-    />
+    ></textarea>
     <div class="input-actions">
       <!-- Stop thinking button - only visible when thinking -->
       {#if loading}
@@ -234,20 +233,15 @@
       {/if}
       <button
         bind:this={micButton}
-        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {isWakeWordListening ? 'wake-word' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''} {loading ? 'queuing' : ''}"
-        title={loading ? 'Voice input will be queued' : ttsIsPlaying ? 'Tap to interrupt and speak' : isWakeWordListening ? 'Listening for "hey greg"…' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
+        class="mic-btn {isRecording ? 'recording' : ''} {isContinuousMode ? 'continuous' : ''} {isConversationMode ? 'conversation' : ''} {ttsIsPlaying ? 'interrupt-ready' : ''} {loading ? 'queuing' : ''}"
+        title={loading ? 'Voice input will be queued' : ttsIsPlaying ? 'Tap to interrupt and speak' : isConversationMode ? (isRecording ? 'Listening…' : 'Conversation mode - just talk!') : isContinuousMode ? (isRecording ? 'Listening continuously…' : 'Continuous mode active') : (isRecording ? 'Listening… tap to stop' : 'Tap to speak, hold for conversation')}
         on:click={handleMicClick}
         on:contextmenu={handleMicContextMenu}
         on:touchstart={handleMicTouchStart}
         on:touchend={handleMicTouchEnd}
         on:touchmove={handleMicTouchMove}
       >
-        {#if isWakeWordListening}
-          <!-- Wake word mode: Ear icon (listening for trigger phrase) -->
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="wake-word-icon">
-            <path d="M12 1C7.03 1 3 5.03 3 10v4c0 1.66 1.34 3 3 3h1v-7H5.5c.32-3.52 3.3-6.25 6.91-6.25s6.59 2.73 6.91 6.25H17v7h1c1.66 0 3-1.34 3-3v-4c0-4.97-4.03-9-9-9zm-1 17h2v2h-2v-2z"/>
-          </svg>
-        {:else if isConversationMode && isRecording}
+        {#if isConversationMode && isRecording}
           <!-- Conversation mode recording: Waveform icon (green) -->
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="recording-icon">
             <rect x="2" y="8" width="2" height="8" rx="1"/>
@@ -363,12 +357,6 @@
     user-select: none;
     touch-action: none;
   }
-
-  /* Wake word mode - purple */
-  .mic-btn.wake-word {
-    @apply bg-purple-500/15 border-purple-600 text-purple-600 dark:bg-purple-400/20 dark:border-purple-400 dark:text-purple-400;
-  }
-  .wake-word-icon { animation: pulse 2s ease-in-out infinite; }
 
   /* Conversation mode - green */
   .mic-btn.conversation {

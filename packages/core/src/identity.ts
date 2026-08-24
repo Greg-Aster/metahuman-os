@@ -47,11 +47,7 @@ export interface PersonaCore {
   values: ValuesConfig;
   goals: GoalsConfig;
   context: ContextConfig;
-  // Extended properties used by cognitive-layers (experimental)
-  name?: string;  // Shorthand for identity.name
-  traits?: string[] | Record<string, unknown>;  // Personality traits
-  currentGoals?: string[] | Record<string, unknown>;  // Current goals
-  background?: string | Record<string, unknown>;  // Background context
+  background?: string | Record<string, unknown>;
   // Allow additional properties for flexibility
   [key: string]: unknown;
 }
@@ -82,14 +78,16 @@ interface ValuesConfig {
   [key: string]: unknown;
 }
 
-interface GoalsConfig {
+export type GoalTier = 'shortTerm' | 'midTerm' | 'longTerm';
+
+export interface GoalsConfig {
   shortTerm: GoalEntry[];
   midTerm: GoalEntry[];
   longTerm: GoalEntry[];
   [key: string]: unknown;
 }
 
-interface GoalEntry {
+export interface GoalEntry {
   id?: string;
   goal: string;
   status: string;
@@ -120,14 +118,16 @@ export interface DecisionRules {
   lastUpdated?: string;
 }
 
-interface HardRule {
+export interface HardRule {
   id: string;
   description: string;
-  scope: string;
-  enforcement: string;
+  scope?: string;
+  enforcement?: string;
+  priority?: number;
+  enforced?: boolean;
 }
 
-interface SoftPreference {
+export interface SoftPreference {
   id: string;
   description: string;
   weight: number;
@@ -713,24 +713,18 @@ export function rejectProposedGoal(goalId: string, reason?: string): { rejected:
 /**
  * Get all proposed goals awaiting approval.
  */
-export function getProposedGoals(): Array<{
-  id: string;
-  goal: string;
-  description?: string;
-  tier: string;
-  sourceDesireId?: string;
-  proposedAt?: string;
-  proposedReason?: string;
-}> {
+export type ProposedGoal = GoalEntry & { id: string; tier: GoalTier };
+
+export function getProposedGoals(): ProposedGoal[] {
   try {
     const persona = loadPersonaCore();
-    const proposed: Array<GoalEntry & { tier: string }> = [];
+    const proposed: ProposedGoal[] = [];
 
-    for (const tier of ['shortTerm', 'midTerm', 'longTerm'] as const) {
+    for (const tier of ['shortTerm', 'midTerm', 'longTerm'] satisfies GoalTier[]) {
       const goals = persona.goals?.[tier] || [];
       for (const goal of goals) {
-        if (goal.status === 'proposed') {
-          proposed.push({ ...goal, tier });
+        if (goal.status === 'proposed' && typeof goal.id === 'string' && goal.id.trim()) {
+          proposed.push({ ...goal, id: goal.id, tier });
         }
       }
     }

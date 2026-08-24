@@ -667,7 +667,7 @@ async function callOllamaProvider(
       ...ollamaOptions,
       num_ctx: options.contextWindow ?? ollamaConfig.contextWindow,
       think: resolveOllamaThinkingMode(options.enableThinking ?? ollamaConfig.enableThinking),
-      format: options.format === 'json' ? 'json' : undefined,
+      format: options.jsonSchema ?? (options.format === 'json' ? 'json' : undefined),
       keep_alive: options.keepAlive ?? ollamaConfig.keepAlive,
     });
   } catch (error) {

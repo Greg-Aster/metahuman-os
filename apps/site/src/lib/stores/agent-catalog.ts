@@ -2,7 +2,7 @@ import { writable } from 'svelte/store';
 import { apiFetch } from '../client/api-config';
 
 export type AgentCatalogLifecycle = 'scheduled-work' | 'workflow' | 'service';
-export type AgentCatalogOwner = 'trigger-manager' | 'agent-monitor' | 'workflow' | 'available';
+export type AgentCatalogOwner = 'trigger-manager' | 'robot-operator' | 'agent-monitor' | 'workflow' | 'available';
 export type AgentCatalogHealth = 'ready' | 'available' | 'missing-source' | 'disabled';
 export type AgentCatalogRisk = 'standard' | 'privileged' | 'destructive';
 

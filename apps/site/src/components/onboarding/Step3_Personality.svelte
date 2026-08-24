@@ -208,7 +208,7 @@
         rows="3"
         disabled={processing || extracting}
         class="flex-1 p-3 text-base font-inherit border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-50 resize-y min-h-[80px] focus:outline-none focus:border-indigo-500 focus:ring-[3px] focus:ring-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-      />
+      ></textarea>
       <button
         class="px-6 py-3 text-base font-semibold border-none rounded-lg cursor-pointer bg-gradient-to-br from-indigo-500 to-purple-600 text-white whitespace-nowrap transition-all hover:enabled:-translate-y-0.5 hover:enabled:shadow-lg hover:enabled:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed md:w-full"
         on:click={handleSendResponse}

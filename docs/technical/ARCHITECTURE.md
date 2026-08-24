@@ -133,7 +133,7 @@ The core ESM library supplies shared capabilities:
 Every runtime surface imports from this package (published locally via `pnpm link` during dev) so logic lives in one place.
 
 ### CLI (`packages/cli` + `bin/mh`)
-The CLI command (`packages/cli/src/mh-new.ts`) is the user-facing entry point. It bootstraps directory structures during `mh init`, surfaces persona/memory status, manages tasks and events, drives Ollama interactions, monitors agents, and exposes subcommands defined in `commands/` (e.g., persona and adapter utilities). All operations go through `@metahuman/core`, so CLI actions reuse the same audit, policy, and storage layers.【F:packages/cli/src/mh-new.ts†L1-L120】
+The CLI launcher (`packages/cli/src/entry.ts`) handles lightweight help output and loads `packages/cli/src/main.ts` for executable commands. The command modules bootstrap directory structures during `mh init`, surface persona/memory status, manage tasks and events, drive local model interactions, monitor agents, and expose focused subcommands under `commands/`. All operations go through `@metahuman/core`, so CLI actions reuse the same audit, policy, and storage layers.
 
 ### Background Agents (`brain/agents`)
 Agents are Node scripts (ESM) that import `@metahuman/core` to perform autonomous routines such as enriching episodic memories, processing inbox files, or running nightly reflections. For example, `organizer.ts` scans the episodic store, calls local LLMs for metadata, and logs outcomes through the audit helpers.【F:brain/agents/organizer.ts†L18-L78】 Agent lifecycle (registration, status, logs) is surfaced via the CLI and UI using the agent monitor utilities.

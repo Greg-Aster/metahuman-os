@@ -225,14 +225,13 @@ export class ExecutionEngine {
       const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
         ? observation.metadata.originatingInstruction.trim()
         : '';
-      const taskInstruction = originatingInstruction || text || (robotObserver?.instruction
-        || (robotObserver
+      const taskInstruction = originatingInstruction || text || (robotObserver
           ? robotObserver.step === 1
             ? 'Inspect the current robot camera image and choose one contextually useful high-level intention, or remain still when no response is warranted.'
             : 'Inspect the returned robot camera image and choose one contextually useful next intention only if it is still warranted.'
         : observation.visual || observation.visuals?.length
           ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
-          : 'Review the returned environment state and choose the next semantic action if one is needed.'));
+          : 'Review the returned environment state and choose the next semantic action if one is needed.');
       const robotOperatorConfig = loadRobotOperatorConfig();
       const graphState = await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
@@ -263,7 +262,9 @@ export class ExecutionEngine {
               robotOperatorConfig.boredomMovementGraph,
               robotOperatorConfig.boredomReflectionGraph,
             ].includes(graphName)
-              ? robotOperatorConfig.environmentGraph
+              ? graphName === robotOperatorConfig.graph
+                ? robotOperatorConfig.environmentGraph
+                : robotOperatorConfig.autonomyGraph
               : undefined,
             abortSignal: context.signal,
             ttsGeneration: typeof task.input.ttsGeneration === 'number'

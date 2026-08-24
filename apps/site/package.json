@@ -25,6 +25,7 @@
     "vite": "^6.4.1"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.10",
     "@astrojs/node": "^9.5.1",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "svelte": "^5.46.0",

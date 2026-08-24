@@ -11,6 +11,11 @@ import type { PersonaCore } from '../../identity.js';
 import { loadPersonaCore } from '../../identity.js';
 import { callLLM } from '../../model-router.js';
 import { audit } from '../../audit.js';
+import {
+  getPersonaBackground,
+  getPersonaName,
+  getPersonaTraitDescriptions,
+} from '../../persona-summary.js';
 
 // ============================================================================
 // Types
@@ -187,18 +192,17 @@ function buildConsistencyPrompt(
   parts.push('');
 
   // Add persona identity
-  if (persona.name) {
-    parts.push(`## Identity: ${persona.name}`);
-    parts.push('');
-  }
+  parts.push(`## Identity: ${getPersonaName(persona)}`);
+  parts.push('');
 
   // Add communication style if checking tone/style
   if (aspects.includes('tone') || aspects.includes('style')) {
     parts.push('## Communication Style');
     parts.push('');
 
-    if (persona.traits && persona.traits.length > 0) {
-      parts.push(`**Traits:** ${persona.traits.join(', ')}`);
+    const traits = getPersonaTraitDescriptions(persona);
+    if (traits.length > 0) {
+      parts.push(`**Traits:** ${traits.join(', ')}`);
     }
 
     // Add communication tone if available
@@ -219,11 +223,11 @@ function buildConsistencyPrompt(
   }
 
   // Add background if checking identity
-  if (aspects.includes('identity') && persona.background) {
+  const background = getPersonaBackground(persona);
+  if (aspects.includes('identity') && background) {
     parts.push('## Background');
     parts.push('');
-    const bg = typeof persona.background === 'string' ? persona.background : JSON.stringify(persona.background);
-    parts.push(bg);
+    parts.push(background);
     parts.push('');
   }
 

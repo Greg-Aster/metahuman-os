@@ -11,6 +11,13 @@ import type { ContextPackage } from '../../context-builder.js';
 import type { CognitiveModeId } from '../../cognitive-mode.js';
 import { formatContextForPrompt } from '../../context-builder.js';
 import { loadPersonaCore } from '../../identity.js';
+import {
+  getActivePersonaGoals,
+  getPersonaBackground,
+  getPersonaName,
+  getPersonaTraitDescriptions,
+  getPersonaValueNames,
+} from '../../persona-summary.js';
 
 // ============================================================================
 // Types
@@ -188,29 +195,30 @@ function buildPersonaSection(cognitiveMode: CognitiveModeId): string | null {
     const parts: string[] = [];
 
     // Name and identity
-    if (persona.name) {
-      parts.push(`You are ${persona.name}.`);
-    }
+    parts.push(`You are ${getPersonaName(persona)}.`);
 
     // Core traits
-    if (persona.traits && persona.traits.length > 0) {
-      parts.push(`Core traits: ${persona.traits.join(', ')}`);
+    const traits = getPersonaTraitDescriptions(persona);
+    if (traits.length > 0) {
+      parts.push(`Core traits: ${traits.join(', ')}`);
     }
 
     // Values
-    if (persona.values && persona.values.length > 0) {
-      parts.push(`Values: ${persona.values.join(', ')}`);
+    const values = getPersonaValueNames(persona);
+    if (values.length > 0) {
+      parts.push(`Values: ${values.join(', ')}`);
     }
 
     // Current goals
-    if (persona.currentGoals && Array.isArray(persona.currentGoals) && persona.currentGoals.length > 0) {
-      parts.push(`Current goals:\n${persona.currentGoals.map((g: string) => `- ${g}`).join('\n')}`);
+    const currentGoals = getActivePersonaGoals(persona);
+    if (currentGoals.length > 0) {
+      parts.push(`Current goals:\n${currentGoals.map(goal => `- ${goal}`).join('\n')}`);
     }
 
     // Background (brief)
-    if (persona.background) {
-      const bg = typeof persona.background === 'string' ? persona.background : JSON.stringify(persona.background);
-      parts.push(`Background: ${bg}`);
+    const background = getPersonaBackground(persona);
+    if (background) {
+      parts.push(`Background: ${background}`);
     }
 
     if (parts.length === 0) return null;

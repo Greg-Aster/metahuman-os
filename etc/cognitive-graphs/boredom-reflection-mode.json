@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Boredom Reflection Mode",
-  "description": "Samples historical memory as inspiration for a private robot reflection or one bounded request. Memories never count as current-world evidence, and outward behavior is delegated to Environment Mode.",
+  "description": "Samples historical memory once and delegates the choice of private reflection, conversation, or advertised action to Boredom Autonomy.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-23",
+  "last_modified": "2026-08-24",
   "nodes": [
     {
       "id": "observation",
@@ -19,7 +19,7 @@
       "data": {
         "label": "Sample Historical Memory",
         "nodeType": "curiosity_weighted_sampler",
-        "properties": { "sampleSize": 3, "decayFactor": 30 }
+        "properties": { "sampleSize": 1, "decayFactor": 30 }
       }
     },
     {
@@ -29,91 +29,26 @@
       "data": {
         "label": "Reflection Policy",
         "nodeType": "text_input",
-        "properties": { "message": "", "inputKey": "environmentTaskInstruction" }
-      }
-    },
-    {
-      "id": "persona-loader",
-      "type": "personaNode",
-      "position": { "x": 60, "y": 470 },
-      "data": { "label": "Persona Loader", "nodeType": "persona_loader", "properties": {} }
-    },
-    {
-      "id": "persona-formatter",
-      "type": "personaNode",
-      "position": { "x": 350, "y": 470 },
-      "data": {
-        "label": "Persona Formatter",
-        "nodeType": "persona_formatter",
-        "properties": { "includeValues": true, "includeGoals": true, "includePersonality": true }
-      }
-    },
-    {
-      "id": "context",
-      "type": "operatorNode",
-      "position": { "x": 700, "y": 170 },
-      "data": { "label": "Reflection Context", "nodeType": "robot_operator_context_builder", "properties": {} }
-    },
-    {
-      "id": "llm",
-      "type": "llmNode",
-      "position": { "x": 1060, "y": 170 },
-      "data": {
-        "label": "Reflection Deliberation",
-        "nodeType": "model_router",
-        "properties": { "role": "persona", "maxTokens": 640, "temperature": 0.7 }
-      }
-    },
-    {
-      "id": "stripper",
-      "type": "outputNode",
-      "position": { "x": 1350, "y": 170 },
-      "data": { "label": "Thinking Stripper", "nodeType": "thinking_stripper", "properties": {} }
-    },
-    {
-      "id": "parser",
-      "type": "operatorNode",
-      "position": { "x": 1640, "y": 170 },
-      "data": { "label": "Reflection Decision", "nodeType": "robot_operator_decision_parser", "properties": {} }
-    },
-    {
-      "id": "private-thought",
-      "type": "outputNode",
-      "position": { "x": 1960, "y": 420 },
-      "data": {
-        "label": "Record Private Reflection",
-        "nodeType": "inner_dialogue_buffer",
         "properties": {
-          "tags": ["robot-operator", "boredom-reflection", "autonomy-trigger", "inner"],
-          "dialogueSource": "boredom-reflection",
-          "role": "reflection",
-          "captureMemory": false
+          "message": "Treat the supplied sampled memory as historical inspiration for Boredom Autonomy. The executive must use it with persona, current evidence, and correlated episode state to author or revise its own intent and choose the next consequence; this trigger does not choose it. Preserve a concrete memory detail without merely summarizing it. A memory is narrative context, never evidence of current objects, people, hazards, or physical clearance.",
+          "inputKey": ""
         }
       }
     },
     {
       "id": "environment-dispatch",
       "type": "operatorNode",
-      "position": { "x": 2300, "y": 170 },
+      "position": { "x": 720, "y": 170 },
       "data": {
-        "label": "Delegate to Environment Mode",
+        "label": "Delegate to Boredom Autonomy",
         "nodeType": "robot_operator_environment_dispatch",
-        "properties": { "graph": "environment", "maxSteps": 3 }
+        "properties": { "graph": "boredom-autonomy", "requireAction": false }
       }
     }
   ],
   "edges": [
-    { "id": "e-observation-context", "source": "observation", "target": "context", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
-    { "id": "e-memory-context", "source": "memory-sampler", "target": "context", "sourceHandle": "memories", "targetHandle": "memoryContext", "type": "default", "data": { "type": "array" } },
-    { "id": "e-instructions-context", "source": "instructions", "target": "context", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } },
-    { "id": "e-persona-format", "source": "persona-loader", "target": "persona-formatter", "sourceHandle": "persona", "targetHandle": "persona", "type": "default", "data": { "type": "object" } },
-    { "id": "e-persona-context", "source": "persona-formatter", "target": "context", "sourceHandle": "formatted", "targetHandle": "personaText", "type": "default", "data": { "type": "string" } },
-    { "id": "e-context-llm", "source": "context", "target": "llm", "sourceHandle": "messages", "targetHandle": "messages", "type": "default", "data": { "type": "array" } },
-    { "id": "e-llm-stripper", "source": "llm", "target": "stripper", "sourceHandle": "response", "targetHandle": "response", "type": "default", "data": { "type": "llm_response" } },
-    { "id": "e-stripper-parser", "source": "stripper", "target": "parser", "sourceHandle": "stripped", "targetHandle": "response", "type": "default", "data": { "type": "string" } },
-    { "id": "e-parser-thought", "source": "parser", "target": "private-thought", "sourceHandle": "reason", "targetHandle": "text", "type": "default", "data": { "type": "string" } },
-    { "id": "e-parser-passthrough", "source": "parser", "target": "private-thought", "sourceHandle": "decision", "targetHandle": "passthrough", "type": "default", "data": { "type": "object" } },
-    { "id": "e-thought-dispatch", "source": "private-thought", "target": "environment-dispatch", "sourceHandle": "passthrough", "targetHandle": "decision", "type": "default", "data": { "type": "object" } },
-    { "id": "e-observation-dispatch", "source": "observation", "target": "environment-dispatch", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } }
+    { "id": "e-observation-dispatch", "source": "observation", "target": "environment-dispatch", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
+    { "id": "e-memory-dispatch", "source": "memory-sampler", "target": "environment-dispatch", "sourceHandle": "memories", "targetHandle": "memories", "type": "default", "data": { "type": "array" } },
+    { "id": "e-instructions-dispatch", "source": "instructions", "target": "environment-dispatch", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } }
   ]
 }

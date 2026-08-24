@@ -345,26 +345,10 @@ export const movementGeneratorNode = defineNode({
         onProgress: context.emitProgress,
       });
       const injected = context.generateEnvironmentMotionPlan;
-      let result = typeof injected === 'function'
+      const result = typeof injected === 'function'
         ? { content: await injected({ request, instruction, observation, messages }) }
         : await callGenerator(messages);
-      let normalized;
-      try {
-        normalized = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
-      } catch (firstCause) {
-        const reason = firstCause instanceof Error ? firstCause.message : String(firstCause);
-        result = typeof injected === 'function'
-          ? { content: await injected({ request, instruction, observation, messages, correction: reason }) }
-          : await callGenerator([
-          ...messages,
-          { role: 'assistant', content: String(result.content).slice(0, ENVIRONMENT_MOTION_PLAN_LIMITS.maxEncodedBytes) },
-          {
-            role: 'user',
-            content: `Your previous response was invalid: ${reason}. Correct that specific error instead of repeating the same values. Each frame's first number is its individual duration, not a timestamp; add them and keep the total at or below ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms. Return one complete corrected compact JSON object only.`,
-          },
-          ]);
-        normalized = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
-      }
+      const normalized = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
       const planId = motionPlanId(normalized.action);
       const cycle = isRecord(observation?.metadata?.robotObserver)
         ? observation.metadata.robotObserver

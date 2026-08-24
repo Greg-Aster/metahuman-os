@@ -15,7 +15,7 @@ import { systemPaths } from './path-builder.js';
 import { agentHandlerId } from './queue/agent-work-catalog.js';
 import { getTriggerConfigService, type TriggerConfigService } from './queue/trigger-config-service.js';
 
-export type AgentCatalogOwner = 'trigger-manager' | 'agent-monitor' | 'workflow' | 'available';
+export type AgentCatalogOwner = 'trigger-manager' | 'robot-operator' | 'agent-monitor' | 'workflow' | 'available';
 export type AgentCatalogHealth = 'ready' | 'available' | 'missing-source' | 'disabled';
 
 export interface AgentCatalogItem {
@@ -190,32 +190,38 @@ export class AgentCatalogService {
         : trigger?.lifecycle ?? definition?.lifecycle ?? 'scheduled-work';
       const workflowReady = lifecycle === 'workflow' && Boolean((trigger?.handler ?? definition?.handler)?.startsWith('workflow.'));
       const sourceReady = workflowReady || Boolean(sourcePath && (sourcePath.startsWith('coordinator:') || fs.existsSync(sourcePath)));
-      const triggerRegistered = Boolean(trigger);
+      const triggerConfigured = Boolean(trigger);
+      const triggerRegistered = Boolean(trigger && trigger.runtimeOwner !== 'robot-operator');
+      const robotOperatorOwned = trigger?.runtimeOwner === 'robot-operator';
       const serviceRegistered = Boolean(service);
       const installed = sourceReady;
       const enabled = trigger?.enabled ?? service?.enabled ?? false;
       const risk = definition?.risk ?? 'standard';
       const owner: AgentCatalogOwner = serviceRegistered
         ? 'agent-monitor'
-        : triggerRegistered
-          ? 'trigger-manager'
-          : lifecycle === 'workflow'
-            ? 'workflow'
-            : 'available';
+        : robotOperatorOwned
+          ? 'robot-operator'
+          : triggerRegistered
+            ? 'trigger-manager'
+            : lifecycle === 'workflow'
+              ? 'workflow'
+              : 'available';
       const health: AgentCatalogHealth = !sourceReady
         ? 'missing-source'
-        : (triggerRegistered || serviceRegistered) && !enabled
+        : (triggerConfigured || serviceRegistered) && !enabled
           ? 'disabled'
-          : triggerRegistered || serviceRegistered
+          : triggerConfigured || serviceRegistered
             ? 'ready'
             : 'available';
       const statusReason = !sourceReady
         ? 'Maintained executable or workflow handler is missing.'
         : serviceRegistered
           ? 'Persistent lifecycle is owned by Agent Monitor and services.json.'
-          : triggerRegistered
-            ? `${trigger?.type === 'manual' ? 'Manual' : 'Scheduled'} finite work is registered with Trigger Manager.`
-            : 'Installed finite agent is available for manual runs or Trigger Manager registration.';
+          : robotOperatorOwned
+            ? 'Finite robot-autonomy work is owned by Robot Operator and can be run manually through the Work Coordinator.'
+            : triggerRegistered
+              ? `${trigger?.type === 'manual' ? 'Manual' : 'Scheduled'} finite work is registered with Trigger Manager.`
+              : 'Installed finite agent is available for manual runs or Trigger Manager registration.';
       const sourceId = discoveredSource?.sourceId ?? definition?.sourceId ?? agentId;
       return {
         id: agentId,
@@ -240,11 +246,11 @@ export class AgentCatalogService {
         priority: trigger?.priority ?? (service?.priority === 'low' || service?.priority === 'high' ? service.priority : undefined) ?? definition?.priority ?? 'normal',
         parentIds: definition?.parentIds ?? [],
         tags: definition?.tags ?? [],
-        canRegister: sourceReady && lifecycle !== 'service' && !triggerRegistered,
+        canRegister: sourceReady && lifecycle !== 'service' && !triggerConfigured,
         canUnregister: triggerRegistered,
         canRun: sourceReady && (serviceRegistered
           ? enabled
-          : lifecycle !== 'service' && (triggerRegistered ? enabled : risk === 'standard')),
+          : lifecycle !== 'service' && (triggerConfigured ? enabled : risk === 'standard')),
         statusReason,
       } satisfies AgentCatalogItem;
     });
@@ -275,6 +281,7 @@ export class AgentCatalogService {
     if (!current) throw new Error(`Unknown installed agent: ${agentId}`);
     if (!current.canRegister) {
       if (current.triggerRegistered) throw new Error(`Agent is already registered: ${agentId}`);
+      if (current.owner === 'robot-operator') throw new Error(`${agentId} is owned by Robot Operator`);
       if (current.lifecycle === 'service') throw new Error(`${agentId} is a persistent service managed by Agent Monitor`);
       throw new Error(`Agent cannot be registered because its executable is missing: ${agentId}`);
     }
@@ -314,6 +321,7 @@ export class AgentCatalogService {
   unregister(agentId: string, actor: string): AgentCatalogSnapshot {
     if (!validAgentId(agentId)) throw new Error('Agent id must use lowercase kebab-case');
     const current = this.getAgent(agentId);
+    if (current?.owner === 'robot-operator') throw new Error(`${agentId} is owned by Robot Operator`);
     if (!current?.triggerRegistered) throw new Error(`Agent is not registered with Trigger Manager: ${agentId}`);
     this.triggerConfig.unregisterAgent(agentId, actor);
     return this.getSnapshot();

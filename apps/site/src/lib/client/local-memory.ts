@@ -26,8 +26,6 @@ interface LocalMemoryDB extends DBSchema {
     indexes: {
       'by-timestamp': string;
       'by-type': string;
-      'by-synced': boolean;
-      'by-deleted': boolean;
     };
   };
   persona: {
@@ -54,7 +52,6 @@ interface LocalMemoryDB extends DBSchema {
     };
     indexes: {
       'by-status': string;
-      'by-synced': boolean;
     };
   };
   settings: {
@@ -105,7 +102,7 @@ export type LocalPersona = LocalMemoryDB['persona']['value'];
 export type LocalTask = LocalMemoryDB['tasks']['value'];
 
 const DB_NAME = 'metahuman-local';
-const DB_VERSION = 4;  // Removes the obsolete browser-owned dialogue buffers.
+const DB_VERSION = 5;  // Removes invalid boolean-key indexes and obsolete dialogue buffers.
 
 let dbInstance: IDBPDatabase<LocalMemoryDB> | null = null;
 
@@ -116,14 +113,12 @@ export async function getDB(): Promise<IDBPDatabase<LocalMemoryDB>> {
   if (dbInstance) return dbInstance;
 
   dbInstance = await openDB<LocalMemoryDB>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
+    upgrade(db, oldVersion, _newVersion, transaction) {
       // Memories store
       if (!db.objectStoreNames.contains('memories')) {
         const memoryStore = db.createObjectStore('memories', { keyPath: 'id' });
         memoryStore.createIndex('by-timestamp', 'timestamp');
         memoryStore.createIndex('by-type', 'type');
-        memoryStore.createIndex('by-synced', 'synced');
-        memoryStore.createIndex('by-deleted', 'deleted');
       }
 
       // Persona store
@@ -135,7 +130,6 @@ export async function getDB(): Promise<IDBPDatabase<LocalMemoryDB>> {
       if (!db.objectStoreNames.contains('tasks')) {
         const taskStore = db.createObjectStore('tasks', { keyPath: 'id' });
         taskStore.createIndex('by-status', 'status');
-        taskStore.createIndex('by-synced', 'synced');
       }
 
       // Settings store
@@ -159,6 +153,27 @@ export async function getDB(): Promise<IDBPDatabase<LocalMemoryDB>> {
       const nativeDb = unwrap(db);
       if (nativeDb.objectStoreNames.contains('conversationBuffers')) {
         nativeDb.deleteObjectStore('conversationBuffers');
+      }
+
+      // IndexedDB keys cannot be booleans. Version 5 removes the old boolean
+      // indexes and uses the canonical boolean fields through bounded scans.
+      if (oldVersion < 5) {
+        const nativeTransaction = unwrap(transaction);
+        if (nativeDb.objectStoreNames.contains('memories')) {
+          const memoryStore = nativeTransaction.objectStore('memories');
+          if (memoryStore.indexNames.contains('by-synced')) {
+            memoryStore.deleteIndex('by-synced');
+          }
+          if (memoryStore.indexNames.contains('by-deleted')) {
+            memoryStore.deleteIndex('by-deleted');
+          }
+        }
+        if (nativeDb.objectStoreNames.contains('tasks')) {
+          const taskStore = nativeTransaction.objectStore('tasks');
+          if (taskStore.indexNames.contains('by-synced')) {
+            taskStore.deleteIndex('by-synced');
+          }
+        }
       }
     },
   });
@@ -233,7 +248,8 @@ export async function getMemoriesByType(type: string, limit = 100): Promise<Loca
  */
 export async function getUnsyncedMemories(): Promise<LocalMemory[]> {
   const db = await getDB();
-  return db.getAllFromIndex('memories', 'by-synced', false);
+  const memories = await db.getAll('memories');
+  return memories.filter(memory => !memory.synced);
 }
 
 /**
@@ -503,8 +519,9 @@ export async function getStats(): Promise<{
 }> {
   const db = await getDB();
 
-  const memories = await db.count('memories');
-  const unsyncedMemories = await db.countFromIndex('memories', 'by-synced', false);
+  const allMemories = await db.getAll('memories');
+  const memories = allMemories.length;
+  const unsyncedMemories = allMemories.filter(memory => !memory.synced).length;
   const tasks = await db.count('tasks');
   const personaKeys = await db.count('persona');
 

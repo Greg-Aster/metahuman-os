@@ -6,13 +6,14 @@ import {
   ACTIVITY_STATE_FILE,
   acquireLock,
   audit,
-  buildRobotOperatorInstruction,
   getOperatorMode,
   getCurrentlyActiveUser,
+  hasActiveRobotAutonomyCycle,
   initGlobalLogger,
   isRobotOperatorChildEnabled,
   isSleepRuntimeActive,
   loadActiveOperatorConfig,
+  loadQueueState,
   loadRobotOperatorConfig,
   nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
@@ -25,13 +26,15 @@ import {
   type RobotOperatorChildRuntimeState,
   type RobotOperatorStimulusAgent,
 } from '@metahuman/core'
-import { getQueueManager, submitCoordinatorWork } from '@metahuman/core/queue'
+import { submitCoordinatorWork } from '@metahuman/core/queue'
 
 const SERVICE_ID = 'robot-operator'
 const ACTIVE_OPERATOR_CONFIG = path.join(systemPaths.etc, 'active-operator.json')
 const SERVICES_CONFIG = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG = path.join(systemPaths.etc, 'agents.json')
 const RETRY_DELAY_MS = 30_000
+const FULL_CYCLE_POLL_MS = 1_000
+const FULL_IDLE_CONFIRMATIONS = 2
 const CHILDREN: RobotOperatorStimulusAgent[] = [
   'boredom-observer',
   'boredom-movement',
@@ -59,7 +62,8 @@ let previousMode = getOperatorMode()
 let shuttingDown = false
 let fullTimer: NodeJS.Timeout | null = null
 let fullCursor = 0
-let lastFullAdmittedAt = 0
+let fullIdleConfirmations = 0
+let lastFullCycleCompletedAt = 0
 let lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped' = 'starting'
 let lifecycleReason = 'startup'
 
@@ -103,6 +107,7 @@ function clearTimers(): void {
   for (const child of CHILDREN) clearChildTimer(child)
   if (fullTimer) clearTimeout(fullTimer)
   fullTimer = null
+  fullIdleConfirmations = 0
 }
 
 function randomizedChildIdleMs(child: RobotOperatorStimulusAgent): number {
@@ -126,25 +131,7 @@ function randomizedChildIdleMs(child: RobotOperatorStimulusAgent): number {
 }
 
 function robotAutonomyCycleActive(): boolean {
-  return getQueueManager().getAllTasks().some(task => isRobotAutonomyWork(task))
-}
-
-function isRobotAutonomyWork(task: { handler: string; input?: Record<string, any> }): boolean {
-  return (
-    task.handler === 'workflow.boredom-observer'
-    || task.handler === 'workflow.boredom-movement'
-    || task.handler === 'workflow.boredom-reflection'
-    || task.handler === 'workflow.robot-observer'
-    || Boolean(task.input?.metadata?.robotObserver)
-    || Boolean(task.input?.observation?.metadata?.robotObserver)
-  )
-}
-
-function cancelAutomaticRobotAutonomy(reason: string): void {
-  const manager = getQueueManager()
-  for (const task of manager.getAllTasks()) {
-    if (task.source === 'autonomy' && isRobotAutonomyWork(task)) manager.cancel(task.id, reason)
-  }
+  return hasActiveRobotAutonomyCycle(loadQueueState()?.items ?? [])
 }
 
 function dormantReason(): string | null {
@@ -180,10 +167,47 @@ function armFull(reason: string, minimumDelayMs = 1_000): void {
   const child = nextRobotOperatorFullChild(enabled, fullCursor)
   if (!child) return
   const cooldownMs = Math.max(1_000, loadActiveOperatorConfig().cooldownMs)
-  const dueAt = robotOperatorFullDueAt(Date.now(), lastFullAdmittedAt, cooldownMs, minimumDelayMs)
+  const dueAt = robotOperatorFullDueAt(Date.now(), lastFullCycleCompletedAt, cooldownMs, minimumDelayMs)
   schedules[child].nextRunAt = dueAt
   fullTimer = setTimeout(() => void onDeadline(child, 'full'), dueAt - Date.now())
   console.log(`[${SERVICE_ID}] Armed child=${child} reason=${reason} mode=full due=${new Date(dueAt).toISOString()}`)
+}
+
+function watchFullCycle(reason: string): void {
+  if (fullTimer) clearTimeout(fullTimer)
+  fullTimer = null
+  for (const child of CHILDREN) schedules[child].nextRunAt = 0
+  if (shuttingDown || getOperatorMode() !== 'full') return
+  lifecycle = 'armed'
+  lifecycleReason = reason
+  fullTimer = setTimeout(checkFullCycle, FULL_CYCLE_POLL_MS)
+}
+
+function checkFullCycle(): void {
+  fullTimer = null
+  if (shuttingDown) return
+  if (getOperatorMode() !== 'full' || dormantReason()) {
+    armForMode('eligibility-changed')
+    return
+  }
+  if (robotAutonomyCycleActive()) {
+    fullIdleConfirmations = 0
+    watchFullCycle('cycle-active')
+    publishRuntime()
+    return
+  }
+  fullIdleConfirmations += 1
+  if (fullIdleConfirmations < FULL_IDLE_CONFIRMATIONS) {
+    watchFullCycle('cycle-settling')
+    publishRuntime()
+    return
+  }
+  fullIdleConfirmations = 0
+  lastFullCycleCompletedAt = Date.now()
+  lifecycle = 'armed'
+  lifecycleReason = 'cycle-complete'
+  armFull('cycle-complete')
+  publishRuntime()
 }
 
 function armForMode(reason: string): void {
@@ -191,7 +215,6 @@ function armForMode(reason: string): void {
   if (shuttingDown) return
   const dormant = dormantReason()
   if (dormant) {
-    cancelAutomaticRobotAutonomy(`Robot Operator dormant: ${dormant}`)
     lifecycle = 'dormant'
     lifecycleReason = dormant
     console.log(`[${SERVICE_ID}] Dormant (${dormant})`)
@@ -200,7 +223,10 @@ function armForMode(reason: string): void {
   }
   lifecycle = 'armed'
   lifecycleReason = reason
-  if (getOperatorMode() === 'full') armFull(reason)
+  if (getOperatorMode() === 'full') {
+    if (robotAutonomyCycleActive()) watchFullCycle('cycle-active')
+    else armFull(reason)
+  }
   else for (const child of CHILDREN) armSemiChild(child, reason)
   publishRuntime()
 }
@@ -230,8 +256,11 @@ async function onDeadline(
 
   if (robotAutonomyCycleActive()) {
     schedule.lastOutcome = 'waiting_for_active_cycle'
-    if (expectedMode === 'full') armFull('active-cycle', RETRY_DELAY_MS)
-    else armSemiChild(child, 'active-cycle', RETRY_DELAY_MS)
+    if (expectedMode === 'full') {
+      watchFullCycle('cycle-active')
+    } else {
+      armSemiChild(child, 'active-cycle', RETRY_DELAY_MS)
+    }
     publishRuntime()
     return
   }
@@ -262,7 +291,6 @@ async function onDeadline(
       cognitiveMode: 'environment',
       input: {
         agentId: child,
-        operatorInstruction: buildRobotOperatorInstruction(child),
         triggeredBy: SERVICE_ID,
         sessionId: config.sessionId,
       },
@@ -274,7 +302,6 @@ async function onDeadline(
     schedule.lastTaskId = task.id
     schedule.lastOutcome = 'admitted'
     if (expectedMode === 'full') {
-      lastFullAdmittedAt = admittedAt
       fullCursor += 1
     }
     console.log(`[${SERVICE_ID}] ${child} admitted task=${task.id} mode=${expectedMode}`)
@@ -286,8 +313,8 @@ async function onDeadline(
       details: { taskId: task.id, child, mode: expectedMode },
     })
     lifecycle = 'armed'
-    lifecycleReason = 'child-admitted'
-    if (expectedMode === 'full') armFull('child-admitted')
+    lifecycleReason = expectedMode === 'full' ? 'cycle-active' : 'child-admitted'
+    if (expectedMode === 'full') watchFullCycle('cycle-active')
     else armSemiChild(child, 'child-admitted')
   } catch (error) {
     schedule.lastOutcome = `admission_failed: ${(error as Error).message}`

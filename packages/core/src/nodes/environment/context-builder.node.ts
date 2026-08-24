@@ -8,6 +8,7 @@ import type {
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
   buildEnvironmentSelectorEnvelope,
+  buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
   environmentTaskContractFromObservation,
   type EnvironmentTaskState,
@@ -53,8 +54,11 @@ function relevantMemoryItems(value: unknown): string[] {
       : [];
 
   return candidates
-    .filter(isRecord)
-    .map(memory => typeof memory.content === 'string' ? memory.content.trim() : '')
+    .map(memory => typeof memory === 'string'
+      ? memory.trim()
+      : isRecord(memory) && typeof memory.content === 'string'
+        ? memory.content.trim()
+        : '')
     .filter(Boolean)
     .slice(0, 3);
 }
@@ -92,12 +96,14 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
     { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
+    { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
     { name: 'routingAnalysis', type: 'object', optional: true, description: 'LLM-selected context policy for the current instruction' },
     { name: 'taskState', type: 'object', optional: true, description: 'Single typed Environment objective lifecycle state' },
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
     { name: 'messages', type: 'array', description: 'Compact action-selector message array' },
+    { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
     { name: 'context', type: 'object', description: 'Structured environment context package' },
     { name: 'location', type: 'object', description: 'Resolved location data' },
     { name: 'map', type: 'object', description: 'Resolved map data' },
@@ -132,6 +138,7 @@ export const environmentContextBuilderNode = defineNode({
       return {
         message: '',
         messages: [],
+        jsonSchema: null,
         context: null,
         location: null,
         map: null,
@@ -170,6 +177,9 @@ export const environmentContextBuilderNode = defineNode({
     const taskState = isRecord(inputs.taskState)
       ? inputs.taskState as unknown as EnvironmentTaskState
       : null;
+    const personaText = typeof inputs.personaText === 'string'
+      ? inputs.personaText.trim().slice(0, 2_000)
+      : '';
     const validatorCommand = isRecord(observation.metadata?.taskValidatorCommand)
       ? observation.metadata.taskValidatorCommand
       : null;
@@ -186,7 +196,7 @@ export const environmentContextBuilderNode = defineNode({
       || routingAnalysis.needsEnvironment === true
       || routingAnalysis.needsVision === true
       || includeActionContracts;
-    const includeRecentHistory = routingAnalysis.isFollowUp === true && !queuedContinuation;
+    const requestedRecentHistory = routingAnalysis.isFollowUp === true && !queuedContinuation;
     const includeSemanticMemory = routingAnalysis.needsMemory === true;
     const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
       ? Math.max(0, Number(properties?.recentHistoryLimit))
@@ -195,6 +205,8 @@ export const environmentContextBuilderNode = defineNode({
       typeof frame.metadata?.correlationId === 'string'
     )) || typeof effectiveObservation.metadata?.correlationId === 'string';
     const robotObserver = readRobotObserverCycle(effectiveObservation);
+    const includeRecentHistory = requestedRecentHistory
+      && robotObserver?.triggerSource !== 'autonomy';
     // environment-perception metadata is attached to ordinary correlated audio
     // so later work can retain lifecycle identity. It is not, by itself, a request
     // to inspect the camera. Only an explicit boredom observation run bypasses typed
@@ -219,13 +231,13 @@ export const environmentContextBuilderNode = defineNode({
       rawInstruction,
     );
     const routedMemories = includeSemanticMemory ? inputs.memories : [];
-    const memoryItems = relevantMemoryItems(routedMemories);
+    const memoryItems = [...new Set([
+      ...relevantMemoryItems(observation.metadata?.robotOperatorMemories),
+      ...relevantMemoryItems(routedMemories),
+    ])].slice(0, 3);
     const selectorContext = buildEnvironmentSelectorSystemPrompt({
       systemPrompt,
-      taskState,
-      taskContract,
       queuedContinuation,
-      memories: memoryItems,
     });
     const renderedContent = (content: string) => selectedImages.length
       ? [{ type: 'text' as const, text: content }, ...selectedImages]
@@ -236,10 +248,18 @@ export const environmentContextBuilderNode = defineNode({
       taskState,
       recentConversation: history,
       memories: memoryItems,
+      personaText,
+      mustSelectAction: routingAnalysis.needsAction === true,
+    });
+    const jsonSchema = buildEnvironmentSelectorJsonSchema({
+      actions: promptObservation.capabilities.actions,
+      robotCommands: promptObservation.capabilities.robotCommands,
+      requireAction: routingAnalysis.needsAction === true,
     });
 
     return {
       message,
+      jsonSchema,
       messages: [
         { role: 'system', content: selectorContext },
         {
@@ -263,6 +283,7 @@ export const environmentContextBuilderNode = defineNode({
           : isRecord(routedMemories) && Array.isArray(routedMemories.memories)
             ? routedMemories.memories
             : [],
+        personaIncluded: Boolean(personaText),
         routingAnalysis,
         contextSelection: {
           recentHistory: includeRecentHistory,

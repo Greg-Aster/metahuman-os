@@ -11,7 +11,6 @@ import {
 import { buildVLLMChatMessages } from '../vllm.js';
 import { environmentImageInputNode } from '../nodes/environment/image-input.node.js';
 import { environmentContextBuilderNode } from '../nodes/environment/context-builder.node.js';
-import { stringifyEnvironmentObservation } from '../nodes/environment/helpers.js';
 import { resolveModelForCognitiveMode } from '../model-resolver.js';
 import { normalizeProviderReasoningResponse } from '../model-router.js';
 import { assertAdapterPreservesImageInput, callProvider } from './bridge.js';
@@ -95,6 +94,14 @@ assert.deepEqual(configuredOllamaRequest.options, {
   num_predict: 2048,
 });
 assert.equal(configuredOllamaRequest.keep_alive, '5m');
+const structuredSchema = {
+  type: 'object',
+  required: ['response'],
+  properties: { response: { type: 'string' } },
+};
+assert.deepEqual(buildOllamaChatRequest('structured-model', [], {
+  format: structuredSchema,
+}).format, structuredSchema);
 
 const nativeThinkingResponse = normalizeOllamaChatResponse({
   model: 'thinking-model',
@@ -150,10 +157,6 @@ const observation = {
   metadata: { correlationId: 'generic-camera-cycle-1' },
 };
 
-const prompt = stringifyEnvironmentObservation(observation, 'Inspect the environment.');
-assert.match(prompt, /generic-camera-1, image\/jpeg, 1x1/);
-assert.doesNotMatch(prompt, /data:image|\/9j\/2Q==/);
-
 const imageOutput = await environmentImageInputNode.execute({ visual }, {} as never, {});
 const contextOutput = await environmentContextBuilderNode.execute({
   observation,
@@ -166,6 +169,7 @@ assert.deepEqual(currentTaskContent[1], {
   type: 'image_url',
   image_url: { url: environmentDataUrl },
 });
+assert.doesNotMatch(JSON.stringify(JSON.parse(String(contextOutput.message))), /data:image|\/9j\/2Q==/);
 
 // Message modality is deliberately absent from model resolution. Text and
 // image calls therefore enter the provider bridge with the same normal target.

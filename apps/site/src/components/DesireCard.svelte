@@ -237,7 +237,7 @@
           rows="3"
           class="w-full px-3 py-2 text-sm border border-violet-300 dark:border-violet-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
           disabled={submitting}
-        />
+        ></textarea>
         {#if error}
           <p class="text-xs text-red-500">{error}</p>
         {/if}

@@ -186,6 +186,8 @@ export interface ProviderOptions {
   repeatPenalty?: number;
   seed?: number;
   format?: 'text' | 'json';
+  /** Provider-native structured-output schema. JSON mode remains the fallback. */
+  jsonSchema?: Record<string, unknown>;
   keepAlive?: string;
   /** Normal model options, applied regardless of input modality. */
   contextWindow?: number;

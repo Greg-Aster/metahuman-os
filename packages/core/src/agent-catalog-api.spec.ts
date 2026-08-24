@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { handleAgentCatalogControl, handleGetAgentCatalog } from './api/handlers/agent-catalog.js';
+import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js';
 import { eventBus } from './infrastructure/event-bus/client.js';
 import type { UnifiedRequest } from './api/types.js';
 
@@ -23,7 +24,10 @@ const nonOwner = await handleGetAgentCatalog(request('user'));
 assert.equal(nonOwner.status, 403);
 const owner = await handleGetAgentCatalog(request('owner'));
 assert.equal(owner.status, 200);
-assert.equal((owner.data as any).snapshot.counts.total, 29);
+assert.equal(
+  (owner.data as any).snapshot.counts.total,
+  Object.keys(AGENT_CATALOG_DEFINITIONS).length,
+);
 
 const invalidAction = await handleAgentCatalogControl(request('owner', { action: 'delete-source', agentId: 'organizer' }));
 assert.equal(invalidAction.status, 400, 'catalog API must not expose source deletion');

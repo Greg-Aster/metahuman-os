@@ -188,7 +188,7 @@
         rows="3"
         maxlength="500"
         class="p-3 text-base font-inherit border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-50 transition-all focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 resize-y min-h-[80px]"
-      />
+      ></textarea>
       <div class="self-end text-xs text-gray-400 dark:text-gray-500 -mt-1">{currentGoal.description.length}/500</div>
     </div>
 
@@ -284,4 +284,3 @@
     </button>
   </div>
 </div>
-

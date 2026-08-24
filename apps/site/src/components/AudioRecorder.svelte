@@ -46,7 +46,7 @@
         chunksQueued++
         const idx = chunksQueued
         const blob = e.data
-        const ts = new Date().toISOString().replace(/[-:T.Z]/g,'').slice(0,14)
+        const ts = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
         const filename = `mic-${ts}-${idx}.webm`
         const form = new FormData()
         form.append('audio', blob, filename)
@@ -146,4 +146,3 @@
   .metrics .err { color: #b91c1c; }
   .error { color: #b91c1c; font-size: 0.9rem; }
 </style>
-

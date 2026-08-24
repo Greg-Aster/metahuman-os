@@ -12,7 +12,7 @@ import { systemPaths } from '../../paths.js';
 
 const ALLOWED_COMMANDS = [
   'init', 'status', 'capture', 'remember', 'task', 'trust',
-  'sync', 'agent', 'ollama', 'help', 'guide'
+  'agent', 'ollama', 'help', 'guide'
 ];
 
 /**
@@ -38,7 +38,7 @@ export async function handleExecuteCommand(req: UnifiedRequest): Promise<Unified
     }
 
     // Execute command
-    const mhPath = `${systemPaths.root}/packages/cli/src/mh-new.ts`;
+    const mhPath = `${systemPaths.root}/packages/cli/src/entry.ts`;
     const child = spawn('tsx', [mhPath, command, ...args], {
       cwd: systemPaths.root,
       env: process.env,

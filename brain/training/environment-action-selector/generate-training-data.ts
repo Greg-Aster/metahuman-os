@@ -4,7 +4,6 @@ import { resolve } from 'node:path'
 import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorSystemPrompt,
-  environmentTaskContractFromObservation,
   validateEnvironmentSelectorOutput,
   type EnvironmentObservation,
 } from '@metahuman/core'
@@ -95,16 +94,12 @@ export async function buildDevelopmentRecords(
   return cases.flatMap(sourceCase => sourceCase.instructions.flatMap((instruction, instructionIndex) => (
     CONTEXT_VARIATIONS.map(contextVariation => {
       const { observation, recentConversation } = withVariation(sourceCase, contextVariation)
-      const taskContract = environmentTaskContractFromObservation(observation)
       const queuedContinuation = sourceCase.taskState?.phase === 'awaiting_action'
         || sourceCase.taskState?.phase === 'evaluating_evidence'
       return {
         system: buildEnvironmentSelectorSystemPrompt({
           systemPrompt: activePrompt,
-          taskState: sourceCase.taskState,
-          taskContract,
           queuedContinuation,
-          memories: sourceCase.memories,
         }),
         user: buildEnvironmentSelectorEnvelope({
           instruction,

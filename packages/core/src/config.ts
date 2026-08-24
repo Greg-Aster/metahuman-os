@@ -25,7 +25,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { storageClient } from './storage-client.js';
-import { safeReadJSON, safeWriteJSON, listBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON } from './safe-file.js';
+import { safeReadJSON, safeWriteJSON, listFileBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON } from './safe-file.js';
 
 // Get project root for fallback paths
 const ROOT = process.cwd().includes('/apps/site')
@@ -494,7 +494,7 @@ export function invalidateCuriosityConfig(username?: string): void {
 // Config Recovery Utilities
 // ============================================================================
 
-export { listBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON };
+export { listFileBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON };
 
 /**
  * Recover corrupted config files for a user from their backups
@@ -520,7 +520,7 @@ export function recoverUserConfigs(username: string): { recovered: string[]; fai
  */
 export function listConfigBackups(filename: string, username: string): Array<{ path: string; timestamp: Date; size: number }> {
   const configPath = path.join(resolveEtcPath(username), filename);
-  return listBackups(configPath);
+  return listFileBackups(configPath);
 }
 
 /**

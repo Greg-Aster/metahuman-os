@@ -6,22 +6,27 @@ import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
   beginEnvironmentPerceptionCycle,
-  buildRobotOperatorInstruction,
+  hasActiveRobotAutonomyCycle,
   isBoredomObserverEnabled,
   isBoredomReflectionEnabled,
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotObserverEnabled,
+  isRobotAutonomyWorkItem,
   nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
   readRobotObserverCycle,
   robotObserverSourceAllowed,
+  robotOperatorChildGraph,
+  robotOperatorChildMaxSteps,
   robotOperatorFullDueAt,
   loadRobotOperatorConfig,
 } from './robot-operator.js'
 import { environmentSendActionNode } from './nodes/environment/send-action.node.js'
 import { environmentActionParserNode } from './nodes/environment/action-parser.node.js'
 import { buildAgentDescriptor } from './agent-monitor-descriptors.js'
+import { getAgentCatalogSnapshot } from './agent-catalog.js'
+import { buildRobotOperatorManualTaskInput } from './queue/queue-system.js'
 import { buildRobotAutonomyStimulus } from './queue/robot-autonomy-trigger-handler.js'
 
 test('robot operator idle timing is five minutes plus or minus one minute', () => {
@@ -38,7 +43,7 @@ test('manual observer cycles remain available while autonomous cycles require se
   assert.equal(robotObserverSourceAllowed('full', 'autonomy'), true)
 })
 
-test('full autonomy rotates children continuously between cooldowns', () => {
+test('full autonomy rotates children after a completed episode cooldown', () => {
   const children = ['boredom-observer', 'boredom-movement', 'boredom-reflection'] as const
   assert.equal(nextRobotOperatorFullChild([...children], 0), 'boredom-observer')
   assert.equal(nextRobotOperatorFullChild([...children], 1), 'boredom-movement')
@@ -49,7 +54,41 @@ test('full autonomy rotates children continuously between cooldowns', () => {
   assert.equal(robotOperatorFullDueAt(100_000, 0, 30_000), 101_000)
 })
 
-test('movement and reflection stimuli never reuse an old camera frame as current evidence', () => {
+test('robot autonomy activity follows the canonical correlated work chain', () => {
+  const child = {
+    id: 'child-1',
+    handler: 'workflow.boredom-observer',
+    state: 'queued',
+    input: {},
+  } as any
+  const observation = {
+    id: 'observation-1',
+    handler: 'environment.observation',
+    state: 'leased',
+    input: { observation: { metadata: { robotObserver: { cycleId: 'cycle-1' } } } },
+  } as any
+  const command = {
+    id: 'command-1',
+    handler: 'environment.command',
+    state: 'waiting',
+    input: { metadata: { robotObserver: { cycleId: 'cycle-1' } } },
+  } as any
+  const unrelated = {
+    id: 'chat-1',
+    handler: 'chat.persona',
+    state: 'queued',
+    input: {},
+  } as any
+  assert.equal(isRobotAutonomyWorkItem(child), true)
+  assert.equal(isRobotAutonomyWorkItem(observation), true)
+  assert.equal(isRobotAutonomyWorkItem(command), true)
+  assert.equal(isRobotAutonomyWorkItem(unrelated), false)
+  assert.equal(hasActiveRobotAutonomyCycle([child, observation, command, unrelated]), true)
+  assert.equal(hasActiveRobotAutonomyCycle([{ ...command, state: 'completed' }]), false)
+  assert.equal(hasActiveRobotAutonomyCycle([child], child.id), false)
+})
+
+test('movement and reflection stimuli exclude old frames while preserving timestamped robot state', () => {
   const cycle = {
     cycleId: 'movement-1',
     step: 1,
@@ -63,17 +102,48 @@ test('movement and reflection stimuli never reuse an old camera frame as current
     adapter: 'ainekio-gateway',
     sessionId: 'robot-1',
     timestamp: '2026-08-23T12:00:00.000Z',
-    capabilities: { actions: ['robotCommand'], movement: true, visual: true },
+    capabilities: {
+      actions: ['robotCommand', 'robotMotionPlan', 'captureImage'],
+      robotCommands: ['gesture_alpha', 'gesture_beta'],
+      movement: true,
+      visual: true,
+    },
     state: { stale: true },
     visual: { id: 'old-frame', timestamp: '2026-08-23T12:00:00.000Z' },
     visuals: [{ id: 'old-frame-2', timestamp: '2026-08-23T12:00:00.000Z' }],
   }, cycle, 'boredom-movement')
   assert.equal(stimulus.visual, undefined)
   assert.equal(stimulus.visuals, undefined)
-  assert.equal(stimulus.state, undefined)
+  assert.deepEqual(stimulus.state, { stale: true })
   assert.equal(stimulus.metadata?.currentVisualEvidence, false)
   assert.equal(stimulus.metadata?.sourceObservationAt, '2026-08-23T12:00:00.000Z')
   assert.equal(stimulus.metadata?.robotObserver, cycle)
+  assert.deepEqual(stimulus.capabilities.actions, ['robotCommand'])
+  assert.deepEqual(stimulus.capabilities.robotCommands, ['gesture_alpha', 'gesture_beta'])
+
+  const reflectionStimulus = buildRobotAutonomyStimulus({
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: '2026-08-23T12:00:00.000Z',
+    capabilities: {
+      actions: ['sendText', 'robotCommand', 'robotMotionPlan', 'captureImage'],
+      robotCommands: ['gesture_alpha', 'gesture_beta'],
+      movement: true,
+      visual: true,
+    },
+  }, {
+    ...cycle,
+    graph: 'boredom-reflection',
+    requestedBy: 'boredom-reflection',
+  }, 'boredom-reflection')
+  assert.deepEqual(reflectionStimulus.capabilities.actions, [
+    'sendText',
+    'robotCommand',
+    'robotMotionPlan',
+    'captureImage',
+  ])
+  assert.deepEqual(reflectionStimulus.capabilities.robotCommands, ['gesture_alpha', 'gesture_beta'])
 })
 
 test('robot observer correlation advances only within its bounded cycle', () => {
@@ -115,43 +185,31 @@ test('robot audio perception reuses the finite observer counter without dependin
   assert.equal(nextRobotObserverCycle(cycle!)?.step, 2)
 })
 
-test('each boredom child receives a specialized bounded instruction', () => {
-  const instruction = buildRobotOperatorInstruction('boredom-movement')
-  const cycle = readRobotObserverCycle({
-    metadata: {
-      robotObserver: {
-        cycleId: 'boredom-1',
-        step: 1,
-        maxSteps: 8,
-        triggerSource: 'autonomy',
-        requestedBy: 'boredom-movement',
-        graph: 'boredom-movement',
-        instruction,
-      },
-    },
-  })
-  assert.deepEqual(cycle, {
-    cycleId: 'boredom-1',
-    step: 1,
-    maxSteps: 8,
-    triggerSource: 'autonomy',
-    requestedBy: 'boredom-movement',
-    graph: 'boredom-movement',
-    instruction,
-  })
-  assert.match(instruction, /one safe, bounded movement opportunity/i)
-  assert.match(instruction, /Environment Mode must execute it/i)
-  assert.match(instruction, /do not execute robot commands, speak, or control hardware/i)
-  assert.doesNotMatch(instruction, /selectedCommand|allowlist/i)
+test('each boredom child keeps its specialized policy in the editable workflow', () => {
+  const graph = (id: string) => JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'etc/cognitive-graphs', `${id}-mode.json`),
+    'utf8',
+  ))
+  const message = (id: string, nodeId: string) => graph(id).nodes.find(
+    (node: any) => node.id === nodeId,
+  )?.data?.properties?.message ?? ''
 
-  const observerInstruction = buildRobotOperatorInstruction('boredom-observer')
-  assert.match(observerInstruction, /single current camera observation/i)
-  assert.notEqual(observerInstruction, instruction)
-  assert.match(observerInstruction, /"observed".*"instruction".*"requiresAction".*"reason"/i)
+  const movement = message('boredom-movement', 'instructions')
+  assert.match(movement, /complete advertised command catalog/i)
+  assert.match(movement, /exactly one safe robotCommand/i)
+  assert.match(movement, /no preferred command or movement category/i)
+  assert.doesNotMatch(movement, /stationary posture|stretch|small reorientation/i)
 
-  const reflectionInstruction = buildRobotOperatorInstruction('boredom-reflection')
-  assert.match(reflectionInstruction, /historical inspiration/i)
-  assert.match(reflectionInstruction, /memory does not establish anything about the current environment/i)
+  const observer = message('boredom-observer', 'observer-policy')
+  assert.match(observer, /returned fresh robot-camera image/i)
+  assert.match(observer, /author or revise its own episode intent/i)
+  assert.match(observer, /do not stop at captioning/i)
+
+  const reflection = message('boredom-reflection', 'instructions')
+  assert.match(reflection, /sampled memory as historical inspiration/i)
+  assert.match(reflection, /author or revise its own intent/i)
+  assert.match(reflection, /concrete memory detail/i)
+  assert.match(reflection, /never evidence of current objects/i)
 })
 
 test('Robot Operator owns scheduling while three boredom children own finite trigger work', () => {
@@ -174,6 +232,38 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.equal(agents.agents['boredom-reflection'].enabled, true)
   assert.equal(isBoredomReflectionEnabled(), true)
   assert.equal(services.services['robot-operator'].startOnSystemBoot, true)
+  const catalog = getAgentCatalogSnapshot()
+  for (const child of ['boredom-observer', 'boredom-movement', 'boredom-reflection']) {
+    const catalogItem = catalog.agents.find(agent => agent.id === child)
+    assert.equal(catalogItem?.owner, 'robot-operator')
+    assert.equal(catalogItem?.triggerRegistered, false)
+    assert.equal(catalogItem?.canRun, true)
+
+    const task = buildRobotOperatorManualTaskInput(
+      child,
+      agents.agents[child],
+      'owner',
+      ['--manual-check'],
+    )
+    assert.equal(task.handler, `workflow.${child}`)
+    assert.equal(task.resource, 'system')
+    assert.equal(task.source, 'user')
+    assert.equal(task.username, 'owner')
+    assert.equal(task.cognitiveMode, 'environment')
+    assert.equal(task.input.agentId, child)
+    assert.equal(task.input.triggeredBy, 'manual')
+    assert.deepEqual(task.input.args, ['--manual-check'])
+    assert.equal(task.metadata?.producer, 'robot-operator')
+    assert.equal(task.metadata?.childAgent, child)
+
+    const childVariables = buildAgentDescriptor(child, agents.agents[child], catalogItem).variables
+    assert.equal(childVariables.find(variable => variable.key === 'runtimeOwner')?.value, 'Robot Operator')
+    assert.equal(childVariables.find(variable => variable.key === 'workflowHandler')?.value, `workflow.${child}`)
+  }
+  assert.throws(
+    () => buildRobotOperatorManualTaskInput('organizer', agents.agents.organizer, 'owner'),
+    /not owned by Robot Operator/,
+  )
   const variables = buildAgentDescriptor(
     'robot-operator',
     services.services['robot-operator'],
@@ -189,13 +279,19 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.equal(variables.find(variable => variable.key === 'boredomObserverGraph')?.value, 'boredom-observer')
   assert.equal(variables.find(variable => variable.key === 'boredomMovementGraph')?.value, 'boredom-movement')
   assert.equal(variables.find(variable => variable.key === 'boredomReflectionGraph')?.value, 'boredom-reflection')
+  assert.equal(variables.find(variable => variable.key === 'autonomyGraph')?.value, 'boredom-autonomy')
   assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
   const config = loadRobotOperatorConfig()
   assert.equal(config.graph, 'robot-operator')
   assert.equal(config.boredomObserverGraph, 'boredom-observer')
   assert.equal(config.boredomMovementGraph, 'boredom-movement')
   assert.equal(config.boredomReflectionGraph, 'boredom-reflection')
+  assert.equal(config.autonomyGraph, 'boredom-autonomy')
   assert.equal(config.environmentGraph, 'environment')
+  assert.equal(robotOperatorChildGraph(config, 'boredom-observer'), 'boredom-observer')
+  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-observer'), 8)
+  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-movement'), 8)
+  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-reflection'), 8)
 
   const engine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8')
   const observerHandler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-autonomy-trigger-handler.ts'), 'utf8')
@@ -204,14 +300,19 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.match(engine, /workflow\.boredom-observer/)
   assert.match(engine, /workflow\.boredom-movement/)
   assert.match(engine, /workflow\.boredom-reflection/)
-  assert.match(observerHandler, /task\.handler === 'workflow\.boredom-movement'/)
-  assert.match(observerHandler, /instruction: suppliedInstruction \|\| buildRobotOperatorInstruction\(agentId\)/)
-  assert.match(observerHandler, /agentId === 'boredom-observer'[\s\S]*type: 'captureImage'/)
+  assert.match(observerHandler, /hasActiveRobotAutonomyCycle/)
+  assert.match(observerHandler, /actions\.filter\(action => action === 'robotCommand'\)/)
+  assert.match(observerHandler, /graph: robotOperatorChildGraph\(config, agentId\)/)
+  assert.doesNotMatch(observerHandler, /enqueueEnvironmentAction|type: 'captureImage'/)
+  assert.match(observerHandler, /triggerSource: 'autonomy'/)
+  assert.match(observerHandler, /priority: manual \? 'high' : 'background'/)
   assert.match(observerHandler, /buildRobotAutonomyStimulus\(session\.latestObservation, cycle, agentId\)/)
   assert.doesNotMatch(observerHandler, /type: 'robotCommand'|chooseBoredomMovementCommand/)
   assert.match(controller, /isSleepRuntimeActive\(\)/)
-  assert.match(controller, /cancelAutomaticRobotAutonomy/)
-  assert.match(controller, /task\.source === 'autonomy'/)
+  assert.match(controller, /loadQueueState\(\)\?\.items/)
+  assert.match(controller, /watchFullCycle\('cycle-active'\)/)
+  assert.doesNotMatch(controller, /getQueueManager|addEventListener/)
+  assert.doesNotMatch(controller, /operatorInstruction:/)
 })
 
 test('structured captureImage remains available and capability gated', async () => {
@@ -223,7 +324,21 @@ test('structured captureImage remains available and capability gated', async () 
   assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'boredom_movement'), false)
 
   const parsed = await environmentActionParserNode.execute({
-    response: '{"response":"I need a fresh view before answering.","actions":[{"type":"captureImage"}],"movementRequest":null}',
+    response: JSON.stringify({
+      response: 'I need a fresh view before answering.',
+      actions: [{ type: 'captureImage' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'A current image is needed.',
+        objective: 'Observe the current surroundings from a fresh image.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        actionPurpose: 'information_gain',
+        presentation: 'private',
+      },
+    }),
     instruction: 'describe the current physical surroundings using your available senses',
     observation: {
       environmentId: 'ainekio',
@@ -238,7 +353,21 @@ test('structured captureImage remains available and capability gated', async () 
   assert.equal(parsed.actions[0]?.type, 'captureImage')
 
   const unavailable = await environmentActionParserNode.execute({
-    response: '{"response":"I need current visual perception.","actions":[{"type":"captureImage"}],"movementRequest":null}',
+    response: JSON.stringify({
+      response: 'I need current visual perception.',
+      actions: [{ type: 'captureImage' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'A current image is needed.',
+        objective: 'Observe the current surroundings from a fresh image.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        actionPurpose: 'information_gain',
+        presentation: 'private',
+      },
+    }),
     instruction: 'inspect the current physical environment',
     observation: {
       environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'ainekio-01',
@@ -248,6 +377,30 @@ test('structured captureImage remains available and capability gated', async () 
   }, {})
   assert.equal(unavailable.actions.length, 0)
   assert.match(unavailable.response, /camera is not currently available/i)
+})
+
+test('Boredom Autonomy presentation keeps cycle correlation in canonical buffer metadata', async () => {
+  const result = await environmentSendActionNode.execute({
+    response: 'The changed view gave me a new detail worth sharing.',
+    presentation: 'conversation',
+  }, {
+    username: 'owner',
+    environmentActionSource: 'autonomy',
+    environmentObservation: { metadata: { autonomousStimulus: 'boredom-observer' } },
+    robotObserver: {
+      cycleId: 'episode-presentation',
+      step: 3,
+      maxSteps: 8,
+      triggerSource: 'autonomy',
+      graph: 'boredom-autonomy',
+      requestedBy: 'boredom-observer',
+    },
+  }, {})
+  assert.equal(result.status, 'no_actions')
+  assert.equal(result.conversationResponse, 'The changed view gave me a new detail worth sharing.')
+  assert.equal(result.presentationMetadata.correlationId, 'episode-presentation')
+  assert.equal('episodeId' in result.presentationMetadata, false)
+  assert.equal('episodeStatus' in result.presentationMetadata, false)
 })
 
 test('Active Operator dashboard exposes Robot Operator children without private payloads', () => {

@@ -23,12 +23,14 @@ import {
   handleEnvironmentBridgeStream,
 } from '../api/handlers/environment-bridge.js';
 import type { UnifiedRequest } from '../api/types.js';
-import { parseEnvironmentModelOutput } from '../nodes/environment/helpers.js';
+import { validateEnvironmentSelectorOutput } from '../nodes/environment/helpers.js';
 import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
 import { environmentContextBuilderNode } from '../nodes/environment/context-builder.node.js';
 import { environmentImageInputNode } from '../nodes/environment/image-input.node.js';
 import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
 import { environmentSendActionNode } from '../nodes/environment/send-action.node.js';
+import { TextInputNode } from '../nodes/input/text-input.node.js';
+import { JSONParserNode } from '../nodes/utility/json-parser.node.js';
 import type { EnvironmentObservation } from './types.js';
 
 const statePath = getEnvironmentBridgeStatePath();
@@ -357,6 +359,19 @@ try {
     'Wave, then use the returned view to tell me what changed.',
     'action context must be recovered from MetaHuman work rather than trusted from the adapter',
   );
+  assert.deepEqual(
+    contextualResult.metadata?.actionContext,
+    {
+      actionId: resultAction.id,
+      status: 'completed',
+      requested: { type: 'robotCommand', command: 'wave' },
+      correlationId: 'conversation-turn-1',
+      queuedAt: resultAction.createdAt,
+      completedAt: manager.getTask(resultAction.id)?.completedAt,
+      result: { type: 'completed', message: 'done' },
+    },
+    'returned observations must recover the exact semantic action MetaHuman requested',
+  );
   const contextualTiming = contextualResult.metadata?.actionTiming as Record<string, unknown>;
   assert.equal(contextualTiming.queueEnteredAt, resultAction.createdAt);
   assert.equal(contextualTiming.leaseGrantedAt, manager.getTask(resultAction.id)?.startedAt);
@@ -540,9 +555,10 @@ try {
   assert.equal(connectionResponse.data.graphQueued, false);
   assert.equal(connectionResponse.data.reason, 'state_only_observation');
 
-  const structured = parseEnvironmentModelOutput(JSON.stringify({
+  const structured = validateEnvironmentSelectorOutput(JSON.stringify({
     response: 'Walking forward.',
-    actions: [{ type: 'robotCommand', command: 'walk', simulatorCommand: 'run walk', units: 3 }],
+    actions: [{ type: 'robotCommand', command: 'walk', units: 3 }],
+    movementRequest: null,
     taskDecision: {
       outcome: 'act',
       reason: 'Walk once.',
@@ -550,17 +566,34 @@ try {
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'action_result',
       motionClass: 'open_loop_displacement',
+      actionPurpose: 'task_effect',
+      presentation: 'private',
     },
   }), 'robot-1');
-  assert.equal(structured.response, 'Walking forward.');
-  assert.equal(structured.actions.length, 1);
-  assert.equal(structured.actions[0]?.type, 'robotCommand');
-  assert.equal(structured.actions[0]?.sessionId, 'robot-1');
-  assert.equal(structured.actions[0]?.command, 'walk');
-  assert.equal(structured.actions[0]?.units, 3);
-  assert.equal('simulatorCommand' in (structured.actions[0] ?? {}), false);
-  assert.equal(structured.taskDecision?.motionClass, 'open_loop_displacement');
-  assert.deepEqual(parseEnvironmentModelOutput('walk forward', 'robot-1').actions, []);
+  assert.equal(structured.valid, true);
+  assert.equal(structured.value?.response, 'Walking forward.');
+  assert.equal(structured.value?.actions.length, 1);
+  assert.equal(structured.value?.actions[0]?.type, 'robotCommand');
+  assert.equal(structured.value?.actions[0]?.sessionId, 'robot-1');
+  assert.equal(structured.value?.actions[0]?.command, 'walk');
+  assert.equal(structured.value?.actions[0]?.units, 3);
+  assert.equal(structured.value?.taskDecision?.motionClass, 'open_loop_displacement');
+  assert.equal(validateEnvironmentSelectorOutput('walk forward', 'robot-1').valid, false);
+  assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({
+    response: 'Turning curiously.',
+    actions: [{ type: 'move', command: 'curious', durationMs: 750 }],
+    movementRequest: null,
+    taskDecision: {
+      outcome: 'act',
+      reason: 'Reorient.',
+      objectiveComplete: false,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+      presentation: 'private',
+    },
+  }), 'robot-1').valid, false, 'a robot command cannot masquerade as a generic move');
 
   const conversationOnly = await environmentSendActionNode.execute({
     actions: [],
@@ -569,10 +602,49 @@ try {
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
   assert.equal(conversationOnly.status, 'no_actions');
   assert.equal(conversationOnly.response, 'Hello from Environment Mode.');
+  assert.equal(conversationOnly.conversationResponse, 'Hello from Environment Mode.');
+  assert.equal(conversationOnly.privateResponse, '');
   assert.equal(conversationOnly.bridgeRecord.status, 'no_actions');
   assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
   assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
   assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
+
+  const autonomousPrivate = await environmentSendActionNode.execute({
+    actions: [],
+    response: 'A new shape is visible.',
+    privateResponse: 'The shape may be worth remembering.',
+    familiarityQuery: 'An unfamiliar rounded shape is visible near the robot.',
+    sessionId: 'robot-1',
+  }, {
+    username: 'bridge-spec',
+    sessionId: 'autonomy-1',
+    environmentActionSource: 'autonomy',
+    environmentObservation: {
+      metadata: { autonomousStimulus: 'boredom-observer' },
+    },
+  } as never, {});
+  assert.equal(autonomousPrivate.conversationResponse, '');
+  assert.equal(autonomousPrivate.privateResponse, 'The shape may be worth remembering.');
+  assert.equal(autonomousPrivate.presentationMetadata.dialogueSource, 'boredom-observer');
+  assert.deepEqual(autonomousPrivate.presentationMetadata.tags, [
+    'robot-operator',
+    'boredom-observer',
+    'autonomy-trigger',
+  ]);
+  assert.match(String(autonomousPrivate.familiarityTaskId), /^task-/);
+
+  const autonomousConversation = await environmentSendActionNode.execute({
+    actions: [],
+    response: 'I found something you may want to see.',
+    presentation: 'conversation',
+    sessionId: 'robot-1',
+  }, {
+    username: 'bridge-spec',
+    sessionId: 'autonomy-2',
+    environmentActionSource: 'autonomy',
+  } as never, {});
+  assert.equal(autonomousConversation.conversationResponse, 'I found something you may want to see.');
+  assert.equal(autonomousConversation.privateResponse, '');
 
   const emptyConversation = await environmentSendActionNode.execute({
     actions: [],
@@ -665,6 +737,62 @@ try {
     'Walk once, then use the returned observation to tell me what changed.',
   );
 
+  resetState();
+  const observerCaptureState = readEnvironmentBridgeState();
+  observerCaptureState.sessions['robot-1']!.latestObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['captureImage'], visual: true },
+    state: { body: { authenticated: true, cameraReady: true } },
+  };
+  writeEnvironmentBridgeState(observerCaptureState);
+  const unsubscribeObserverCapture = subscribeEnvironmentActions('robot-1', () => {});
+  const observerCaptureText = await TextInputNode.execute({}, {}, {
+    message: '{"type":"captureImage"}',
+    inputKey: '',
+  });
+  const observerCaptureAction = await JSONParserNode.execute({
+    text: observerCaptureText.text,
+  }, {}, {});
+  assert.equal(observerCaptureAction.success, true);
+  assert.deepEqual(observerCaptureAction.data, { type: 'captureImage' });
+  const observerWorkflowCapture = await environmentSendActionNode.execute({
+    action: observerCaptureAction.data,
+    sessionId: 'robot-1',
+    response: 'I captured and understood the image.',
+    privateResponse: 'The image was fully interpreted.',
+    presentation: 'conversation',
+    taskInstruction: 'Interpret the returned image as one autonomous observation.',
+  }, {
+    username: 'bridge-spec',
+    sessionId: 'observer-capture',
+    environmentActionSource: 'autonomy',
+    robotObserver: {
+      cycleId: 'observer-cycle-1',
+      step: 1,
+      maxSteps: 4,
+      triggerSource: 'autonomy',
+      graph: 'boredom-observer',
+      requestedBy: 'boredom-observer',
+    },
+  } as never, {
+    allowedActions: ['captureImage'],
+    feedbackGraph: 'environment',
+  });
+  unsubscribeObserverCapture();
+  assert.equal(observerWorkflowCapture.status, 'coordinated_for_adapter');
+  assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.graph, 'environment');
+  assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.requestedBy, 'boredom-observer');
+  assert.equal(observerWorkflowCapture.presentationMetadata.dialogueSource, 'boredom-observer');
+  assert.equal(observerWorkflowCapture.conversationResponse, '');
+  assert.equal(observerWorkflowCapture.privateResponse, '');
+  assert.equal(
+    manager.getTask(observerWorkflowCapture.commands[0]?.id)?.metadata?.originatingInstruction,
+    'Interpret the returned image as one autonomous observation.',
+  );
+
   const feedbackInstruction = await environmentInstructionInterpreterNode.execute({
     observation: {
       environmentId: 'ainekio',
@@ -733,7 +861,17 @@ try {
     response: JSON.stringify({
       response: 'The wave completed, and the post-action image has returned.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
-      movementRequest: { description: 'wave again' },
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The advertised wave command is the selected next action.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'open_loop_displacement',
+        actionPurpose: 'expression',
+        presentation: 'conversation',
+      },
     }),
     instruction: continuationInstruction.instruction,
     observation: continuationInstruction.observation,
@@ -887,7 +1025,7 @@ try {
   assert.match(String(satisfiedCaptureInstruction.instruction), /do not request another image/i);
   assert.match(
     String(satisfiedCaptureInstruction.instruction),
-    /Original user goal: Can you take a picture/,
+    /Current objective: Can you take a picture/,
   );
   assert.doesNotMatch(
     String(satisfiedCaptureInstruction.instruction),
@@ -903,6 +1041,17 @@ try {
       response: 'I see a blue object and several lights.',
       actions: [],
       movementRequest: null,
+      taskDecision: {
+        outcome: 'complete',
+        reason: 'The fresh correlated image supplies the requested visual answer.',
+        objectiveComplete: true,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'response',
+        completionBasis: 'response',
+        completionEvidence: 'The response reports the current correlated image.',
+        actionPurpose: 'information_gain',
+        presentation: 'conversation',
+      },
     }),
     instruction: satisfiedCaptureInstruction.instruction,
     observation: satisfiedCaptureInstruction.observation,
@@ -927,7 +1076,7 @@ try {
     },
     instruction: 'Find the object in front of the robot.',
     images: imageOutput.images,
-  }, {}, {});
+  }, {}, { systemPrompt: 'Use the current instruction, observation, and advertised capabilities.' });
   const content = contextOutput.messages.at(-1)?.content;
   assert.equal(typeof content, 'string');
   assert.deepEqual(contextOutput.images, []);
@@ -944,7 +1093,10 @@ try {
   assert.deepEqual(selectorEnvelope.currentEnvironment.capabilities.robotCommands, ['stand', 'wave', 'dance']);
   assert.deepEqual(selectorEnvelope.currentEnvironment.visualFrames, []);
   const selectorSystemPrompt = String(contextOutput.messages[0]?.content);
-  assert.match(selectorSystemPrompt, /Only the current task instruction and current environment observation may authorize/i);
+  assert.equal(
+    selectorSystemPrompt,
+    'Use the current instruction, observation, and advertised capabilities.',
+  );
 
   const correlatedImageContext = await environmentContextBuilderNode.execute({
     observation: {

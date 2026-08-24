@@ -38,6 +38,11 @@ interface TTSOutputDependencies {
   createRequestId: () => string;
 }
 
+const ROBOT_SPEECH_WORKFLOW_SOURCES = new Set([
+  'environment-mode',
+  'boredom-autonomy',
+]);
+
 const defaultTTSOutputDependencies: TTSOutputDependencies = {
   getSettings: getSpeechOutputSettings,
   queue: queueTTS,
@@ -69,15 +74,15 @@ export async function deliverTTSOutput(
   }
 
   // Inner Dialogue is a local interface surface whose audible state is gated
-  // by the visible Inner view. Outward robot speech remains exclusively owned
-  // by Environment Mode.
+  // by the visible Inner view. Outward robot speech remains limited to the two
+  // explicit robot execution workflows rather than becoming a general TTS path.
   if (route === 'robot') {
-    if (request.source !== 'environment-mode') {
+    if (!ROBOT_SPEECH_WORKFLOW_SOURCES.has(request.source)) {
       return {
         accepted: false,
         deliveryId: '',
         route: 'robot',
-        reason: 'Robot speech is limited to Environment Mode tts-out',
+        reason: 'Robot speech is limited to robot execution workflows',
       };
     }
     if (settings.provider !== 'kokoro') {

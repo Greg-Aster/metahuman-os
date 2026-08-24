@@ -7,7 +7,13 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const text = inputs[0]?.text || inputs[0]?.response || inputs[0] || '';
+  const rawText = inputs.text
+    ?? inputs.response
+    ?? inputs[0]?.text
+    ?? inputs[0]?.response
+    ?? inputs[0]
+    ?? '';
+  const text = typeof rawText === 'string' ? rawText : '';
   const fallback = properties?.fallback || null;
 
   try {

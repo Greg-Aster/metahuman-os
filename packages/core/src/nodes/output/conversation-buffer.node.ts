@@ -46,6 +46,7 @@ const execute: NodeExecutor = async (inputs, context) => {
   const passthrough = inputs.passthrough ?? null;
   const assistantResponse = assistantResponseText(inputs, context);
   const taskLifecycle = taskLifecycleMetadata(inputs.taskLifecycle);
+  const assistantMetadata = taskLifecycleMetadata(inputs.metadata) ?? {};
   const username = typeof context.username === 'string'
     ? context.username.trim()
     : typeof context.userId === 'string'
@@ -98,13 +99,14 @@ const execute: NodeExecutor = async (inputs, context) => {
   if (explicitEntry && typeof explicitEntry === 'object') {
     entries.push({
       ...explicitEntry,
-      ...(explicitEntry.role === 'assistant' && taskLifecycle
+      ...(explicitEntry.role === 'assistant' && (taskLifecycle || Object.keys(assistantMetadata).length > 0)
         ? {
             meta: {
               ...(explicitEntry.meta && typeof explicitEntry.meta === 'object'
                 ? explicitEntry.meta
                 : {}),
-              taskLifecycle,
+              ...assistantMetadata,
+              ...(taskLifecycle ? { taskLifecycle } : {}),
             },
           }
         : {}),
@@ -138,6 +140,7 @@ const execute: NodeExecutor = async (inputs, context) => {
           ...(context.replyToDesireTitle ? { replyToDesireTitle: context.replyToDesireTitle } : {}),
           ...(context.cognitiveMode ? { cognitiveMode: context.cognitiveMode } : {}),
           ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          ...assistantMetadata,
           ...(taskLifecycle ? { taskLifecycle } : {}),
         },
       });
@@ -180,6 +183,7 @@ export const ConversationBufferNode = defineNode({
     { name: 'response', type: 'any', optional: true, description: 'Assistant response' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Legacy history edge; persistence does not derive ownership from it' },
     { name: 'taskLifecycle', type: 'object', optional: true, description: 'Existing task owner lifecycle decision attached to an assistant result' },
+    { name: 'metadata', type: 'object', optional: true, description: 'Origin metadata attached to the assistant response' },
     { name: 'responseBufferId', type: 'string', optional: true, description: 'Pass-through response-buffer ID' },
     { name: 'summary', type: 'object', optional: true, description: 'Conversation summary marker' },
     { name: 'passthrough', type: 'any', optional: true, description: 'Data forwarded after conversation admission for graph sequencing' },

@@ -21,5 +21,5 @@ const command = requestedCommand(process.argv.slice(2))
 if (command === 'help' || command === '--help' || command === '-h') {
   printHelp()
 } else {
-  await import('./mh-new.js')
+  await import('./main.js')
 }

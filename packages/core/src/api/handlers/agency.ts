@@ -26,7 +26,6 @@ import {
   initializeScratchpadSummary,
   initializeStageIterations,
   getSourceWeight,
-  executeDesireViaGraph,
   type Desire,
   type DesireExecution,
   type DesireStatus,
@@ -34,6 +33,7 @@ import {
   type DesireStage,
   type ClarifyingAnswer,
 } from '../../agency/index.js';
+import { executeDesireViaGraph } from '../../agency/executor.js';
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';

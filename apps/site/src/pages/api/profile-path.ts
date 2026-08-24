@@ -8,17 +8,10 @@
  */
 import { astroHandler } from '@metahuman/core/api/adapters/astro';
 import type { APIRoute } from 'astro';
-import {
-  getAuthenticatedUser,
-  getProfilePathsWithStatus,
-  getDefaultProfilePath,
-  audit,
-} from '@metahuman/core';
+import { getAuthenticatedUser, getProfilePathsWithStatus, audit } from '@metahuman/core';
 import { validateProfilePath } from '@metahuman/core/path-security';
-import { migrateProfile, estimateMigrationDuration } from '@metahuman/core/profile-migration';
-import { getStorageInfo } from '@metahuman/core/external-storage';
-import { isProfileEncrypted, getEncryptionMeta } from '@metahuman/core/encryption';
-import { getProfileStorageConfig, verifyUserPassword } from '@metahuman/core/users';
+import { migrateProfile } from '@metahuman/core/profile-migration';
+import { verifyUserPassword } from '@metahuman/core/users';
 
 // GET, PUT, DELETE use unified handler
 export const GET = astroHandler;

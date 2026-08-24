@@ -89,7 +89,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       version: 1,
       owner: 'environment-action-selector',
       purpose: 'merged-quantized-runtime-artifact',
-      model: 'environment-action-selector-0.8b:v1',
+      model: 'environment-action-selector-0.8b:v2',
       baseModel: provenance.baseModel,
       selectionEvidence: provenance.selectionEvidence,
       quantization: 'Q4_K_M',

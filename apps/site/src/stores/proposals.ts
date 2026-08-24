@@ -83,7 +83,6 @@ export const proposalsConnected = derived(proposalsStore, ($store) => $store.con
 
 // SSE connection management
 let connectionHandle: ConnectionHandle | null = null;
-let eventSource: EventSource | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -110,7 +109,6 @@ export function connectProposalsStream(): void {
       priority: ConnectionPriority.MEDIUM,
       defer: true,
       onOpen: (source) => {
-        eventSource = source;
         reconnectAttempts = 0;
         proposalsStore.update((s) => ({ ...s, connected: true, error: null }));
 
@@ -160,7 +158,6 @@ export function connectProposalsStream(): void {
         });
       },
       onClose: () => {
-        eventSource = null;
         proposalsStore.update((s) => ({ ...s, connected: false }));
       },
       onError: () => {
@@ -202,7 +199,6 @@ export function disconnectProposalsStream(): void {
   if (connectionHandle) {
     connectionHandle.close();
     connectionHandle = null;
-    eventSource = null;
   }
 
   proposalsStore.update((s) => ({ ...s, connected: false }));

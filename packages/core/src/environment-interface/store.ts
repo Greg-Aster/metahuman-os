@@ -209,6 +209,34 @@ export function attachEnvironmentActionContext(
   const taskInputMetadata = isRecord(task?.input?.metadata)
     ? task.input.metadata
     : null;
+  if (task?.type === 'environment_command') {
+    const requested = task.input as Partial<EnvironmentAction>;
+    const resultFeedback = isRecord(task.result?.feedback) ? task.result.feedback : null;
+    metadata.actionContext = {
+      actionId: task.id,
+      status: typeof resultFeedback?.type === 'string'
+        ? resultFeedback.type
+        : commandStatus(task),
+      requested: {
+        type: requested.type,
+        ...(requested.command ? { command: requested.command } : {}),
+        ...(requested.direction ? { direction: requested.direction } : {}),
+        ...(typeof requested.units === 'number' ? { units: requested.units } : {}),
+        ...(requested.target ? { target: requested.target } : {}),
+      },
+      ...(task.correlationId ? { correlationId: task.correlationId } : {}),
+      queuedAt: task.createdAt,
+      ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+      ...(resultFeedback
+        ? {
+            result: {
+              type: resultFeedback.type,
+              message: resultFeedback.message,
+            },
+          }
+        : {}),
+    };
+  }
   if (!isRecord(metadata.robotObserver) && isRecord(taskInputMetadata?.robotObserver)) {
     metadata.robotObserver = taskInputMetadata.robotObserver;
   }
@@ -451,6 +479,12 @@ function normalizeAction(
   }
   if (action.type === 'sendText' && !action.text?.trim()) throw new Error('Environment sendText action requires text');
   if (action.type === 'robotCommand' && !action.command?.trim()) throw new Error('Environment robotCommand action requires a semantic command');
+  if (action.type !== 'robotCommand' && action.command?.trim()) {
+    throw new Error(`Environment ${action.type} action cannot contain a robot command`);
+  }
+  if (action.type === 'move' && !action.direction && !action.vector) {
+    throw new Error('Environment move action requires a direction or vector');
+  }
   if (action.type === 'speak') {
     if (
       options.source !== 'system'

@@ -24,10 +24,8 @@
 import { apiFetch, getSyncServerUrl, remoteFetch, normalizeUrl } from './api-config';
 import { healthStatus } from './server-health';
 import {
-  getDB,
   savePersona,
   getAllPersona,
-  saveMemory,
   getUnsyncedMemories,
   markMemoriesSynced,
   importMemories,
@@ -37,7 +35,6 @@ import {
   getActiveTasks,
   saveTask,
   type LocalMemory,
-  type LocalPersona,
   type LocalTask,
 } from './local-memory';
 import { get } from 'svelte/store';
@@ -325,7 +322,6 @@ export async function uploadChanges(): Promise<{ uploaded: number; errors: strin
       });
 
       if (response.ok) {
-        const data = await response.json();
         const syncedIds = unsyncedMemories.map(m => m.id);
         await markMemoriesSynced(syncedIds, new Date().toISOString());
         uploaded += syncedIds.length;
@@ -712,7 +708,6 @@ import {
   getSyncServerCredentials,
   saveSyncServerCredentials,
   updateSyncTimestamp,
-  type SyncServerCredentials,
 } from './local-memory';
 // NOTE: saveSyncedCredentials REMOVED - was IndexedDB, now use saveLocalCredentials (unified API)
 // mobile-fs imports removed - sync now uses unified LOCAL API (filesystem writes handled server-side)

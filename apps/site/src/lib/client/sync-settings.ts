@@ -28,12 +28,6 @@ export interface SyncSettings {
   syncConversationBuffer: boolean; // Sync conversation history (default: false - can be large)
 }
 
-export interface SyncState {
-  lastSyncTimestamp: string | null;  // ISO timestamp of last successful sync
-  lastSyncResult: 'success' | 'failed' | 'skipped' | null;
-  pendingChanges: number;            // Number of local changes waiting to sync
-}
-
 const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   syncOnLogin: true,
   syncOnWifiOnly: true,  // Conservative default - don't use cellular data
@@ -46,14 +40,7 @@ const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   syncConversationBuffer: false,  // Large, sync manually
 };
 
-const DEFAULT_SYNC_STATE: SyncState = {
-  lastSyncTimestamp: null,
-  lastSyncResult: null,
-  pendingChanges: 0,
-};
-
 const SETTINGS_KEY = 'syncSettings';
-const STATE_KEY = 'syncState';
 
 /**
  * Get current sync settings

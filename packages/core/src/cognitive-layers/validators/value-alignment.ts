@@ -11,6 +11,7 @@ import type { PersonaCore } from '../../identity.js';
 import { loadPersonaCore } from '../../identity.js';
 import { callLLM } from '../../model-router.js';
 import { audit } from '../../audit.js';
+import { getPersonaName, getPersonaValueNames } from '../../persona-summary.js';
 
 // ============================================================================
 // Types
@@ -96,8 +97,8 @@ export async function checkValueAlignment(
   // Load persona core values
   const persona = loadPersonaCore();
 
-  // Handle values being undefined, not an array, or empty
-  if (!persona.values || !Array.isArray(persona.values) || persona.values.length === 0) {
+  const values = getPersonaValueNames(persona);
+  if (values.length === 0) {
     // No values to check against - consider aligned by default
     return {
       aligned: true,
@@ -107,14 +108,6 @@ export async function checkValueAlignment(
       processingTime: Date.now() - startTime
     };
   }
-
-  // Extract value names for checking
-  // Values might be objects with .value property or plain strings
-  const values = persona.values.map(v => {
-    if (typeof v === 'string') return v;
-    if (v && typeof v === 'object' && 'value' in v) return v.value;
-    return null;
-  }).filter(Boolean) as string[];
 
   // Build analysis prompt
   const systemPrompt = buildValueAlignmentPrompt(persona, values);
@@ -193,9 +186,7 @@ function buildValueAlignmentPrompt(persona: PersonaCore, values: string[]): stri
   parts.push('');
 
   // Add persona context
-  if (persona.name) {
-    parts.push(`Person: ${persona.name}`);
-  }
+  parts.push(`Person: ${getPersonaName(persona)}`);
 
   // Add core values
   parts.push('## Core Values');

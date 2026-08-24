@@ -125,7 +125,8 @@ export class SubconsciousLayer implements CognitiveLayer<SubconsciousInput, Subc
         };
 
       case 'agent':
-        // Lightweight assistant mode
+      case 'environment':
+        // Lightweight assistant and embodied-environment modes
         return {
           searchDepth: 'normal',            // 8 results
           similarityThreshold: 0.62,

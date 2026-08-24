@@ -45,12 +45,7 @@ function externalizeMetahumanCoreForClient() {
 export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: true }),
-    svelte({
-      // Ensure Svelte components are compiled for both SSR and client
-      compilerOptions: {
-        hydratable: true,
-      },
-    })
+    svelte()
   ],
   adapter: node({
     mode: 'standalone'

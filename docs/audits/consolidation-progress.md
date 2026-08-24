@@ -1,6 +1,288 @@
 # Consolidation Progress
 
-This document tracks the MetaHuman cleanup/refactor. The kickoff and first full-plan cleanup are complete. The active goal is now the bounded follow-up consolidation plan below.
+This document is the chronological evidence ledger for the MetaHuman cleanup and
+refactor. The canonical program, principles, scope, and completion criteria live
+in `docs/technical/REFACTOR_BLUEPRINT.md`.
+
+## Active System-Wide Refactor Goal - 2026-08-24
+
+The Installation Owner opened a repository-wide refactor under the Engineering
+Principles in the System Refactor Blueprint. The goal covers the complete
+maintained source surface and proceeds owner by owner through audit, scoped
+implementation, cleanup, and validation.
+
+Starting evidence:
+
+- `HEAD` and `origin/main` both resolve to
+  `c081c1218f1db4d1912f81b7e53d11e36167a6ca`.
+- Maintained-source inventory dry run: 2,035 maintained files, including 1,531
+  code files.
+- `pnpm -s check:architecture`: pass with zero current architecture violations.
+- `git diff --check`: pass.
+- The starting worktree contains 128 tracked changed paths and nine untracked
+  paths. Existing work must be attributed and preserved before overlapping edits.
+
+Current phase:
+
+1. Canonical refactor principles and repository-wide execution order: complete.
+2. Starting architecture and maintained-source baseline: complete.
+3. Attribute the existing dirty worktree by owner and validation state: active.
+4. Site validation and client cleanup slice: complete.
+5. Core backup export ownership slice: complete.
+6. Agent graph executor ownership slice: complete.
+7. Node property-schema vocabulary slice: complete.
+8. Cognitive-layer persona contract slice: complete.
+9. Identity and decision-rule consumer contract slice: active.
+
+No production source was changed while establishing this goal and baseline.
+
+## Robot Boredom Autonomy Lifecycle Consolidation - 2026-08-24
+
+Scope and canonical owners:
+
+- Robot Operator remains the only boredom timer/admission owner.
+- Work Coordinator remains the only queue and interruption owner.
+- Environment Task State remains the only objective lifecycle, evidence,
+  action-budget, and completion owner.
+- Environment Bridge Out remains transport and presentation routing only.
+
+Finding and repair:
+
+- The first Boredom Autonomy implementation added a competing Robot Autonomy
+  Episode State node and fed its model-authored `selfInstruction` back as the
+  next execution authority. That bypassed Task State's objective lifecycle and
+  allowed a gesture name to become the repeated task.
+- Deleted that node, its types, graph wiring, transport inputs/outputs,
+  presentation metadata, and repair fallbacks.
+- Rewired the editable Boredom Autonomy graph through the existing Task State
+  prepare/reduce nodes. The autonomy selector now authors or revises one generic
+  `taskDecision.objective`; Task State persists it with correlated evidence.
+- Activated the existing strict Environment selector validator at the existing
+  Action Parser boundary, so prose and partial JSON cannot authorize work.
+- Removed graph-local Environment-dispatch step settings; Robot Operator's
+  `maxCycleSteps` is now the single action-budget configuration.
+
+Validation:
+
+- Focused Environment parser, Task State, Robot Operator graph, and Robot
+  Operator service tests: pass.
+- Environment selector corpus and regression tests: pass.
+- Cognitive graph validation: 30/30 pass.
+- Node defaults and Agent Monitor validations: pass.
+- Architecture guard: pass with zero violations.
+- Core typecheck remains red on the pre-existing broad TypeScript backlog; it
+  reported no error in this repair's changed owner files.
+- Live model behavior, correlated bridge re-entry, and physical robot motion
+  remain unverified until the runtime is rebuilt/restarted and hardware is
+  exercised.
+
+## System-Wide Refactor Slice 1 - Site Validation and Client Cleanup
+
+Scope and owner:
+
+- Existing root `typecheck:site` command and the `apps/site` package.
+- Site component registry, local IndexedDB owner, profile sync utilities, and
+  unused client/server imports exposed by the checker.
+- No concurrently modified Svelte component was edited.
+
+Baseline findings:
+
+- `pnpm -s typecheck:site` did not run a check. Astro prompted to install the
+  missing `@astrojs/check` package and exited without diagnostics.
+- After installing the checker, the real baseline was 11 errors and 18 hints
+  across 402 files.
+- The card registry used the retired class-style `SvelteComponent` type for
+  function-style Svelte components.
+- The local IndexedDB schema indexed boolean `synced` and `deleted` fields even
+  though booleans are not valid IndexedDB keys. The `by-deleted` memory index and
+  `by-synced` task index had no callers.
+- Remaining hints were unused imports, an unused response body, unused sync-state
+  constants, an unused tier-selection argument, a dead battery helper, and an
+  EventSource reference duplicated by the connection-pool handle.
+
+Implementation and cleanup:
+
+- Added the official `@astrojs/check` development dependency to the existing Astro
+  validation path; no second checker or script was introduced.
+- Typed the dynamic message-card registry against the shared card contract while
+  preserving each generated component's concrete type.
+- Advanced the local database to version 5, removed invalid boolean-key indexes
+  during upgrade, retained the canonical boolean fields, and replaced invalid
+  indexed queries with direct bounded scans.
+- Removed the unused imports, response parse, constants, argument, helper, and
+  duplicate EventSource state reported by the checker.
+
+Validation:
+
+- `pnpm -s typecheck:site`: pass, 402 files, zero errors, warnings, or hints.
+- Browser-backed version-4 to version-5 IndexedDB migration probe: pass. Retained
+  memory indexes were `by-timestamp` and `by-type`; retained task index was
+  `by-status`; one unsynced fixture and all aggregate counts matched expectation.
+- `pnpm --dir apps/site build`: pass. Existing accessibility and mixed
+  static/dynamic import warnings remain as later owner-group work.
+- `pnpm -s check:architecture`: pass with zero current architecture violations.
+- `git diff --check`: pass.
+
+Remaining evidence boundary:
+
+- This slice proves the checker, production build, and isolated IndexedDB upgrade.
+  It does not claim full interactive site acceptance.
+- Core and CLI type checks remain red and are tracked as separate owner work.
+
+## System-Wide Refactor Slice 2 - Core Backup Export Ownership
+
+Scope and owner:
+
+- `packages/core/src/system-operator/backup.ts` owns profile-level system backups.
+- `packages/core/src/safe-file.ts` owns per-file atomic-write backups.
+- `packages/core/src/config.ts` exposes config-specific recovery helpers over the
+  per-file owner.
+
+Baseline findings:
+
+- The root core barrel exported three `listBackups` paths: the System Operator
+  profile API, the low-level safe-file helper, and the config module's re-export
+  of that same helper.
+- TypeScript reported two ambiguous root exports, and Vite ignored the conflicting
+  namespace during the site build.
+- Static maintained-source discovery found no consumer importing the low-level
+  helper as `listBackups`; its only callers were `safe-file.ts` and `config.ts`.
+- The concurrently edited root barrel only adds environment types and did not need
+  modification for this repair.
+
+Implementation and cleanup:
+
+- Kept `listBackups(username?)` as the System Operator's canonical public name.
+- Renamed the per-file helper to `listFileBackups(filePath)` and updated its direct
+  restore and config-backup callers and exports.
+- Added a focused test proving per-file listing and restoration through the new
+  unambiguous contract.
+
+Validation:
+
+- `node --import tsx --test packages/core/src/safe-file.spec.ts`: pass.
+- Maintained-source reference search: no stale low-level `listBackups` caller.
+- `pnpm -s typecheck:core`: the two `src/index.ts` ambiguous-export diagnostics are
+  removed; unrelated core diagnostics remain.
+- `pnpm --dir apps/site build`: pass; the conflicting `listBackups` namespace
+  warning is removed. Other existing build warnings remain separate owner work.
+- Focused `git diff --check`: pass.
+
+## System-Wide Refactor Slice 3 - Agent Graph Executor Ownership
+
+Scope and owner:
+
+- `packages/core/src/graph-runtime.ts` and the cognitive graph API handlers own
+  graph loading and execution.
+- `etc/cognitive-graphs` is the canonical built-in graph resource directory.
+- `brain/agents/organizer` remains the production Organizer owner.
+
+Baseline findings:
+
+- `packages/core/src/agent-graph-executor.ts` pointed at the deleted
+  `apps/site/src/lib/cognitive-nodes/templates` directory.
+- The executor duplicated the canonical Svelte Flow graph types, validation,
+  loading, and execution path already provided by core.
+- Maintained-source discovery found no production caller. Its only caller was an
+  ad-hoc script that expected a legacy `links` field from an `edges` graph and
+  attempted live graph execution despite describing the operation as a dry run.
+- The user guide still named the deleted UI directory as the built-in graph
+  owner.
+
+Implementation and cleanup:
+
+- Deleted the unused parallel executor and removed its root barrel export.
+- Deleted the stale ad-hoc execution script; existing canonical graph validation
+  remains the maintained verification path.
+- Corrected the user guide to name `etc/cognitive-graphs/*.json` as the built-in
+  graph location.
+- Preserved the Organizer agent and `organizer-agent.json`; this slice removes a
+  duplicate loader/executor, not either maintained resource owner.
+
+Validation:
+
+- Maintained-source reference search: no active executor API or deleted template
+  path references remain. Historical ledger and generated inventory references
+  are retained until the next inventory checkpoint.
+- `pnpm validate:graphs`: pass, 30 of 30 graphs valid.
+- `pnpm -s check:architecture`: pass with zero current architecture violations.
+- `pnpm -s typecheck:core`: all four `agent-graph-executor.ts` diagnostics are
+  removed; unrelated owner groups remain red.
+- `git diff --check`: pass.
+
+## System-Wide Refactor Slice 4 - Node Property-Schema Vocabulary
+
+Scope and owner:
+
+- `packages/core/src/nodes/types.ts` owns the node property-schema vocabulary.
+- The existing flow-editor property inspector owns rendering for that vocabulary.
+
+Baseline findings:
+
+- Eleven prompt fields across the response LLM and response synthesizer nodes used
+  the undeclared property type `textarea`.
+- The shared core contract and editor already agreed on `text_multiline`, which
+  the editor renders as a textarea. Adding `textarea` would create a redundant
+  alias and another UI branch.
+
+Implementation and cleanup:
+
+- Normalized all eleven prompt fields to the existing `text_multiline` contract.
+- Did not alter the shared type or concurrently modified property inspector.
+
+Validation:
+
+- Maintained-source search: no `textarea` property-schema declarations or
+  handling branches remain.
+- `pnpm -s typecheck:core`: all eleven affected node diagnostics are removed;
+  unrelated owner groups remain red.
+- `pnpm -s typecheck:site`: pass, 402 files with zero diagnostics.
+- `git diff --check`: pass.
+
+## System-Wide Refactor Slice 5 - Cognitive-Layer Persona Contract
+
+Scope and owner:
+
+- `packages/core/src/identity.ts` owns the canonical persona contract.
+- Cognitive-layer prompt and validation utilities consume that contract.
+- The Subconscious layer owns mode-specific context retrieval settings.
+
+Baseline findings:
+
+- Cognitive-layer consumers still expected experimental top-level persona aliases
+  for name, traits, values, goals, and background instead of the canonical nested
+  identity shape used by templates and live profiles.
+- Value alignment tested whether the complete `values` object was an array. It
+  therefore returned "aligned" without evaluating any canonical core values.
+- Environment mode was part of `CognitiveModeId` but had no Subconscious context
+  policy, leaving a non-exhaustive execution path.
+
+Implementation and cleanup:
+
+- Added one pure cognitive-layer adapter for prompt-ready persona name, numeric
+  traits, core value names, active goals, and background.
+- Reused that adapter across prompt building, consistency analysis, and value
+  alignment; removed the obsolete alias reads from those consumers.
+- Removed the experimental alias fields from the declared persona contract while
+  retaining canonical top-level background.
+- Assigned Environment mode the existing lightweight contextual retrieval policy
+  used by Agent mode.
+
+Validation:
+
+- `node --import tsx --test packages/core/src/cognitive-layers/utils/persona-summary.spec.ts`:
+  pass, including canonical and legacy-value adapter cases.
+- Cognitive-layer stale-alias search: no flat persona name, traits, current-goal,
+  or array-values reads remain.
+- `pnpm -s typecheck:core`: all seven cognitive-layer diagnostics are removed;
+  unrelated owner groups remain red.
+- `git diff --check`: pass.
+
+## Previous Consolidation Work
+
+The kickoff, full-plan cleanup, and bounded API follow-up below are completed
+historical inputs to this new goal. Their findings remain evidence; their former
+"active" labels do not supersede the current goal above.
 
 ## User-Agnostic Voice Service Ownership - 2026-08-04
 

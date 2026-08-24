@@ -65,6 +65,15 @@ export const ENVIRONMENT_CONTINUATION_POLICIES = ['none', 'bounded'] as const;
 
 export type EnvironmentContinuationPolicy = typeof ENVIRONMENT_CONTINUATION_POLICIES[number];
 
+export const ENVIRONMENT_ACTION_PURPOSES = [
+  'expression',
+  'information_gain',
+  'task_effect',
+] as const;
+
+export type EnvironmentActionPurpose = typeof ENVIRONMENT_ACTION_PURPOSES[number];
+export type EnvironmentPresentation = 'private' | 'conversation';
+
 export interface EnvironmentEscalationRequest {
   target: 'general';
   reason: string;
@@ -77,6 +86,8 @@ export interface EnvironmentTaskContract {
   requiredCompletionBasis: EnvironmentCompletionBasis;
   /** Absent only on legacy or non-motion contracts. */
   motionClass?: EnvironmentMotionClass;
+  actionPurpose?: EnvironmentActionPurpose;
+  visualEvidenceMode?: EnvironmentVisualEvidenceMode;
 }
 
 export type EnvironmentVisualEvidenceMode = 'single' | 'comparison';
@@ -118,6 +129,8 @@ export interface EnvironmentTaskState {
   continuationPolicy: EnvironmentContinuationPolicy;
   requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
   motionClass?: EnvironmentMotionClass;
+  actionPurpose?: EnvironmentActionPurpose;
+  presentation?: EnvironmentPresentation;
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
   baselineFrame?: EnvironmentTaskFrameRef;
   selectedAction?: EnvironmentTaskSelectedAction;
@@ -162,6 +175,13 @@ function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis |
     : null;
 }
 
+export function normalizedEnvironmentActionPurpose(value: unknown): EnvironmentActionPurpose | null {
+  return typeof value === 'string'
+    && ENVIRONMENT_ACTION_PURPOSES.includes(value as EnvironmentActionPurpose)
+    ? value as EnvironmentActionPurpose
+    : null;
+}
+
 export function normalizedEnvironmentMotionClass(value: unknown): EnvironmentMotionClass | null {
   return typeof value === 'string'
     && ENVIRONMENT_MOTION_CLASSES.includes(value as EnvironmentMotionClass)
@@ -179,6 +199,11 @@ export function environmentTaskContractFromRouting(
     value.actionParams.requiredCompletionBasis,
   );
   const motionClass = normalizedEnvironmentMotionClass(value.actionParams.motionClass);
+  const actionPurpose = normalizedEnvironmentActionPurpose(value.actionParams.actionPurpose);
+  const visualEvidenceMode = value.actionParams.visualEvidenceMode === 'single'
+    || value.actionParams.visualEvidenceMode === 'comparison'
+    ? value.actionParams.visualEvidenceMode
+    : undefined;
   if (
     (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
     || !requiredCompletionBasis
@@ -189,6 +214,45 @@ export function environmentTaskContractFromRouting(
     continuationPolicy,
     requiredCompletionBasis,
     ...(motionClass ? { motionClass } : {}),
+    ...(actionPurpose ? { actionPurpose } : {}),
+    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
+  };
+}
+
+/**
+ * A trigger may define the evidence needed for its high-level intention while
+ * leaving action selection and lifecycle ownership to Environment Mode.
+ */
+export function robotOperatorLifecycleContractFromObservation(
+  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
+): EnvironmentTaskContract | null {
+  const decision = isRecord(observation?.metadata?.robotOperatorDecision)
+    ? observation.metadata.robotOperatorDecision
+    : null;
+  const lifecycle = isRecord(decision?.lifecycleContract)
+    ? decision.lifecycleContract
+    : null;
+  if (!lifecycle) return null;
+  const objective = typeof lifecycle.objective === 'string'
+    ? lifecycle.objective.trim().slice(0, 1_000)
+    : '';
+  const continuationPolicy = lifecycle.continuationPolicy;
+  const requiredCompletionBasis = normalizedCompletionBasis(lifecycle.requiredCompletionBasis);
+  const visualEvidenceMode = lifecycle.visualEvidenceMode === 'single'
+    || lifecycle.visualEvidenceMode === 'comparison'
+    ? lifecycle.visualEvidenceMode
+    : undefined;
+  if (
+    !objective
+    || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
+    || !requiredCompletionBasis
+    || requiredCompletionBasis === 'none'
+  ) return null;
+  return {
+    objective,
+    continuationPolicy,
+    requiredCompletionBasis,
+    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
   };
 }
 
@@ -209,6 +273,7 @@ export function environmentTaskContractFromObservation(
       continuationPolicy: command?.continuationPolicy,
       requiredCompletionBasis: command?.requiredCompletionBasis,
       motionClass: command?.motionClass,
+      actionPurpose: command?.actionPurpose,
     },
   }, objective);
   if (commandContract) {
@@ -217,6 +282,8 @@ export function environmentTaskContractFromObservation(
       ...(currentInstruction ? { currentInstruction } : {}),
     };
   }
+  const robotOperatorContract = robotOperatorLifecycleContractFromObservation(observation);
+  if (robotOperatorContract) return robotOperatorContract;
   const taskState = parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
   if (taskState) {
     return {
@@ -224,6 +291,8 @@ export function environmentTaskContractFromObservation(
       continuationPolicy: taskState.continuationPolicy,
       requiredCompletionBasis: taskState.requiredCompletionBasis,
       ...(taskState.motionClass ? { motionClass: taskState.motionClass } : {}),
+      ...(taskState.actionPurpose ? { actionPurpose: taskState.actionPurpose } : {}),
+      ...(taskState.visualEvidenceMode ? { visualEvidenceMode: taskState.visualEvidenceMode } : {}),
     };
   }
   return parseEnvironmentTaskInstruction(observation?.metadata?.originatingInstruction);
@@ -239,6 +308,8 @@ export function encodeEnvironmentTaskState(state: EnvironmentTaskState): string 
     continuationPolicy: state.continuationPolicy,
     requiredCompletionBasis: state.requiredCompletionBasis,
     ...(state.motionClass ? { motionClass: state.motionClass } : {}),
+    ...(state.actionPurpose ? { actionPurpose: state.actionPurpose } : {}),
+    ...(state.presentation ? { presentation: state.presentation } : {}),
     ...(state.visualEvidenceMode ? { visualEvidenceMode: state.visualEvidenceMode } : {}),
     ...(state.baselineFrame ? { baselineFrame: state.baselineFrame } : {}),
     ...(state.selectedAction ? { selectedAction: state.selectedAction } : {}),
@@ -299,6 +370,10 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
     const continuationPolicy = parsed.continuationPolicy;
     const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
     const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
+    const actionPurpose = normalizedEnvironmentActionPurpose(parsed.actionPurpose);
+    const presentation = parsed.presentation === 'private' || parsed.presentation === 'conversation'
+      ? parsed.presentation
+      : undefined;
     const visualEvidenceMode = parsed.visualEvidenceMode === 'single' || parsed.visualEvidenceMode === 'comparison'
       ? parsed.visualEvidenceMode
       : undefined;
@@ -314,6 +389,8 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       || !requiredCompletionBasis
       || requiredCompletionBasis === 'none'
       || (parsed.motionClass !== undefined && !motionClass)
+      || (parsed.actionPurpose !== undefined && !actionPurpose)
+      || (parsed.presentation !== undefined && !presentation)
     ) return null;
     const baselineFrame = normalizedTaskFrameRef(parsed.baselineFrame);
     const selectedAction = normalizedSelectedAction(parsed.selectedAction);
@@ -326,6 +403,8 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       continuationPolicy,
       requiredCompletionBasis,
       ...(motionClass ? { motionClass } : {}),
+      ...(actionPurpose ? { actionPurpose } : {}),
+      ...(presentation ? { presentation } : {}),
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(baselineFrame ? { baselineFrame } : {}),
       ...(selectedAction ? { selectedAction } : {}),
@@ -343,11 +422,12 @@ export function environmentTaskStateFromObservation(
 
   // Backward-compatible adoption of an action already queued by the retired
   // validator workflow. The new reducer becomes its sole lifecycle owner.
-  const contract = environmentTaskContractFromObservation(observation);
-  if (!contract || contract.requiredCompletionBasis === 'none') return null;
   const command = isRecord(observation?.metadata?.taskValidatorCommand)
     ? observation.metadata.taskValidatorCommand
     : null;
+  if (!command) return null;
+  const contract = environmentTaskContractFromObservation(observation);
+  if (!contract || contract.requiredCompletionBasis === 'none') return null;
   const step = Number.isInteger(command?.step) ? Math.max(0, Number(command?.step)) : 1;
   const maxSteps = Number.isInteger(command?.maxSteps)
     ? Math.max(1, Math.min(10, Number(command?.maxSteps)))
@@ -361,6 +441,8 @@ export function environmentTaskStateFromObservation(
     continuationPolicy: contract.continuationPolicy,
     requiredCompletionBasis: contract.requiredCompletionBasis,
     ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
+    ...(contract.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
+    ...(contract.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
   };
 }
 
@@ -374,6 +456,8 @@ export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContra
     continuationPolicy: contract.continuationPolicy,
     requiredCompletionBasis: contract.requiredCompletionBasis,
     ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
+    ...(contract.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
+    ...(contract.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
   })}`;
 }
 
@@ -391,7 +475,13 @@ export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTask
     const continuationPolicy = parsed.continuationPolicy;
     const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
     const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
+    const actionPurpose = normalizedEnvironmentActionPurpose(parsed.actionPurpose);
+    const visualEvidenceMode = parsed.visualEvidenceMode === 'single'
+      || parsed.visualEvidenceMode === 'comparison'
+      ? parsed.visualEvidenceMode
+      : undefined;
     if (parsed.motionClass !== undefined && !motionClass) return null;
+    if (parsed.actionPurpose !== undefined && !actionPurpose) return null;
     if (
       !objective
       || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
@@ -404,6 +494,8 @@ export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTask
       continuationPolicy,
       requiredCompletionBasis,
       ...(motionClass ? { motionClass } : {}),
+      ...(actionPurpose ? { actionPurpose } : {}),
+      ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
     };
   } catch {
     return null;
@@ -413,6 +505,8 @@ export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTask
 export interface EnvironmentTaskDecision {
   outcome: EnvironmentTaskOutcome;
   reason: string;
+  /** Model-authored objective. Autonomous workflows may require this field. */
+  objective?: string;
   objectiveComplete: boolean;
   continuationPolicy?: EnvironmentContinuationPolicy;
   requiredCompletionBasis?: EnvironmentCompletionBasis;
@@ -420,6 +514,12 @@ export interface EnvironmentTaskDecision {
   completionEvidence?: string;
   /** Environment LLM-owned semantic motion reference for the selected action. */
   motionClass?: EnvironmentMotionClass;
+  /** Why the selected action exists; Task State uses this to enforce evidence consistency. */
+  actionPurpose?: EnvironmentActionPurpose;
+  /** Autonomous outputs are private unless the selector deliberately addresses a person. */
+  presentation?: EnvironmentPresentation;
+  /** Short current-scene description used only for asynchronous familiarity search. */
+  observationSummary?: string;
   /** Whether visual proof needs one current frame or a before/after comparison. */
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
   /** Explicit request for one conversation-only general-model response. */
@@ -428,15 +528,6 @@ export interface EnvironmentTaskDecision {
   taskContractSource?: EnvironmentTaskContractSource;
   /** Typed disagreement retained for lifecycle telemetry; never model-authored. */
   taskContractConflict?: EnvironmentTaskContractConflict;
-}
-
-export interface EnvironmentPromptAdmission {
-  /** Include current state, capabilities, feedback, location, and map context. */
-  includeEnvironmentContext?: boolean;
-  /** Include fresh visual-frame descriptions and vision-specific instructions. */
-  includeVisionContext?: boolean;
-  /** Include action, movement, and whole-objective lifecycle contracts. */
-  includeActionContracts?: boolean;
 }
 
 const SELECTOR_MAX_OBJECT_KEYS = 12;
@@ -482,55 +573,48 @@ export interface EnvironmentSelectorEnvelopeInput {
   taskState?: EnvironmentTaskState | null;
   recentConversation?: Array<{ role: string; content: string }>;
   memories?: string[];
+  personaText?: string;
+  mustSelectAction?: boolean;
 }
 
 export interface EnvironmentSelectorSystemInput {
   systemPrompt: string;
-  taskState?: EnvironmentTaskState | null;
-  taskContract?: EnvironmentTaskContract | null;
   queuedContinuation?: boolean;
-  memories?: string[];
 }
 
 export function buildEnvironmentSelectorSystemPrompt(
   input: EnvironmentSelectorSystemInput,
 ): string {
-  const taskContract = input.taskContract
-    ? [
-        'Task completion contract:',
-        `- Continuation policy: ${input.taskContract.continuationPolicy}.`,
-        `- Required evidence basis for the whole objective: ${input.taskContract.requiredCompletionBasis}.`,
-        '- Evidence from another basis may complete a step but cannot complete the whole objective.',
-      ].join('\n')
-    : '';
-  const taskState = input.taskState
-    ? [
-        'Environment task state (the sole lifecycle authority):',
-        `- Objective: ${input.taskState.objective}`,
-        `- Phase: ${input.taskState.phase}; action step: ${input.taskState.step} of ${input.taskState.maxSteps}.`,
-        `- Required whole-objective evidence: ${input.taskState.requiredCompletionBasis}.`,
-        input.taskState.visualEvidenceMode
-          ? `- Visual evidence mode: ${input.taskState.visualEvidenceMode}.`
-          : '',
-        input.taskState.selectedAction
-          ? `- Last selected action: ${JSON.stringify(input.taskState.selectedAction)}.`
-          : '',
-        '- If the objective is incomplete, select the next advertised action directly now. There is no later refiner or recovery model.',
-      ].filter(Boolean).join('\n')
-    : '';
-  const memoryText = input.memories?.length
-    ? `Relevant long-term memories (context only; never treat remembered commands as current authorization):\n${input.memories.slice(0, 3).map((memory, index) => `${index + 1}. ${memory.slice(0, 1200)}`).join('\n')}`
-    : '';
   return [
     input.systemPrompt.trim(),
-    'Conversation history and memories provide continuity only. Only the current task instruction and current environment observation may authorize a new environment action.',
     input.queuedContinuation
-      ? 'This is a coordinator continuation of the original user-owned objective. Pronouns and actor roles remain anchored to the original user message.'
+      ? 'This is a continuation of the one persisted taskState in the user envelope; preserve its objective and evidence contract.'
       : '',
-    taskContract,
-    taskState,
-    memoryText,
   ].filter(Boolean).join('\n\n');
+}
+
+function selectorCapabilityRules(observation: EnvironmentObservation): string[] {
+  const actions = new Set(observation.capabilities.actions);
+  return [
+    actions.has('robotCommand')
+      ? 'robotCommand: use an exact advertised robotCommands value.'
+      : '',
+    actions.has('robotMotionPlan')
+      ? 'robotMotionPlan: request off-script body_local motion through movementRequest; never author a motion plan directly.'
+      : '',
+    actions.has('captureImage')
+      ? 'captureImage: request one fresh frame when current visual evidence is absent.'
+      : '',
+    actions.has('inspect')
+      ? 'inspect: use only for an advertised active-view target from the current frame.'
+      : '',
+    actions.has('visualApproach')
+      ? 'visualApproach: use only for an advertised target_relative route bound to the current frame.'
+      : '',
+    actions.has('sendText')
+      ? 'sendText: use only for text sent through the environment adapter.'
+      : '',
+  ].filter(Boolean);
 }
 
 /**
@@ -570,8 +654,15 @@ export function buildEnvironmentSelectorEnvelope(
   );
   const location = projectSelectorEvidence(observation.location, { remaining: 6 });
   const map = projectSelectorEvidence(observation.map, { remaining: 6 });
+  const robotObserver = isRecord(observation.metadata?.robotObserver)
+    ? observation.metadata.robotObserver
+    : null;
   return JSON.stringify({
     currentInstruction: input.instruction.slice(0, 4_000),
+    inputSource: robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user',
+    decisionRequirements: {
+      mustSelectAction: input.mustSelectAction === true,
+    },
     currentEnvironment: {
       sessionId: observation.sessionId,
       timestamp: observation.timestamp,
@@ -597,212 +688,15 @@ export function buildEnvironmentSelectorEnvelope(
         ? observation.metadata.correlationId
         : undefined,
     },
+    capabilityRules: selectorCapabilityRules(observation),
     taskState: input.taskState ?? null,
+    activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     recentConversation: (input.recentConversation ?? []).slice(-4).map(message => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: message.content.slice(0, SELECTOR_MAX_STRING_LENGTH),
     })),
     memories: (input.memories ?? []).slice(0, 3).map(memory => memory.slice(0, 500)),
   });
-}
-
-export function stringifyEnvironmentObservation(
-  observation: EnvironmentObservation,
-  systemPrompt: string,
-  admission: EnvironmentPromptAdmission = {},
-): string {
-  const includeEnvironmentContext = admission.includeEnvironmentContext ?? true;
-  const includeVisionContext = admission.includeVisionContext ?? true;
-  const includeActionContracts = admission.includeActionContracts ?? true;
-  const sections: string[] = [];
-  if (includeActionContracts && systemPrompt.trim()) {
-    sections.push(systemPrompt.trim());
-  }
-
-  if (includeEnvironmentContext) {
-    sections.push(`Environment: ${observation.environmentId}`);
-    sections.push(`Adapter: ${observation.adapter}`);
-    sections.push(`Session: ${observation.sessionId}`);
-    sections.push(`Time: ${observation.timestamp}`);
-  }
-
-  if (includeEnvironmentContext && observation.text?.length) {
-    sections.push([
-      'Recent text:',
-      ...observation.text.map(event => {
-        const speaker = event.senderName ?? event.senderId ?? event.source;
-        return `- [${event.source}] ${speaker}: ${event.text}`;
-      }),
-    ].join('\n'));
-  }
-
-  if (includeEnvironmentContext && observation.state && Object.keys(observation.state).length > 0) {
-    sections.push(`State:\n${JSON.stringify(observation.state, null, 2)}`);
-  }
-
-  if (includeEnvironmentContext && observation.location && Object.keys(observation.location).length > 0) {
-    sections.push(`Location:\n${JSON.stringify(observation.location, null, 2)}`);
-  }
-
-  if (includeEnvironmentContext && observation.map && Object.keys(observation.map).length > 0) {
-    sections.push(`Map:\n${JSON.stringify(observation.map, null, 2)}`);
-  }
-
-  if (includeVisionContext && observation.visual) {
-    sections.push(`Visual frame: ${describeVisualFrame(observation.visual)}`);
-  }
-
-  if (includeVisionContext && observation.visuals?.length) {
-    sections.push([
-      'Visual frames:',
-      ...observation.visuals.map(frame => `- ${describeVisualFrame(frame)}`),
-    ].join('\n'));
-  }
-
-  if (includeEnvironmentContext && observation.feedback?.length) {
-    sections.push([
-      'Recent feedback:',
-      ...observation.feedback.map(event => `- [${event.type}] ${event.message}`),
-    ].join('\n'));
-  }
-
-  if (includeEnvironmentContext) {
-    sections.push(`Available actions: ${observation.capabilities.actions.join(', ')}`);
-    sections.push(`Target-aware navigation: ${observation.capabilities.navigation === true ? 'available' : 'unavailable'}`);
-    sections.push(`Admitted motion classes: ${observation.capabilities.motionClasses?.join(', ') || 'none explicitly advertised'}`);
-  }
-  const robotCommands = observation.capabilities.robotCommands
-    ?.map(command => command.trim())
-    .filter(Boolean);
-  if (includeEnvironmentContext && robotCommands?.length) {
-    sections.push(`Supported robot commands: ${robotCommands.join(', ')}`);
-  }
-  if (includeEnvironmentContext) {
-    sections.push([
-      'Sensor truth contract:',
-      '- Capability and readiness fields describe available hardware, not current sensory content.',
-      '- Claim current sight only from a fresh visual frame and current hearing only from a current audio transcript.',
-      '- Treat false readiness as unavailable and null or missing readiness as unknown.',
-    ].join('\n'));
-  }
-  if (includeActionContracts) {
-    sections.push([
-      'Response contract:',
-      '- Return exactly one JSON object: {"response":"short conversational reply","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete","reason":"why","objectiveComplete":true,"continuationPolicy":"none","requiredCompletionBasis":"response","completionBasis":"response","completionEvidence":"the requested result is present in response"}}.',
-      '- Use exactly the four top-level fields response, actions, movementRequest, and taskDecision. Invalid, partial, fenced, or extra-field output cannot authorize work and is not retried by another model.',
-      '- Put only supported semantic actions in actions[]. Use an empty array when no action is needed.',
-      '- You are the semantic action selector. Interpret the user\'s natural language and choose the best advertised action or Supported robot command. Deterministic nodes validate your typed selection but never reinterpret the user\'s words.',
-      '- Context-admission fields select supporting data only. They never authorize or veto your current action selection.',
-      '- taskDecision.outcome must be one of: complete, continue, observe, act, escalate, report, curiosity, background, request_user, wait.',
-      '- Use outcome="escalate" only for substantive conversation or complex non-action reasoning that needs the general model. Include escalation:{"target":"general","reason":"why"}, return no action or movementRequest, set objectiveComplete=false, continuationPolicy="none", and requiredCompletionBasis="response".',
-      '- Negated, quoted, hypothetical, stale, conditional, and future movement statements do not authorize a physical action.',
-      '- Every physical action must set taskDecision.motionClass to body_local, open_loop_displacement, or target_relative. Classify the selected action itself, not keywords in the request.',
-      '- Set objectiveComplete=true only when the current objective is actually satisfied.',
-      '- A response, observation, or action result can complete the current step without completing the objective. Do useful work now; do not merely promise future work.',
-      '- Actions and movementRequest in the current output have not executed yet. When either contains work, use outcome="act" and objectiveComplete=false; action_result is available only from later terminal feedback.',
-      '- Every taskDecision must set continuationPolicy="none" or "bounded" and requiredCompletionBasis. Default to "none" only when one response or action result proves the entire objective. Use "bounded" when the objective requires later work or evidence beyond the completed step. Never pair continuationPolicy="bounded" with requiredCompletionBasis="action_result": an action result proves only that step, so select the evidence that can prove the whole objective.',
-      '- Choose the completion basis from the objective, not merely the action type. action_result proves that a command executed; visual_observation can prove a requested change in the external scene.',
-      '- When requiredCompletionBasis is visual_observation, set visualEvidenceMode="single" for an absolute current-scene fact or "comparison" for a claimed change between before and after.',
-      '- A robot-mounted camera observes the external scene, not the robot itself. Never use its image to judge the robot\'s own pose or body motion; use the correlated action result for that.',
-      '- requiredCompletionBasis declares the evidence needed to prove the whole objective: response, action_result, visual_observation, environment_state, or user_input. A different basis may prove a step but cannot prove the whole objective.',
-      '- A completed action with continuationPolicy="none" closes that one-shot objective using action_result evidence. Do not keep a simple completed action alive merely because the instruction was recorded as the objective.',
-      '- On an exact terminal feedback pass, close an action_result objective or directly select the next action for an incomplete external objective. There is no separate refiner or recovery model.',
-      '- Never merely write a successor instruction. If another action is needed, return it now in actions[] or movementRequest.',
-      '- objectiveComplete=true requires completionBasis and completionEvidence proving the whole objective and every constraint. completionBasis is response, action_result, visual_observation, environment_state, or user_input.',
-      '- Visual completion evidence must be fresh and correlated; ambiguous, stale, or missing sensory input cannot prove completion.',
-    ].join('\n'));
-  } else {
-    sections.push([
-      'Conversation-only escalation contract:',
-      '- Return only the substantive conversational answer as plain text.',
-      '- Do not return JSON, actions, movement requests, command suggestions, or promises of physical work.',
-    ].join('\n'));
-  }
-  if (includeActionContracts && observation.capabilities.actions.includes('robotCommand')) {
-    sections.push([
-      'Robot command contract:',
-      '- A robotCommand contains a named body command and optional units, never simulator commands or raw servo values.',
-      '- Every actions item is a typed object. A named command uses {"type":"robotCommand","command":"<one Supported robot command>"}; never put a bare command string in actions.',
-      ...(robotCommands?.length
-        ? ['- Use only a command named in Supported robot commands.']
-        : []),
-      '- Named body commands are open-loop unless Target-aware navigation is explicitly available.',
-      '- body_local changes pose without environmental displacement. open_loop_displacement changes position or orientation without tracking a target. target_relative describes a spatial objective, not permission to reject an advertised command.',
-      '- motionClass records execution and completion semantics; it never vetoes an otherwise advertised action selected by this LLM.',
-      '- A robotCommand action result proves command execution. If the objective asks for an externally visible result, preserve that objective and evaluate the gateway\'s correlated post-action image before deciding whether the objective is complete.',
-      '- Do not claim target tracking, path planning, obstacle avoidance, distance control, or arrival from an open-loop command.',
-      '- Command completion proves only that the named command ran. A claimed scene or spatial outcome requires matching current environment evidence.',
-    ].join('\n'));
-  }
-  if (includeActionContracts && observation.capabilities.actions.includes('captureImage')) {
-    sections.push([
-      'Robot vision contract:',
-      '- The camera is the robot\'s visual sense. captureImage obtains one fresh view of the present physical environment.',
-      '- When the current task depends on the present physical scene and no fresh correlated visual frame is available, request captureImage before answering from sight.',
-      '- Do not describe the scene until a fresh correlated visual observation arrives.',
-    ].join('\n'));
-  }
-  if (includeActionContracts && observation.capabilities.actions.includes('visualApproach')) {
-    sections.push([
-      'Visual approach contract:',
-      '- visualApproach is the only camera-feedback target approach action. It runs a bounded adapter-owned image and movement loop and returns typed progress.',
-      '- Use it only for a target_relative route and only when visualApproach and target_relative are both advertised.',
-      '- visualTarget must identify the exact fresh frame and one normalized target box: {"version":1,"targetId":"bounded id","frameId":"exact current frame id","frameTimestamp":"exact frame timestamp","box":{"x":0..1,"y":0..1,"width":0..1,"height":0..1},"confidence":0..1,"description":"short appearance description"}.',
-      '- The box is normalized to the full image, has visible area, and remains inside the frame. Box size is not metric distance.',
-      '- Never substitute move, robotCommand, or robotMotionPlan for visualApproach when motionClass is target_relative.',
-    ].join('\n'));
-  }
-  if (includeActionContracts && observation.capabilities.actions.includes('inspect')) {
-    sections.push([
-      'Active inspection contract:',
-      '- inspect asks the adapter to acquire and preserve one current target, improve its view through bounded camera feedback, reacquire it after temporary loss, and verify the same target before returning one result.',
-      '- Use it only for a target_relative route and only when inspect, activeView, and target_relative are advertised.',
-      '- inspectionTarget names what current visible subject to acquire: {"version":1,"targetId":"request id","frameId":"exact current frame id","frameTimestamp":"exact frame timestamp","query":"concise visible subject"}.',
-      '- Do not invent a target box. The adapter perception system owns localization. seedBox and seedConfidence are optional paired fields only when the current evidence already provides them.',
-      '- The adapter owns tracking, view correction, reacquisition, and verification. Do not replace inspect with repeated captureImage, move, robotCommand, robotMotionPlan, or LLM retries.',
-    ].join('\n'));
-  }
-  if (includeActionContracts && observation.capabilities.actions.includes('robotMotionPlan')) {
-    sections.push([
-      'Off-script movement routing:',
-      '- Decide movement only from the current Task instruction. Conversation history, memories, prior actions, and feedback never authorize a new movement.',
-      '- For greetings, general conversation, information questions, or any Task instruction that does not ask the robot to move, keep movementRequest null.',
-      '- Prefer an advertised Supported robot command whenever it represents the requested behavior.',
-      '- Movement Generator is body-local only. When a body_local movement has no matching supported command, leave actions empty and set movementRequest to {"description":"a concise movement description"}.',
-      '- Never use movementRequest for open_loop_displacement or target_relative work.',
-      '- Never put robotMotionPlan, joint targets, servo values, PWM values, calibration, or simulator commands in actions.',
-    ].join('\n'));
-  }
-
-  return sections.join('\n\n');
-}
-
-function describeVisualFrame(frame: NonNullable<EnvironmentObservation['visual']>): string {
-  const details = [
-    frame.id,
-    frame.mimeType,
-    frame.width && frame.height ? `${frame.width}x${frame.height}` : undefined,
-    frame.source ? `source=${frame.source}` : undefined,
-    frame.altText ? `alt=${frame.altText}` : undefined,
-  ].filter(Boolean);
-  return details.join(', ') || 'image attached';
-}
-
-function extractJsonObject(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const first = trimmed.indexOf('{');
-    const last = trimmed.lastIndexOf('}');
-    if (first >= 0 && last > first) {
-      return JSON.parse(trimmed.slice(first, last + 1));
-    }
-  }
-
-  return null;
 }
 
 function normalizeAction(value: unknown, sessionId?: string): Partial<EnvironmentAction> | null {
@@ -821,6 +715,18 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     if (!command) {
       return null;
     }
+  } else if (typeof record.command === 'string' && record.command.trim()) {
+    // A semantic command belongs only to robotCommand. Accepting it on move
+    // previously let malformed selector output fall through as a generic walk.
+    return null;
+  }
+
+  if (
+    type === 'move'
+    && typeof record.direction !== 'string'
+    && (!record.vector || typeof record.vector !== 'object')
+  ) {
+    return null;
   }
 
   if (type === 'sendText' && (typeof record.text !== 'string' || !record.text.trim())) {
@@ -914,6 +820,9 @@ function parseTaskDecision(
   }
 
   const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 500) : '';
+  const objective = typeof record.objective === 'string'
+    ? record.objective.replace(/\s+/g, ' ').trim().slice(0, 1_000)
+    : '';
   const completionBasis = typeof record.completionBasis === 'string'
     ? record.completionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
@@ -951,6 +860,22 @@ function parseTaskDecision(
   if (record.motionClass !== undefined && !motionClass) {
     return { decision: null, error: 'taskDecision motionClass is not supported' };
   }
+  const actionPurpose = normalizedEnvironmentActionPurpose(record.actionPurpose);
+  if (record.actionPurpose !== undefined && !actionPurpose) {
+    return { decision: null, error: 'taskDecision actionPurpose is not supported' };
+  }
+  const presentation = record.presentation === 'private' || record.presentation === 'conversation'
+    ? record.presentation
+    : undefined;
+  if (record.presentation !== undefined && !presentation) {
+    return { decision: null, error: 'taskDecision presentation is not supported' };
+  }
+  const observationSummary = typeof record.observationSummary === 'string'
+    ? record.observationSummary.replace(/\s+/g, ' ').trim()
+    : '';
+  if (observationSummary.length > 300) {
+    return { decision: null, error: 'taskDecision observationSummary exceeds 300 characters' };
+  }
   const visualEvidenceMode = record.visualEvidenceMode === 'single'
     || record.visualEvidenceMode === 'comparison'
     ? record.visualEvidenceMode
@@ -980,6 +905,7 @@ function parseTaskDecision(
     decision: {
       outcome,
       reason,
+      ...(objective ? { objective } : {}),
       objectiveComplete: typeof record.objectiveComplete === 'boolean'
         ? record.objectiveComplete
         : outcome === 'complete',
@@ -988,72 +914,13 @@ function parseTaskDecision(
       ...(completionBasis ? { completionBasis } : {}),
       ...(completionEvidence ? { completionEvidence } : {}),
       ...(motionClass ? { motionClass } : {}),
+      ...(actionPurpose ? { actionPurpose } : {}),
+      ...(presentation ? { presentation } : {}),
+      ...(observationSummary ? { observationSummary } : {}),
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(escalation ? { escalation } : {}),
     },
     error: '',
-  };
-}
-
-export function parseEnvironmentActions(
-  value: unknown,
-  sessionId?: string,
-): Partial<EnvironmentAction>[] {
-  if (Array.isArray(value)) {
-    return value.map(item => normalizeAction(item, sessionId)).filter(action => action !== null);
-  }
-
-  if (typeof value === 'string') {
-    const parsed = extractJsonObject(value);
-    return parsed ? parseEnvironmentActions(parsed, sessionId) : [];
-  }
-
-  if (!value || typeof value !== 'object') {
-    return [];
-  }
-
-  const record = value as Record<string, unknown>;
-  if (Array.isArray(record.actions)) {
-    return parseEnvironmentActions(record.actions, sessionId);
-  }
-  if (record.action) {
-    return parseEnvironmentActions(record.action, sessionId);
-  }
-
-  const normalized = normalizeAction(record, sessionId);
-  return normalized ? [normalized] : [];
-}
-
-export function parseEnvironmentModelOutput(
-  value: unknown,
-  sessionId?: string,
-): {
-  response: string;
-  actions: Partial<EnvironmentAction>[];
-  movementRequest: EnvironmentMovementRequest | null;
-  movementRequestError: string;
-  taskDecision: EnvironmentTaskDecision | null;
-  taskDecisionError: string;
-} {
-  const parsed = typeof value === 'string' ? extractJsonObject(value) : value;
-  const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? parsed as Record<string, unknown>
-    : null;
-  const response = typeof record?.response === 'string'
-    ? record.response.trim()
-    : typeof value === 'string' && !parsed
-      ? value.trim()
-      : '';
-  const movement = parseMovementRequest(record?.movementRequest, sessionId);
-  const task = parseTaskDecision(record?.taskDecision);
-
-  return {
-    response,
-    actions: parseEnvironmentActions(parsed, sessionId),
-    movementRequest: movement.request,
-    movementRequestError: movement.error,
-    taskDecision: task.decision,
-    taskDecisionError: task.error,
   };
 }
 
@@ -1065,6 +932,141 @@ export interface EnvironmentModelOutput {
   }) | null;
   taskDecision: EnvironmentTaskDecision;
 }
+
+const SELECTOR_SCHEMA_STRING = { type: 'string' } as const;
+const SELECTOR_SCHEMA_COMPLETION_BASES = ENVIRONMENT_COMPLETION_BASES.filter(value => value !== 'none');
+const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
+  outcome: { type: 'string', enum: [...ENVIRONMENT_TASK_OUTCOMES] },
+  reason: SELECTOR_SCHEMA_STRING,
+  objective: SELECTOR_SCHEMA_STRING,
+  objectiveComplete: { type: 'boolean' },
+  continuationPolicy: { type: 'string', enum: [...ENVIRONMENT_CONTINUATION_POLICIES] },
+  requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
+  completionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
+  completionEvidence: SELECTOR_SCHEMA_STRING,
+  motionClass: { type: 'string', enum: [...ENVIRONMENT_MOTION_CLASSES] },
+  actionPurpose: { type: 'string', enum: [...ENVIRONMENT_ACTION_PURPOSES] },
+  presentation: { type: 'string', enum: ['private', 'conversation'] },
+  observationSummary: SELECTOR_SCHEMA_STRING,
+  visualEvidenceMode: { type: 'string', enum: ['single', 'comparison'] },
+  escalation: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['target', 'reason'],
+    properties: {
+      target: { const: 'general' },
+      reason: SELECTOR_SCHEMA_STRING,
+    },
+  },
+} as const;
+const SELECTOR_SCHEMA_DECISION_REQUIRED = [
+  'outcome',
+  'reason',
+  'objectiveComplete',
+  'continuationPolicy',
+  'requiredCompletionBasis',
+  'presentation',
+] as const;
+const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
+  type: { type: 'string', enum: [...DIRECT_ACTION_TYPES] },
+  command: SELECTOR_SCHEMA_STRING,
+  direction: SELECTOR_SCHEMA_STRING,
+  target: SELECTOR_SCHEMA_STRING,
+  text: SELECTOR_SCHEMA_STRING,
+  units: { type: 'number' },
+  amount: { type: 'number' },
+  durationMs: { type: 'number' },
+  vector: { type: 'object' },
+  inspectionTarget: { type: 'object' },
+  visualTarget: { type: 'object' },
+  metadata: { type: 'object' },
+} as const;
+
+export interface EnvironmentSelectorJsonSchemaInput {
+  actions?: readonly string[];
+  robotCommands?: readonly string[];
+  requireAction?: boolean;
+  requireMotionClass?: boolean;
+  requireObjective?: boolean;
+}
+
+/**
+ * Provider-level structured output for the universal Environment selector.
+ * It constrains output to the current adapter capability contract without
+ * encoding scene content or phrase-specific behavior.
+ *
+ * Ollama's structured decoder reliably enforces this flat schema. Cross-field
+ * lifecycle consistency remains in Task State, its canonical runtime owner.
+ */
+export function buildEnvironmentSelectorJsonSchema(
+  input: EnvironmentSelectorJsonSchemaInput = {},
+): Record<string, unknown> {
+  const capabilityBound = Array.isArray(input.actions);
+  const advertisedActions = new Set(input.actions ?? []);
+  const robotCommands = [...new Set((input.robotCommands ?? [])
+    .map(command => command.trim())
+    .filter(Boolean))].slice(0, 64);
+  const directActionTypes = [...DIRECT_ACTION_TYPES].filter(type => (
+    (!capabilityBound || advertisedActions.has(type))
+    && (type !== 'robotCommand' || !capabilityBound || robotCommands.length > 0)
+  ));
+  const movementSupported = !capabilityBound || advertisedActions.has('robotMotionPlan');
+  const commandOnly = directActionTypes.length === 1 && directActionTypes[0] === 'robotCommand';
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['response', 'actions', 'movementRequest', 'taskDecision'],
+    properties: {
+      response: SELECTOR_SCHEMA_STRING,
+      actions: {
+        type: 'array',
+        ...(input.requireAction && !movementSupported && directActionTypes.length > 0
+          ? { minItems: 1 }
+          : {}),
+        maxItems: 1,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: commandOnly ? ['type', 'command'] : ['type'],
+          properties: {
+            ...SELECTOR_SCHEMA_ACTION_PROPERTIES,
+            type: { type: 'string', enum: directActionTypes },
+            ...(robotCommands.length > 0
+              ? { command: { type: 'string', enum: robotCommands } }
+              : {}),
+          },
+        },
+      },
+      movementRequest: movementSupported
+        ? {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                additionalProperties: false,
+                required: ['description'],
+                properties: { description: SELECTOR_SCHEMA_STRING },
+              },
+            ],
+          }
+        : { type: 'null' },
+      taskDecision: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          ...SELECTOR_SCHEMA_DECISION_REQUIRED,
+          ...(input.requireMotionClass === false ? [] : ['motionClass']),
+          ...(input.requireObjective === true ? ['objective'] : []),
+          'actionPurpose',
+        ],
+        properties: SELECTOR_SCHEMA_DECISION_PROPERTIES,
+      },
+    },
+  };
+}
+
+export const ENVIRONMENT_SELECTOR_JSON_SCHEMA = buildEnvironmentSelectorJsonSchema();
 
 export interface EnvironmentSelectorValidationResult {
   jsonValid: boolean;
@@ -1083,12 +1085,16 @@ const SELECTOR_OUTPUT_FIELDS = new Set([
 const SELECTOR_TASK_DECISION_FIELDS = new Set([
   'outcome',
   'reason',
+  'objective',
   'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',
   'completionBasis',
   'completionEvidence',
   'motionClass',
+  'actionPurpose',
+  'presentation',
+  'observationSummary',
   'visualEvidenceMode',
   'escalation',
 ]);
@@ -1120,6 +1126,7 @@ const SELECTOR_ACTION_FIELDS = new Set([
 export function validateEnvironmentSelectorOutput(
   text: unknown,
   sessionId?: string,
+  input: { requireObjective?: boolean } = {},
 ): EnvironmentSelectorValidationResult {
   if (typeof text !== 'string') {
     return {
@@ -1179,6 +1186,12 @@ export function validateEnvironmentSelectorOutput(
     if (typeof raw.taskDecision.reason !== 'string' || !raw.taskDecision.reason.trim()) {
       errors.push('taskDecision.reason must be a non-empty string');
     }
+    if (
+      input.requireObjective === true
+      && (typeof raw.taskDecision.objective !== 'string' || !raw.taskDecision.objective.trim())
+    ) {
+      errors.push('taskDecision.objective must be a non-empty string for autonomous work');
+    }
     if (typeof raw.taskDecision.objectiveComplete !== 'boolean') {
       errors.push('taskDecision.objectiveComplete must be boolean');
     }
@@ -1226,8 +1239,9 @@ export function validateEnvironmentSelectorOutput(
         errors.push('an escalation must use continuationPolicy=none and requiredCompletionBasis=response');
       }
     } else if (action || movement.request) {
-      if (decision.outcome !== 'act' || decision.objectiveComplete) {
-        errors.push('physical work requires outcome=act and objectiveComplete=false');
+      if (decision.outcome !== 'act') errors.push('physical work requires outcome=act');
+      if (!decision.actionPurpose) {
+        errors.push('physical work requires taskDecision.actionPurpose');
       }
     } else if (!String(raw.response ?? '').trim()) {
       errors.push('a non-action result requires a response or explicit escalation');
@@ -1238,6 +1252,22 @@ export function validateEnvironmentSelectorOutput(
     }
     if (action && isPhysicalSelectorAction(action) && !decision.motionClass) {
       errors.push('a physical action requires taskDecision.motionClass');
+    }
+    if ((action || movement.request) && decision.actionPurpose === 'information_gain') {
+      if (
+        decision.continuationPolicy !== 'bounded'
+        || decision.requiredCompletionBasis !== 'visual_observation'
+      ) {
+        errors.push('information_gain requires bounded visual_observation evidence');
+      }
+    }
+    if ((action || movement.request) && decision.actionPurpose === 'expression') {
+      if (
+        decision.continuationPolicy !== 'none'
+        || decision.requiredCompletionBasis !== 'action_result'
+      ) {
+        errors.push('expression requires one action_result');
+      }
     }
     if (decision.outcome === 'complete') {
       if (!decision.objectiveComplete) errors.push('outcome=complete requires objectiveComplete=true');

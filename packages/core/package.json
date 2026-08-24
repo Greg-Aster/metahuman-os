@@ -99,7 +99,6 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.939.0",
     "@aws-sdk/lib-storage": "^3.939.0",
-    "@types/diff": "^8.0.0",
     "bcryptjs": "^3.0.3",
     "diff": "^8.0.2",
     "exif-reader": "^2.0.3",

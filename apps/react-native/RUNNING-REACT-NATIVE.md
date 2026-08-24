@@ -4,29 +4,30 @@ This guide explains how to run the React Native version of MetaHuman OS for deve
 
 ## Prerequisites
 
-1. **Node.js** >= 20.0.0 (check with `node --version`)
-2. **Android Studio** installed with:
+1. **Node.js** >= 22.3.0 and < 23 (check with `node --version`)
+2. **pnpm** >= 10 (check with `pnpm --version`)
+3. **Android Studio** installed with:
    - Android SDK
    - Android SDK Platform-Tools
    - Android Virtual Device (AVD) or physical Android device
-3. **Java Development Kit (JDK)** 17 or higher
-4. **React Native development environment** set up ([guide](https://reactnative.dev/docs/environment-setup))
+4. **Java Development Kit (JDK)** 17 or higher
+5. **React Native development environment** set up ([guide](https://reactnative.dev/docs/environment-setup))
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-cd /home/greggles/metahuman/apps/react-native
-npm install
+cd /home/greggles/metahuman
+pnpm install
 ```
 
 ### 2. Start Metro Bundler (Development Server)
 
 Metro is React Native's JavaScript bundler that provides live reloading:
-npm start
 ```bash
-npm start
+cd /home/greggles/metahuman/apps/react-native
+pnpm start
 ```
 
 This starts the Metro bundler on port 8081. Keep this terminal open.
@@ -37,7 +38,7 @@ In a new terminal:
 
 ```bash
 cd /home/greggles/metahuman/apps/react-native
-npm run android
+pnpm android
 ```
 
 This will:
@@ -77,21 +78,15 @@ This React Native app has a unique architecture:
 
 ### For Svelte UI Changes
 
-1. Build the Svelte UI with mobile config:
+1. Rebuild the mobile UI, backend bundle, and APK:
    ```bash
-   cd ../site
-   npm run build:mobile
-   ```
-
-2. Copy the built files to React Native:
-   ```bash
-   cd ../react-native
+   cd /home/greggles/metahuman/apps/react-native
    ./scripts/build-mobile.sh
    ```
 
-3. Restart the React Native app:
+2. Restart the React Native app:
    ```bash
-   npm run android
+   pnpm android
    ```
 
 ### For Backend Changes (@metahuman/core)
@@ -123,7 +118,7 @@ Shake the device or press `Cmd+M` (Mac) / `Ctrl+M` (Windows/Linux) to open:
 
 1. **Console Logs**: View in Metro terminal or:
    ```bash
-   npx react-native log-android
+   pnpm exec react-native log-android
    ```
 
 2. **Chrome DevTools**: 
@@ -133,7 +128,7 @@ Shake the device or press `Cmd+M` (Mac) / `Ctrl+M` (Windows/Linux) to open:
 
 3. **React Developer Tools**:
    ```bash
-   npm install -g react-devtools
+   pnpm add --global react-devtools
    react-devtools
    ```
 
@@ -162,7 +157,7 @@ Output: `android/app/build/outputs/apk/debug/app-debug.apk`
 
 If the app shows "Unable to connect to development server":
 
-1. Ensure Metro is running (`npm start`)
+1. Ensure Metro is running (`pnpm start`)
 2. Check device is on same network as computer
 3. For physical devices, run:
    ```bash
@@ -176,12 +171,12 @@ If the app shows "Unable to connect to development server":
    cd android
    ./gradlew clean
    cd ..
-   npm run android
+   pnpm android
    ```
 
 2. Clear Metro cache:
    ```bash
-   npx react-native start --reset-cache
+   pnpm exec react-native start --reset-cache
    ```
 
 ### Node.js Backend Issues

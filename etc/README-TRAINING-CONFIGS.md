@@ -29,8 +29,8 @@ cp etc/training-gpt-oss-20b.json etc/training.json
 
 Then run training as normal:
 ```bash
-./bin/mh-train-local    # Local training
-./bin/mh-train-runpod   # RunPod training
+pnpm exec tsx brain/training/full-cycle-local.ts --username <username>  # Local training
+pnpm exec tsx brain/training/full-cycle.ts --username <username>        # RunPod training
 ```
 
 ## Configuration Fields

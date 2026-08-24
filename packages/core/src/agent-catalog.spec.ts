@@ -12,7 +12,7 @@ setAuditEnabled(false);
 
 const live = getAgentCatalogSnapshot();
 assert.equal(live.counts.total, Object.keys(AGENT_CATALOG_DEFINITIONS).length, 'every maintained definition must appear exactly once');
-assert.equal(live.counts.triggerRegistered, 21, 'the maintained system trigger catalog should expose 21 registered finite jobs');
+assert.equal(live.counts.triggerRegistered, 19, 'Robot Operator children must not be counted as Trigger Manager registrations');
 assert.equal(live.counts.services, 3, 'persistent lifecycle must expose the three configured system services');
 assert.equal(live.counts.missingSource, 0, 'every maintained catalog item must have a resolvable implementation');
 assert.deepEqual(
@@ -26,6 +26,13 @@ assert.equal(live.agents.find(agent => agent.id === 'coder')?.canRun, false, 'pr
 assert.equal(live.agents.find(agent => agent.id === 'memory-pruner')?.canRun, false, 'destructive agents must be registered explicitly before use');
 assert.equal(live.agents.find(agent => agent.id === 'mood')?.enabled, false, 'Mood must remain opt-in even while registered');
 assert.equal(AGENT_CATALOG_DEFINITIONS.mood.defaultTrigger?.enabled, false, 're-registering Mood must preserve its disabled default');
+for (const childId of ['boredom-observer', 'boredom-movement', 'boredom-reflection']) {
+  const child = live.agents.find(agent => agent.id === childId);
+  assert.equal(child?.owner, 'robot-operator', `${childId} must expose Robot Operator as its runtime owner`);
+  assert.equal(child?.triggerRegistered, false, `${childId} must not claim Trigger Manager registration`);
+  assert.equal(child?.canUnregister, false, `${childId} cannot be removed through Trigger Manager controls`);
+  assert.equal(child?.canRun, true, `${childId} must remain manually runnable from Agent Monitor`);
+}
 for (const serviceId of ['environment-bridge', 'maintenance-service', 'robot-operator']) {
   assert.equal(
     AGENT_CATALOG_DEFINITIONS[serviceId]?.executionContext,

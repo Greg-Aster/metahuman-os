@@ -68,7 +68,9 @@ export {
   validateEnvironmentSelectorOutput,
 } from './nodes/environment/helpers.js';
 export type {
+  EnvironmentActionPurpose,
   EnvironmentModelOutput,
+  EnvironmentPresentation,
   EnvironmentSelectorEnvelopeInput,
   EnvironmentSelectorSystemInput,
   EnvironmentSelectorValidationResult,
@@ -503,7 +505,6 @@ export * from './graph-streaming';
 // Unified Node System (schemas + executors colocated)
 export * from './nodes/index.js';
 
-export * from './agent-graph-executor';
 export * from './graph-error-handler';
 export * from './plugin-system';
 

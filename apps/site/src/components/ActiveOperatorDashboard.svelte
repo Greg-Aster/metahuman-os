@@ -102,7 +102,7 @@
 <div class="h-full overflow-y-auto p-4 text-sm">
   <div class="mb-4">
     <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Active Operator</h2>
-    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Bounded autonomy policy above the single deterministic work coordinator.</p>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Robot autonomy admission above the single deterministic work coordinator.</p>
   </div>
 
   {#if error}
@@ -126,8 +126,8 @@
         <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{status.queue.length}</div>
       </div>
       <div class="rounded border border-gray-200 p-3 dark:border-gray-800">
-        <div class="text-xs text-gray-500 dark:text-gray-400">Policy evaluations/hour</div>
-        <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{status.policy.evaluationsLastHour}</div>
+        <div class="text-xs text-gray-500 dark:text-gray-400">Full-mode cooldown</div>
+        <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{Math.round(status.config.cooldownMs / 1000)}s</div>
       </div>
     </div>
 
@@ -139,7 +139,7 @@
       <div class="border-b border-gray-200 p-3 dark:border-gray-800">
         <div class="font-semibold text-gray-900 dark:text-gray-100">Robot Operator</div>
         <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Robot-side autonomy scheduler. Child triggers deliberate; Environment Mode owns speech and physical execution.
+          Robot-side autonomy scheduler. Child triggers start an episode; Boredom Autonomy owns its iterative decisions and bridge execution.
         </div>
       </div>
       {#if !status.robotOperator.runtime}
@@ -149,7 +149,7 @@
           <span class="font-medium text-gray-800 dark:text-gray-200">{status.robotOperator.runtime.lifecycle}</span>
           · {status.robotOperator.runtime.reason}
           {#if status.robotOperator.runtime.mode === 'full' && status.robotOperator.runtime.fullCooldownMs}
-            · continuous rotation every {Math.round(status.robotOperator.runtime.fullCooldownMs / 1000)}s cooldown
+            · next episode begins after completion plus a {Math.round(status.robotOperator.runtime.fullCooldownMs / 1000)}s cooldown
           {:else if status.robotOperator.runtime.mode === 'semi'}
             · independent idle timers
           {/if}

@@ -64,7 +64,7 @@ test('production inventory rejects development folds and checkpoint tags', () =>
   assert.equal(isRetiredDevelopmentModelId('environment-classifier.run.fold-0.checkpoint-516'), true)
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-classifier-2b:checkpoint-120'), true)
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-classifier-0.8b:final'), true)
-  assert.equal(isRetiredDevelopmentModelId('ollama.environment-action-selector-0.8b:v1'), false)
+  assert.equal(isRetiredDevelopmentModelId('ollama.environment-action-selector-0.8b:v1'), true)
 })
 
 test('registry migration removes environmentRouter instead of assigning its incompatible artifact to the new role', () => {
@@ -99,7 +99,7 @@ test('registry migration removes environmentRouter instead of assigning its inco
   assert.equal((migration.registry.defaults as Record<string, string>).environmentRouter, undefined)
   assert.equal(
     migration.registry.defaults.environmentActionSelector,
-    'ollama.environment-action-selector-0.8b:v1',
+    'default.orchestrator',
   )
   assert.equal(
     migration.registry.cognitiveModeMappings?.environment?.environmentRouter,
@@ -107,16 +107,14 @@ test('registry migration removes environmentRouter instead of assigning its inco
   )
   assert.equal(
     migration.registry.cognitiveModeMappings?.environment?.environmentActionSelector,
-    'ollama.environment-action-selector-0.8b:v1',
+    'default.orchestrator',
   )
   assert.equal(
     migration.registry.models['ollama.environment-classifier-0.8b:final'],
     undefined,
   )
-  assert.deepEqual(
-    migration.registry.models['ollama.environment-action-selector-0.8b:v1']?.roles,
-    ['environmentActionSelector'],
-  )
+  assert.equal(migration.registry.models['default.orchestrator']?.roles.includes('environmentActionSelector'), true)
+  assert.deepEqual(migration.registry.models['default.orchestrator']?.capabilities, ['text', 'image'])
 })
 
 test('registry migration preserves an explicit selector assignment and unrelated model records', () => {
@@ -148,4 +146,33 @@ test('registry migration preserves an explicit selector assignment and unrelated
     'ollama.custom-selector',
   )
   assert.ok(migration.registry.models['ollama.environment-classifier-not-a-router'])
+})
+
+test('registry migration replaces the known text-only selector with the vision-capable owner', () => {
+  const source = {
+    version: '1.0.0',
+    defaults: { environmentActionSelector: 'ollama.environment-action-selector-0.8b:v1' },
+    models: {
+      'default.orchestrator': model('default.orchestrator', 'ollama', 'qwen3.5:9b', ['orchestrator']),
+      'ollama.environment-action-selector-0.8b:v1': model(
+        'ollama.environment-action-selector-0.8b:v1',
+        'ollama',
+        'environment-action-selector-0.8b:v1',
+        ['environmentActionSelector'],
+      ),
+    },
+    roleHierarchy: {
+      environmentActionSelector: ['ollama.environment-action-selector-0.8b:v1'],
+    },
+    cognitiveModeMappings: {
+      environment: { environmentActionSelector: 'ollama.environment-action-selector-0.8b:v1' },
+    },
+  } as unknown as ModelRegistry
+
+  const migration = migrateModelRegistry(source)
+  assert.equal(migration.registry.defaults.environmentActionSelector, 'default.orchestrator')
+  assert.deepEqual(migration.registry.roleHierarchy?.environmentActionSelector, ['default.orchestrator'])
+  assert.equal(migration.registry.models['ollama.environment-action-selector-0.8b:v1'], undefined)
+  assert.equal(migration.registry.models['default.orchestrator']?.roles.includes('environmentActionSelector'), true)
+  assert.equal(migration.registry.models['default.orchestrator']?.capabilities?.includes('image'), true)
 })

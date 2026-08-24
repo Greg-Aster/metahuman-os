@@ -39,8 +39,9 @@
   });
 
   function ownerLabel(agent: AgentCatalogItem): string {
-    if (agent.serviceRegistered) return 'Agent Monitor service';
-    if (agent.triggerRegistered) return agent.triggerType === 'manual' ? 'Trigger Manager · manual' : `Trigger Manager · ${agent.triggerType}`;
+    if (agent.owner === 'agent-monitor') return 'Agent Monitor service';
+    if (agent.owner === 'robot-operator') return 'Robot Operator · manual and autonomous';
+    if (agent.owner === 'trigger-manager') return agent.triggerType === 'manual' ? 'Trigger Manager · manual' : `Trigger Manager · ${agent.triggerType}`;
     if (agent.parentIds.length > 0) return `Workflow child · ${agent.parentIds.join(', ')}`;
     return 'Installed · not scheduled';
   }

@@ -484,6 +484,9 @@ function formatDialogueSource(source: string): string {
     'reflector': '💭 Reflection',
     'curiosity': '❓ Curiosity',
     'dreamer': '🌙 Dream',
+    'boredom-observer': '👀 Boredom Observer',
+    'boredom-movement': '🐾 Boredom Movement',
+    'boredom-reflection': '💭 Boredom Reflection',
   };
   return labels[source] || source;
 }

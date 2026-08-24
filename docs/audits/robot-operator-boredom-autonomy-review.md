@@ -37,10 +37,10 @@ Active Operator mode + Sleep state
        -> Boredom Observer workflow
        -> Boredom Movement workflow
        -> Boredom Reflection workflow
-            -> specialized deliberation graph
-                 -> private reflection, or
-                 -> high-level autonomous input to Environment Mode
-                      -> one bounded Environment objective
+            -> Boredom Autonomy executive graph
+                 -> canonical Environment Task State
+                 -> private reflection, deliberate conversation, or
+                 -> one bounded advertised robot consequence
                       -> Environment Bridge
 ```
 
@@ -180,9 +180,13 @@ The maintained source now follows the target boundary:
   Boredom Reflection enqueue non-visual autonomous stimuli and cannot select a
   robot command in their trigger handler.
 - `boredom-observer-mode.json`, `boredom-movement-mode.json`, and
-  `boredom-reflection-mode.json` provide separate deliberation contracts. They
-  write fixed-source private Inner Dialogue and contain no TTS or robot action
-  node. Environment dispatch is their only outward route.
+  `boredom-reflection-mode.json` are finite trigger graphs. They contain no
+  executive LLM, TTS, or semantic action-selection node and feed the editable
+  `boredom-autonomy-mode.json` graph.
+- Boredom Autonomy reuses the canonical Environment action parser, Task State,
+  Movement Generator, Bridge Out, buffers, and TTS. Task State is the sole
+  objective/evidence lifecycle owner; no boredom-specific state store,
+  validator, queue, or executor exists.
 - Boredom Reflection reuses the user-scoped curiosity sampler, with sampled
   memories explicitly represented as historical, non-current context.
 - Robot Operator publishes sanitized runtime schedule state under `logs/run`.

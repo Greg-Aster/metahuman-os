@@ -10,6 +10,7 @@
 
 import { queryIndex, getIndexStatus } from './vector-index.js';
 import { loadPersonaCore } from './identity.js';
+import { getPersonaValueNames } from './persona-summary.js';
 import { loadShortTermState, loadPersonaCache } from './state.js';
 import { audit } from './audit.js';
 import { listActiveTasks } from './memory.js';
@@ -867,7 +868,7 @@ export async function buildContextPackage(
       return {
         name: personaCore.identity?.name || 'Assistant',
         role: personaCore.identity?.role || 'AI Assistant',
-        coreValues: personaCore.values || [],
+        coreValues: getPersonaValueNames(personaCore),
         recentThemes: personaCache?.recentThemes?.slice(0, 5).map(t => t.theme) || [],
         frequentFacts: personaCache?.frequentFacts || {}
       };

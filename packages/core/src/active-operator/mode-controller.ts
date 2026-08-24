@@ -1,14 +1,15 @@
 /**
  * Active Operator autonomy-mode controller.
  *
- * It owns no queue and executes no task. It only enables configured timer
- * admission and the bounded full-autonomy policy producer.
+ * It owns no queue and executes no task. It only selects the operating mode;
+ * Robot Operator owns robot-side autonomy admission.
  */
 
 import { EventEmitter } from 'node:events';
 import { audit } from '../audit.js';
 import { ensureQueueSystemStarted, getQueueManager } from '../queue/index.js';
 import type { AutonomyMode } from '../queue/types.js';
+import { readRobotOperatorRuntimeState } from '../robot-operator.js';
 import { readLastActiveUsername } from '../system-activity.js';
 import { getOperatorPolicyService } from './operator-policy-service.js';
 import { loadConfig, saveConfig } from './state-persister.js';
@@ -32,11 +33,11 @@ export class ModeController extends EventEmitter {
   }
 
   get isRunning(): boolean {
-    return getOperatorPolicyService().isRunning();
+    return this.currentMode !== 'reactive';
   }
 
   get shutdownRequested(): boolean {
-    return !getOperatorPolicyService().isRunning();
+    return this.currentMode === 'reactive';
   }
 
   async applyConfiguredMode(username?: string): Promise<AutonomyMode> {
@@ -59,16 +60,9 @@ export class ModeController extends EventEmitter {
       const system = await ensureQueueSystemStarted();
       system.setAutonomyMode(mode);
       const config = loadConfig();
-      if (mode === 'full') {
-        getOperatorPolicyService().start(username, {
-          cooldownMs: config.cooldownMs,
-          maxConsecutiveTasks: config.maxConsecutiveTasks,
-          maxEvaluationsPerHour: config.maxEvaluationsPerHour,
-          userPresenceCooldownMs: config.userPresenceCooldownMs,
-        });
-      } else {
-        getOperatorPolicyService().stop();
-      }
+      // Robot Operator is the sole robot-autonomy producer. Stop the legacy
+      // general policy loop so Full cannot admit a competing LLM evaluation.
+      getOperatorPolicyService().stop();
       if (mode === 'reactive') {
         for (const task of getQueueManager().getAllTasks()) {
           const robotAutonomyWork = task.handler === 'workflow.robot-observer'
@@ -121,16 +115,30 @@ export class ModeController extends EventEmitter {
 
   getStatus() {
     const manager = getQueueManager();
-    const currentTask = manager.getAllTasks().find(task => task.handler === 'operator.policy' && task.state === 'leased');
+    const robotAutonomyWork = (task: { source: string; handler: string; input?: Record<string, any> }) => (
+      task.source === 'autonomy'
+      && (
+        task.handler === 'workflow.robot-observer'
+        || task.handler === 'workflow.boredom-observer'
+        || task.handler === 'workflow.boredom-movement'
+        || task.handler === 'workflow.boredom-reflection'
+        || Boolean(task.input?.metadata?.robotObserver)
+        || Boolean(task.input?.observation?.metadata?.robotObserver)
+      )
+    );
+    const currentTask = manager.getAllTasks().find(task => robotAutonomyWork(task) && task.state === 'leased');
+    const runtime = readRobotOperatorRuntimeState();
+    const fullRuntimeHealthy = this.currentMode !== 'full'
+      || Boolean(runtime && runtime.mode === 'full' && runtime.lifecycle !== 'stopped');
     return {
       mode: this.currentMode,
       isExecuting: Boolean(currentTask),
       currentTask: currentTask || undefined,
       queueLength: manager.getAllTasks().length,
       lastActivityAt: manager.getHistory()[0]?.completedAt || new Date().toISOString(),
-      health: getOperatorPolicyService().isRunning() || this.currentMode !== 'full' ? 'healthy' as const : 'degraded' as const,
-      healthMessage: this.currentMode === 'full' && !getOperatorPolicyService().isRunning()
-        ? 'Full autonomy policy service is not running'
+      health: fullRuntimeHealthy ? 'healthy' as const : 'degraded' as const,
+      healthMessage: !fullRuntimeHealthy
+        ? 'Full autonomy is selected, but Robot Operator has not published an active Full-mode runtime state'
         : undefined,
       policy: getOperatorPolicyService().getStatus(),
     };

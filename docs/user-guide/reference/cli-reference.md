@@ -18,9 +18,6 @@ Start background services.
 ### `./bin/mh chat`
 Start a persona-aware chat session in the terminal.
 
-### `./bin/mh sync`
-Show current identity + trust state and mark a sync checkpoint.
-
 ### `./bin/mh guide`
 Print the local user guide path. Note: the guide lives in `docs/user-guide/`.
 

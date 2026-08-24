@@ -9,9 +9,12 @@ import {
 import { loadRobotOperatorConfig, readRobotObserverCycle } from '../../robot-operator.js';
 import {
   encodeEnvironmentTaskState,
+  environmentTaskContractFromObservation,
   environmentTaskStateFromObservation,
   robotOperatorActionRequirement,
+  robotOperatorLifecycleContractFromObservation,
   type EnvironmentCompletionBasis,
+  type EnvironmentActionPurpose,
   type EnvironmentTaskDecision,
   type EnvironmentTaskFrameRef,
   type EnvironmentTaskSelectedAction,
@@ -132,18 +135,28 @@ function currentCorrelatedFrame(
 function initialTaskState(
   instruction: string,
   observation: EnvironmentObservation | null,
+  useObservationContract = true,
 ): EnvironmentTaskState {
   const cycle = readRobotObserverCycle(observation ?? undefined);
+  const contract = useObservationContract
+    ? environmentTaskContractFromObservation(observation ?? undefined)
+    : null;
   const configuredMaxSteps = loadRobotOperatorConfig().maxCycleSteps;
   const baseline = framesFromObservation(observation).find(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
   return {
     version: 1,
-    objective: instruction || 'Respond to the current environment input.',
+    objective: contract?.objective || instruction || 'Respond to the current environment input.',
     phase: 'new',
     step: 0,
-    maxSteps: cycle?.maxSteps ?? configuredMaxSteps,
-    continuationPolicy: 'none',
-    requiredCompletionBasis: 'response',
+    maxSteps: configuredMaxSteps,
+    continuationPolicy: contract?.continuationPolicy ?? 'none',
+    requiredCompletionBasis: contract && contract.requiredCompletionBasis !== 'none'
+      ? contract.requiredCompletionBasis
+      : 'response',
+    ...(contract?.motionClass ? { motionClass: contract.motionClass } : {}),
+    ...(contract?.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
+    ...(contract?.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
+    presentation: cycle?.triggerSource === 'autonomy' ? 'private' : 'conversation',
     ...(frameRef(baseline) ? { baselineFrame: frameRef(baseline) } : {}),
   };
 }
@@ -152,17 +165,35 @@ function terminalCommand(feedback: EnvironmentFeedback | null): string {
   return cleanText(feedback?.data?.command, 200);
 }
 
+function isObserverInputAcquisition(
+  observation: EnvironmentObservation | null,
+  terminal: EnvironmentFeedback | null,
+  frames: EnvironmentVisualFrame[],
+): boolean {
+  const cycle = readRobotObserverCycle(observation ?? undefined);
+  if (
+    !cycle
+    || (cycle.requestedBy !== 'boredom-observer' && cycle.requestedBy !== 'robot-observer')
+    || terminal?.type !== 'completed'
+    || terminalCommand(terminal) !== 'captureImage'
+    || environmentTaskStateFromObservation(observation)
+  ) return false;
+
+  // The observer's first capture obtains the input for Environment Mode; it is
+  // not an Environment-selected task action awaiting lifecycle closure.
+  return Boolean(currentCorrelatedFrame(observation, frames));
+}
+
 function completionResponse(state: EnvironmentTaskState, terminal: EnvironmentFeedback): string {
   const action = cleanText(
     state.selectedAction?.command || state.selectedAction?.type,
     200,
   ).replace(/_/g, ' ');
-  const objective = cleanText(state.objective, 500);
   const evidence = cleanText(terminal.message, 500) || 'The correlated robot action completed.';
   return JSON.stringify({
     response: action
-      ? `The ${action} action finished successfully, which satisfies the one-step objective: ${objective}`
-      : `The requested one-step action finished successfully, which satisfies the objective: ${objective}`,
+      ? `The ${action} action is complete.`
+      : 'The requested action is complete.',
     actions: [],
     movementRequest: null,
     taskDecision: {
@@ -224,10 +255,15 @@ function evidenceMode(
   state: EnvironmentTaskState,
   action: Partial<EnvironmentAction> | undefined,
   requiredBasis: EnvironmentCompletionBasis,
+  actionPurpose?: EnvironmentActionPurpose,
+  contractLocked = false,
 ): EnvironmentVisualEvidenceMode | undefined {
   if (requiredBasis !== 'visual_observation') return undefined;
+  if (contractLocked && state.visualEvidenceMode) return state.visualEvidenceMode;
   if (decision?.visualEvidenceMode) return decision.visualEvidenceMode;
   if (state.visualEvidenceMode) return state.visualEvidenceMode;
+  if (actionPurpose === 'information_gain') return 'single';
+  if (!action) return 'single';
   return action?.type === 'captureImage' ? 'single' : 'comparison';
 }
 
@@ -262,6 +298,8 @@ function lifecycleDecision(
     continuationPolicy: state.continuationPolicy,
     requiredCompletionBasis: state.requiredCompletionBasis,
     motionClass: state.motionClass ?? null,
+    actionPurpose: state.actionPurpose ?? null,
+    presentation: state.presentation ?? null,
     visualEvidenceMode: state.visualEvidenceMode ?? null,
     ...details,
   };
@@ -295,6 +333,9 @@ export const environmentTaskStateNode = defineNode({
     { name: 'actions', type: 'array', description: 'At most one admitted action for this objective step' },
     { name: 'movementRequest', type: 'object', description: 'Always null after reduction; generated motion is emitted as an action' },
     { name: 'response', type: 'string', description: 'Visible response or explicit failure diagnostic' },
+    { name: 'presentation', type: 'string', description: 'Private or conversational output admission' },
+    { name: 'privateResponse', type: 'string', description: 'Private autonomous reflection, empty for conversation output' },
+    { name: 'familiarityQuery', type: 'string', description: 'Optional current-scene summary for asynchronous memory matching' },
     { name: 'decision', type: 'object', description: 'Typed lifecycle decision' },
     { name: 'taskInstruction', type: 'string', description: 'Serialized state persisted with the selected action' },
     { name: 'complete', type: 'boolean', description: 'Whether the whole objective is complete' },
@@ -324,7 +365,11 @@ export const environmentTaskStateNode = defineNode({
       const persisted = currentUserInstruction
         ? null
         : environmentTaskStateFromObservation(observation);
-      const state = persisted ?? initialTaskState(instruction, observation);
+      const state = persisted ?? initialTaskState(
+        instruction,
+        observation,
+        !currentUserInstruction,
+      );
       const terminal = persisted
         ? matchingEnvironmentTerminalFeedback(observation)
         : null;
@@ -341,11 +386,15 @@ export const environmentTaskStateNode = defineNode({
       const operatorActionRequired = feedbackPass
         ? null
         : robotOperatorActionRequirement(observation);
+      const observerCycle = readRobotObserverCycle(observation ?? undefined);
       const needsMemory = Boolean(!feedbackPass && cleanText(context.userMessage, 4_000));
       const needsVision = feedbackPass
         ? state.requiredCompletionBasis === 'visual_observation'
-          || Boolean(terminal?.type === 'completed' && state.continuationPolicy === 'bounded')
-        : operatorActionRequired === true && Boolean(current);
+        : Boolean(current) && (
+            operatorActionRequired === true
+            || observerCycle?.requestedBy === 'boredom-observer'
+            || observerCycle?.requestedBy === 'robot-observer'
+          );
       const preparedState: EnvironmentTaskState = feedbackPass
         ? {
             ...state,
@@ -367,7 +416,7 @@ export const environmentTaskStateNode = defineNode({
           : operatorActionRequired === true
             ? [
                 instruction,
-                'Robot Operator delegated this intention because it requires one new sensing or environment action. Select one safe advertised action that advances the intention now. If no advertised action can do so safely, explain that limitation instead of returning an empty result.',
+                'Robot Operator delegated this intention because it requires one new sensing or environment action. Return one safe advertised action in actions[] or movementRequest now; prose about a future action is not execution. Any taskState evidence requirement applies after that action and must not replace it. If no advertised action can safely advance the intention, report the limitation without claiming that you will act.',
               ].filter(Boolean).join('\n\n')
             : instruction,
         routingAnalysis: {
@@ -383,6 +432,7 @@ export const environmentTaskStateNode = defineNode({
             continuationPolicy: preparedState.continuationPolicy,
             requiredCompletionBasis: preparedState.requiredCompletionBasis,
             ...(preparedState.motionClass ? { motionClass: preparedState.motionClass } : {}),
+            ...(preparedState.actionPurpose ? { actionPurpose: preparedState.actionPurpose } : {}),
           },
           complexity: 0.2,
           responseStyle: 'conversational',
@@ -405,6 +455,9 @@ export const environmentTaskStateNode = defineNode({
         actions: [],
         movementRequest: null,
         response: '',
+        presentation: preparedState.presentation ?? 'conversation',
+        privateResponse: '',
+        familiarityQuery: '',
         decision: lifecycleDecision(preparedState, { prepared: true, deterministicComplete }),
         taskInstruction: '',
         complete: deterministicComplete,
@@ -414,7 +467,10 @@ export const environmentTaskStateNode = defineNode({
     const preparedState = isRecord(inputs.taskState)
       ? inputs.taskState as unknown as EnvironmentTaskState
       : environmentTaskStateFromObservation(observation) ?? initialTaskState(instruction, observation);
-    const terminal = matchingEnvironmentTerminalFeedback(observation);
+    const matchingTerminal = matchingEnvironmentTerminalFeedback(observation);
+    const terminal = isObserverInputAcquisition(observation, matchingTerminal, observedFrames)
+      ? null
+      : matchingTerminal;
     if (
       terminal?.type === 'completed'
       && preparedState.requiredCompletionBasis === 'action_result'
@@ -422,6 +478,7 @@ export const environmentTaskStateNode = defineNode({
     ) {
       const exactResponse = completionResponse(preparedState, terminal);
       const completeState: EnvironmentTaskState = { ...preparedState, phase: 'complete' };
+      const response = cleanText(inputs.response, 4_000) || JSON.parse(exactResponse).response;
       return {
         taskState: completeState,
         instruction,
@@ -431,7 +488,10 @@ export const environmentTaskStateNode = defineNode({
         precomputedResponse: '',
         actions: [],
         movementRequest: null,
-        response: cleanText(inputs.response, 4_000) || JSON.parse(exactResponse).response,
+        response,
+        presentation: completeState.presentation ?? 'conversation',
+        privateResponse: completeState.presentation === 'private' ? response : '',
+        familiarityQuery: '',
         decision: lifecycleDecision(completeState, {
           complete: true,
           completionBasis: 'action_result',
@@ -450,22 +510,56 @@ export const environmentTaskStateNode = defineNode({
     const generatedActions = Array.isArray(inputs.generatedActions)
       ? inputs.generatedActions.filter(isRecord) as Array<Partial<EnvironmentAction>>
       : [];
+    const taskDecision = isRecord(inputs.taskDecision)
+      ? inputs.taskDecision as unknown as EnvironmentTaskDecision
+      : null;
+    const observerCycle = readRobotObserverCycle(observation ?? undefined);
+    const autonomous = context.environmentActionSource === 'autonomy'
+      || observerCycle?.triggerSource === 'autonomy';
+    const objective = autonomous
+      ? cleanText(taskDecision?.objective, 1_000) || preparedState.objective
+      : preparedState.objective;
     const actionAdmission = isRecord(inputs.actionAdmission) ? inputs.actionAdmission : null;
-    const admissionBlocked = actionAdmission?.admitted === false;
+    const selectedWorkExists = parsedActions.length > 0 || generatedActions.length > 0;
+    // Preserve compatibility for already-admitted user commands while making
+    // autonomous physical work fail closed until its semantic purpose is clear.
+    const purposeMissing = autonomous && selectedWorkExists && !taskDecision?.actionPurpose;
+    const admissionBlocked = actionAdmission?.admitted === false || purposeMissing;
     const candidateActions = admissionBlocked
       ? []
       : (parsedActions.length > 0 ? parsedActions : generatedActions).slice(0, 1);
     const action = candidateActions[0];
-    const taskDecision = isRecord(inputs.taskDecision)
-      ? inputs.taskDecision as unknown as EnvironmentTaskDecision
-      : null;
     const taskDecisionError = cleanText(inputs.taskDecisionError, 500);
     const generatedResponse = cleanText(inputs.generatedResponse, 2_000);
-    const modelResponse = cleanText(inputs.response, 4_000) || generatedResponse;
+    const movementGenerationFailed = isRecord(inputs.movementRequest)
+      && generatedActions.length === 0
+      && Boolean(generatedResponse);
+    const modelResponse = movementGenerationFailed
+      ? generatedResponse
+      : cleanText(inputs.response, 4_000)
+        || generatedResponse
+        || (autonomous && !selectedWorkExists && !taskDecisionError
+          ? cleanText(taskDecision?.observationSummary, 1_000)
+            || cleanText(taskDecision?.reason, 1_000)
+          : '');
+    const familiarityQuery = autonomous
+      ? cleanText(taskDecision?.observationSummary, 300)
+        || (observedFrames.some(frame => validEnvironmentJpegDataUrl(frame.dataUrl))
+          ? cleanText(taskDecision?.reason, 300)
+          : '')
+      : '';
     const operatorActionRequired = robotOperatorActionRequirement(observation) === true;
     const persistedPass = Boolean(terminal && environmentTaskStateFromObservation(observation));
-    const boundedFeedbackPass = Boolean(persistedPass && preparedState.continuationPolicy === 'bounded');
-    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = persistedPass && !boundedFeedbackPass
+    const triggerContract = persistedPass
+      ? null
+      : robotOperatorLifecycleContractFromObservation(observation);
+    const contractLocked = persistedPass || Boolean(triggerContract);
+    const actionPurpose = persistedPass
+      ? preparedState.actionPurpose
+      : selectedWorkExists
+        ? taskDecision?.actionPurpose ?? preparedState.actionPurpose
+        : undefined;
+    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = contractLocked
       ? preparedState.requiredCompletionBasis
       : taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
         ? taskDecision.requiredCompletionBasis
@@ -473,15 +567,32 @@ export const environmentTaskStateNode = defineNode({
           ? 'action_result'
           : 'response';
     if (action && requiredCompletionBasis === 'response') requiredCompletionBasis = 'action_result';
-    const continuationPolicy = persistedPass && !boundedFeedbackPass
+    let continuationPolicy = contractLocked
       ? preparedState.continuationPolicy
       : taskDecision?.continuationPolicy ?? (requiredCompletionBasis === 'action_result' ? 'none' : 'bounded');
-    const motionClass = taskDecision?.motionClass ?? preparedState.motionClass;
+    if (!contractLocked && actionPurpose === 'information_gain') {
+      continuationPolicy = 'bounded';
+      requiredCompletionBasis = 'visual_observation';
+    } else if (!contractLocked && actionPurpose === 'expression') {
+      continuationPolicy = 'none';
+      requiredCompletionBasis = 'action_result';
+    }
+    const motionClass = persistedPass
+      ? preparedState.motionClass
+      : taskDecision?.motionClass ?? preparedState.motionClass;
+    // Autonomous work remains private by default, but each Environment
+    // evaluation may deliberately address a person. Do not freeze the initial
+    // private default across a post-action evidence pass.
+    const presentation = autonomous
+      ? taskDecision?.presentation ?? preparedState.presentation ?? 'private'
+      : 'conversation';
     const visualEvidenceMode = evidenceMode(
       taskDecision,
       preparedState,
       action,
       requiredCompletionBasis,
+      actionPurpose,
+      contractLocked,
     );
     const nextStep = preparedState.step + (action ? 1 : 0);
     const atStepLimit = Boolean(action && nextStep > preparedState.maxSteps);
@@ -491,11 +602,14 @@ export const environmentTaskStateNode = defineNode({
       ?? frameRef(observedFrames.find(frame => validEnvironmentJpegDataUrl(frame.dataUrl)));
     const nextState: EnvironmentTaskState = {
       ...preparedState,
+      objective,
       phase: actionQueued ? 'awaiting_action' : preparedState.phase,
       step: actionQueued ? nextStep : preparedState.step,
       continuationPolicy,
       requiredCompletionBasis,
       ...(motionClass ? { motionClass } : {}),
+      ...(actionPurpose ? { actionPurpose } : {}),
+      presentation,
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(baselineFrame ? { baselineFrame } : {}),
       ...(actionQueued && selectedAction(admittedActions[0])
@@ -505,6 +619,9 @@ export const environmentTaskStateNode = defineNode({
 
     if (actionQueued) {
       const visibleResponse = modelResponse || 'Executing the requested robot action.';
+      const privateResponse = presentation === 'private'
+        ? visibleResponse
+        : '';
       return {
         taskState: nextState,
         instruction,
@@ -515,6 +632,9 @@ export const environmentTaskStateNode = defineNode({
         actions: admittedActions,
         movementRequest: null,
         response: visibleResponse,
+        presentation,
+        privateResponse,
+        familiarityQuery,
         decision: lifecycleDecision(nextState, {
           complete: false,
           actionQueued: true,
@@ -553,8 +673,9 @@ export const environmentTaskStateNode = defineNode({
     ) || Boolean(
       !terminal
       && !action
+      && !operatorActionRequired
       && modelResponse
-      && requiredCompletionBasis === 'response'
+      && completionEvidenceAvailable
     );
     const finalState: EnvironmentTaskState = {
       ...nextState,
@@ -563,16 +684,20 @@ export const environmentTaskStateNode = defineNode({
     const fallbackResponse = atStepLimit
       ? `I could not complete the objective within the ${preparedState.maxSteps}-action safety limit, so I stopped.`
       : admissionBlocked
-        ? modelResponse || 'The selected robot action is not available on the connected robot.'
+        ? purposeMissing
+          ? 'The Environment selector did not declare why the action was needed, so Task State stopped it before dispatch.'
+          : modelResponse || 'The selected robot action is not available on the connected robot.'
         : taskDecisionError
           ? `I received the request, but the Environment LLM returned an invalid task decision: ${taskDecisionError}`
-          : modelResponse
-            ? modelResponse
+          : movementGenerationFailed
+            ? generatedResponse
             : operatorActionRequired
-              ? 'I could not select a safe supported action for this Robot Operator intention, so I stopped rather than guessing.'
-              : terminal
-                ? 'The robot result arrived, but I could not determine a usable completion or next action.'
-                : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.';
+              ? 'I intended to act, but Environment Mode did not produce an executable supported action, so nothing was sent to the robot.'
+              : modelResponse
+                ? modelResponse
+                : terminal
+                  ? 'The robot result arrived, but I could not determine a usable completion or next action.'
+                  : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.';
     return {
       taskState: finalState,
       instruction,
@@ -583,6 +708,11 @@ export const environmentTaskStateNode = defineNode({
       actions: [],
       movementRequest: null,
       response: fallbackResponse,
+      presentation,
+      privateResponse: presentation === 'private'
+        ? fallbackResponse
+        : '',
+      familiarityQuery,
       decision: lifecycleDecision(finalState, {
         complete,
         actionQueued: false,
@@ -596,12 +726,18 @@ export const environmentTaskStateNode = defineNode({
           : atStepLimit
             ? 'step_limit'
             : admissionBlocked
-              ? cleanText(actionAdmission?.reason, 200) || 'action_not_admitted'
-              : requiredCompletionBasis === 'visual_observation' && !visualAvailable
-                ? 'visual_evidence_unavailable'
-                : taskDecisionError
-                  ? 'invalid_task_decision'
-                  : 'no_completion_or_action',
+              ? purposeMissing
+                ? 'action_purpose_missing'
+                : cleanText(actionAdmission?.reason, 200) || 'action_not_admitted'
+              : movementGenerationFailed
+                ? 'movement_generation_failed'
+                : operatorActionRequired
+                  ? 'required_action_missing'
+                  : requiredCompletionBasis === 'visual_observation' && !visualAvailable
+                    ? 'visual_evidence_unavailable'
+                    : taskDecisionError
+                      ? 'invalid_task_decision'
+                      : 'no_completion_or_action',
       }),
       taskInstruction: '',
       complete,

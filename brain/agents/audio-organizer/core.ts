@@ -22,24 +22,13 @@ interface AudioConfig {
 
 interface TranscriptMetadata {
   audioId: string;
-  originalFile: string;
-  transcribedAt: string;
-  model: string;
-  language: string;
-  status: string;
   organized?: boolean;
 }
 
-export interface AudioOrganizerOptions {
-  oneShot?: boolean;
-}
-
 export interface AudioOrganizerResult {
-  success: boolean;
   transcriptsProcessed: number;
   transcriptsOrganized: number;
   transcriptsFailed: number;
-  errors: string[];
 }
 
 function loadAudioConfig(): AudioConfig {
@@ -68,7 +57,6 @@ function loadAudioConfig(): AudioConfig {
 }
 
 async function organizeTranscript(transcriptPath: string, metadataPath: string, config: AudioConfig): Promise<boolean> {
-  console.log(`${LOG_PREFIX} ========== organizeTranscript HIT ==========`);
   console.log(`${LOG_PREFIX} Processing: ${transcriptPath}`);
   
   const metadata: TranscriptMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
@@ -170,16 +158,11 @@ Respond with JSON only:
   }
 }
 
-export async function runCycle(options: AudioOrganizerOptions = {}): Promise<AudioOrganizerResult> {
-  console.log(`${LOG_PREFIX} ========== runCycle HIT ==========`);
-  console.log(`${LOG_PREFIX} Input options:`, options);
-  
+export async function runCycle(): Promise<AudioOrganizerResult> {
   const result: AudioOrganizerResult = {
-    success: true,
     transcriptsProcessed: 0,
     transcriptsOrganized: 0,
     transcriptsFailed: 0,
-    errors: [],
   };
 
   const config = loadAudioConfig();
@@ -235,7 +218,6 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
     } catch (error) {
       console.error(`${LOG_PREFIX} Error processing ${metadata.audioId}:`, error);
       result.transcriptsFailed++;
-      result.errors.push(`Error organizing ${metadata.audioId}: ${(error as Error).message}`);
     }
   }
 
@@ -254,50 +236,26 @@ export async function runCycle(options: AudioOrganizerOptions = {}): Promise<Aud
   return result;
 }
 
-export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+export async function run(_ctx: AgentContext, _input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();
-  console.log(`${LOG_PREFIX} ========== run HIT ==========`);
-  
+
   try {
-    const args = input.args || [];
-    const opts = input.options || {};
-
-    const options: AudioOrganizerOptions = {
-      oneShot: args.includes('--oneshot') || opts.oneShot === true,
-    };
-    console.log(`${LOG_PREFIX} Options: oneShot=${options.oneShot}`);
-
-    const result = await runCycle(options);
-
+    const result = await runCycle();
     return {
-      success: result.success,
-      data: {
-        transcriptsProcessed: result.transcriptsProcessed,
-        transcriptsOrganized: result.transcriptsOrganized,
-        transcriptsFailed: result.transcriptsFailed,
-      },
-      errors: result.errors.length > 0 ? result.errors : undefined,
+      success: result.transcriptsFailed === 0,
+      data: result,
       durationMs: Date.now() - startTime,
+      itemsProcessed: result.transcriptsProcessed,
     };
   } catch (error) {
-    console.error(`${LOG_PREFIX} Fatal error in run():`, error);
+    const message = (error as Error).message;
     audit({
       level: 'error',
       category: 'agent',
       event: 'audio_organizer_run_failed',
-      details: { error: (error as Error).message },
+      details: { error: message },
       actor: 'audio-organizer',
     });
-
-    return {
-      success: false,
-      data: {
-        transcriptsProcessed: 0,
-        transcriptsOrganized: 0,
-        transcriptsFailed: 0,
-      },
-      errors: [(error as Error).message],
-      durationMs: Date.now() - startTime,
-    };
+    return { success: false, error: message, durationMs: Date.now() - startTime };
   }
 }

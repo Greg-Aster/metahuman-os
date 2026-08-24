@@ -9,7 +9,7 @@ import {
   environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
   normalizedEnvironmentMotionClass,
-  parseEnvironmentModelOutput,
+  validateEnvironmentSelectorOutput,
 } from './helpers.js';
 
 const PHYSICAL_MOTION_ACTIONS = new Set([
@@ -134,6 +134,8 @@ export const environmentActionParserNode = defineNode({
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
     { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task-state reducer' },
     { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
+    { name: 'presentation', type: 'string', description: 'Private or conversational presentation selected by the model' },
+    { name: 'privateResponse', type: 'string', description: 'Response text when private presentation was selected' },
     { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for the Environment Task State owner' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
@@ -147,7 +149,31 @@ export const environmentActionParserNode = defineNode({
         ? inputs.observation as EnvironmentObservation
         : undefined;
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
-      const parsed = parseEnvironmentModelOutput(inputs.response, sessionId);
+      const validation = validateEnvironmentSelectorOutput(
+        inputs.response,
+        sessionId,
+        { requireObjective: readRobotObserverCycle(observation)?.triggerSource === 'autonomy' },
+      );
+      const validated = validation.value;
+      const parsed = validated
+        ? {
+            response: validated.response,
+            actions: validated.actions,
+            movementRequest: validated.movementRequest
+              ? { ...validated.movementRequest, motionClass: 'body_local' as const }
+              : null,
+            movementRequestError: '',
+            taskDecision: validated.taskDecision,
+            taskDecisionError: '',
+          }
+        : {
+            response: '',
+            actions: [],
+            movementRequest: null,
+            movementRequestError: '',
+            taskDecision: null,
+            taskDecisionError: validation.errors.join('; '),
+          };
       const routedContract = environmentTaskContractFromRouting(routingAnalysis);
       const persistedContract = environmentTaskContractFromObservation(observation);
       const routedMotionClass = isRecord(routingAnalysis?.actionParams)
@@ -254,6 +280,10 @@ export const environmentActionParserNode = defineNode({
             ...(motionClass ? { motionClass } : {}),
           }
         : parsed.taskDecision;
+      const presentation = taskDecision?.presentation === 'private'
+        || taskDecision?.presentation === 'conversation'
+        ? taskDecision.presentation
+        : '';
 
       return {
         actions,
@@ -262,9 +292,13 @@ export const environmentActionParserNode = defineNode({
         movementRequested,
         taskDecision,
         taskDecisionError: parsed.taskDecisionError,
+        presentation,
+        privateResponse: presentation === 'private' ? response : '',
         actionAdmission,
         valid,
-        error: valid ? '' : movementError || 'No valid environment actions found',
+        error: valid
+          ? ''
+          : parsed.taskDecisionError || movementError || 'No valid environment actions found',
         response,
       };
     } catch (error) {
@@ -275,6 +309,8 @@ export const environmentActionParserNode = defineNode({
         movementRequested: false,
         taskDecision: null,
         taskDecisionError: '',
+        presentation: '',
+        privateResponse: '',
         actionAdmission: null,
         valid: false,
         error: (error as Error).message,

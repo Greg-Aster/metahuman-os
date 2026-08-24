@@ -97,15 +97,11 @@ Uploading model to s3://metahuman-training/greggles/2025-11-25-101234/model/
 After training completes and the pod terminates, download your model:
 
 ```bash
-# Using the helper script
-./bin/s3-download greggles/2025-11-25-101234/model ./out/downloaded-model
-
-# Or using AWS CLI directly
 aws s3 sync s3://metahuman-training/greggles/2025-11-25-101234/model/ ./out/downloaded-model \
   --endpoint-url https://storage.runpod.io
 ```
 
-The download script automatically uses credentials from your `.env` file.
+The AWS CLI reads the RunPod S3 credentials exported in your shell environment.
 
 ### Installing AWS CLI
 
@@ -213,8 +209,7 @@ aws s3 sync /workspace/output/model s3://metahuman-training/username/run-label/m
 ### Implementation Files
 
 - [packages/core/src/s3-upload.ts](../packages/core/src/s3-upload.ts) - S3 client and upload functions
-- [brain/agents/lora-trainer.ts](../brain/agents/lora-trainer.ts) - Training pipeline with S3 integration (lines 1038-1123)
-- [bin/s3-download](../bin/s3-download) - Helper script for downloading from S3
+- [brain/training/lora-trainer.ts](../brain/training/lora-trainer.ts) - Training pipeline with S3 integration
 
 ### Result Metadata
 

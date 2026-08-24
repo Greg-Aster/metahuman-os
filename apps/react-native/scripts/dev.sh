@@ -309,10 +309,10 @@ start_metro() {
     fi
 
     # Start Metro in background with colored output
-    log CMD "npx react-native start ${metro_args[*]}"
+    log CMD "pnpm exec react-native start ${metro_args[*]}"
 
     # Use script to preserve colors in background
-    npx react-native start "${metro_args[@]}" 2>&1 &
+    pnpm exec react-native start "${metro_args[@]}" 2>&1 &
     METRO_PID=$!
 
     # Wait for Metro to be ready

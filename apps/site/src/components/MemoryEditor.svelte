@@ -134,7 +134,7 @@
             bind:value={content}
             placeholder="Memory content..."
             spellcheck="false"
-          />
+          ></textarea>
         {/if}
       </div>
 

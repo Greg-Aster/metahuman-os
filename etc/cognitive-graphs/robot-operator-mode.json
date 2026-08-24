@@ -135,8 +135,7 @@
         "label": "Delegate to Environment Mode",
         "nodeType": "robot_operator_environment_dispatch",
         "properties": {
-          "graph": "environment",
-          "maxSteps": 8
+          "graph": "environment"
         }
       }
     },

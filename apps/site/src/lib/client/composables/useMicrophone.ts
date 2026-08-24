@@ -274,8 +274,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
   const interimTranscript = writable(''); // Real-time transcript preview
   const whisperStatus = writable<'unknown' | 'loading' | 'ready' | 'stopped' | 'error'>('unknown'); // Whisper server status
   const isConversationMode = writable(false); // Conversation mode active (any speech triggers)
-  const isWakeWordListening = writable(false); // Deprecated: always false (wake word removed)
-  const wakeWordDetected = writable(false); // Deprecated: always false (wake word removed)
 
   // Native speech recognition state
   let speechRecognition: ISpeechRecognition | null = null;
@@ -535,7 +533,7 @@ export function useMicrophone(options: UseMicrophoneOptions) {
       clearTimeout(conversationRestartTimer);
       conversationRestartTimer = null;
     }
-    // Just stop - don't auto-start wake word or anything else
+    // Just stop without starting another listening mode
   }
 
   /**
@@ -1933,8 +1931,6 @@ export function useMicrophone(options: UseMicrophoneOptions) {
     interimTranscript,  // Real-time transcript preview (native mode only)
     whisperStatus,      // Whisper server status (checked once on load, no polling)
     isConversationMode, // Conversation mode active (any speech triggers)
-    isWakeWordListening, // Deprecated: always false (for UI compatibility)
-    wakeWordDetected,   // Deprecated: always false (for UI compatibility)
 
     // Methods
     loadVADSettings,

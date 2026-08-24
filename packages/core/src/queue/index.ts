@@ -54,7 +54,13 @@ export {
 } from './sleep-workflow.js';
 
 // Facade
-export { QueueSystem, ensureQueueSystemStarted, getQueueSystem, resetQueueSystem } from './queue-system.js';
+export {
+  QueueSystem,
+  buildRobotOperatorManualTaskInput,
+  ensureQueueSystemStarted,
+  getQueueSystem,
+  resetQueueSystem,
+} from './queue-system.js';
 export {
   authorizeWorkSubmission,
   claimWorkCoordinatorOwnership,

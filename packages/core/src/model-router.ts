@@ -153,7 +153,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   const username = ctx?.username || callOptions.userId;
 
   // Resolve the model for this role (using user-specific models.json if available)
-  const resolved = effectiveCognitiveMode
+  const requestedModel = effectiveCognitiveMode
     ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role, username)
     : resolveModel(callOptions.role, callOptions.overrides, username);
 
@@ -163,6 +163,16 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   // Response Synthesizer applies persona voice to final output only.
   let messages = callOptions.messages;
   const hasImages = providerMessagesContainImages(messages);
+  const declaredCapabilities = requestedModel.capabilities.map(value => value.toLowerCase());
+  const needsVisionFallback = hasImages
+    && declaredCapabilities.length > 0
+    && !declaredCapabilities.some(value => value === 'vision' || value === 'image')
+    && callOptions.role !== 'orchestrator';
+  const resolved = needsVisionFallback
+    ? effectiveCognitiveMode
+      ? resolveModelForCognitiveMode(effectiveCognitiveMode, 'orchestrator', username)
+      : resolveModel('orchestrator', undefined, username)
+    : requestedModel;
 
   // Merge options: model defaults + call-specific options
   const mergedOptions = {
@@ -204,6 +214,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         topP: mergedOptions.topP || mergedOptions.top_p,
         repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
         format: mergedOptions.format,
+        jsonSchema: mergedOptions.jsonSchema,
         keepAlive: callOptions.keepAlive as string | undefined,
         contextWindow: mergedOptions.contextWindow,
         enableThinking: mergedOptions.enableThinking,
@@ -262,6 +273,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         hadThinking: !!thinking,
         thinkingLength: thinking?.length || 0,
         imageInput: hasImages,
+        capabilityFallback: needsVisionFallback ? 'orchestrator' : null,
       },
     });
 

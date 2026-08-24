@@ -3,6 +3,10 @@ import type {
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
 import { defineNode } from '../types.js';
+import {
+  buildEnvironmentSelectorJsonSchema,
+  robotOperatorActionRequirement,
+} from '../environment/helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -73,6 +77,7 @@ function consolidatedHistory(value: unknown): Array<Record<string, unknown>> {
               isInnerDialogue,
               originalRole: originalRole || null,
               dialogueSource: cleanText(meta.dialogueSource, 100) || null,
+              correlationId: cleanText(meta.correlationId, 200) || null,
               tags: normalizedTags(meta.tags),
               taskLifecycle: boundedObject(meta.taskLifecycle, 2_000),
             },
@@ -81,6 +86,33 @@ function consolidatedHistory(value: unknown): Array<Record<string, unknown>> {
     });
   }
   return history;
+}
+
+function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>> {
+  const messages = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.messages)
+      ? value.messages
+      : [];
+  return messages.filter(isRecord).flatMap(message => {
+    const content = cleanText(message.content, 2_000);
+    if (!content) return [];
+    const meta = isRecord(message.meta) ? message.meta : {};
+    return [{
+      role: 'assistant',
+      content,
+      ...(typeof message.timestamp === 'number' || typeof message.timestamp === 'string'
+        ? { timestamp: message.timestamp }
+        : {}),
+      context: {
+        isInnerDialogue: true,
+        originalRole: cleanText(message.role, 40).toLowerCase() || 'reflection',
+        dialogueSource: cleanText(meta.dialogueSource, 100) || null,
+        correlationId: cleanText(meta.correlationId, 200) || null,
+        tags: normalizedTags(meta.tags),
+      },
+    }];
+  });
 }
 
 function boundedObject(value: unknown, maxLength = 8_000): unknown {
@@ -123,7 +155,6 @@ function robotTrigger(observation: EnvironmentObservation): Record<string, unkno
     correlationId: correlationId(observation) || null,
     cycleId: cleanText(observer?.cycleId, 200) || null,
     step: typeof observer?.step === 'number' ? observer.step : null,
-    maxSteps: typeof observer?.maxSteps === 'number' ? observer.maxSteps : null,
   };
 }
 
@@ -138,21 +169,107 @@ function compactFeedback(observation: EnvironmentObservation): Array<Record<stri
   }));
 }
 
+function compactAction(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const type = cleanText(value.type, 60);
+  if (!type) return null;
+  return {
+    type,
+    ...(cleanText(value.command, 120) ? { command: cleanText(value.command, 120) } : {}),
+    ...(cleanText(value.direction, 60) ? { direction: cleanText(value.direction, 60) } : {}),
+    ...(typeof value.units === 'number' ? { units: value.units } : {}),
+    ...(cleanText(value.target, 160) ? { target: cleanText(value.target, 160) } : {}),
+  };
+}
+
+function autonomySelectorSchema(
+  observation: EnvironmentObservation,
+): Record<string, unknown> {
+  return buildEnvironmentSelectorJsonSchema({
+    actions: observation.capabilities.actions,
+    robotCommands: observation.capabilities.robotCommands,
+    requireAction: robotOperatorActionRequirement(observation) === true,
+    requireMotionClass: false,
+    requireObjective: true,
+  });
+}
+
+/**
+ * Turn canonical Robot Buffer records into a small, correlated action ledger.
+ * This is action evidence; conversation and memories are intentionally absent.
+ */
+function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
+  const messages = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.messages)
+      ? value.messages
+      : [];
+  const actions = new Map<string, Record<string, unknown>>();
+  let anonymousIndex = 0;
+
+  for (const message of messages.filter(isRecord)) {
+    const meta = isRecord(message.meta) ? message.meta : null;
+    const record = isRecord(meta?.bridgeRecord) ? meta.bridgeRecord : null;
+    if (!record) continue;
+    const timestamp = typeof message.timestamp === 'number' || typeof message.timestamp === 'string'
+      ? message.timestamp
+      : undefined;
+
+    if (record.direction === 'inbound') {
+      const action = isRecord(record.action) ? record.action : null;
+      const actionId = cleanText(record.actionId, 200) || cleanText(action?.id, 200);
+      if (!actionId) continue;
+      const prior = actions.get(actionId) ?? { actionId };
+      actions.set(actionId, {
+        ...prior,
+        requested: compactAction(action) ?? prior.requested,
+        status: cleanText(record.status, 60) || 'reported',
+        result: cleanText(record.message, 500) || undefined,
+        completedAt: timestamp,
+        verified: true,
+      });
+      continue;
+    }
+
+    const commands = Array.isArray(record.commands) ? record.commands.filter(isRecord) : [];
+    for (const command of commands) {
+      const actionId = cleanText(command.id, 200) || `outbound-${anonymousIndex++}`;
+      actions.set(actionId, {
+        actionId,
+        requested: compactAction(command),
+        status: cleanText(command.status, 60) || cleanText(record.status, 60) || 'queued',
+        correlationId: cleanText(command.correlationId, 200)
+          || cleanText(record.correlationId, 200)
+          || undefined,
+        requestedAt: timestamp,
+        verified: false,
+      });
+    }
+  }
+
+  return [...actions.values()].filter(entry => entry.requested).slice(-8);
+}
+
 export const robotOperatorContextBuilderNode = defineNode({
   id: 'robot_operator_context_builder',
   name: 'Robot Operator Context',
   category: 'operator',
   inputs: [
     { name: 'instruction', type: 'string', description: 'Graph-owned Robot Operator instructions' },
+    { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Specialized trigger instruction for this autonomous cycle' },
     { name: 'observation', type: 'object', description: 'Current correlated robot observation or agent-produced stimulus' },
     { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
     { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Canonical recent conversation with unified inner context when enabled' },
+    { name: 'innerHistory', type: 'array', optional: true, description: 'Canonical recent private reflection entries supplied separately' },
+    { name: 'actionHistory', type: 'array', optional: true, description: 'Canonical Robot Buffer entries used as verified prior-action evidence' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
     { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
+    { name: 'taskState', type: 'object', optional: true, description: 'Canonical Environment Task State for the current autonomy objective' },
   ],
   outputs: [
     { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
+    { name: 'jsonSchema', type: 'object', description: 'Capability-bounded Environment action output schema' },
     { name: 'context', type: 'object', description: 'Structured high-level deliberation context' },
     { name: 'valid', type: 'boolean', description: 'Whether the configured context is ready for deliberation' },
     { name: 'error', type: 'string', description: 'Visible configuration or input error' },
@@ -165,8 +282,10 @@ export const robotOperatorContextBuilderNode = defineNode({
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const instruction = cleanText(inputs.instruction, 8_000);
+    const stimulusInstruction = cleanText(inputs.stimulusInstruction, 4_000);
     const invalid = (error: string) => ({
       messages: [],
+      jsonSchema: null,
       context: null,
       valid: false,
       error,
@@ -174,7 +293,10 @@ export const robotOperatorContextBuilderNode = defineNode({
     if (!observation?.sessionId) return invalid('Robot Operator context requires a robot observation with a session ID.');
     if (!instruction) return invalid('Robot Operator context requires instructions from a connected text input node.');
 
-    const recentContext = consolidatedHistory(inputs.conversationHistory);
+    const conversationContext = consolidatedHistory(inputs.conversationHistory).slice(-4);
+    const innerContext = consolidatedInnerHistory(inputs.innerHistory).slice(-2);
+    const recentContext = [...conversationContext, ...innerContext];
+    const actionHistory = verifiedActionHistory(inputs.actionHistory);
     const innerContextCount = recentContext.filter(entry => (
       isRecord(entry.context) && entry.context.isInnerDialogue === true
     )).length;
@@ -184,21 +306,48 @@ export const robotOperatorContextBuilderNode = defineNode({
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
-    const memoryContext = Array.isArray(inputs.memoryContext)
-      ? inputs.memoryContext.slice(0, 5).map(memory => boundedObject(memory, 4_000))
+    const suppliedMemories = Array.isArray(inputs.memoryContext) ? inputs.memoryContext : [];
+    const delegatedMemories = Array.isArray(observation.metadata?.robotOperatorMemories)
+      ? observation.metadata.robotOperatorMemories
       : [];
+    const seenMemories = new Set<string>();
+    const memoryContext = [...suppliedMemories, ...delegatedMemories].flatMap(memory => {
+      const bounded = boundedObject(memory, 4_000);
+      const key = typeof memory === 'string'
+        ? cleanText(memory, 4_000)
+        : isRecord(memory)
+          ? cleanText(memory.content, 4_000)
+          : '';
+      if (!key || seenMemories.has(key)) return [];
+      seenMemories.add(key);
+      return [bounded];
+    }).slice(0, 5);
     const images = selectedImageParts(observation, inputs.images, inputs.frames);
     const frames = [observation.visual, ...(observation.visuals ?? [])]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .map(frameSummary);
+    const trigger = robotTrigger(observation);
+    const cycleId = cleanText(trigger.cycleId, 200);
+    const taskState = isRecord(inputs.taskState)
+      ? boundedObject(inputs.taskState, 4_000)
+      : null;
+    const taskNarrative = recentContext.filter(entry => (
+      isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
+    ));
+    const backgroundNarrative = recentContext.filter(entry => !taskNarrative.includes(entry));
+    const reflectionTrigger = trigger.requestedBy === 'boredom-reflection'
+      || cleanText(observation.metadata?.autonomousStimulus, 100) === 'boredom-reflection';
     const stimulus = {
       observedAt: observation.timestamp,
-      trigger: robotTrigger(observation),
+      stateObservedAt: cleanText(observation.metadata?.sourceObservationAt, 100)
+        || observation.timestamp,
+      trigger,
       state: boundedObject(observation.state, 8_000),
       location: boundedObject(observation.location, 4_000),
       map: boundedObject(observation.map, 4_000),
       capabilities: boundedObject(observation.capabilities, 4_000),
       feedback: compactFeedback(observation),
+      verifiedCurrentAction: boundedObject(observation.metadata?.actionContext, 2_000),
       text: (observation.text ?? []).slice(-8).map(event => ({
         source: event.source,
         sender: event.senderName ?? event.senderId ?? null,
@@ -206,47 +355,78 @@ export const robotOperatorContextBuilderNode = defineNode({
         timestamp: event.timestamp,
       })),
       visualFrames: frames,
+      currentVisualEvidence: observation.metadata?.currentVisualEvidence === true,
     };
-    const stimulusText = JSON.stringify({ robotStimulus: stimulus });
+    const stimulusText = JSON.stringify({
+      robotStimulus: stimulus,
+      ...(stimulusInstruction ? { autonomyTriggerInstruction: stimulusInstruction } : {}),
+      ...(reflectionTrigger
+        ? {
+            reflectionMaterial: {
+              provenance: 'historical_memory_inspiration',
+              currentEvidence: false,
+              entries: memoryContext,
+            },
+          }
+        : {}),
+    });
     const userContent = images.length > 0
       ? [{ type: 'text', text: stimulusText }, ...images]
       : stimulusText;
-    const supportingContext = personaText || recentContext.length > 0 || memoryContext.length > 0
-      ? {
-          role: 'assistant',
-          content: JSON.stringify({
-            robotOperatorContext: {
-              activePersona: personaText || null,
-              recentContext: {
-                provenance: 'canonical_conversation_history',
-                includesUnifiedInnerContext: innerContextCount > 0,
-                entries: recentContext,
-              },
-              sampledMemories: {
-                provenance: 'historical_memory_inspiration',
-                currentEvidence: false,
-                entries: memoryContext,
-              },
-              currentEvidence: false,
-            },
-          }),
-        }
-      : null;
+    const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
+    const supportingContext = {
+      role: 'assistant',
+      content: JSON.stringify({
+        robotOperatorContext: {
+          activePersona: personaText || null,
+          environmentTaskState: {
+            provenance: 'canonical_environment_task_state',
+            state: taskState,
+            correlatedNarrative: taskNarrative,
+          },
+          recentContext: {
+            provenance: 'canonical_conversation_history',
+            evidenceStatus: 'narrative_only',
+            includesUnifiedInnerContext: innerContextCount > 0,
+            entries: backgroundNarrative,
+          },
+          verifiedActionHistory: {
+            provenance: 'canonical_robot_buffer',
+            entries: actionHistory,
+          },
+          ...(supportingMemoryContext.length > 0
+            ? {
+                sampledMemories: {
+                  provenance: 'historical_memory_inspiration',
+                  currentEvidence: false,
+                  entries: supportingMemoryContext,
+                },
+              }
+            : {}),
+          currentEvidence: false,
+        },
+      }),
+    };
 
     return {
       messages: [
         { role: 'system', content: instruction },
-        ...(supportingContext ? [supportingContext] : []),
+        supportingContext,
         { role: 'user', content: userContent },
       ],
+      jsonSchema: autonomySelectorSchema(observation),
       context: {
         instruction,
+        stimulusInstruction,
         stimulus,
         recentContext,
+        taskNarrativeCount: taskNarrative.length,
         personaIncluded: Boolean(personaText),
         recentContextCount: recentContext.length,
         innerContextCount,
+        actionHistoryCount: actionHistory.length,
         memoryContextCount: memoryContext.length,
+        reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,
       },
       valid: true,

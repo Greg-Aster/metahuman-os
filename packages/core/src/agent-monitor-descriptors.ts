@@ -112,6 +112,39 @@ function labelFromId(id: string): string {
     .join(' ');
 }
 
+function catalogOwnershipVariables(catalogItem?: AgentCatalogItem): AgentVariableDescriptor[] {
+  if (!catalogItem) return [];
+  const owner = catalogItem.owner === 'robot-operator'
+    ? 'Robot Operator'
+    : catalogItem.owner === 'trigger-manager'
+      ? 'Trigger Manager'
+      : catalogItem.owner === 'agent-monitor'
+        ? 'Agent Monitor'
+        : catalogItem.owner === 'workflow'
+          ? 'Parent Workflow'
+          : 'Manual only';
+  return [
+    {
+      key: 'runtimeOwner',
+      label: 'Runtime Owner',
+      type: 'readonly',
+      value: owner,
+      applyMode: 'readonly',
+      writable: false,
+      description: 'The service or coordinator responsible for admitting this work.',
+    },
+    {
+      key: 'workflowHandler',
+      label: 'Workflow Handler',
+      type: 'readonly',
+      value: catalogItem.handler,
+      applyMode: 'readonly',
+      writable: false,
+      description: 'The Work Coordinator handler used for finite runs.',
+    },
+  ];
+}
+
 function inferKind(id: string, config?: AgentCatalogEntry): AgentKind {
   if (id.endsWith('-service')) return 'service';
   if (config?.type === 'manual') return 'manual';
@@ -367,6 +400,15 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         writable: true,
       },
       {
+        key: 'autonomyGraph',
+        label: 'Boredom Autonomy Graph',
+        type: 'text',
+        value: typeof effective.autonomyGraph === 'string' ? effective.autonomyGraph : 'boredom-autonomy',
+        applyMode: 'restart',
+        writable: true,
+        description: 'Shared semantic executive graph used by all three boredom triggers.',
+      },
+      {
         key: 'environmentGraph',
         label: 'Environment Execution Graph',
         type: 'text',
@@ -476,6 +518,7 @@ export function buildAgentDescriptor(id: string, catalogEntry?: AgentCatalogEntr
     bootEligible,
     dependencyNotes: known?.dependencyNotes ?? [],
     variables: [
+      ...catalogOwnershipVariables(catalogItem),
       ...serviceLifecycleVariables(catalogEntry, id, kind, bootEligible),
       ...(id === 'environment-bridge' ? environmentBridgeVariables() : []),
     ],

@@ -17,9 +17,9 @@ This document is the maintained paper trail for Environment Mode response-time w
 - Optimize the measured critical path before changing model quality.
 - Do not bypass the cognitive graph or add keyword-based intent shortcuts.
 - The Environment action selector is the sole semantic action owner for each turn. It decides conversation versus physical work, selects one exact advertised command or one body-local movement request, and judges external evidence when Task State requires another semantic pass.
-- The general model is conversation-only behind an explicit typed escalation. It may generate a requested off-script motion plan only after the selector has already owned and typed the body-local movement request; it never reinterprets or overrides a selected action.
+- The selector model must be vision-capable because one Environment decision owns both attached robot images and action selection. Movement Generator may generate a requested off-script motion plan only after the selector has already owned and typed the body-local movement request; it never reinterprets or overrides a selected action.
 - Environment Task State is the one deterministic lifecycle owner. It validates capabilities and schemas, persists the objective, closes exact action results, and enforces the bounded action ceiling; it does not reinterpret natural language.
-- Every new user input must produce a conversational response, one executable action with a response, or an explicit failure diagnostic.
+- Every new user input must produce a conversational response, one executable action with a response, or an explicit failure diagnostic. Autonomous observations are private by default and may validly complete with no external response or action.
 - Matching `completed` feedback closes an `action_result` objective without another model call, regardless of whether an earlier model unnecessarily marked the continuation policy bounded.
 - Failed actions and incomplete external objectives return to the same Environment action selector. There is no separate recovery, visual-review, validator, or refiner model.
 - Fresh correlated images are admitted for current visual work. A claimed external change requires an ordered baseline and current frame; an absolute current-scene fact requires one current correlated frame.
@@ -47,19 +47,43 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 
 ## Current Architecture Findings
 
-- Environment Mode currently has 24 nodes and 57 edges.
+- Environment Mode currently has 22 nodes and 56 edges.
 - The graph executor visits nodes in topological order and awaits them serially.
 - The work coordinator also serializes the broad `local-llm` resource lane with `maxConcurrent: 1` and a 2,000 ms cooldown between complete work items.
 - A normal question or named robot command requires one `environmentActionSelector` call. A valid named command makes no general-model or Movement Generator call. Substantive conversation makes one general-model call only after a typed `escalate` decision. Off-script body-local motion adds the Movement Generator only after the selector returns `movementRequest`.
 - Exact successful `action_result` feedback is reduced without a model call. Failed results and external visual/state objectives use one action-selector evidence/next-action call per physical attempt.
 - Long-term memory retrieval remains a bounded vector lookup. The generative Context Router and Memory Relevance Interpreter are no longer in the active Environment graph.
 - The retired Task Contract, Visual Evidence Assessor, Task Validator, Task Refiner, and Workflow Command nodes are no longer registered or present in the graph.
-- The checked-in registry uses `environmentActionSelector` and the target artifact `environment-action-selector-0.8b:v1`. Registry migration removes the retired `environmentRouter` role and its incompatible 14-field classifier assignment rather than copying that assignment into the new role.
-- The current profile has intentionally not been migrated or restarted while fold training and artifact validation are incomplete. Source implementation is not deployment proof.
+- The checked-in registry maps `environmentActionSelector` to the vision-capable `default.orchestrator` model. Registry migration removes the retired `environmentRouter` role and replaces the known text-only `environment-action-selector-0.8b:v1` assignment while preserving explicit custom selector choices.
+- A rebuilt server artifact contains this implementation. Runtime profile migration and physical robot behavior still require proof after the next server start.
 - Ollama model unloading after five minutes adds an intermittent cold-start penalty.
 - Graph serialization and coordinator serialization are MetaHuman policies, not hard Ollama limitations.
 
 ## Work Log
+
+### 2026-08-23 - Direct autonomous vision and generic Task State evidence contract
+
+Status: implemented and rebuilt locally. Focused Core suites, selector corpus/regression checks, all 28 cognitive graphs, and the production Astro build pass. A live local 384-token Qwen3.5-9B image probe produced strict valid selector output in 2,517 ms; Task State completed the no-action observation privately. No physical robot action was dispatched by that probe.
+
+Implemented change:
+
+- Route Boredom Observer's returned image directly to Environment Mode and delete its redundant preliminary LLM graph.
+- Classify physical work with the generic `expression`, `information_gain`, or `task_effect` purpose. Task State preserves that contract through correlated feedback and normalizes information-gain work to bounded visual evidence.
+- Skip post-action model inference for exact one-step action-result completion. Only objectives requiring new evidence return to the selector.
+- Default autonomous output to private inner dialogue. Conversation Buffer, conversational telemetry, and TTS receive output only after explicit conversation admission.
+- Queue familiarity matching after autonomous visual reasoning through the existing background semantic-search owner.
+- Reduce the Environment prompt to 212 words and the selector budget to 384 tokens. Task State, memories, and history each appear at most once; autonomous observations receive no conversation history; capability rules are generated only for advertised capabilities.
+- Add provider-native structured output for the shared Environment contract. Cross-field lifecycle consistency remains in Task State rather than a second validator model or graph.
+- Retire the text-only 0.8B selector from runtime selection because it cannot accept the directly routed image and failed the revised output contract. The exact spiky-friend/head-tilt case is an evaluation-only regression and is excluded from development training data and runtime logic.
+
+Measured local probes:
+
+| Probe | Model | Budget | Result | Latency |
+|---|---|---:|---|---:|
+| Advertised `wave` | `qwen3.5:9b` | 384 | Strict valid `robotCommand`; Task State owns incomplete-until-feedback lifecycle | 7,354 ms |
+| Autonomous attached image, no warranted action | `qwen3.5:9b` | 384 | Strict valid; private complete; no action | 2,517 ms |
+
+The exact live failure text `The robot result arrived, but I could not determine a usable completion or next action.` was reproduced as an invalid-selector boundary failure. The new structured-output contract plus deterministic no-work completion removes that failure mode without scene-specific parsing or retries.
 
 ### 2026-08-06 - Dedicated Environment action selector
 

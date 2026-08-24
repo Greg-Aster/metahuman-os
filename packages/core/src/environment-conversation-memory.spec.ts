@@ -52,6 +52,8 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
 const historyId = nodeId('conversation_history');
 const memoryRouterId = nodeId('memory_router');
 const contextId = nodeId('environment_context_builder');
+const personaLoaderId = nodeId('persona_loader');
+const personaFormatterId = nodeId('persona_formatter');
 const actionParserId = nodeId('environment_action_parser');
 const bridgeId = nodeId('environment_send_action');
 const robotBufferId = nodeId('robot_buffer');
@@ -69,12 +71,14 @@ assert.ok(reducerId);
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
 assert.ok(hasEdge(prepareId, 'memoryHints', memoryRouterId, 'orchestratorHints'));
 assert.ok(hasEdge(memoryRouterId, 'memories', contextId, 'memories'));
+assert.ok(hasEdge(personaLoaderId, 'persona', personaFormatterId, 'persona'));
+assert.ok(hasEdge(personaFormatterId, 'formatted', contextId, 'personaText'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', contextId, 'routingAnalysis'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', actionParserId, 'routingAnalysis'));
-assert.ok(hasEdge(bridgeId, 'response', bufferId, 'response'));
+assert.ok(hasEdge(bridgeId, 'conversationResponse', bufferId, 'response'));
 assert.ok(hasEdge(actionParserId, 'actions', reducerId, 'actions'));
 assert.equal(hasEdge(reducerId, 'decision', bufferId, 'taskLifecycle'), false);
-assert.ok(hasEdge(bridgeId, 'response', captureId, 'assistantResponse'));
+assert.ok(hasEdge(bridgeId, 'conversationResponse', captureId, 'assistantResponse'));
 assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
 assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
 assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
@@ -82,11 +86,6 @@ assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'response_synthesizer'),
   false,
   'Environment Mode must not rewrite an already generated response with a second LLM pass',
-);
-assert.equal(
-  graph.nodes.some(node => node.data?.nodeType === 'persona_loader' || node.data?.nodeType === 'persona_formatter'),
-  false,
-  'Environment Mode must not load persona data for a deleted escalation branch',
 );
 assert.equal(ConversationBufferNode.id, 'conversation_buffer');
 assert.equal(
@@ -153,7 +152,7 @@ const context = await environmentContextBuilderNode.execute({
 }, {}, {});
 
 assert.equal(context.messages.length, 2);
-assert.match(String(context.messages[0]?.content), /My name is Greg/);
+assert.doesNotMatch(String(context.messages[0]?.content), /My name is Greg/);
 const memorySelectorEnvelope = JSON.parse(String(context.messages.at(-1)?.content)) as {
   currentInstruction: string;
   currentEnvironment: { capabilities: { actions: string[]; robotCommands: string[] } };
@@ -163,6 +162,11 @@ assert.equal(memorySelectorEnvelope.currentInstruction, 'What is my name?');
 assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.actions, ['robotCommand']);
 assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.robotCommands, ['wave']);
 assert.match(memorySelectorEnvelope.memories[0] ?? '', /My name is Greg/);
+assert.equal(
+  `${String(context.messages[0]?.content)}\n${String(context.messages[1]?.content)}`.match(/My name is Greg/g)?.length,
+  1,
+  'Each selected memory enters the selector context exactly once',
+);
 assert.deepEqual(context.context.contextSelection, {
   recentHistory: false,
   recentHistoryCount: 0,

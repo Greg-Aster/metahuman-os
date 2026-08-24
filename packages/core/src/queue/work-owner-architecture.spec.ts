@@ -75,7 +75,7 @@ assert.ok(
 assert.ok(
   source('packages/core/src/infrastructure/event-bus/client.ts').includes('_socket?.unref?.()')
     && source('packages/core/src/agent-process-runner.ts').includes('child.stdout')
-    && source('packages/cli/src/mh-new.ts').includes('detached: true'),
+    && source('packages/cli/src/main.ts').includes('detached: true'),
   'service startup and event-bus observability must not leave a hidden terminal owner',
 );
 
@@ -94,8 +94,10 @@ for (const finiteUiPath of [
 assert.ok(
   source('apps/site/src/components/AgentMonitor.svelte').includes('/api/agents/run')
     && source('packages/core/src/api/handlers/agent.ts').includes("catalogAgent.lifecycle === 'service'")
+    && source('packages/core/src/api/handlers/agent.ts').includes("catalogAgent.owner === 'robot-operator'")
+    && source('packages/core/src/api/handlers/agent.ts').includes('system.enqueueRobotOperatorChild')
     && source('packages/core/src/api/handlers/agent.ts').includes('system.enqueueFiniteAgent'),
-  'Agent Monitor control must derive service lifecycle from Agent Catalog and send finite work through the coordinator',
+  'Agent Monitor control must derive lifecycle ownership from Agent Catalog and send finite work through the coordinator',
 );
 
 assert.ok(
