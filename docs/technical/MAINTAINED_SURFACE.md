@@ -86,7 +86,7 @@ The default is intentionally simple: an existing file returned by `git ls-files`
 - `packages/core`: engine and domain logic, storage abstractions, auth, policy, model routing, graph nodes, shared API handlers, and the work coordinator.
 - `packages/agent-runtime`: shared agent execution interfaces and runtime adapters.
 - `packages/cli`: the `mh` command interface. It dispatches to core or agent APIs instead of owning domain behavior.
-- `packages/server` and `packages/local-model-service`: maintained deployment and local-model service packages.
+- `packages/local-model-service`: maintained local-model inference service package.
 - `apps/site`: Astro/Svelte interface and thin server transport for the web app.
 - `apps/react-native`: maintained React Native interface shell and its bundled mobile runtime entrypoints.
 - `brain/*`: workers, services, training, scripts, policies, rules, and the React Native bridge entrypoints above the engine. `brain/journal` and `brain/state` are runtime/history areas excluded by the policy.

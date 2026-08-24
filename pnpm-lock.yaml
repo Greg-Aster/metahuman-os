@@ -290,10 +290,6 @@ importers:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
-    optionalDependencies:
-      '@metahuman/server':
-        specifier: workspace:*
-        version: link:../server
 
   packages/local-model-service:
     dependencies:
@@ -315,19 +311,6 @@ importers:
         version: 4.20.6
       typescript:
         specifier: ^5.5.0
-        version: 5.9.3
-
-  packages/server:
-    dependencies:
-      '@metahuman/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^20.0.0
-        version: 20.19.25
-      typescript:
-        specifier: ^5.0.0
         version: 5.9.3
 
 packages:

@@ -106,8 +106,7 @@ deleted only after static references and real entrypoints or registrations agree
 4. `packages/core` domain owners: queues, triggers, agents, autonomy, environment,
    speech, training, and other services.
 5. Core API handlers, graph execution, nodes, schemas, and public exports.
-6. `packages/agent-runtime`, `packages/cli`, `packages/server`, and local model
-   service packages.
+6. `packages/agent-runtime`, `packages/cli`, and the local model service package.
 7. `apps/site` transport, client stores, components, and public assets.
 8. `brain/*` agents, services, training, scripts, policies, and rules.
 9. React Native and other maintained interface applications.
