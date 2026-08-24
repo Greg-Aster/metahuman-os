@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
-import { ExecutionEngine } from './execution-engine.js';
-import { TriggerManager, type TriggerManagerConfig } from './trigger-manager.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type { TriggerManagerConfig } from './trigger-manager.js';
 import { UnifiedQueueManager } from './unified-queue-manager.js';
 import { applyPolicyDecision } from '../active-operator/policy-contract.js';
 import { eventBus } from '../infrastructure/event-bus/client.js';
+
+const sleepRuntimeFile = path.join(os.tmpdir(), `metahuman-work-coordinator-sleep-${randomUUID()}.json`);
+process.env.MH_SLEEP_RUNTIME_FILE = sleepRuntimeFile;
+process.on('exit', () => fs.rmSync(sleepRuntimeFile, { force: true }));
+
+const [{ ExecutionEngine }, { SLEEP_WORKFLOW_STAGES }, { TriggerManager }] = await Promise.all([
+  import('./execution-engine.js'),
+  import('./sleep-workflow.js'),
+  import('./trigger-manager.js'),
+]);
 
 async function waitFor(
   predicate: () => boolean,
@@ -126,6 +139,26 @@ function input(overrides: Record<string, unknown> = {}) {
   const restored = afterRestart.getTask(task.id);
   assert.equal(restored?.state, 'queued', 'interrupted leased work must be reconciled on restart');
   assert.equal(restored?.attempt, 1);
+}
+
+{
+  const manager = new UnifiedQueueManager();
+  const task = manager.enqueue(input({
+    type: 'user_message',
+    source: 'user',
+    maxAttempts: 9,
+  }));
+  manager.claim(task.id);
+  assert.equal(task.maxAttempts, 1, 'interactive user messages must be admitted for one attempt');
+  task.maxAttempts = 9;
+
+  assert.equal(
+    manager.requeue(task, { code: 'chat_failed', message: 'chat failed', retryable: true }),
+    false,
+    'a failed interactive chat turn must not be retried',
+  );
+  assert.equal(task.maxAttempts, 1, 'interactive user messages must execute once');
+  assert.equal(manager.getTask(task.id)?.state, 'failed');
 }
 
 {
@@ -321,8 +354,9 @@ function input(overrides: Record<string, unknown> = {}) {
 {
   const manager = new UnifiedQueueManager();
   const engine = new ExecutionEngine({ wakeFallbackMs: 250 }, manager);
-  engine.registerHandler('agent.dreamer', async () => ({ dreamed: true }));
-  engine.registerHandler('agent.psychoanalyzer', async () => ({ reviewed: true }));
+  for (const stage of SLEEP_WORKFLOW_STAGES) {
+    engine.registerHandler(stage.handler, async () => ({ stage: stage.id }));
+  }
   engine.start();
 
   const parent = manager.enqueue({
@@ -336,12 +370,14 @@ function input(overrides: Record<string, unknown> = {}) {
     maxAttempts: 1,
   });
   await waitFor(() => manager.getTask(parent.id)?.state === 'completed');
-  await waitFor(() => manager.getHistory().filter(task => task.parentTaskId === parent.id).length === 2);
+  await waitFor(() => manager.getHistory().filter(task => task.parentTaskId === parent.id).length === SLEEP_WORKFLOW_STAGES.length);
   const children = manager.getHistory().filter(task => task.parentTaskId === parent.id);
-  assert.deepEqual(children.map(task => task.handler).sort(), ['agent.dreamer', 'agent.psychoanalyzer']);
+  assert.deepEqual(children.map(task => task.handler).reverse(), SLEEP_WORKFLOW_STAGES.map(stage => stage.handler));
   assert.equal(children.every(task => task.state === 'completed'), true);
   await engine.stop();
 }
 
 console.log('work coordinator contract passed');
 eventBus.disconnect();
+fs.rmSync(sleepRuntimeFile, { force: true });
+delete process.env.MH_SLEEP_RUNTIME_FILE;

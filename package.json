@@ -32,7 +32,9 @@
 		"postinstall": "node scripts/postinstall.mjs",
 		"validate:graphs": "tsx scripts/validate-graphs.ts",
 		"sync:graph-artifacts": "tsx scripts/sync-cognitive-graph-artifacts.ts",
-		"test:dual-graph": "tsx tests/dual-mode-graph.spec.ts",
+		"test:dual-graph": "node --import tsx tests/dual-mode-graph.spec.ts",
+		"test:environment-graph": "node --import tsx tests/environment-freestyle-graph.spec.ts",
+		"test:model-defaults": "node --import tsx tests/model-defaults.spec.ts",
 		"smoke:vision": "tsx scripts/smoke-vision.ts",
 		"validate:agent-monitor": "tsx scripts/validate-agent-monitor.ts",
 		"validate:security-routes": "tsx scripts/validate-security-routes.ts",
@@ -40,15 +42,6 @@
 		"validate:tts-node-ownership": "tsx packages/core/src/tts-node-ownership.spec.ts",
 		"validate:tts-delivery-queue": "tsx packages/core/src/tts/delivery-queue.spec.ts",
 		"validate:voice-service-ownership": "tsx packages/core/src/voice-service-ownership.spec.ts",
-		"validate:environment-classifier": "node --import tsx --test packages/core/src/environment-classifier.spec.ts brain/training/environment-classifier/benchmark.spec.ts",
-		"generate:environment-classifier-training": "node --import tsx brain/training/environment-classifier/generate-training-data.ts",
-		"train:environment-classifier:0.8b": "node --import tsx brain/training/environment-classifier/train.ts",
-		"evaluate:environment-classifier:checkpoint": "node --import tsx brain/training/environment-classifier/evaluate-checkpoint.ts",
-    "evaluate:environment-classifier:final": "node --import tsx brain/training/environment-classifier/evaluate-final.ts",
-    "benchmark:environment-classifier:runtime": "node --import tsx brain/training/environment-classifier/benchmark-final-runtime.ts",
-    "export:environment-classifier:merged": "node --import tsx brain/training/environment-classifier/export-final-merged.ts",
-		"score:environment-classifier:development": "node --import tsx brain/training/environment-classifier/score-development-validation.ts",
-		"benchmark:environment-classifier": "node --import tsx brain/training/environment-classifier/benchmark.ts",
 		"validate:environment-action-selector": "node --import tsx --test brain/training/environment-action-selector/corpus.spec.ts brain/training/environment-action-selector/regression.spec.ts",
 		"generate:environment-action-selector-training": "node --import tsx brain/training/environment-action-selector/generate-training-data.ts",
 		"train:environment-action-selector:0.8b": "node --import tsx brain/training/environment-action-selector/train.ts",
@@ -64,20 +57,20 @@
 		"audit:inventory": "tsx scripts/create-audit-inventory.ts",
 		"audit:fast": "./bin/audit check",
 		"typecheck:core": "pnpm --dir packages/core exec tsc --noEmit",
+		"typecheck:brain": "pnpm --dir brain typecheck",
 		"typecheck:cli": "pnpm --dir packages/cli exec tsc --noEmit",
+		"typecheck:agent-runtime": "pnpm --dir packages/agent-runtime exec tsc --noEmit",
+		"typecheck:local-model-service": "pnpm --dir packages/local-model-service exec tsc --noEmit",
+		"typecheck:scripts": "pnpm exec tsc --project scripts/tsconfig.json",
+		"typecheck:tests": "pnpm exec tsc --project tests/tsconfig.json",
+		"typecheck:mobile": "pnpm --dir apps/react-native typecheck",
 		"typecheck:site": "cd apps/site && pnpm exec astro check",
+		"typecheck": "pnpm typecheck:core && pnpm typecheck:brain && pnpm typecheck:cli && pnpm typecheck:agent-runtime && pnpm typecheck:local-model-service && pnpm typecheck:scripts && pnpm typecheck:tests && pnpm typecheck:mobile && pnpm typecheck:site",
 		"dev": "cd apps/site && NODE_OPTIONS='--max-old-space-size=4096' pnpm dev",
 		"build": "pnpm check:architecture && pnpm validate:user-agnostic && pnpm validate:graphs && pnpm validate:tts-node-ownership && pnpm validate:tts-delivery-queue && pnpm validate:voice-service-ownership && cd apps/site && pnpm build",
 		"start": "cd apps/site && pnpm preview",
 		"mobile:dev": "pnpm --dir apps/react-native dev",
 		"mobile:build": "pnpm --dir apps/react-native build"
-	},
-	"dependencies": {
-		"dotenv": "^17.2.3",
-		"fs-extra": "^11.3.2",
-		"node-fetch": "^2.7.0",
-		"node-pty": "^1.1.0",
-		"tsx": "^4.20.6"
 	},
 	"packageManager": "pnpm@10.15.1+sha512.34e538c329b5553014ca8e8f4535997f96180a1d0f614339357449935350d924e22f8614682191264ec33d1462ac21561aff97f6bb18065351c162c7e8f6de67",
 	"engines": {
@@ -85,8 +78,8 @@
 		"pnpm": ">=10.15.1 <11"
 	},
 	"devDependencies": {
-		"@types/fs-extra": "^11.0.4",
-		"@types/node-fetch": "^2.6.13",
-		"esbuild": "^0.27.1"
+		"@types/node": "^24.9.1",
+		"tsx": "^4.20.6",
+		"typescript": "^5.9.3"
 	}
 }

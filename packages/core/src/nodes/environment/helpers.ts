@@ -40,7 +40,6 @@ export const ENVIRONMENT_TASK_OUTCOMES = [
   'continue',
   'observe',
   'act',
-  'escalate',
   'report',
   'curiosity',
   'background',
@@ -72,12 +71,6 @@ export const ENVIRONMENT_ACTION_PURPOSES = [
 ] as const;
 
 export type EnvironmentActionPurpose = typeof ENVIRONMENT_ACTION_PURPOSES[number];
-export type EnvironmentPresentation = 'private' | 'conversation';
-
-export interface EnvironmentEscalationRequest {
-  target: 'general';
-  reason: string;
-}
 
 export interface EnvironmentTaskContract {
   objective: string;
@@ -130,7 +123,6 @@ export interface EnvironmentTaskState {
   requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
   motionClass?: EnvironmentMotionClass;
   actionPurpose?: EnvironmentActionPurpose;
-  presentation?: EnvironmentPresentation;
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
   baselineFrame?: EnvironmentTaskFrameRef;
   selectedAction?: EnvironmentTaskSelectedAction;
@@ -151,6 +143,19 @@ const ENVIRONMENT_TASK_STATE_PREFIX = 'EnvironmentTaskState:';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function environmentInputSource(
+  context: { environmentActionSource?: unknown; userMessage?: unknown },
+  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
+): 'user' | 'autonomy' {
+  if (context.environmentActionSource === 'autonomy') return 'autonomy';
+  if (context.environmentActionSource === 'user') return 'user';
+  if (typeof context.userMessage === 'string' && context.userMessage.trim()) return 'user';
+  const robotObserver = isRecord(observation?.metadata?.robotObserver)
+    ? observation.metadata.robotObserver
+    : null;
+  return robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user';
 }
 
 /**
@@ -309,7 +314,6 @@ export function encodeEnvironmentTaskState(state: EnvironmentTaskState): string 
     requiredCompletionBasis: state.requiredCompletionBasis,
     ...(state.motionClass ? { motionClass: state.motionClass } : {}),
     ...(state.actionPurpose ? { actionPurpose: state.actionPurpose } : {}),
-    ...(state.presentation ? { presentation: state.presentation } : {}),
     ...(state.visualEvidenceMode ? { visualEvidenceMode: state.visualEvidenceMode } : {}),
     ...(state.baselineFrame ? { baselineFrame: state.baselineFrame } : {}),
     ...(state.selectedAction ? { selectedAction: state.selectedAction } : {}),
@@ -371,9 +375,6 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
     const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
     const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
     const actionPurpose = normalizedEnvironmentActionPurpose(parsed.actionPurpose);
-    const presentation = parsed.presentation === 'private' || parsed.presentation === 'conversation'
-      ? parsed.presentation
-      : undefined;
     const visualEvidenceMode = parsed.visualEvidenceMode === 'single' || parsed.visualEvidenceMode === 'comparison'
       ? parsed.visualEvidenceMode
       : undefined;
@@ -390,7 +391,6 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       || requiredCompletionBasis === 'none'
       || (parsed.motionClass !== undefined && !motionClass)
       || (parsed.actionPurpose !== undefined && !actionPurpose)
-      || (parsed.presentation !== undefined && !presentation)
     ) return null;
     const baselineFrame = normalizedTaskFrameRef(parsed.baselineFrame);
     const selectedAction = normalizedSelectedAction(parsed.selectedAction);
@@ -404,7 +404,6 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       requiredCompletionBasis,
       ...(motionClass ? { motionClass } : {}),
       ...(actionPurpose ? { actionPurpose } : {}),
-      ...(presentation ? { presentation } : {}),
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(baselineFrame ? { baselineFrame } : {}),
       ...(selectedAction ? { selectedAction } : {}),
@@ -510,20 +509,16 @@ export interface EnvironmentTaskDecision {
   objectiveComplete: boolean;
   continuationPolicy?: EnvironmentContinuationPolicy;
   requiredCompletionBasis?: EnvironmentCompletionBasis;
-  completionBasis?: EnvironmentCompletionBasis;
-  completionEvidence?: string;
   /** Environment LLM-owned semantic motion reference for the selected action. */
   motionClass?: EnvironmentMotionClass;
   /** Why the selected action exists; Task State uses this to enforce evidence consistency. */
   actionPurpose?: EnvironmentActionPurpose;
-  /** Autonomous outputs are private unless the selector deliberately addresses a person. */
-  presentation?: EnvironmentPresentation;
   /** Short current-scene description used only for asynchronous familiarity search. */
   observationSummary?: string;
   /** Whether visual proof needs one current frame or a before/after comparison. */
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
-  /** Explicit request for one conversation-only general-model response. */
-  escalation?: EnvironmentEscalationRequest;
+  /** Model-authored evidence for a completion claim. Visual evidence must cite the current frame id. */
+  completionEvidence?: string;
   /** Internal provenance added after model output parsing by Environment Task Contract. */
   taskContractSource?: EnvironmentTaskContractSource;
   /** Typed disagreement retained for lifecycle telemetry; never model-authored. */
@@ -575,11 +570,14 @@ export interface EnvironmentSelectorEnvelopeInput {
   memories?: string[];
   personaText?: string;
   mustSelectAction?: boolean;
+  mustAdvanceTask?: boolean;
+  inputSource?: 'user' | 'autonomy';
 }
 
 export interface EnvironmentSelectorSystemInput {
   systemPrompt: string;
   queuedContinuation?: boolean;
+  mustAdvanceTask?: boolean;
 }
 
 export function buildEnvironmentSelectorSystemPrompt(
@@ -589,6 +587,9 @@ export function buildEnvironmentSelectorSystemPrompt(
     input.systemPrompt.trim(),
     input.queuedContinuation
       ? 'This is a continuation of the one persisted taskState in the user envelope; preserve its objective and evidence contract.'
+      : '',
+    input.mustAdvanceTask
+      ? 'This bounded continuation must advance the persisted task: either complete it from the exact required evidence or return one next advertised action now. An incomplete response with no action is invalid.'
       : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -659,9 +660,11 @@ export function buildEnvironmentSelectorEnvelope(
     : null;
   return JSON.stringify({
     currentInstruction: input.instruction.slice(0, 4_000),
-    inputSource: robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user',
+    inputSource: input.inputSource
+      ?? (robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user'),
     decisionRequirements: {
       mustSelectAction: input.mustSelectAction === true,
+      mustAdvanceTask: input.mustAdvanceTask === true,
     },
     currentEnvironment: {
       sessionId: observation.sessionId,
@@ -823,12 +826,6 @@ function parseTaskDecision(
   const objective = typeof record.objective === 'string'
     ? record.objective.replace(/\s+/g, ' ').trim().slice(0, 1_000)
     : '';
-  const completionBasis = typeof record.completionBasis === 'string'
-    ? record.completionBasis.trim() as EnvironmentCompletionBasis
-    : undefined;
-  if (completionBasis !== undefined && !ENVIRONMENT_COMPLETION_BASES.includes(completionBasis)) {
-    return { decision: null, error: 'taskDecision completionBasis is not supported' };
-  }
   const requiredCompletionBasis = typeof record.requiredCompletionBasis === 'string'
     ? record.requiredCompletionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
@@ -850,12 +847,6 @@ function parseTaskDecision(
   ) {
     return { decision: null, error: 'taskDecision continuationPolicy is not supported' };
   }
-  const completionEvidence = typeof record.completionEvidence === 'string'
-    ? record.completionEvidence.trim()
-    : '';
-  if (completionEvidence.length > 500) {
-    return { decision: null, error: 'taskDecision completionEvidence exceeds 500 characters' };
-  }
   const motionClass = normalizedEnvironmentMotionClass(record.motionClass);
   if (record.motionClass !== undefined && !motionClass) {
     return { decision: null, error: 'taskDecision motionClass is not supported' };
@@ -863,12 +854,6 @@ function parseTaskDecision(
   const actionPurpose = normalizedEnvironmentActionPurpose(record.actionPurpose);
   if (record.actionPurpose !== undefined && !actionPurpose) {
     return { decision: null, error: 'taskDecision actionPurpose is not supported' };
-  }
-  const presentation = record.presentation === 'private' || record.presentation === 'conversation'
-    ? record.presentation
-    : undefined;
-  if (record.presentation !== undefined && !presentation) {
-    return { decision: null, error: 'taskDecision presentation is not supported' };
   }
   const observationSummary = typeof record.observationSummary === 'string'
     ? record.observationSummary.replace(/\s+/g, ' ').trim()
@@ -883,23 +868,11 @@ function parseTaskDecision(
   if (record.visualEvidenceMode !== undefined && !visualEvidenceMode) {
     return { decision: null, error: 'taskDecision visualEvidenceMode is not supported' };
   }
-  let escalation: EnvironmentEscalationRequest | undefined;
-  if (record.escalation !== undefined) {
-    if (!isRecord(record.escalation)) {
-      return { decision: null, error: 'taskDecision escalation must be an object' };
-    }
-    const escalationKeys = Object.keys(record.escalation);
-    const escalationReason = typeof record.escalation.reason === 'string'
-      ? record.escalation.reason.trim().slice(0, 500)
-      : '';
-    if (
-      escalationKeys.some(key => key !== 'target' && key !== 'reason')
-      || record.escalation.target !== 'general'
-      || !escalationReason
-    ) {
-      return { decision: null, error: 'taskDecision escalation must contain only target=general and a reason' };
-    }
-    escalation = { target: 'general', reason: escalationReason };
+  const completionEvidence = typeof record.completionEvidence === 'string'
+    ? record.completionEvidence.replace(/\s+/g, ' ').trim()
+    : '';
+  if (completionEvidence.length > 1_000) {
+    return { decision: null, error: 'taskDecision completionEvidence exceeds 1000 characters' };
   }
   return {
     decision: {
@@ -911,14 +884,11 @@ function parseTaskDecision(
         : outcome === 'complete',
       ...(continuationPolicy ? { continuationPolicy } : {}),
       ...(requiredCompletionBasis ? { requiredCompletionBasis } : {}),
-      ...(completionBasis ? { completionBasis } : {}),
-      ...(completionEvidence ? { completionEvidence } : {}),
       ...(motionClass ? { motionClass } : {}),
       ...(actionPurpose ? { actionPurpose } : {}),
-      ...(presentation ? { presentation } : {}),
       ...(observationSummary ? { observationSummary } : {}),
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-      ...(escalation ? { escalation } : {}),
+      ...(completionEvidence ? { completionEvidence } : {}),
     },
     error: '',
   };
@@ -942,22 +912,11 @@ const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
   objectiveComplete: { type: 'boolean' },
   continuationPolicy: { type: 'string', enum: [...ENVIRONMENT_CONTINUATION_POLICIES] },
   requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
-  completionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
-  completionEvidence: SELECTOR_SCHEMA_STRING,
   motionClass: { type: 'string', enum: [...ENVIRONMENT_MOTION_CLASSES] },
   actionPurpose: { type: 'string', enum: [...ENVIRONMENT_ACTION_PURPOSES] },
-  presentation: { type: 'string', enum: ['private', 'conversation'] },
   observationSummary: SELECTOR_SCHEMA_STRING,
   visualEvidenceMode: { type: 'string', enum: ['single', 'comparison'] },
-  escalation: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['target', 'reason'],
-    properties: {
-      target: { const: 'general' },
-      reason: SELECTOR_SCHEMA_STRING,
-    },
-  },
+  completionEvidence: { type: 'string', maxLength: 1_000 },
 } as const;
 const SELECTOR_SCHEMA_DECISION_REQUIRED = [
   'outcome',
@@ -965,7 +924,6 @@ const SELECTOR_SCHEMA_DECISION_REQUIRED = [
   'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',
-  'presentation',
 ] as const;
 const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
   type: { type: 'string', enum: [...DIRECT_ACTION_TYPES] },
@@ -982,12 +940,48 @@ const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
   metadata: { type: 'object' },
 } as const;
 
+function selectorActionItemSchema(
+  directActionTypes: EnvironmentActionType[],
+  robotCommands: string[],
+): Record<string, unknown> {
+  const nonCommandTypes = directActionTypes.filter(type => type !== 'robotCommand');
+  const { command: _command, ...nonCommandProperties } = SELECTOR_SCHEMA_ACTION_PROPERTIES;
+  const nonCommandSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['type'],
+    properties: {
+      ...nonCommandProperties,
+      type: { type: 'string', enum: nonCommandTypes },
+    },
+  };
+  const robotCommandSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['type', 'command'],
+    properties: {
+      type: { type: 'string', enum: ['robotCommand'] },
+      command: robotCommands.length > 0
+        ? { type: 'string', enum: robotCommands }
+        : SELECTOR_SCHEMA_STRING,
+      units: SELECTOR_SCHEMA_ACTION_PROPERTIES.units,
+      amount: SELECTOR_SCHEMA_ACTION_PROPERTIES.amount,
+      durationMs: SELECTOR_SCHEMA_ACTION_PROPERTIES.durationMs,
+      metadata: SELECTOR_SCHEMA_ACTION_PROPERTIES.metadata,
+    },
+  };
+
+  if (nonCommandTypes.length === 0) return robotCommandSchema;
+  if (!directActionTypes.includes('robotCommand')) return nonCommandSchema;
+  return { anyOf: [nonCommandSchema, robotCommandSchema] };
+}
+
 export interface EnvironmentSelectorJsonSchemaInput {
   actions?: readonly string[];
   robotCommands?: readonly string[];
   requireAction?: boolean;
-  requireMotionClass?: boolean;
   requireObjective?: boolean;
+  requireProgress?: boolean;
 }
 
 /**
@@ -1011,12 +1005,44 @@ export function buildEnvironmentSelectorJsonSchema(
     && (type !== 'robotCommand' || !capabilityBound || robotCommands.length > 0)
   ));
   const movementSupported = !capabilityBound || advertisedActions.has('robotMotionPlan');
-  const commandOnly = directActionTypes.length === 1 && directActionTypes[0] === 'robotCommand';
+  const progressBranches: Record<string, unknown>[] = [];
+  if (directActionTypes.length > 0) {
+    progressBranches.push({
+      properties: {
+        actions: { minItems: 1 },
+      },
+    });
+  }
+  if (movementSupported) {
+    progressBranches.push({
+      properties: {
+        movementRequest: { type: 'object' },
+      },
+    });
+  }
+  progressBranches.push({
+    properties: {
+      actions: { maxItems: 0 },
+      movementRequest: { type: 'null' },
+      taskDecision: {
+        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
+          completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
+        },
+      },
+    },
+  });
 
   return {
     type: 'object',
     additionalProperties: false,
     required: ['response', 'actions', 'movementRequest', 'taskDecision'],
+    ...(input.requireProgress === true
+      ? { allOf: [{ anyOf: progressBranches }] }
+      : {}),
     properties: {
       response: SELECTOR_SCHEMA_STRING,
       actions: {
@@ -1025,18 +1051,7 @@ export function buildEnvironmentSelectorJsonSchema(
           ? { minItems: 1 }
           : {}),
         maxItems: 1,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: commandOnly ? ['type', 'command'] : ['type'],
-          properties: {
-            ...SELECTOR_SCHEMA_ACTION_PROPERTIES,
-            type: { type: 'string', enum: directActionTypes },
-            ...(robotCommands.length > 0
-              ? { command: { type: 'string', enum: robotCommands } }
-              : {}),
-          },
-        },
+        items: selectorActionItemSchema(directActionTypes, robotCommands),
       },
       movementRequest: movementSupported
         ? {
@@ -1046,7 +1061,9 @@ export function buildEnvironmentSelectorJsonSchema(
                 type: 'object',
                 additionalProperties: false,
                 required: ['description'],
-                properties: { description: SELECTOR_SCHEMA_STRING },
+                properties: {
+                  description: { type: 'string', minLength: 1, maxLength: 500 },
+                },
               },
             ],
           }
@@ -1056,9 +1073,7 @@ export function buildEnvironmentSelectorJsonSchema(
         additionalProperties: false,
         required: [
           ...SELECTOR_SCHEMA_DECISION_REQUIRED,
-          ...(input.requireMotionClass === false ? [] : ['motionClass']),
           ...(input.requireObjective === true ? ['objective'] : []),
-          'actionPurpose',
         ],
         properties: SELECTOR_SCHEMA_DECISION_PROPERTIES,
       },
@@ -1089,14 +1104,10 @@ const SELECTOR_TASK_DECISION_FIELDS = new Set([
   'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',
-  'completionBasis',
-  'completionEvidence',
   'motionClass',
   'actionPurpose',
-  'presentation',
   'observationSummary',
   'visualEvidenceMode',
-  'escalation',
 ]);
 
 const SELECTOR_ACTION_FIELDS = new Set([
@@ -1214,73 +1225,20 @@ export function validateEnvironmentSelectorOutput(
     errors.push('every action must be a valid typed Environment action');
   }
   if (actions.length > 1) errors.push('selector output may contain at most one action');
-  const movement = parseMovementRequest(raw.movementRequest, sessionId);
+  const normalizedActions = actions.filter((action): action is Partial<EnvironmentAction> => action !== null);
+  // Some structured decoders populate both mutually exclusive branches. A
+  // complete typed direct action is the narrower and safer choice, so it owns
+  // the decision and the off-script movement branch is discarded. Without a
+  // direct action, movement remains strictly validated below.
+  const movement = parseMovementRequest(
+    normalizedActions.length > 0 ? null : raw.movementRequest,
+    sessionId,
+  );
   if (movement.error) errors.push(movement.error);
   const task = parseTaskDecision(raw.taskDecision);
   if (task.error) errors.push(task.error);
 
-  const normalizedActions = actions.filter((action): action is Partial<EnvironmentAction> => action !== null);
-  const action = normalizedActions[0];
   const decision = task.decision;
-  if (action && movement.request) errors.push('actions and movementRequest are mutually exclusive');
-
-  if (decision) {
-    const escalating = decision.outcome === 'escalate' || Boolean(decision.escalation);
-    if (decision.outcome === 'escalate' && !decision.escalation) {
-      errors.push('outcome=escalate requires taskDecision.escalation');
-    }
-    if (decision.escalation && decision.outcome !== 'escalate') {
-      errors.push('taskDecision.escalation requires outcome=escalate');
-    }
-    if (escalating) {
-      if (action || movement.request) errors.push('an escalation cannot contain physical work');
-      if (decision.objectiveComplete) errors.push('an escalation cannot mark the objective complete');
-      if (decision.continuationPolicy !== 'none' || decision.requiredCompletionBasis !== 'response') {
-        errors.push('an escalation must use continuationPolicy=none and requiredCompletionBasis=response');
-      }
-    } else if (action || movement.request) {
-      if (decision.outcome !== 'act') errors.push('physical work requires outcome=act');
-      if (!decision.actionPurpose) {
-        errors.push('physical work requires taskDecision.actionPurpose');
-      }
-    } else if (!String(raw.response ?? '').trim()) {
-      errors.push('a non-action result requires a response or explicit escalation');
-    }
-
-    if (movement.request && decision.motionClass !== 'body_local') {
-      errors.push('movementRequest requires taskDecision.motionClass=body_local');
-    }
-    if (action && isPhysicalSelectorAction(action) && !decision.motionClass) {
-      errors.push('a physical action requires taskDecision.motionClass');
-    }
-    if ((action || movement.request) && decision.actionPurpose === 'information_gain') {
-      if (
-        decision.continuationPolicy !== 'bounded'
-        || decision.requiredCompletionBasis !== 'visual_observation'
-      ) {
-        errors.push('information_gain requires bounded visual_observation evidence');
-      }
-    }
-    if ((action || movement.request) && decision.actionPurpose === 'expression') {
-      if (
-        decision.continuationPolicy !== 'none'
-        || decision.requiredCompletionBasis !== 'action_result'
-      ) {
-        errors.push('expression requires one action_result');
-      }
-    }
-    if (decision.outcome === 'complete') {
-      if (!decision.objectiveComplete) errors.push('outcome=complete requires objectiveComplete=true');
-      if (
-        !decision.completionBasis
-        || decision.completionBasis !== decision.requiredCompletionBasis
-        || !decision.completionEvidence
-      ) {
-        errors.push('a complete objective requires matching completionBasis and completionEvidence');
-      }
-    }
-  }
-
   if (errors.length > 0 || !decision) {
     return { jsonValid: true, valid: false, errors };
   }
@@ -1300,13 +1258,4 @@ export function validateEnvironmentSelectorOutput(
       taskDecision: decision,
     },
   };
-}
-
-function isPhysicalSelectorAction(action: Partial<EnvironmentAction>): boolean {
-  return action.type === 'move'
-    || action.type === 'look'
-    || action.type === 'jump'
-    || action.type === 'robotCommand'
-    || action.type === 'inspect'
-    || action.type === 'visualApproach';
 }

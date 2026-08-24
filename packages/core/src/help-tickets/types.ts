@@ -2,7 +2,7 @@
  * Help Ticket Types
  *
  * When users provide negative feedback, the system creates help tickets
- * that can be reviewed and addressed by the Lizard Brain / System Coder.
+ * that can be reviewed and addressed by the Lizard Brain or a human maintainer.
  */
 
 export type TicketStatus =
@@ -11,8 +11,6 @@ export type TicketStatus =
   | 'needs_fix'        // Confirmed issue, needs code fix
   | 'needs_training'   // Personality/response issue, needs training adjustment
   | 'investigating'    // Requires more context or analysis
-  | 'fix_proposed'     // System Coder has proposed a fix
-  | 'fix_approved'     // User approved the fix
   | 'resolved'         // Issue has been addressed
   | 'wont_fix'         // Intentional behavior or out of scope
   | 'duplicate';       // Already tracked by another ticket
@@ -63,9 +61,8 @@ export interface HelpTicket {
   // Resolution
   resolution?: {
     resolvedAt: string;
-    resolvedBy: 'system_coder' | 'training_update' | 'manual' | 'wont_fix';
+    resolvedBy: 'training_update' | 'manual' | 'wont_fix';
     summary: string;
-    fixId?: string;  // Reference to ProposedFix if code change
     desireId?: string;  // Reference to Desire if training/personality change
   };
 
@@ -76,7 +73,7 @@ export interface HelpTicket {
 export interface TicketHistoryEntry {
   timestamp: string;
   action: string;
-  actor: 'user' | 'lizard_brain' | 'system_coder' | 'system';
+  actor: 'user' | 'lizard_brain' | 'system';
   details?: Record<string, unknown>;
 }
 

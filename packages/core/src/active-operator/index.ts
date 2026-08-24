@@ -125,5 +125,4 @@ export {
   // Big Brother execution review
   type ExecutionReviewResult,
   triggerBigBrotherExecutionReview,
-  submitImprovementRequest,
 } from './operator-proposals.js';

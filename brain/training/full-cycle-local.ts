@@ -356,20 +356,12 @@ async function mainWithContext() {
       console.log('[full-cycle-local] STEP 0/4: Pre-curation pass (LLM curator finishing uncurated memories)...');
       console.log('[full-cycle-local] Processing remaining uncurated memories before aggregation');
 
-      try {
-        const llmCuratorCode = await runAgent('curator', ['--username', ctx.username]);
-        if (llmCuratorCode === 0) {
-          console.log('[full-cycle-local] ✅ Pre-curation pass completed successfully');
-        } else {
-          console.warn(`[full-cycle-local] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
-        }
-      } catch (curatorError) {
-        console.warn('[full-cycle-local] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
-        console.warn('[full-cycle-local] Continuing with available curated memories...');
-      }
+      const llmCuratorCode = await runAgent('curator', ['--username', ctx.username, '--all']);
+      if (llmCuratorCode !== 0) throw new Error(`Pre-curation pass failed with exit code ${llmCuratorCode}`);
+      console.log('[full-cycle-local] ✅ Pre-curation pass completed successfully');
     }
 
-    // Step 1: Aggregate curated conversations from curator.ts output
+    // Step 1: Aggregate the canonical curated-conversation store
     console.log('[full-cycle-local] STEP 1/4: Aggregating curated conversations...');
     if (!skipPreprocessing) {
       console.log('[full-cycle-local] Using LLM-curated conversations from curator agent');
@@ -379,9 +371,7 @@ async function mainWithContext() {
 
     const aggregatorArgs = ['--username', ctx.username, '--output', CURATED_PATH];
 
-    // Note: Monthly training strategy is handled by curator.ts incrementally
-    // The curator processes ~50 memories per run and maintains quality over time
-    // For training, we simply aggregate all available curated conversations
+    // The bounded --all pass above drains available memories before aggregation.
 
     if (process.env.METAHUMAN_MAX_SAMPLES) {
       aggregatorArgs.push('--max', process.env.METAHUMAN_MAX_SAMPLES);

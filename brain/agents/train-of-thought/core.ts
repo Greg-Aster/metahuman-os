@@ -30,6 +30,7 @@ import {
   getProfilePaths,
   type SvelteFlowGraph,
 } from '@metahuman/core';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -191,7 +192,7 @@ export function selectSeedMemory(memories: Array<{ file: string; timestamp: Date
  * Execute train of thought for a specific user
  */
 export async function executeTrainOfThoughtForUser(username: string): Promise<UserThoughtStats> {
-  return await withUserContext(username, async () => {
+  return await withUserContext(requireUserInfo(username), async () => {
     console.log(`[train-of-thought] Starting for user: ${username}`);
 
     try {

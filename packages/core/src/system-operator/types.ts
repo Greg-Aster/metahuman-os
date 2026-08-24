@@ -50,9 +50,11 @@ export interface HousekeepingResult extends OperationResult {
 export interface IndexMaintenanceResult extends OperationResult {
   operation: 'index_maintenance';
   details: {
-    indexesRebuild: string[];
-    memoriesReindexed: number;
-    orphanedEntriesRemoved: number;
+    rebuildNeeded: boolean;
+    rebuildQueued: boolean;
+    taskId?: string;
+    missingFromIndex: number;
+    orphanedEntries: number;
     indexSize: number;
   };
 }
@@ -102,11 +104,6 @@ export interface SystemOperatorConfig {
     maxLogAgeDays: number;
     maxTempAgeDays: number;
   };
-  autoIndexMaintenance: {
-    enabled: boolean;
-    intervalHours: number;
-    rebuildThreshold: number; // % of stale entries
-  };
   ingestionQA: {
     enabled: boolean;
     intervalHours: number;
@@ -127,11 +124,6 @@ export const DEFAULT_CONFIG: SystemOperatorConfig = {
     intervalHours: 6,
     maxLogAgeDays: 30,
     maxTempAgeDays: 7,
-  },
-  autoIndexMaintenance: {
-    enabled: true,
-    intervalHours: 12,
-    rebuildThreshold: 20,
   },
   ingestionQA: {
     enabled: false,

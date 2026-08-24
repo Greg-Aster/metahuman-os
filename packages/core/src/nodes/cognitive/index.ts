@@ -9,6 +9,7 @@ export { AuditLoggerNode } from './audit-logger.node.js';
 export { ToolCatalogBuilderNode } from './tool-catalog-builder.node.js';
 export { PlanValidatorNode } from './plan-validator.node.js';
 export { PersonaFormatterNode } from './persona-formatter.node.js';
+export { ReflectionPromptNode } from './reflection-prompt.node.js';
 export { PolicyLoaderNode } from './policy-loader.node.js';
 export { InnerDialogueSaverNode } from './inner-dialogue-saver.node.js';
 export { ScratchpadWriterNode } from './scratchpad-writer.node.js';
@@ -19,6 +20,7 @@ import { AuditLoggerNode } from './audit-logger.node.js';
 import { ToolCatalogBuilderNode } from './tool-catalog-builder.node.js';
 import { PlanValidatorNode } from './plan-validator.node.js';
 import { PersonaFormatterNode } from './persona-formatter.node.js';
+import { ReflectionPromptNode } from './reflection-prompt.node.js';
 import { PolicyLoaderNode } from './policy-loader.node.js';
 import { InnerDialogueSaverNode } from './inner-dialogue-saver.node.js';
 import { ScratchpadWriterNode } from './scratchpad-writer.node.js';
@@ -29,6 +31,7 @@ export const cognitiveNodes = [
   ToolCatalogBuilderNode,
   PlanValidatorNode,
   PersonaFormatterNode,
+  ReflectionPromptNode,
   PolicyLoaderNode,
   InnerDialogueSaverNode,
   ScratchpadWriterNode,

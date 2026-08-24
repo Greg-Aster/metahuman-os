@@ -248,9 +248,7 @@ interface ScratchpadEntry {
 - `search_index` - Semantic memory search
 - `web_search` - Web search via API
 
-##### Development (3 skills)
-- `code_generate` - Generate code
-- `code_apply_patch` - Apply code patches
+##### Development (1 skill)
 - `shell_safe` - Safe shell command execution
 
 ##### Communication (1 skill)

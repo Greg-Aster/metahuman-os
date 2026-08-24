@@ -71,11 +71,13 @@ The `brain/` layer contains agents and services above the core engine. They are 
 
 Examples include:
 
-- memory organizer, ingestor, pruner, sync, auto-indexer, and summarizer;
+- memory organizer, ingestor, pruner, sync, and summarizer;
 - reflector, dreamer, daydreamer, train-of-thought, curiosity service, and inner curiosity;
 - desire generator, desire explorer, desire planner, desire executor, and outcome reviewer;
 - curator, night pipeline, training orchestrators, adapter builders, and model utilities;
-- transcriber, audio organizer, voice-training helpers, and maintenance/coder agents.
+- transcriber, audio organizer, voice-training helpers, and maintenance services.
+
+Full vector-index reconciliation is core engine work admitted through the Work Coordinator, including the final Sleep Workflow stage; it is not a separate agent or scheduler.
 
 The agency system turns memories, goals, tasks, reflections, and curiosity into supervised desires. Desires can be clarified, planned, reviewed, approved, executed through the operator/tool layer, and later promoted into proposed persona goals.
 

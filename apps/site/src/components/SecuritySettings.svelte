@@ -1233,6 +1233,12 @@
       </div>
     {/if}
 
+    {#if currentUser.role === 'owner'}
+      <div class="panel mb-6">
+        <ProfileCreation />
+      </div>
+    {/if}
+
     <!-- Danger Zone -->
     <div class="bg-red-50 dark:bg-red-900/20 border-2 border-red-500 rounded-xl p-6 mb-6">
       <h2 class="text-xl font-semibold text-red-800 dark:text-red-200 m-0 mb-4">⚠️ Danger Zone</h2>

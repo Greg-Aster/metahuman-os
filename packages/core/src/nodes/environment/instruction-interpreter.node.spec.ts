@@ -59,7 +59,6 @@ test('instruction interpreter restores the original objective from a persisted c
     robotObserver: {
       cycleId: 'cycle-1',
       step: 2,
-      maxSteps: 4,
       triggerSource: 'user',
       graph: 'environment',
       requestedBy: 'environment-perception',
@@ -99,7 +98,6 @@ test('a legacy queued continuation is normalized without creating routing author
     robotObserver: {
       cycleId: 'cycle-1',
       step: 2,
-      maxSteps: 4,
       triggerSource: 'autonomy',
       graph: 'environment',
       requestedBy: 'environment-perception',
@@ -119,7 +117,6 @@ test('an existing correlated image is not mislabeled as a completed camera reque
     robotObserver: {
       cycleId: 'cycle-1',
       step: 1,
-      maxSteps: 4,
       triggerSource: 'user',
       graph: 'environment',
       requestedBy: 'environment-perception',

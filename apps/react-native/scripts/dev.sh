@@ -41,6 +41,7 @@ USE_EMULATOR=true
 FORCE_REBUILD=false
 COLD_START=false
 VERBOSE=false
+BACKEND_REBUILT=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -67,7 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --no-emu, --device   Use physical device instead of emulator"
-            echo "  --rebuild            Force rebuild handlers before starting"
+            echo "  --rebuild            Force rebuild backend assets before starting"
             echo "  --cold               Clear Metro cache (cold start)"
             echo "  --verbose, -v        Show verbose output"
             echo "  --help, -h           Show this help"
@@ -227,10 +228,13 @@ start_emulator() {
     exit 1
 }
 
-# Build handlers (if needed)
-build_handlers() {
-    local handlers_built="$SCRIPT_DIR/.handlers_built"
+# Build backend assets (if needed)
+build_backend() {
+    local handlers_built="$SCRIPT_DIR/.backend_built"
     local core_src="$ROOT_DIR/packages/core/src"
+    local brain_src="$ROOT_DIR/brain"
+    local config_src="$ROOT_DIR/etc"
+    local node_entry="$RN_DIR/nodejs-assets/nodejs-project/main.js"
 
     # Check if rebuild is needed
     local need_rebuild=false
@@ -244,25 +248,43 @@ build_handlers() {
     elif [[ -n $(find "$core_src" -name "*.ts" -newer "$handlers_built" 2>/dev/null | head -1) ]]; then
         need_rebuild=true
         log INFO "Core source files changed"
+    elif [[ -n $(find "$brain_src" -name "*.ts" -newer "$handlers_built" 2>/dev/null | head -1) ]]; then
+        need_rebuild=true
+        log INFO "Brain source files changed"
+    elif [[ -n $(find "$config_src" -type f -newer "$handlers_built" 2>/dev/null | head -1) ]]; then
+        need_rebuild=true
+        log INFO "Runtime configuration changed"
+    elif [[ "$SCRIPT_DIR/build-backend.mjs" -nt "$handlers_built" ]]; then
+        need_rebuild=true
+        log INFO "Backend build owner changed"
+    elif [[ "$node_entry" -nt "$handlers_built" ]]; then
+        need_rebuild=true
+        log INFO "Mobile Node entrypoint changed"
     fi
 
     if [[ "$need_rebuild" == "true" ]]; then
-        log CMD "Building mobile handlers..."
+        log CMD "Building mobile backend assets..."
         cd "$ROOT_DIR"
-        node "$SCRIPT_DIR/build-handlers.mjs"
+        node "$SCRIPT_DIR/build-backend.mjs"
         touch "$handlers_built"
-        log INFO "Handlers built"
+        BACKEND_REBUILT=true
+        log INFO "Backend assets built"
     else
-        log INFO "Handlers up to date (skip with --rebuild to force)"
+        log INFO "Backend assets up to date (use --rebuild to force)"
     fi
 }
 
 # Install app on device/emulator
 install_app() {
     local apk_path="$RN_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+    local mobile_index="$RN_DIR/nodejs-assets/nodejs-project/www/index.html"
 
-    if [[ ! -f "$apk_path" ]]; then
-        log WARN "Debug APK not found, building..."
+    if [[ ! -f "$mobile_index" ]]; then
+        log INFO "Bundled UI is missing; running the complete mobile asset build..."
+        "$SCRIPT_DIR/build-mobile.sh"
+        BACKEND_REBUILT=false
+    elif [[ ! -f "$apk_path" || "$BACKEND_REBUILT" == "true" ]]; then
+        log INFO "Building debug APK with current backend assets..."
         cd "$RN_DIR/android"
         export JAVA_HOME
         export PATH="$JAVA_HOME/bin:$PATH"
@@ -398,8 +420,8 @@ main() {
     start_emulator
 
     echo ""
-    log INFO "=== STEP 2: Build Handlers ==="
-    build_handlers
+    log INFO "=== STEP 2: Build Backend ==="
+    build_backend
 
     echo ""
     log INFO "=== STEP 3: Install App ==="

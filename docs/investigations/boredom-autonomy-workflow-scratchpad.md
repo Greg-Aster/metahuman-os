@@ -12,29 +12,43 @@ Implemented at source level on 2026-08-24:
   persona, delegated reflection memory, current correlated images, action
   feedback, and the complete advertised capability schema;
 - reused the existing Environment action parser, optional Movement Generator,
-  Environment Task State, Bridge Out, Robot Buffer, Conversation Buffer, Inner
-  Dialogue Buffer, and TTS nodes;
+  Environment Task State, Bridge Out, Robot Buffer, Conversation Buffer, and
+  TTS nodes while retaining Inner Buffer only as historical context input;
 - made Environment Task State the sole lifecycle and consequence-admission owner
   for both reactive Environment Mode and Boredom Autonomy;
-- returned model-selected presentation directly from the existing action parser,
-  avoiding a second response-routing or synthesis pass;
+- removed model-selected response visibility and routed every Environment result
+  through the one Conversation Buffer and TTS path;
 - routed physical results back to Boredom Autonomy through the existing bounded
   robot-observer cycle;
-- made the same executive model call author or revise a short-lived objective in
-  the existing Environment Task State before selecting one consequence;
-- carried only Task State's serialized lifecycle contract as the originating
-  instruction for the next correlated action-result pass;
+- made the same executive model call author or revise an evolving episode
+  objective in the existing Environment Task State before selecting the next
+  consequence;
+- persisted Task State's serialized lifecycle contract as execution authority
+  while reloading persona, recent conversation and reflection, sampled memory,
+  verified action history, current state, capabilities, and correlated evidence
+  on every pass;
 - removed the competing Robot Autonomy Episode State node, nested output
-  contract, self-instruction feedback authority, and episode presentation
+  contract, self-instruction feedback authority, and episode response
   metadata;
-- made the existing Environment Action Parser enforce the existing strict
-  selector JSON contract at runtime instead of accepting prose or partial JSON;
-- removed the movement trigger's stationary/posture preference and restored the
-  single configured Robot Operator cycle step ceiling for every boredom child;
+- made the Environment Action Parser enforce structural selector JSON while
+  leaving lifecycle and evidence judgment to Environment Task State;
+- removed the movement trigger's stationary/posture preference and made
+  Environment Task State enforce the one configured action ceiling for every
+  boredom child;
+- removed the Movement Generator's duplicate-plan rejection and its plan-list
+  and repetition-counter state; identical valid plans are not policy-blocked;
 - kept the three trigger graphs free of LLM, persona, history, speech, and
   semantic action-selection nodes;
 - authorized the new graph to reuse the one canonical server-owned robot speech
   route without opening robot TTS to arbitrary workflows.
+- classified the latest action result by cycle correlation: matching results are
+  current evidence, while older results remain available as history rather than
+  leaking into the new episode as its completed action;
+- returned failed or expired autonomous captures to the same Boredom Autonomy
+  graph so the executive can revise its objective instead of silently ending;
+- removed model-authored `completionBasis` and `completionEvidence` restatement;
+  Environment Task State now checks its own canonical evidence directly and
+  records the verified completion provenance itself.
 
 Still unproven: live model quality, physical movement, fresh-frame correlation,
 TTS completion ordering, and Semi/Full interruption behavior on the actual
@@ -47,10 +61,10 @@ only a voice-command appliance. When the robot has been idle, Robot Operator
 may trigger observation, movement, or reflection. Those triggers supply an
 autonomous stimulus; they do not decide or execute the consequence.
 
-The consequence can be broad and persona-dependent: a private thought, speech,
-an advertised movement, a fresh observation, or a short sequence that changes
-as action results and images arrive. Activities must be inferred from current
-evidence, persona, recent conversation, private reflection, sampled memory, and
+The consequence can be broad and persona-dependent: a reflection, speech, an
+advertised movement, a fresh observation, or a short sequence that changes as
+action results and images arrive. Activities must be inferred from current
+evidence, persona, recent conversation, historical reflection, sampled memory, and
 available capabilities. They must not be encoded as scene-specific rules or a
 hard-coded activity catalog.
 
@@ -89,12 +103,15 @@ Robot Operator already supplies most of the control plane that is needed:
 - Semi uses independent randomized inactivity timers.
 - Full rotates the three triggers between configured cooldowns.
 - active robot-autonomy work prevents overlapping boredom cycles.
-- each cycle has correlation metadata and a small step budget.
+- each cycle has correlation metadata; Environment Task State owns its small
+  action budget.
 - action results can select a feedback graph.
 - the coordinator can preempt autonomy for user work.
 
 The source repair now carries one Environment Task State contract through the
-existing robot-observer cycle. Remaining proof is runtime and physical: the
+existing robot-observer cycle and rebuilds the executive context on every pass.
+Older context remains influential, but only the matching correlated result can
+prove the current action. Remaining proof is runtime and physical: the
 configured model must produce a valid objective and consequence, the adapter
 must return correlated action evidence, and the next pass must use that state
 on hardware.
@@ -168,7 +185,7 @@ Robot Operator timer or manual Agent Monitor run
        read bounded persona + conversation + inner reflection + sampled memory
        choose one consequence
        capability-check and execute at most one action
-       publish speech or private reflection when selected
+       publish every response through Conversation Buffer and TTS
   -> yield to Work Coordinator
   -> correlated action result/image re-enters Boredom Autonomy
   -> choose one next consequence or end the episode
@@ -192,13 +209,13 @@ expensive than asking the model to author and repeatedly validate a long plan.
 The existing correlated robot-observer metadata carries:
 
 - `cycleId`
-- `step` and `maxSteps`
+- `step` for feedback correlation only
 - `requestedBy`
 - `triggerSource`
 - `graph`
 - latest correlated image/action feedback
 - one serialized `EnvironmentTaskState` contract containing the current
-  model-authored objective, phase, action step, evidence contract, presentation,
+  model-authored objective, phase, action step and limit, evidence contract,
   baseline frame reference, and selected action
 
 This adds no database or transcript. The visible graph prepares the existing
@@ -208,11 +225,9 @@ the executive prompt and requirement that autonomy author an objective differ.
 
 ### Deliberation contract
 
-One model pass may choose exactly one of:
-
-1. one supported action, optionally with a brief spoken or private response;
-2. conversation without a physical action;
-3. substantive private reflection without a physical action.
+One model pass returns one outward response and may choose at most one supported
+action or body-local movement request. A reflection is a valid response; it does
+not use a separate hidden output route.
 
 The model receives the complete currently advertised robot-command catalog.
 Novel body-local gesture generation is available only through the existing
@@ -222,9 +237,9 @@ present in the structured action field; prose such as “I will stretch” does 
 count as execution.
 
 After an action, the next pass sees its correlated result and any new image. It
-may continue, change direction, speak, reflect, or stop. The graph step limit,
-coordinator preemption, capability admission, bridge readiness, and physical
-safety checks remain deterministic.
+may continue, change direction, speak, reflect, or stop. The Task State action
+limit, coordinator preemption, capability admission, bridge readiness, and
+physical safety checks remain deterministic.
 
 ## Efficiency rules
 
@@ -248,11 +263,11 @@ safety checks remain deterministic.
    nodes.
 2. Route Observer camera feedback and Movement/Reflection delegation into it.
 3. Reuse the Environment structured action schema, parser, Movement Generator,
-   Bridge Out, Robot Buffer, Conversation Buffer, Inner Dialogue Buffer, and
-   TTS nodes.
+   Bridge Out, Robot Buffer, Conversation Buffer, and TTS nodes.
 4. Use Environment Task State for objective persistence, evidence consistency,
    generated-movement admission, and serialized feedback continuation.
-5. Keep the existing cycle correlation and step limit as the bounded episode.
+5. Keep the existing cycle correlation and let Environment Task State enforce
+   the configured bounded action limit.
 6. Validate source contracts, all cognitive graphs, architecture boundaries,
    and focused autonomous cases.
 7. Physically test Semi and Full separately. Source validation cannot prove a
@@ -270,12 +285,55 @@ safety checks remain deterministic.
 - An action result re-enters Boredom Autonomy with the same cycle and incremented
   step; the next decision sees and may preserve or revise the same self-authored
   Task State objective.
-- No action produces a substantive conversation/private reflection and ends the
-  episode cleanly.
+- No action produces a substantive outward response and ends the episode cleanly.
 - A user message preempts queued/active autonomy; Reactive and Sleep prevent new
   automatic admission.
 - Full mode never overlaps two boredom cycles and observes cooldowns.
 - The final step cannot dispatch another physical action.
+
+## 2026-08-24 live contract correction
+
+Live Agent Monitor runs exposed selector output that omitted `motionClass`,
+returned an empty non-action response, or paired `actionPurpose=expression` with
+the Movement trigger's preselected `visual_observation` contract. The repair
+removed that trigger-owned lifecycle choice: Movement still requires one
+physical consequence, while Boredom Autonomy and Environment Task State select
+its purpose and matching evidence contract. The autonomy context now uses the
+existing selector schema's required `motionClass`, and the compact executive
+prompt states the valid generic action and response shapes. No retry, output
+repair, permissive parser, or repetition policy was
+added. A subsequent live run exposed duplicate purpose/evidence enforcement in
+the selector parser. That competing check was deleted: the parser still owns
+strict shape and capability admission, while Environment Task State remains the
+single owner that resolves lifecycle evidence from the selected action purpose.
+The next live Reflection run exposed an orphan `escalation` output that had no
+runtime consumer and could only fail validation. Its schema, parser, prompt,
+training cases, and evaluation metrics were deleted; historical context is now
+explicitly inspiration rather than unfinished instruction authority.
+Live action feedback then exposed a reactive Task State optimization leaking
+into autonomy: exact `action_result` feedback skipped the selector and emitted
+the canned sentence `The <action> action is complete.` A second fixed rule said
+bounded action results could not satisfy an objective, biasing the next output
+toward an unnecessary image. Task State now reserves deterministic closure for
+reactive one-step user commands. Boredom Autonomy keeps physical consequences
+bounded, reviews their correlated results in the same selector, and can either
+complete with a persona-grounded response or revise the objective, action
+purpose, and evidence contract for the next consequence. No reviewer, retry,
+queue, or alternate execution path was added.
+
+The next failure was continuity, not missing context: a previous cycle's
+`actionContext` was copied into a new trigger and labeled as the current result,
+while failed captures were filtered out before cognition. The context builder
+now keeps that prior result as historical context unless its correlation matches
+the active cycle, and capture failures return to the same graph. Task State also
+stopped requiring the selector to repeat `completionBasis` and
+`completionEvidence`; those fields duplicated state Task State already owns and
+caused valid result reviews to fall into the generic failure message. The
+executive prompt now states the receding-horizon contract directly: one
+consequence per graph pass, the verified result re-enters the graph, context
+materially shapes the revised objective, and a successful movement does not end
+the episode by itself. No second episode store, retry path, or repetition policy
+was added.
 
 ## Deferred questions
 

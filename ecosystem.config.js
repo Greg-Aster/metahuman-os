@@ -1,29 +1,27 @@
 /**
  * PM2 Ecosystem Configuration
  *
- * This file configures PM2 to manage the MetaHuman OS web server.
+ * PM2 supervises the canonical startup owner. start.sh remains responsible for
+ * service admission, exposure configuration, web startup, and scoped cleanup.
  *
  * Usage:
  *   pm2 start ecosystem.config.js
- *   pm2 stop all
- *   pm2 restart all
+ *   pm2 delete metahuman-os
  *   pm2 monit
  *
- * PM2 owns only the web server in this configuration. Persistent agent
- * services are owned by Agent Monitor and etc/services.json; finite agents
- * are submitted through TriggerManager and the Work Coordinator.
+ * Keep one forked instance: runtime coordinators and service owners are not
+ * process-shared and must not be multiplied with PM2 cluster mode.
  */
 
 module.exports = {
   apps: [
     {
-      name: 'metahuman-web',
-      script: 'dist/server/entry.mjs',
-      cwd: './apps/site',
-
-      // Cluster mode: use all CPU cores
-      instances: 'max',
-      exec_mode: 'cluster',
+      name: 'metahuman-os',
+      script: './start.sh',
+      cwd: '.',
+      interpreter: 'bash',
+      instances: 1,
+      exec_mode: 'fork',
 
       // Environment
       env: {
@@ -32,7 +30,6 @@ module.exports = {
       },
 
       // Stability settings
-      max_memory_restart: '1G',    // Restart if memory exceeds 1GB
       min_uptime: '10s',           // Consider started after 10s
       max_restarts: 10,            // Max restarts before giving up
       restart_delay: 4000,         // Wait 4s between restarts
@@ -42,7 +39,7 @@ module.exports = {
       out_file: './logs/pm2/out.log',
       error_file: './logs/pm2/error.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      merge_logs: true,            // Merge cluster logs into single files
+      merge_logs: true,
 
       // Graceful shutdown
       kill_timeout: 5000,          // Wait 5s for graceful shutdown

@@ -4,7 +4,7 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'desire-executor', name: 'Desire Executor',
   description: 'Executes approved desires through the operator system',
-  usesLLM: true, priority: 'medium', defaultInterval: 300,
+  usesLLM: true, priority: 'normal', defaultInterval: 300,
   tags: ['agency', 'llm', 'background', 'desire', 'execution'],
 };
 

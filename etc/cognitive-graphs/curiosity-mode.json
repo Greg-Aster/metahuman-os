@@ -7,23 +7,6 @@
   "last_modified": "2025-12-17",
   "nodes": [
     {
-      "id": "1",
-      "type": "cognitiveNode",
-      "position": {
-        "x": 100,
-        "y": 100
-      },
-      "data": {
-        "label": "Check Question Timing",
-        "nodeType": "curiosity_activity_check",
-        "properties": {
-          "questionIntervalSeconds": 1800
-        }
-      },
-      "width": 220,
-      "height": 100
-    },
-    {
       "id": "2",
       "type": "cognitiveNode",
       "position": {
@@ -158,17 +141,6 @@
     }
   ],
   "edges": [
-    {
-      "id": "e-1-canAsk-2-slot_0",
-      "source": "1",
-      "target": "2",
-      "sourceHandle": "canAsk",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Activity check result → Sample Memories"
-      }
-    },
     {
       "id": "e-2-memories-3-memories",
       "source": "2",

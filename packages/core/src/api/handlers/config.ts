@@ -167,13 +167,6 @@ export async function handleSetCuriosityConfig(req: UnifiedRequest): Promise<Uni
 
     saveCuriosityConfig(newConfig, user.username);
 
-    // Update the same canonical trigger transaction used by Trigger Manager Settings.
-    if ((updates as any).questionIntervalSeconds !== undefined) {
-      getTriggerConfigService().update({
-        agents: { curiosity: { inactivityThreshold: (updates as any).questionIntervalSeconds } },
-      }, user.username);
-    }
-
     return successResponse({ success: true, config: newConfig });
   } catch (error) {
     return {

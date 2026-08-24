@@ -259,9 +259,8 @@ See [Autonomous Agents](../advanced-features/autonomous-agents.md) for complete 
 
 1. **Semantic search** (meaning-based):
    ```bash
-   # Setup (one-time)
-   ./bin/mh ollama pull nomic-embed-text
-   ./bin/mh index build
+   # Queue a rebuild through the running MetaHuman Work Coordinator
+   ./bin/mh --user <username> index build
 
    # Search
    ./bin/mh remember "conversations about machine learning"

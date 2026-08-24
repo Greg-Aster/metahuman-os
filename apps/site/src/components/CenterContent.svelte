@@ -178,9 +178,6 @@
         case 'AgentCatalogDashboard':
           module = await import('./AgentCatalogDashboard.svelte');
           break;
-        case 'SystemCoderDashboard':
-          module = await import('./SystemCoderDashboard.svelte');
-          break;
         default:
           throw new Error(`Unknown component: ${name}`);
       }

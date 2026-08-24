@@ -39,6 +39,19 @@ const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
     .map(definition => [definition.handler ?? `agent.${definition.id}`, definition.id]),
 );
 
+async function withTaskUserContext<T>(task: QueuedTask, operation: () => Promise<T>): Promise<T> {
+  const [{ getUserByUsername }, { withUserContext }] = await Promise.all([
+    import('../users.js'),
+    import('../context.js'),
+  ]);
+  const user = getUserByUsername(task.username);
+  if (!user) throw new Error(`Work item user does not exist: ${task.username}`);
+  return withUserContext(
+    { userId: user.id, username: user.username, role: user.role },
+    operation,
+  );
+}
+
 function isWithinWindow(window: { start: string; end: string }, now = new Date()): boolean {
   const [startHour, startMinute] = window.start.split(':').map(Number);
   const [endHour, endMinute] = window.end.split(':').map(Number);
@@ -117,13 +130,18 @@ export class ExecutionEngine {
 
   private registerDefaultHandlers(): void {
     this.registerHandler('vector.index-build', async (task) => {
-      const { buildMemoryIndex } = await import('../vector-index.js');
-      return buildMemoryIndex({ force: task.input.force ?? false, username: task.username });
+      const { refreshMemoryIndex } = await import('../vector-index.js');
+      return withTaskUserContext(task, () => refreshMemoryIndex({
+        username: task.username,
+        force: task.input.force === true,
+        maxAgeHours: task.input.maxAgeHours,
+        source: task.source,
+      }));
     });
 
     this.registerHandler('vector.append-event', async (task) => {
       const { appendEventToIndex } = await import('../vector-index.js');
-      const indexed = await appendEventToIndex({
+      const indexed = await withTaskUserContext(task, () => appendEventToIndex({
         id: task.input.id,
         timestamp: task.input.timestamp,
         content: task.input.content,
@@ -131,13 +149,16 @@ export class ExecutionEngine {
         tags: task.input.tags,
         entities: task.input.entities,
         path: task.input.path,
-      }, { username: task.username });
+      }, { username: task.username }));
       return { eventId: task.input.id, indexed };
     });
 
     this.registerHandler('vector.semantic-search', async (task) => {
       const { queryIndex } = await import('../vector-index.js');
-      return queryIndex(task.input.query, { topK: task.input.limit || 10, username: task.username });
+      return withTaskUserContext(task, () => queryIndex(
+        task.input.query,
+        { topK: task.input.limit || 10, username: task.username },
+      ));
     });
 
     for (const [handlerId, agentId] of Object.entries(AGENT_HANDLERS)) {
@@ -181,7 +202,6 @@ export class ExecutionEngine {
           typeof task.input.graph === 'string' && task.input.graph !== 'robot-operator'
             ? task.input.graph
             : config.environmentGraph,
-          config.maxCycleSteps,
         );
         if (robotObserver) {
           observation = {

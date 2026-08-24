@@ -5,13 +5,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
   ROOT,
   systemPaths,
   ensureVoiceServiceRunning,
   getVoiceServiceStatus,
+  startKokoroVoicepackTraining,
   stopVoiceService,
+  type KokoroTrainingOptions,
 } from '@metahuman/core';
 import { createTTSService } from '@metahuman/core';
 
@@ -274,102 +276,43 @@ async function testSynthesis(args: string[]): Promise<void> {
 }
 
 async function trainVoicepack(args: string[]): Promise<void> {
-  const getArg = (flag: string, fallback?: string) => {
+  const getArg = (flag: string): string | undefined => {
     const index = args.indexOf(flag);
-    if (index !== -1 && args[index + 1]) {
-      return args[index + 1];
-    }
-    return fallback;
+    return index !== -1 ? args[index + 1] : undefined;
   };
 
-  const speaker = getArg('--speaker', 'default');
-  const datasetDir = getArg('--dataset', path.join(ROOT, 'out', 'kokoro', 'datasets', speaker));
-  const outputPath = getArg('--output', path.join(ROOT, 'out', 'kokoro', 'voicepacks', `${speaker}.pt`));
-  const langCode = getArg('--lang', 'a');
-  const baseVoice = getArg('--base-voice', 'af_heart');
-  const epochs = getArg('--epochs', '120');
-  const learningRate = getArg('--learning-rate', '0.0005');
-  const device = getArg('--device', 'auto');
-  const maxSamples = getArg('--max-samples', '200');
-  const regularization = getArg('--regularization');
-
-  if (!fs.existsSync(datasetDir)) {
-    console.error(`✗ Dataset directory not found: ${datasetDir}`);
-    console.error('  Use the Voice Training UI to copy samples first.');
-    process.exit(1);
+  if (args.includes('--dataset')) {
+    throw new Error('Custom dataset paths are not supported. Curate samples through the Voice Training owner first.');
   }
 
-  const pythonBin = path.join(KOKORO_DIR, 'venv', 'bin', 'python3');
-  const trainerScript = path.join(KOKORO_DIR, 'build_voicepack.py');
-
-  if (!fs.existsSync(pythonBin)) {
-    console.error('✗ Kokoro virtual environment not found. Run "./bin/install-kokoro.sh" first.');
-    process.exit(1);
+  const parseNumber = (flag: string): number | undefined => {
+    const raw = getArg(flag);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) throw new Error(`${flag} must be a number`);
+    return value;
+  };
+  const rawDevice = getArg('--device');
+  if (rawDevice && rawDevice !== 'auto' && rawDevice !== 'cpu' && rawDevice !== 'cuda') {
+    throw new Error('--device must be auto, cpu, or cuda');
   }
 
-  if (!fs.existsSync(trainerScript)) {
-    console.error('✗ build_voicepack.py not found. Reinstall the Kokoro add-on.');
-    process.exit(1);
-  }
-
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-
-  const statusFile = path.join(systemPaths.logs, 'run', `kokoro-training-${speaker}.json`);
-  const logFile = path.join(systemPaths.logs, 'run', `kokoro-training-${speaker}.log`);
-  fs.mkdirSync(path.dirname(statusFile), { recursive: true });
-
-  const trainerArgs = [
-    trainerScript,
-    '--speaker', speaker,
-    '--dataset', datasetDir,
-    '--output', outputPath,
-    '--lang', langCode,
-    '--base-voice', baseVoice,
-    '--epochs', epochs,
-    '--learning-rate', learningRate,
-    '--max-samples', maxSamples,
-    '--device', device,
-    '--status-file', statusFile,
-    '--log-file', logFile,
-  ];
-
-  if (regularization) {
-    trainerArgs.push('--regularization', regularization);
-  }
-
-  console.log('Starting Kokoro voicepack training...\n');
-  console.log(`  Speaker:     ${speaker}`);
-  console.log(`  Dataset dir: ${datasetDir}`);
-  console.log(`  Output:      ${outputPath}`);
-  console.log(`  Base voice:  ${baseVoice}`);
-  console.log(`  Language:    ${langCode}`);
-  console.log(`  Epochs:      ${epochs}`);
-  console.log(`  Device:      ${device}`);
-  console.log('');
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(pythonBin, trainerArgs, {
-      cwd: KOKORO_DIR,
-      stdio: 'inherit',
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        console.log('\n✓ Kokoro voicepack training completed!');
-        console.log(`  Saved to: ${outputPath}`);
-        console.log(`  Status:   ${statusFile}`);
-        console.log(`  Log:      ${logFile}`);
-        resolve();
-      } else {
-        reject(new Error(`Trainer exited with code ${code}`));
-      }
-    });
-
-    child.on('error', reject);
-  }).catch((error) => {
-    console.error('✗ Training failed:', (error as Error).message);
-    process.exit(1);
-  });
+  const speaker = getArg('--speaker') || 'default';
+  const options: KokoroTrainingOptions = {
+    langCode: getArg('--lang'),
+    baseVoice: getArg('--base-voice'),
+    epochs: parseNumber('--epochs'),
+    learningRate: parseNumber('--learning-rate'),
+    regularization: parseNumber('--regularization'),
+    device: rawDevice as KokoroTrainingOptions['device'],
+    maxSamples: parseNumber('--max-samples'),
+    outputPath: getArg('--output'),
+    continueFromCheckpoint: args.includes('--continue-from-checkpoint'),
+    pureTraining: args.includes('--pure-training'),
+  };
+  const result = await startKokoroVoicepackTraining(speaker, options);
+  if (!result.success) throw new Error(result.error || 'Kokoro voicepack training failed to start');
+  console.log(`✓ ${result.message}`);
 }
 
 async function uninstallKokoro(): Promise<void> {
@@ -392,7 +335,7 @@ async function uninstallKokoro(): Promise<void> {
   });
 
   try {
-    execSync(`rm -rf "${KOKORO_DIR}"`, { stdio: 'inherit' });
+    fs.rmSync(KOKORO_DIR, { recursive: true, force: true });
     console.log('\n✓ Kokoro uninstalled successfully');
 
     // Update addons.json

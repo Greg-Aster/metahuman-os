@@ -28,11 +28,9 @@ export type EnvironmentMotionClass = typeof ENVIRONMENT_MOTION_CLASSES[number];
 export interface EnvironmentMotionControlState {
   version: 1;
   cycleId?: string;
-  planIds: string[];
   lastPlanId?: string;
   lastVisualFrameId?: string;
   lastVisualFrameTimestamp?: string;
-  consecutiveIdentical: number;
 }
 
 /**

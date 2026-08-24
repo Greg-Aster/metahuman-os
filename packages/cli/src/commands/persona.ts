@@ -1,99 +1,50 @@
 /**
  * Persona Management Commands
- * Manage active profiles, adapters, and persona state
+ * Manage persona interviews, adapters, and persona state
  * Includes persona generator interview system
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { ROOT, systemPaths, audit, getActiveAdapter } from '@metahuman/core';
 import {
-  startSession,
-  loadSession,
-  saveSession,
-  listSessions,
+  audit,
   addQuestion,
-  recordAnswer,
-  type Session,
-} from '@metahuman/core/persona/session-manager';
-import { generateNextQuestion, getCompletionStatus } from '@metahuman/core/persona/question-generator';
-import { extractPersonaFromSession } from '@metahuman/core/persona/extractor';
-import {
-  loadExistingPersona,
-  mergePersonaDraft,
-  savePersona,
+  cleanupSessions,
+  extractPersonaFromSession,
   generateDiffText,
+  generateNextQuestion,
+  getActiveAdapter,
+  getCompletionStatus,
+  getProfilePaths,
+  getUserContext,
+  listPersonaSessions as listSessions,
+  loadExistingPersona,
+  loadPersonaSession as loadSession,
+  mergePersonaDraft,
+  recordAnswer,
+  savePersona,
+  savePersonaSession as saveSession,
+  startPersonaSession as startSession,
   type MergeStrategy,
-} from '@metahuman/core/persona/merger';
-import { cleanupSessions, previewCleanup } from '@metahuman/core/persona/cleanup';
+  type PersonaSession as Session,
+} from '@metahuman/core';
 import readline from 'node:readline';
 
-export function personaActivate() {
-  console.log('Activating persona profile (running morning-loader)...\n');
-
-  const agentPath = path.join(systemPaths.brain, 'agents', 'morning-loader.ts');
-
-  if (!fs.existsSync(agentPath)) {
-    console.error('Error: morning-loader.ts not found');
-    process.exit(1);
+function requirePersonaContext() {
+  const context = getUserContext();
+  if (!context) {
+    throw new Error('Persona commands require an explicit user. Run: mh --user <username> persona <command>');
   }
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'persona_activate_requested',
-    details: { manual: true },
-    actor: 'cli',
-  });
-
-  const child = spawn('tsx', [agentPath], {
-    stdio: 'inherit',
-    cwd: ROOT,
-  });
-
-  child.on('error', (err) => {
-    console.error(`Failed to run morning-loader: ${err.message}`);
-    process.exit(1);
-  });
-
-  child.on('close', (code) => {
-    if (code === 0) {
-      console.log('\n✓ Persona profile activated successfully');
-    } else {
-      console.error(`\nmorning-loader exited with code ${code}`);
-      process.exit(code || 1);
-    }
-  });
+  return {
+    userId: context.userId,
+    username: context.username,
+    paths: getProfilePaths(context.username),
+  };
 }
 
 export function personaStatus() {
+  const { paths } = requirePersonaContext();
   console.log('Persona Status\n');
-
-  // Check for active profile
-  const activeProfilePath = path.join(systemPaths.persona, 'active-profile.md');
-  const activeProfileExists = fs.existsSync(activeProfilePath);
-
-  if (activeProfileExists) {
-    const stats = fs.statSync(activeProfilePath);
-    const lastModified = stats.mtime.toISOString();
-    const age = Math.floor((Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60));
-
-    console.log(`Active Profile: ${activeProfilePath}`);
-    console.log(`Last Updated: ${lastModified} (${age}h ago)`);
-    console.log(`Size: ${stats.size} bytes`);
-
-    // Show which daily profile it links to
-    if (stats.isSymbolicLink()) {
-      const target = fs.readlinkSync(activeProfilePath);
-      console.log(`Target: ${target}`);
-    }
-  } else {
-    console.log('Active Profile: ❌ None (using base persona only)');
-    console.log('\nRun `mh persona activate` to generate a daily profile.');
-  }
-
-  console.log('');
 
   // Check for active adapter (Tier-2)
   const activeAdapter = getActiveAdapter();
@@ -119,7 +70,7 @@ export function personaStatus() {
   console.log('');
 
   // Check base persona
-  const personaCorePath = systemPaths.personaCore;
+  const personaCorePath = paths.personaCore;
   if (fs.existsSync(personaCorePath)) {
     const persona = JSON.parse(fs.readFileSync(personaCorePath, 'utf-8'));
     console.log(`Base Persona: ${persona.identity?.name || 'Unknown'}`);
@@ -127,39 +78,11 @@ export function personaStatus() {
   }
 }
 
-export function personaDiff() {
-  console.log('Persona Diff (Base vs Active Profile)\n');
-
-  const activeProfilePath = path.join(systemPaths.persona, 'active-profile.md');
-
-  if (!fs.existsSync(activeProfilePath)) {
-    console.log('No active profile found. Run `mh persona activate` first.');
-    return;
-  }
-
-  const activeProfile = fs.readFileSync(activeProfilePath, 'utf-8');
-
-  // Show the overnight learnings section
-  const overnightMatch = activeProfile.match(/## Overnight Learnings[\s\S]*?(?=\n---|\n##|$)/);
-
-  if (overnightMatch) {
-    console.log('Recent Overnight Learnings:\n');
-    console.log(overnightMatch[0]);
-  } else {
-    console.log('No overnight learnings section found in active profile.');
-  }
-
-  console.log('\n---\n');
-  console.log('Full active profile available at:');
-  console.log(activeProfilePath);
-}
-
 /**
  * Persona Generator: Start interactive interview session
  */
 export async function personaGenerate(options: { resume?: boolean } = {}) {
-  const username = process.env.USER || 'default';
-  const userId = username; // Simplified for CLI
+  const { username, userId, paths } = requirePersonaContext();
 
   try {
     let session: Session;
@@ -174,11 +97,9 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
         session = await startSession(userId, username);
       } else {
         console.log(`Resuming session: ${activeSession.sessionId}\n`);
-        session = await loadSession(username, activeSession.sessionId);
-        if (!session) {
-          console.error('Failed to load session');
-          process.exit(1);
-        }
+        const loadedSession = await loadSession(username, activeSession.sessionId);
+        if (!loadedSession) throw new Error('Failed to load session');
+        session = loadedSession;
       }
     } else {
       console.log('Starting new persona interview...\n');
@@ -241,11 +162,9 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
         }
 
         await addQuestion(username, session.sessionId, result.question);
-        session = await loadSession(username, session.sessionId);
-        if (!session) {
-          console.error('Failed to reload session');
-          process.exit(1);
-        }
+        const loadedSession = await loadSession(username, session.sessionId);
+        if (!loadedSession) throw new Error('Failed to reload session');
+        session = loadedSession;
         continue;
       }
 
@@ -257,7 +176,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       const answer = await askQuestion('Your answer: ');
 
       if (answer.trim().toLowerCase() === 'quit' || answer.trim().toLowerCase() === 'exit') {
-        console.log('\nPausing interview. Resume with: mh persona generate --resume');
+        console.log(`\nPausing interview. Resume with: mh --user ${username} persona generate --resume`);
         rl.close();
         return;
       }
@@ -269,11 +188,9 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
 
       // Record answer
       await recordAnswer(username, session.sessionId, currentQuestion.id, answer);
-      session = await loadSession(username, session.sessionId);
-      if (!session) {
-        console.error('Failed to reload session');
-        process.exit(1);
-      }
+      const loadedSession = await loadSession(username, session.sessionId);
+      if (!loadedSession) throw new Error('Failed to reload session');
+      session = loadedSession;
     }
 
     rl.close();
@@ -285,7 +202,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       const extracted = await extractPersonaFromSession(session);
 
       // Load existing persona
-      const currentPersona = loadExistingPersona(systemPaths.personaCore);
+      const currentPersona = loadExistingPersona(paths.personaCore);
 
       // Generate diff
       const { updated, diff } = mergePersonaDraft(currentPersona, extracted, 'merge');
@@ -312,11 +229,11 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
 
       if (applyAnswer.trim().toLowerCase() === 'yes' || applyAnswer.trim().toLowerCase() === 'y') {
         // Create backup
-        const backupPath = path.join(systemPaths.persona, `core-backup-${Date.now()}.json`);
+        const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
         fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
 
         // Apply changes
-        savePersona(systemPaths.personaCore, updated);
+        savePersona(paths.personaCore, updated);
 
         console.log(`\n✓ Persona updated successfully!`);
         console.log(`  Backup saved to: ${backupPath}`);
@@ -325,16 +242,20 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
         session.status = 'applied';
         await saveSession(username, session);
 
-        await audit('data_change', 'info', {
-          action: 'persona_applied_via_cli',
-          sessionId: session.sessionId,
-          diffSummary: diff.summary,
-          backupPath,
+        await audit({
+          category: 'data_change',
+          level: 'info',
+          event: 'persona_applied_via_cli',
           actor: 'cli',
+          details: {
+            sessionId: session.sessionId,
+            diffSummary: diff.summary,
+            backupPath,
+          },
         });
       } else {
         console.log('\nChanges not applied. You can apply later with:');
-        console.log(`  mh persona apply ${session.sessionId}`);
+        console.log(`  mh --user ${username} persona apply ${session.sessionId}`);
       }
     }
   } catch (error) {
@@ -347,14 +268,14 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
  * List all persona interview sessions
  */
 export async function personaSessions() {
-  const username = process.env.USER || 'default';
+  const { username } = requirePersonaContext();
 
   try {
     const sessions = await listSessions(username);
 
     if (sessions.length === 0) {
       console.log('No interview sessions found.\n');
-      console.log('Start a new interview with: mh persona generate');
+      console.log(`Start a new interview with: mh --user ${username} persona generate`);
       return;
     }
 
@@ -385,7 +306,7 @@ export async function personaSessions() {
  * View transcript of a specific session
  */
 export async function personaView(sessionId: string) {
-  const username = process.env.USER || 'default';
+  const { username } = requirePersonaContext();
 
   if (!sessionId) {
     console.error('Error: sessionId required');
@@ -443,7 +364,7 @@ export async function personaView(sessionId: string) {
  * Apply persona changes from a finalized session
  */
 export async function personaApply(sessionId: string, strategy: MergeStrategy = 'merge') {
-  const username = process.env.USER || 'default';
+  const { username, paths } = requirePersonaContext();
 
   if (!sessionId) {
     console.error('Error: sessionId required');
@@ -466,7 +387,7 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     const extracted = await extractPersonaFromSession(session);
 
     // Load existing persona
-    const currentPersona = loadExistingPersona(systemPaths.personaCore);
+    const currentPersona = loadExistingPersona(paths.personaCore);
 
     // Generate diff
     const { updated, diff } = mergePersonaDraft(currentPersona, extracted, strategy);
@@ -476,11 +397,11 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     console.log('\n' + '='.repeat(50));
 
     // Create backup
-    const backupPath = path.join(systemPaths.persona, `core-backup-${Date.now()}.json`);
+    const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
     fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
 
     // Apply changes
-    savePersona(systemPaths.personaCore, updated);
+    savePersona(paths.personaCore, updated);
 
     console.log(`\n✓ Persona updated successfully using "${strategy}" strategy`);
     console.log(`  Backup saved to: ${backupPath}`);
@@ -492,13 +413,17 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     session.appliedStrategy = strategy;
     await saveSession(username, session);
 
-    await audit('data_change', 'info', {
-      action: 'persona_applied_via_cli',
-      sessionId: session.sessionId,
-      strategy,
-      diffSummary: diff.summary,
-      backupPath,
+    await audit({
+      category: 'data_change',
+      level: 'info',
+      event: 'persona_applied_via_cli',
       actor: 'cli',
+      details: {
+        sessionId: session.sessionId,
+        strategy,
+        diffSummary: diff.summary,
+        backupPath,
+      },
     });
   } catch (error) {
     console.error('Error applying persona:', error);
@@ -510,7 +435,7 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
  * Discard a persona interview session
  */
 export async function personaDiscard(sessionId: string) {
-  const username = process.env.USER || 'default';
+  const { username } = requirePersonaContext();
 
   if (!sessionId) {
     console.error('Error: sessionId required');
@@ -553,10 +478,12 @@ export async function personaDiscard(sessionId: string) {
 
     console.log(`✓ Session ${sessionId} discarded.`);
 
-    await audit('action', 'info', {
-      action: 'persona_session_discarded',
-      sessionId,
+    await audit({
+      category: 'action',
+      level: 'info',
+      event: 'persona_session_discarded',
       actor: 'cli',
+      details: { sessionId },
     });
   } catch (error) {
     console.error('Error discarding session:', error);
@@ -568,7 +495,7 @@ export async function personaDiscard(sessionId: string) {
  * Clean up old persona interview sessions
  */
 export async function personaCleanup(options: { dryRun?: boolean; maxAge?: number } = {}) {
-  const username = process.env.USER || 'default';
+  const { username } = requirePersonaContext();
   const maxAge = options.maxAge || 30;
 
   try {
@@ -628,37 +555,31 @@ export async function personaCleanup(options: { dryRun?: boolean; maxAge?: numbe
   }
 }
 
-export function personaCommand(args: string[]) {
+export async function personaCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
   const subArgs = args.slice(1);
 
   switch (subcommand) {
-    case 'activate':
-      personaActivate();
-      break;
     case 'status':
       personaStatus();
       break;
-    case 'diff':
-      personaDiff();
-      break;
     case 'generate':
-      personaGenerate({ resume: subArgs.includes('--resume') });
+      await personaGenerate({ resume: subArgs.includes('--resume') });
       break;
     case 'sessions':
-      personaSessions();
+      await personaSessions();
       break;
     case 'view':
-      personaView(subArgs[0]);
+      await personaView(subArgs[0]);
       break;
     case 'apply':
-      personaApply(subArgs[0], (subArgs[1] as MergeStrategy) || 'merge');
+      await personaApply(subArgs[0], (subArgs[1] as MergeStrategy) || 'merge');
       break;
     case 'discard':
-      personaDiscard(subArgs[0]);
+      await personaDiscard(subArgs[0]);
       break;
     case 'cleanup':
-      personaCleanup({
+      await personaCleanup({
         dryRun: subArgs.includes('--dry-run'),
         maxAge: subArgs.includes('--max-age')
           ? parseInt(subArgs[subArgs.indexOf('--max-age') + 1], 10)
@@ -669,9 +590,7 @@ export function personaCommand(args: string[]) {
       console.log('Usage: mh persona <command>');
       console.log('');
       console.log('Profile Commands:');
-      console.log('  activate   - Generate and activate daily profile (run morning-loader)');
-      console.log('  status     - Show current persona state (profile, adapter)');
-      console.log('  diff       - Compare base persona vs active profile');
+      console.log('  status     - Show current persona and adapter state');
       console.log('');
       console.log('Generator Commands:');
       console.log('  generate           - Start interactive personality interview');

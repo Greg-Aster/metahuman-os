@@ -141,22 +141,6 @@ if (typeof localStorage !== 'undefined') {
   });
 }
 
-const savedSystemCoderDisabled = typeof localStorage !== 'undefined'
-  ? localStorage.getItem('mh_system_coder_disabled')
-  : null;
-
-// Hidden by default; users can re-enable it from System -> Settings.
-export const systemCoderDisabled = writable<boolean>(savedSystemCoderDisabled !== 'false');
-
-if (typeof localStorage !== 'undefined') {
-  systemCoderDisabled.subscribe(disabled => {
-    try {
-      localStorage.setItem('mh_system_coder_disabled', String(disabled));
-    } catch {}
-  });
-}
-
-
 // Load YOLO mode from localStorage on init
 if (typeof localStorage !== 'undefined') {
   try {

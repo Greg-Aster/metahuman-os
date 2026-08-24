@@ -58,11 +58,11 @@ test('Environment Mode sends one action selector directly to parser and one task
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
   assert.equal(contextBuilder.data.properties?.recentHistoryLimit, 4);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /robot(?:-mounted)? camera sees the external scene/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Task State is the sole lifecycle owner/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /taskDecision is the semantic contract for the whole objective/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /captureImage is an action type, never a robotCommand command/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Never claim to be waiting, searching, or continuing without returning the action/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /without a current image, do not claim what the camera sees/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /conditional visual search or stopping condition.*bounded multi-step work/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Select one action, inspect only fresh correlated evidence/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /prose is not execution/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Preserve taskState/i);
 
   assert.equal(hasEdge(instruction.id, 'observation', prepare.id, 'observation'), true);
   assert.equal(hasEdge(prepare.id, 'memoryHints', memoryRouter.id, 'orchestratorHints'), true);
@@ -80,8 +80,6 @@ test('Environment Mode sends one action selector directly to parser and one task
     'search_interpreter',
     'environment_task_refiner',
     'environment_selection_gate',
-    'persona_loader',
-    'persona_formatter',
   ]) {
     assert.equal(graph.nodes.some(node => node.data.nodeType === retired), false);
   }

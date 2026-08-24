@@ -39,7 +39,7 @@ const DEFAULT_LANE_CONFIGS: Record<ResourceLaneId, LaneConfig & { id: ResourceLa
   },
   'vector-index': {
     id: 'vector-index',
-    maxConcurrent: 10,
+    maxConcurrent: 1,
     cooldownMs: 0,
   },
   'remote-llm': {
@@ -149,12 +149,14 @@ export class UnifiedQueueManager {
     const createdAt = new Date().toISOString();
     const resource = input.resource || TASK_LANE_MAP[input.type];
     const resourceLane = this.laneFor(resource, input.type);
-    const maxAttempts = Math.max(
-      1,
-      input.maxAttempts
-        ?? this.config?.execution?.maxAttempts
-        ?? 3,
-    );
+    const maxAttempts = input.type === 'user_message'
+      ? 1
+      : Math.max(
+          1,
+          input.maxAttempts
+            ?? this.config?.execution?.maxAttempts
+            ?? 3,
+        );
 
     const task: QueuedTask = {
       id: `task-${Date.now()}-${randomUUID().slice(0, 8)}`,
@@ -330,6 +332,7 @@ export class UnifiedQueueManager {
   requeue(task: QueuedTask, error?: string | WorkError): boolean {
     const current = this.tasks.get(task.id);
     if (!current || current.state !== 'leased') return false;
+    if (current.type === 'user_message') current.maxAttempts = 1;
     this.releaseCapacity(current);
     current.attempt += 1;
     if (current.attempt >= current.maxAttempts) {
@@ -566,6 +569,7 @@ export class UnifiedQueueManager {
     this.clear(false);
     for (const rawTask of state.items || []) {
       const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
+      if (task.type === 'user_message') task.maxAttempts = 1;
       const staleTaskTimeoutMs = Math.max(0, this.config?.execution?.staleTaskTimeoutMs ?? 0);
       const createdAtMs = new Date(task.createdAt).getTime();
       const isStaleRecoveredWork = staleTaskTimeoutMs > 0

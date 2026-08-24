@@ -21,7 +21,7 @@
 import { randomUUID } from 'crypto';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, ClarifyingQuestion } from '../../agency/types.js';
-import { callLLMPrompt } from '../../model-router.js';
+import { callLLMPrompt, normalizeModelRole, type ModelRole } from '../../model-router.js';
 import { audit } from '../../audit.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -109,7 +109,7 @@ Generate questions now:`;
 
 interface QuestionGenerationOptions {
   promptTemplate?: string;
-  role?: string;
+  role?: ModelRole;
   temperature?: number;
   maxTokens?: number;
 }
@@ -171,10 +171,11 @@ async function generateQuestions(desire: Desire, options: QuestionGenerationOpti
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const slot0 = (inputs.desire || inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
+  const slot0 = (inputs.desire || inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
 
   // Handle both wrapped and direct desire input
-  const desire = (slot0 as any)?.desire || slot0 as Desire;
+  const desire: Desire | undefined = (slot0 as { desire?: Desire } | undefined)?.desire
+    ?? slot0 as Desire | undefined;
 
   if (!desire || !desire.id) {
     return {
@@ -214,7 +215,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const questions = await generateQuestions(desire, {
     promptTemplate: properties?.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE,
-    role: properties?.role ?? 'curator',
+    role: normalizeModelRole(properties?.role, 'curator'),
     temperature: properties?.temperature ?? 0.5,
     maxTokens: properties?.maxTokens ?? 500,
   });

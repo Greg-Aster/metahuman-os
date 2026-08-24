@@ -7,12 +7,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { getProfilePaths } from '../path-builder.js';
 import { audit } from '../audit.js';
+import {
+  getPersonaSessionStoragePaths,
+  isCompletedPersonaSession,
+  resolvePersonaInterviewsPath,
+  type SessionIndex,
+  type SessionStatus,
+} from './session-manager.js';
 
 export interface CleanupOptions {
   maxAgeInDays: number; // Sessions older than this will be cleaned up
-  statuses?: ('active' | 'completed' | 'finalized' | 'applied' | 'aborted')[]; // Only cleanup these statuses
+  statuses?: SessionStatus[]; // Only cleanup these statuses
   dryRun?: boolean; // If true, only report what would be cleaned, don't actually clean
   archiveBeforeDelete?: boolean; // If true, move to archive instead of deleting
 }
@@ -50,9 +56,8 @@ export async function cleanupSessions(
   };
 
   try {
-    // Resolve interviews directory path using storage router (respects external/encrypted storage)
-    const profilePaths = getProfilePaths(username);
-    const interviewsDir = path.join(profilePaths.root, 'persona', 'interviews');
+    // Use the same storage category and layout as Session Manager.
+    const interviewsDir = resolvePersonaInterviewsPath(username);
 
     if (!fs.existsSync(interviewsDir)) {
       console.log(`[cleanup] No interviews directory found for user: ${username}`);
@@ -66,14 +71,15 @@ export async function cleanupSessions(
       return result;
     }
 
-    const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+    const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8')) as SessionIndex;
     const now = Date.now();
     const maxAgeMs = options.maxAgeInDays * 24 * 60 * 60 * 1000;
 
     // Iterate through sessions
     for (const sessionMeta of index.sessions) {
-      const sessionDir = path.join(interviewsDir, sessionMeta.sessionId);
-      const sessionPath = path.join(sessionDir, 'session.json');
+      const sessionPaths = getPersonaSessionStoragePaths(interviewsDir, sessionMeta.sessionId);
+      const sessionPath = sessionPaths.session;
+      const artifactsPath = sessionPaths.artifacts;
 
       if (!fs.existsSync(sessionPath)) {
         result.sessions.push({
@@ -95,7 +101,7 @@ export async function cleanupSessions(
       // Check if session should be cleaned
       const shouldClean =
         ageMs > maxAgeMs &&
-        (!options.statuses || options.statuses.includes(sessionMeta.status as any));
+        (!options.statuses || options.statuses.includes(sessionMeta.status));
 
       if (!shouldClean) {
         result.sessions.push({
@@ -129,12 +135,12 @@ export async function cleanupSessions(
       try {
         if (options.archiveBeforeDelete) {
           // Create archive directory
-          const archiveDir = path.join(interviewsDir, '_archive');
-          fs.mkdirSync(archiveDir, { recursive: true });
-
-          // Move session to archive
-          const archivePath = path.join(archiveDir, sessionMeta.sessionId);
-          fs.renameSync(sessionDir, archivePath);
+          const archivePath = path.join(interviewsDir, '_archive', sessionMeta.sessionId);
+          fs.mkdirSync(archivePath, { recursive: true });
+          fs.renameSync(sessionPath, path.join(archivePath, 'session.json'));
+          if (fs.existsSync(artifactsPath)) {
+            fs.renameSync(artifactsPath, path.join(archivePath, 'artifacts'));
+          }
 
           result.sessions.push({
             sessionId: sessionMeta.sessionId,
@@ -144,8 +150,10 @@ export async function cleanupSessions(
           });
           result.archived++;
         } else {
-          // Delete session directory
-          fs.rmSync(sessionDir, { recursive: true, force: true });
+          fs.rmSync(sessionPath, { force: true });
+          if (fs.existsSync(artifactsPath)) {
+            fs.rmSync(artifactsPath, { recursive: true, force: true });
+          }
 
           result.sessions.push({
             sessionId: sessionMeta.sessionId,
@@ -174,11 +182,12 @@ export async function cleanupSessions(
         .map((s) => s.sessionId);
 
       if (cleanedSessionIds.length > 0) {
-        index.sessions = index.sessions.filter(
-          (s: any) => !cleanedSessionIds.includes(s.sessionId)
-        );
+        index.sessions = index.sessions.filter((session) => !cleanedSessionIds.includes(session.sessionId));
         index.totalSessions = index.sessions.length;
-        index.lastCleanup = new Date().toISOString();
+        index.completedCount = index.sessions.filter((session) =>
+          isCompletedPersonaSession(session.status)
+        ).length;
+        index.latestSessionId = index.sessions[0]?.sessionId || null;
 
         fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
       }

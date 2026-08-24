@@ -13,7 +13,7 @@ import {
 
 interface SleepWorkflowStage extends SleepStageDefinition {
   type: TaskType
-  agentId: string
+  agentId?: string
   args?: string[]
   maxAttempts: number
 }
@@ -30,13 +30,12 @@ export const SLEEP_WORKFLOW_STAGES: readonly SleepWorkflowStage[] = [
   { id: 'organize-memory', displayName: 'Organize memories', type: 'memory_curate', handler: 'agent.organizer', agentId: 'organizer', args: ['--limit=20'], maxAttempts: 2 },
   { id: 'curate-memory', displayName: 'Curate training memories', type: 'training_curate', handler: 'agent.curator', agentId: 'curator', maxAttempts: 2 },
   { id: 'generate-desires', displayName: 'Generate desires', type: 'desire_generate', handler: 'agent.desire-generator', agentId: 'desire-generator', maxAttempts: 2 },
-  { id: 'explore-desires', displayName: 'Explore desires', type: 'generic', handler: 'agent.desire-explorer', agentId: 'desire-explorer', maxAttempts: 2 },
   { id: 'plan-desires', displayName: 'Plan desires', type: 'generic', handler: 'agent.desire-planner', agentId: 'desire-planner', maxAttempts: 2 },
   { id: 'execute-desires', displayName: 'Execute approved desires', type: 'desire_execute', handler: 'agent.desire-executor', agentId: 'desire-executor', maxAttempts: 2 },
   { id: 'review-outcomes', displayName: 'Review desire outcomes', type: 'generic', handler: 'agent.desire-outcome-reviewer', agentId: 'desire-outcome-reviewer', maxAttempts: 2 },
   { id: 'dream', displayName: 'Dream from memories', type: 'dream', handler: 'agent.dreamer', agentId: 'dreamer', maxAttempts: 2 },
   { id: 'review-persona', displayName: 'Review persona learnings', type: 'psychoanalyze', handler: 'agent.psychoanalyzer', agentId: 'psychoanalyzer', maxAttempts: 2 },
-  { id: 'rebuild-index', displayName: 'Refresh memory index', type: 'index_build', handler: 'agent.auto-indexer', agentId: 'auto-indexer', args: ['--single-user'], maxAttempts: 2 },
+  { id: 'rebuild-index', displayName: 'Refresh memory index', type: 'index_build', handler: 'vector.index-build', maxAttempts: 2 },
 ]
 
 export const SLEEP_WORKFLOW_HANDLERS = new Set(SLEEP_WORKFLOW_STAGES.map(stage => stage.handler))
@@ -58,9 +57,10 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     stageIndex,
     totalStages: SLEEP_WORKFLOW_STAGES.length,
   }
-  const usernameArgs = ['desire-generator', 'desire-planner', 'desire-executor', 'desire-outcome-reviewer'].includes(stage.agentId)
+  const usernameArgs = stage.agentId && ['desire-generator', 'desire-planner', 'desire-executor', 'desire-outcome-reviewer'].includes(stage.agentId)
     ? ['--username', session.username]
     : []
+  const args = [...(stage.args ?? []), ...usernameArgs]
   return {
     type: stage.type,
     handler: stage.handler,
@@ -68,8 +68,8 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     username: session.username,
     priority: 'background',
     input: {
-      agentId: stage.agentId,
-      args: [...(stage.args ?? []), ...usernameArgs],
+      ...(stage.agentId ? { agentId: stage.agentId } : {}),
+      ...(args.length > 0 ? { args } : {}),
       triggeredBy: 'sleep-workflow',
       sleepWorkflow: marker,
     },

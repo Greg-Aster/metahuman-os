@@ -26,7 +26,8 @@ tsx scripts/test-fine-tune-pipeline.ts --username greggles --max 100
 ```
 
 This will:
-- ✅ Curate 100 memories
+- ✅ Curate all currently uncurated memories in bounded batches
+- ✅ Aggregate up to 100 accepted memories
 - ✅ Format them with mode tags
 - ✅ Apply Qwen schema
 - ✅ Export JSONL dataset
@@ -43,7 +44,7 @@ Once the test passes, run the full pipeline:
 
 ```bash
 # Full fine-tune with all modes
-tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
+pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
 ```
 
 **What happens**:
@@ -69,13 +70,13 @@ Train only one cognitive mode:
 
 ```bash
 # Train only dual mode (personality deepening)
-tsx brain/agents/fine-tune-cycle.ts --username greggles --mode dual --max 3000
+pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --mode dual --max 3000
 
 # Train only emulation mode (chatbot behavior)
-tsx brain/agents/fine-tune-cycle.ts --username greggles --mode emulation
+pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --mode emulation
 
 # Train only agent mode (tool usage)
-tsx brain/agents/fine-tune-cycle.ts --username greggles --mode agent
+pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --mode agent
 ```
 
 ---
@@ -92,7 +93,7 @@ Supported model families:
 
 ```bash
 # Use different base model
-tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model llama3-70b
+pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --base-model llama3-70b
 ```
 
 ### Fine-Tune Settings
@@ -201,7 +202,7 @@ Dataset has only 847 samples. Recommended: 5000+ for full fine-tuning.
 
 ### "Filler detected >5%"
 
-**Solution**: Update filler phrase list in `memory-curator.ts`
+**Solution**: Adjust the Curator LLM quality criteria in the `curator_llm` graph node. The maintained default prompt is owned by `packages/core/src/nodes/curator/curator-llm.node.ts`.
 
 ### "One mode has <10% distribution"
 
@@ -224,19 +225,9 @@ Edit `etc/schemas/{family}.json` to customize model-specific formatting:
 }
 ```
 
-### Custom Mode Mapping
+### Cognitive Mode Provenance
 
-Edit `brain/agents/memory-curator.ts` to change memory type → mode assignment:
-
-```typescript
-const MODE_MAPPING: Record<string, CognitiveMode> = {
-  'inner_dialogue': 'dual',      // Your internal thoughts
-  'reflection': 'dual',          // Self-reflection
-  'conversation': 'emulation',   // Chat conversations
-  'action': 'agent',             // Tool/action usage
-  // Add custom mappings...
-};
-```
+Curator preserves a valid `metadata.cognitiveMode` from the source memory. Legacy memories without that field use the system's `dual` capture default and are labeled `cognitiveModeSource: "legacy-default"`; invalid explicit modes fail curation instead of being silently remapped. Backfill source metadata if a legacy memory needs a different mode.
 
 ---
 
@@ -262,7 +253,6 @@ const MODE_MAPPING: Record<string, CognitiveMode> = {
 
 ## References
 
-- [Full Implementation Plan](fine-tune-implementation-plan.md)
 - [Master Specification](model-fine-tune-overview.md)
 - [Schema Files](../etc/schemas/)
 - [Configuration](../etc/fine-tune-config.json)

@@ -80,7 +80,7 @@ export interface ToolExecutorConfig {
     [key: string]: any;
   };
   llmProxy: LLMProxyConfig;
-  escalation?: EscalationConfig;
+  escalation: EscalationConfig;
 }
 
 // ============================================================================

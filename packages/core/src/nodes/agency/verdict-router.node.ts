@@ -28,10 +28,12 @@ interface VerdictRouterInput {
   };
   verdict?: OutcomeVerdict;
   desire?: Desire;
+  milestoneAdvance?: boolean;
+  completionCriteriaMet?: boolean;
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const slot0 = inputs[0] as VerdictRouterInput | undefined;
+  const slot0 = (inputs.slot_0 ?? inputs.outcomeReview ?? inputs[0]) as VerdictRouterInput | undefined;
 
   const outcomeReview = slot0?.outcomeReview;
   const verdict = outcomeReview?.verdict || slot0?.verdict;
@@ -50,8 +52,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   // Check for milestone advancement in long-running goals
-  const milestoneAdvance = outcomeReview?.milestoneAdvance;
-  const completionCriteriaMet = outcomeReview?.completionCriteriaMet;
+  const milestoneAdvance = outcomeReview?.milestoneAdvance ?? slot0?.milestoneAdvance;
+  const completionCriteriaMet = outcomeReview?.completionCriteriaMet ?? slot0?.completionCriteriaMet;
   const isLongRunning = desire?.goalType === 'long_running';
 
   // Handle milestone advancement for long-running goals
@@ -61,14 +63,17 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     // Advance to next milestone
     if (desire?.id && username) {
       try {
-        const updatedDesire = await advanceDesireMilestone(desire.id, username);
-        desire = updatedDesire; // Use updated desire with advanced milestone
-
-        const progress = updatedDesire.goalProgress;
-        console.log(
-          `[verdict-router] Advanced to milestone ${(progress?.currentMilestone || 0) + 1}/${progress?.totalMilestones || 0} ` +
-          `(${progress?.progressPercent || 0}% complete)`
-        );
+        const advancement = await advanceDesireMilestone(desire.id, username);
+        if (advancement) {
+          desire = advancement.desire;
+          const progress = desire.goalProgress;
+          console.log(
+            `[verdict-router] Advanced to milestone ${(progress?.currentMilestone || 0) + 1}/${progress?.totalMilestones || 0} ` +
+            `(${progress?.progressPercent || 0}% complete)`
+          );
+        } else {
+          console.warn('[verdict-router] Milestone could not be advanced; retaining the current desire');
+        }
       } catch (err) {
         console.error('[verdict-router] Failed to advance milestone:', err);
         // Still route to planning, let it handle the error

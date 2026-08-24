@@ -6,33 +6,37 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { getProfilePaths } from '../../index.js';
+import { getProfilePaths } from '../../paths.js';
 
 const execute: NodeExecutor = async (_inputs, context, _properties) => {
   if (!context.userId) {
-    return {
-      personaSummary: 'User: unknown',
-    };
+    throw new Error('Curator requires a userId to load persona context');
   }
 
   const profilePaths = getProfilePaths(context.userId);
   const personaCorePath = path.join(profilePaths.persona, 'core.json');
-  let personaSummary = `User: ${context.userId}`;
+  if (!fs.existsSync(personaCorePath)) {
+    throw new Error(`Curator persona context is missing for user ${context.userId}`);
+  }
 
+  let personaData: any;
   try {
-    if (fs.existsSync(personaCorePath)) {
-      const personaData = JSON.parse(fs.readFileSync(personaCorePath, 'utf-8'));
-      personaSummary = `
+    personaData = JSON.parse(fs.readFileSync(personaCorePath, 'utf-8'));
+  } catch (error) {
+    throw new Error(`Curator persona context is invalid for user ${context.userId}: ${(error as Error).message}`);
+  }
+
+  if (!personaData || typeof personaData !== 'object' || Array.isArray(personaData)) {
+    throw new Error(`Curator persona context must be an object for user ${context.userId}`);
+  }
+
+  const personaSummary = `
 Name: ${personaData.identity?.name || context.userId}
 Role: ${personaData.identity?.role || 'User'}
 Communication Style: ${personaData.personality?.communicationStyle || 'Natural and conversational'}
 Core Values: ${personaData.coreValues?.join(', ') || 'Not specified'}
 Interests: ${personaData.interests?.join(', ') || 'Various topics'}
 `.trim();
-    }
-  } catch (error) {
-    console.warn('[PersonaSummaryLoader] Could not load persona, using minimal summary');
-  }
 
   return {
     personaSummary,

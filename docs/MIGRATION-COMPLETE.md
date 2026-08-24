@@ -62,8 +62,8 @@ See: [docs/PHASE-3-COMPLETE.md](./PHASE-3-COMPLETE.md)
 **Phase 4.4** - Configuration (6 files):
 - cognitive-mode.ts, chat-settings.ts, conversation-buffer.ts, curiosity-config.ts, approvals.ts, node-pipeline.ts
 
-**Phase 4.5** - Remaining Mixed (4 files):
-- tts.ts, kokoro-training.ts, code-approvals/index.ts, operator/react.ts
+**Phase 4.5** - Remaining Mixed (3 files):
+- tts.ts, kokoro-training.ts, operator/react.ts
 
 See: [docs/PHASE-4-COMPLETE.md](./PHASE-4-COMPLETE.md)
 

@@ -38,7 +38,6 @@ const observation: EnvironmentObservation = {
     robotObserver: {
       cycleId: 'spiky-friend-cycle',
       step: 1,
-      maxSteps: 4,
       triggerSource: 'autonomy',
       graph: 'environment',
       requestedBy: 'boredom-observer',
@@ -50,6 +49,7 @@ const expected: EnvironmentModelOutput = {
   actions: [],
   movementRequest: { description: 'Tilt the head gently toward the visible object.' },
   taskDecision: {
+    objective: 'Inspect the visible object from a slightly different viewpoint.',
     outcome: 'act',
     reason: 'The motion is intended to gain a different view, not merely to express curiosity.',
     objectiveComplete: false,
@@ -57,7 +57,6 @@ const expected: EnvironmentModelOutput = {
     requiredCompletionBasis: 'visual_observation',
     motionClass: 'body_local',
     actionPurpose: 'information_gain',
-    presentation: 'private',
     observationSummary: 'A small fuzzy teal spiky toy is visible in the current robot-camera image.',
     visualEvidenceMode: 'single',
   },
@@ -74,7 +73,7 @@ test('the spiky-friend head-tilt regression exercises the generic information-ga
   assert.equal(validation.valid, true, validation.errors.join('; '))
   assert.equal(validation.value?.taskDecision.actionPurpose, 'information_gain')
   assert.equal(validation.value?.taskDecision.requiredCompletionBasis, 'visual_observation')
-  assert.equal(validation.value?.taskDecision.presentation, 'private')
+  assert.equal('presentation' in (validation.value?.taskDecision ?? {}), false)
 
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify(expected),

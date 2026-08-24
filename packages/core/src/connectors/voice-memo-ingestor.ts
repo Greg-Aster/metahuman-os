@@ -12,7 +12,7 @@ import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { captureEvent } from '../memory.js';
+import { captureEventWithDetails, toToolParameters } from '../memory.js';
 import { transcribe, isWhisperCppAvailable, type TranscriptionResult } from '../transcription.js';
 
 // ============================================================================
@@ -324,20 +324,21 @@ export async function ingestVoiceMemo(
     ];
 
     // Create memory event
-    const eventId = captureEvent(content, {
+    const capture = captureEventWithDetails(content, {
       type: 'observation',
       tags,
       metadata: {
-        voiceMemo: {
+        voiceMemo: toToolParameters({
           ...metadata,
           filepath: storedPath, // Override with stored path
           hasTranscription: !!transcription,
-        },
+        }),
         consent: true,
         provenance: 'voice-memo',
         source: options?.source || 'voice-memo-ingestor',
       },
     });
+    const eventId = capture.eventId;
 
     // Audit the ingestion
     audit({

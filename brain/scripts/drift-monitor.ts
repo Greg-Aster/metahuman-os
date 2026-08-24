@@ -21,7 +21,7 @@ import { audit, captureEvent, getProfilePaths } from '@metahuman/core';
 import { callLLM, type RouterMessage } from '@metahuman/core/model-router';
 import { type EpisodicEvent } from '@metahuman/core';
 import { listUsers } from '@metahuman/core';
-import { getEmbedding, cosineSimilarity } from '@metahuman/core';
+import { callEmbeddings, cosineSimilarity } from '@metahuman/core';
 import {
   type DriftReport,
   type DriftAnalysis,
@@ -275,7 +275,8 @@ async function collectExchanges(
  */
 async function calculateEmbeddingSimilarity(
   userTexts: string[],
-  llmTexts: string[]
+  llmTexts: string[],
+  username: string,
 ): Promise<EmbeddingSimilarity | null> {
   try {
     if (userTexts.length === 0 || llmTexts.length === 0) {
@@ -287,20 +288,21 @@ async function calculateEmbeddingSimilarity(
     const llmCombined = llmTexts.slice(0, 10).join(' ').substring(0, 2000);
 
     // Get embeddings
-    const userEmbedding = await getEmbedding(userCombined);
-    const llmEmbedding = await getEmbedding(llmCombined);
-
-    if (!userEmbedding || !llmEmbedding) {
-      return null;
+    const [userEmbedding, llmEmbedding] = await Promise.all([
+      callEmbeddings({ text: userCombined, userId: username }),
+      callEmbeddings({ text: llmCombined, userId: username }),
+    ]);
+    if (userEmbedding.model !== llmEmbedding.model || userEmbedding.provider !== llmEmbedding.provider) {
+      throw new Error('Embedding provider changed during drift analysis');
     }
 
     // Calculate cosine similarity
-    const similarity = cosineSimilarity(userEmbedding, llmEmbedding);
+    const similarity = cosineSimilarity(userEmbedding.embeddings, llmEmbedding.embeddings);
 
     return {
       cosineSimilarity: similarity,
       semanticSimilarity: similarity, // Same for now, could use different method
-      embeddingModel: 'nomic-embed-text', // Default model
+      embeddingModel: `${userEmbedding.provider}:${userEmbedding.model}`,
     };
   } catch (error) {
     console.error(`${LOG_PREFIX} Embedding similarity error:`, error);
@@ -468,7 +470,8 @@ async function generateDriftReport(username: string): Promise<DriftReport | null
     analyzeExchanges(exchanges),
     calculateEmbeddingSimilarity(
       exchanges.map(e => e.userMessage),
-      exchanges.map(e => e.llmResponse)
+      exchanges.map(e => e.llmResponse),
+      username,
     ),
   ]);
 

@@ -127,6 +127,9 @@ All chat conversations are captured automatically from the web UI and CLI chat.
 ./bin/mh index query "when did I meet with Sarah?"
 ```
 
+`index build` queues the rebuild through the running MetaHuman Work Coordinator;
+the configured embedding service must be available when the job executes.
+
 `mh remember` automatically uses semantic search if an index exists for the current user.
 
 ## Memory System Architecture

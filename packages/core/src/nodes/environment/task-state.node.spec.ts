@@ -68,7 +68,89 @@ test('a new instruction does not admit an incidental correlated camera frame', a
   }), 'Please wave');
 
   assert.equal(prepared.routingAnalysis.needsVision, false);
+  assert.equal(prepared.routingAnalysis.needsMemory, true);
+  assert.equal(prepared.routingAnalysis.isFollowUp, true);
+  assert.equal(prepared.memoryHints.needsMemory, true);
   assert.equal(prepared.taskState.phase, 'new');
+});
+
+test('a fresh user task cannot inherit terminal feedback from unrelated work', async () => {
+  const stale = observation({
+    metadata: {
+      actionId: 'old-action',
+      correlationId: 'old-autonomy-cycle',
+      originatingInstruction: 'EnvironmentTaskState:{"version":1,"objective":"Walk around","phase":"awaiting_action","step":1,"maxSteps":8,"continuationPolicy":"bounded","requiredCompletionBasis":"action_result"}',
+    },
+    feedback: [{
+      id: 'old-feedback',
+      actionId: 'old-action',
+      timestamp: '2026-08-06T02:59:00.000Z',
+      type: 'completed',
+      message: 'An unrelated autonomous walk completed.',
+      data: { command: 'walk_forward' },
+    }],
+  });
+  const initial = await prepare(stale, 'Please turn right until you see a foot.');
+  const result = await environmentTaskStateNode.execute({
+    observation: stale,
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [],
+    response: 'My sensors indicate the room remains empty.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'No action was selected.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'body_local',
+      actionPurpose: 'task_effect',
+    },
+  }, {
+    userMessage: 'Please turn right until you see a foot.',
+    username: 'greggles',
+  }, { phase: 'reduce' });
+
+  assert.equal(result.actions.length, 0);
+  assert.equal(result.decision.terminalFeedback, null);
+  assert.equal(result.decision.actionId, null);
+  assert.equal(result.decision.blockedReason, 'visual_evidence_unavailable');
+  assert.equal(
+    result.response,
+    'Environment Mode did not produce an executable action or evidence-backed completion, so nothing was sent to the robot.',
+  );
+  assert.doesNotMatch(result.response, /room remains empty/i);
+});
+
+test('a visual stopping condition is normalized to bounded continuation', async () => {
+  const initial = await prepare(observation(), 'Turn right until you see the target.');
+  assert.equal(initial.taskState.continuationPolicy, 'bounded');
+  assert.equal(initial.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(initial.taskState.visualEvidenceMode, 'single');
+  const result = await environmentTaskStateNode.execute({
+    observation: observation(),
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90' }],
+    response: 'Turning right ninety degrees now.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'The turn advances the requested visual search.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+    },
+  }, {
+    userMessage: 'Turn right until you see the target.',
+    username: 'greggles',
+  }, { phase: 'reduce' });
+
+  assert.equal(result.actions[0]?.command, 'turn_right_90');
+  assert.equal(result.taskState.continuationPolicy, 'bounded');
+  assert.equal(result.taskState.requiredCompletionBasis, 'visual_observation');
+  assert.equal(result.taskState.visualEvidenceMode, 'single');
 });
 
 test('a Robot Operator action handoff admits its current image and requires one executable selection', async () => {
@@ -103,7 +185,6 @@ test('autonomy revises its objective inside canonical Environment Task State', a
       robotObserver: {
         cycleId: 'self-authored-objective',
         step: 1,
-        maxSteps: 8,
         triggerSource: 'autonomy',
         graph: 'boredom-autonomy',
         requestedBy: 'boredom-observer',
@@ -132,7 +213,6 @@ test('autonomy revises its objective inside canonical Environment Task State', a
       requiredCompletionBasis: 'visual_observation',
       motionClass: 'open_loop_displacement',
       actionPurpose: 'information_gain',
-      presentation: 'private',
     },
   }, {
     userMessage: '',
@@ -187,7 +267,6 @@ test('action-required autonomy does not present future-action prose as executed 
       requiredCompletionBasis: 'visual_observation',
       motionClass: 'body_local',
       actionPurpose: 'expression',
-      presentation: 'private',
     },
   }, {
     userMessage: '',
@@ -256,7 +335,6 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
       robotObserver: {
         cycleId: 'movement-cycle',
         step: 1,
-        maxSteps: 3,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'environment-perception',
@@ -304,7 +382,6 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
       actionPurpose: 'expression',
-      presentation: 'private',
     },
   }, {
     userMessage: '',
@@ -328,7 +405,6 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
       robotObserver: {
         cycleId: 'movement-cycle',
         step: 2,
-        maxSteps: 3,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'environment-perception',
@@ -362,10 +438,8 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
       reason: 'The fresh view inspired a specific persona-grounded reaction.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'Frame movement-after was interpreted after the turn.',
       visualEvidenceMode: 'single',
-      presentation: 'conversation',
+      completionEvidence: 'Frame movement-after shows the brighter patch that prompted this reaction.',
     },
   }, {
     userMessage: '',
@@ -374,8 +448,6 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
   }, { phase: 'reduce' });
 
   assert.equal(reacted.complete, true);
-  assert.equal(reacted.presentation, 'conversation');
-  assert.equal(reacted.privateResponse, '');
   assert.match(reacted.response, /brighter patch of the room/);
 });
 
@@ -563,10 +635,9 @@ test('a bounded visual objective closes only when the selector cites the admitte
       reason: 'The attached correlated frame contains the requested stopping condition.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'The requested foot is visible in frame foot-visible.',
       visualEvidenceMode: 'single',
       motionClass: 'body_local',
+      completionEvidence: 'Frame foot-visible visibly contains the requested foot.',
     },
   });
 
@@ -574,6 +645,71 @@ test('a bounded visual objective closes only when the selector cites the admitte
   assert.deepEqual(completed.actions, []);
   assert.equal(completed.response, 'I see your foot, so I stopped waving.');
   assert.equal(completed.decision.completionBasis, 'visual_observation');
+  assert.equal(completed.decision.completionEvidence, 'Frame foot-visible visibly contains the requested foot.');
+});
+
+test('an ungrounded visual completion advances the persisted action instead of stopping or replaying the request', async () => {
+  clearEnvironmentTaskFrameCache();
+  const initial = await prepare(observation(), 'Please wave until you see my hand, then stop');
+  const queued = await reduce({
+    observation: observation(),
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'wave', sessionId: 'robot-1' }],
+    response: 'I will wave and inspect the returned frame.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'The hand is the visual stopping condition.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
+      motionClass: 'body_local',
+    },
+  });
+  const current = frame('hand-not-grounded', 'hand-cycle', 'hand-action');
+  const terminal = observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      actionId: 'hand-action',
+      correlationId: 'hand-cycle',
+      originatingInstruction: queued.taskInstruction,
+    },
+    feedback: [{
+      id: 'hand-feedback',
+      actionId: 'hand-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'done',
+      data: { command: 'emote' },
+    }],
+  });
+  const evidencePass = await prepare(terminal);
+  const continued = await reduce({
+    observation: terminal,
+    instruction: evidencePass.instruction,
+    taskState: evidencePass.taskState,
+    frames: evidencePass.visuals,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: 'The wave action is complete. I will turn to search for the hand.',
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The motor action completed.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
+    },
+  });
+
+  assert.equal(continued.complete, false);
+  assert.equal(continued.actions.length, 1);
+  assert.equal(continued.actions[0]?.command, 'wave');
+  assert.equal(continued.taskState.step, 2);
+  assert.match(continued.response, /does not provide grounded evidence/i);
+  assert.doesNotMatch(continued.response, /action is complete/i);
+  assert.notEqual(continued.actions[0]?.command, 'turn_right_90');
 });
 
 test('a bounded exploratory action inspects the correlated result before deciding the objective is complete', async () => {
@@ -642,10 +778,9 @@ test('a bounded exploratory action inspects the correlated result before decidin
       reason: 'The fresh correlated image contains no object or activity requiring another action.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'Frame room-after shows no situation requiring attention.',
       visualEvidenceMode: 'single',
       motionClass: 'body_local',
+      completionEvidence: 'Frame room-after shows a clear room with nothing requiring attention.',
     },
   });
   assert.equal(closed.complete, true);
@@ -666,7 +801,6 @@ test('any autonomous information-gain action preserves a visual contract through
       robotObserver: {
         cycleId: 'information-cycle',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'boredom-observer',
@@ -708,7 +842,6 @@ test('any autonomous information-gain action preserves a visual contract through
   assert.equal(queued.taskState.continuationPolicy, 'bounded');
   assert.equal(queued.taskState.requiredCompletionBasis, 'visual_observation');
   assert.equal(queued.taskState.visualEvidenceMode, 'single');
-  assert.equal(queued.presentation, 'private');
   assert.equal(queued.familiarityQuery, 'An unfamiliar object is visible in the current frame.');
 
   const after = frame('object-after', 'information-cycle', 'information-action');
@@ -722,7 +855,6 @@ test('any autonomous information-gain action preserves a visual contract through
       robotObserver: {
         cycleId: 'information-cycle',
         step: 2,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'boredom-observer',
@@ -746,13 +878,201 @@ test('any autonomous information-gain action preserves a visual contract through
   assert.equal(returned.visuals.at(-1)?.id, 'object-after');
 });
 
+test('Task State owns expression evidence consistency before dispatch', async () => {
+  const autonomousObservation = observation({
+    metadata: {
+      correlationId: 'expression-cycle',
+      robotObserver: {
+        cycleId: 'expression-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-reflection',
+      },
+    },
+  });
+  const initial = await prepare(
+    autonomousObservation,
+    'Choose one meaningful consequence from the current reflection.',
+  );
+  const result = await reduce({
+    observation: autonomousObservation,
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'wave', sessionId: 'robot-1' }],
+    response: 'I will wave once as an outward expression.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Express the reflected thought through one supported gesture.',
+      objectiveComplete: false,
+      reason: 'The wave gives the reflection a physical consequence.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+    },
+  });
+
+  assert.equal(result.actions[0]?.command, 'wave');
+  assert.equal(result.taskState.actionPurpose, 'expression');
+  assert.equal(result.taskState.continuationPolicy, 'bounded');
+  assert.equal(result.taskState.requiredCompletionBasis, 'action_result');
+});
+
+test('autonomous action results return to the selector for a meaningful review instead of canned closure', async () => {
+  const autonomousObservation = observation({
+    metadata: {
+      correlationId: 'review-cycle',
+      robotObserver: {
+        cycleId: 'review-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-reflection',
+      },
+    },
+  });
+  const initial = await prepare(
+    autonomousObservation,
+    'Use the reflection as inspiration for one meaningful consequence.',
+  );
+  const queued = await reduce({
+    observation: autonomousObservation,
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [{ type: 'robotCommand', command: 'wave', sessionId: 'robot-1' }],
+    response: 'I answer the memory with a curious wave.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Express curiosity prompted by the remembered encounter.',
+      objectiveComplete: false,
+      reason: 'The gesture gives the reflection an embodied consequence.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+    },
+  });
+  assert.equal(queued.taskState.continuationPolicy, 'bounded');
+
+  const terminal = observation({
+    metadata: {
+      actionId: 'review-action',
+      correlationId: 'review-cycle',
+      originatingInstruction: queued.taskInstruction,
+      robotObserver: {
+        cycleId: 'review-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-reflection',
+      },
+    },
+    feedback: [{
+      id: 'review-feedback',
+      actionId: 'review-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'curious gesture completed',
+      data: { command: 'wave' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  assert.equal(returned.deterministicComplete, false);
+  assert.equal(returned.precomputedResponse, '');
+  assert.match(String(returned.instruction), /Review what the verified action changes/);
+  assert.match(String(returned.instruction), /does not end an autonomous episode by itself/);
+
+  const reviewed = await reduce({
+    observation: terminal,
+    instruction: returned.instruction,
+    taskState: returned.taskState,
+    actions: [],
+    response: 'That curious wave felt like the right answer to the memory, so I let the moment settle.',
+    taskDecision: {
+      outcome: 'complete',
+      objective: 'Express curiosity prompted by the remembered encounter.',
+      objectiveComplete: true,
+      reason: 'The verified gesture fulfilled the chosen expression.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+      actionPurpose: 'expression',
+    },
+  });
+  assert.equal(reviewed.complete, true);
+  assert.equal(
+    reviewed.response,
+    'That curious wave felt like the right answer to the memory, so I let the moment settle.',
+  );
+  assert.doesNotMatch(reviewed.response, /action is complete/i);
+});
+
+test('autonomy can revise the purpose and evidence contract when feedback motivates another action', async () => {
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Express curiosity about the remembered object.',
+    phase: 'awaiting_action',
+    step: 1,
+    maxSteps: 8,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'action_result',
+    motionClass: 'body_local',
+    actionPurpose: 'expression',
+    selectedAction: { type: 'robotCommand', command: 'wave' },
+  });
+  const terminal = observation({
+    metadata: {
+      actionId: 'revision-action',
+      correlationId: 'revision-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'revision-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-reflection',
+      },
+    },
+    feedback: [{
+      id: 'revision-feedback',
+      actionId: 'revision-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'wave completed',
+      data: { command: 'wave' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  const revised = await reduce({
+    observation: terminal,
+    instruction: returned.instruction,
+    taskState: returned.taskState,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: 'The gesture makes me curious about what is beside me, so I turn for a fresh view.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'See what is beside me after the gesture.',
+      objectiveComplete: false,
+      reason: 'A new orientation can provide the needed visual evidence.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'information_gain',
+    },
+  });
+  assert.equal(revised.actions[0]?.command, 'turn_right_90');
+  assert.equal(revised.taskState.objective, 'See what is beside me after the gesture.');
+  assert.equal(revised.taskState.actionPurpose, 'information_gain');
+  assert.equal(revised.taskState.continuationPolicy, 'bounded');
+  assert.equal(revised.taskState.requiredCompletionBasis, 'visual_observation');
+});
+
 test('autonomous physical work without an action purpose fails closed', async () => {
   const autonomousObservation = observation({
     metadata: {
       robotObserver: {
         cycleId: 'purpose-cycle',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'boredom-observer',
@@ -782,7 +1102,7 @@ test('autonomous physical work without an action purpose fails closed', async ()
   assert.equal(result.decision.blockedReason, 'action_purpose_missing');
 });
 
-test('an autonomous observation can remain physically still while producing a meaningful private reflection', async () => {
+test('an autonomous observation can remain physically still while producing a meaningful outward reflection', async () => {
   const current = frame('quiet-current-view', 'quiet-cycle');
   const autonomousObservation = observation({
     visual: current,
@@ -792,7 +1112,6 @@ test('an autonomous observation can remain physically still while producing a me
       robotObserver: {
         cycleId: 'quiet-cycle',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'boredom-observer',
@@ -813,20 +1132,17 @@ test('an autonomous observation can remain physically still while producing a me
     taskDecision: {
       outcome: 'complete',
       objectiveComplete: true,
-      reason: 'The current scene supports a specific private reflection without requiring movement.',
+      reason: 'The current scene supports a specific reflection without requiring movement.',
       continuationPolicy: 'none',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'The fresh frame shows a quiet, softly lit corner.',
       observationSummary: 'A quiet corner is softly lit in the current frame.',
-      presentation: 'private',
+      completionEvidence: 'Frame quiet-current-view shows the softly lit quiet corner described in the response.',
     },
   }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
 
   assert.equal(result.complete, true);
   assert.deepEqual(result.actions, []);
-  assert.equal(result.presentation, 'private');
-  assert.match(result.privateResponse, /quiet light makes this corner feel calm/);
+  assert.match(result.response, /quiet light makes this corner feel calm/);
   assert.equal(result.familiarityQuery, 'A quiet corner is softly lit in the current frame.');
   assert.equal(result.decision.completionBasis, 'visual_observation');
 });
@@ -843,7 +1159,6 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
       robotObserver: {
         cycleId: 'bootstrap-cycle',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'boredom-observer',
@@ -879,9 +1194,6 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
       reason: 'The current view does not justify an external response or action.',
       continuationPolicy: 'none',
       requiredCompletionBasis: 'response',
-      completionBasis: 'response',
-      completionEvidence: 'The current view was evaluated.',
-      presentation: 'private',
     },
   }, {
     userMessage: '',
@@ -890,14 +1202,12 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
   }, { phase: 'reduce' });
 
   assert.equal(result.complete, true);
-  assert.equal(result.presentation, 'private');
   assert.equal(result.response, 'The current view does not justify an external response or action.');
-  assert.equal(result.privateResponse, 'The current view does not justify an external response or action.');
   assert.equal(result.decision.terminalFeedback, null);
   assert.equal(result.decision.blockedReason, '');
 });
 
-test('a user-started action cannot be hidden by a selector presentation hint', async () => {
+test('a user-started action remains on the single response path', async () => {
   const initial = await prepare(observation(), 'Please wave');
   const result = await reduce({
     observation: observation(),
@@ -913,12 +1223,10 @@ test('a user-started action cannot be hidden by a selector presentation hint', a
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
       actionPurpose: 'expression',
-      presentation: 'private',
     },
   });
 
-  assert.equal(result.presentation, 'conversation');
-  assert.equal(result.privateResponse, '');
+  assert.equal(result.response, 'Waving once.');
 });
 
 test('a generic adapter command label cannot hide matching terminal feedback', async () => {
@@ -1123,10 +1431,9 @@ test('external visual change is judged once by the same Environment LLM with ord
       reason: 'The before and after images show the requested change.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'The object occupies more of the current frame.',
       visualEvidenceMode: 'comparison',
       motionClass: 'open_loop_displacement',
+      completionEvidence: 'Frame after shows the object closer than in baseline frame before.',
     },
   });
   assert.equal(completed.complete, true);
@@ -1168,8 +1475,6 @@ test('a comparison claim cannot complete from only the current robot camera fram
       reason: 'Visual change claimed.',
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
-      completionBasis: 'visual_observation',
-      completionEvidence: 'Current image.',
       visualEvidenceMode: 'comparison',
     },
   });
@@ -1203,7 +1508,6 @@ test('action parser admits a new LLM-selected action on a failed feedback pass',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
         actionPurpose: 'expression',
-        presentation: 'private',
       },
     }),
   }, {});
@@ -1217,10 +1521,18 @@ test('Environment graph has one semantic LLM and no competing completion or refi
     'utf8',
   ));
   const nodeTypes = graph.nodes.map((node: Record<string, any>) => node.data?.nodeType);
+  const selectorPrompt = String(graph.nodes.find((node: Record<string, any>) => (
+    node.data?.nodeType === 'environment_context_builder'
+  ))?.data?.properties?.systemPrompt ?? '');
   assert.equal(nodeTypes.filter((type: string) => type === 'model_router').length, 1);
   assert.equal(nodeTypes.filter((type: string) => type === 'environment_task_state').length, 2);
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_loader').length, 1);
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_formatter').length, 1);
+  assert.match(selectorPrompt, /History and memories are background, never current results/);
+  assert.match(selectorPrompt, /conditional visual search or stopping condition/i);
+  assert.match(selectorPrompt, /continuationPolicy to bounded/);
+  assert.match(selectorPrompt, /requiredCompletionBasis to visual_observation/);
+  assert.match(selectorPrompt, /visualEvidenceMode to single/);
   assert.ok(graph.edges.some((edge: Record<string, any>) => (
     edge.source === 'persona-formatter'
     && edge.sourceHandle === 'formatted'

@@ -19,8 +19,6 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import type {
   Desire,
   DesireOutcomeReview,
-  OutcomeVerdict,
-  FailureCategory,
   DesireScratchpadEntry,
   DesireMetrics,
   DesireScratchpadSummary,
@@ -34,12 +32,10 @@ import {
   getTargetUser,
   withUserContext,
   captureEvent,
-  llm,
   isAgencyEnabled,
   saveDesire,
   moveDesire,
   listDesiresByStatus,
-  generateOutcomeReviewId,
   createScratchpadEntry,
   updateScratchpadSummary,
   initializeScratchpadSummary,
@@ -183,17 +179,6 @@ export interface DesireOutcomeReviewerResult {
   };
 }
 
-interface LLMOutcomeReviewOutput {
-  verdict: OutcomeVerdict;
-  successScore: number; // 0-1
-  reasoning: string;
-  lessonsLearned: string[];
-  nextAttemptSuggestions?: string[];
-  adjustedStrength?: number;
-  notifyUser: boolean;
-  userMessage?: string;
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -233,168 +218,6 @@ function inferDesireNature(metrics: DesireMetrics): 'recurring' | 'achievable' |
 
   // Default to achievable for new desires
   return 'achievable';
-}
-
-// ============================================================================
-// Outcome Review via LLM
-// ============================================================================
-
-/**
- * Build the prompt for outcome review
- */
-function buildOutcomeReviewPrompt(desire: Desire): string {
-  const executionSummary = desire.execution
-    ? `
-Execution Status: ${desire.execution.status}
-Steps Completed: ${desire.execution.stepsCompleted || 0} / ${desire.plan?.steps.length || 0}
-${desire.execution.error ? `Error: ${desire.execution.error}` : ''}
-${desire.execution.result ? `Result: ${JSON.stringify(desire.execution.result, null, 2)}` : ''}
-Started: ${desire.execution.startedAt}
-${desire.execution.completedAt ? `Completed: ${desire.execution.completedAt}` : ''}
-`
-    : 'No execution data available';
-
-  const planSummary = desire.plan
-    ? `
-Plan Version: ${desire.plan.version}
-Operator Goal: ${desire.plan.operatorGoal}
-Steps:
-${desire.plan.steps.map(s => `  ${s.order}. ${s.action}`).join('\n')}
-`
-    : 'No plan available';
-
-  const historyContext = desire.planHistory?.length
-    ? `\nPrevious Plan Attempts: ${desire.planHistory.length}`
-    : '';
-
-  const rejectionContext = desire.rejectionHistory?.length
-    ? `\nPrevious Rejections: ${desire.rejectionHistory.length}
-${desire.rejectionHistory.map(r => `  - ${r.rejectedBy}: ${r.reason}`).join('\n')}`
-    : '';
-
-  // Build metrics context for LLM
-  const metrics = desire.metrics || initializeDesireMetrics();
-  const inferredNature = inferDesireNature(metrics);
-
-  const metricsContext = `
-BEHAVIORAL METRICS (how the desire has evolved):
-- Cycles completed: ${metrics.cycleCount} (how many times it's been through the full pipeline)
-- Completions: ${metrics.completionCount} (times successfully satisfied)
-- Execution attempts: ${metrics.executionAttemptCount} (total attempts)
-- Success rate: ${metrics.executionSuccessCount}/${metrics.executionAttemptCount || 1}
-- Plan versions: ${metrics.planVersionCount} (times replanned)
-- Reinforcements: ${metrics.reinforcementCount} (times strength increased)
-- Decays: ${metrics.decayCount} (times strength decreased)
-- User interactions: ${metrics.userInputCount} (times user provided input)
-
-INFERRED NATURE: ${inferredNature}
-(Based on metrics: ${
-  inferredNature === 'recurring' ? 'High cycle/completion count - returns after satisfaction' :
-  inferredNature === 'aspirational' ? 'Many attempts, never fully satisfied - continuous pursuit' :
-  'First-time or few attempts - likely a one-time goal'
-})`;
-
-  return `You are an outcome reviewer for an autonomous agent system. Review the following desire execution and determine the next action.
-
-DESIRE INFORMATION:
-Title: ${desire.title}
-Description: ${desire.description}
-Reason: ${desire.reason}
-Current Strength: ${desire.strength}
-Source: ${desire.source}
-${metricsContext}
-
-PLAN:
-${planSummary}
-
-EXECUTION:
-${executionSummary}
-${historyContext}
-${rejectionContext}
-
-UNDERSTANDING DESIRE NATURE (inferred from metrics, not hardcoded):
-- Desires with high cycle counts that keep returning after completion are RECURRING (e.g., "exercise daily", "eat healthy")
-- Desires with single completion and low attempts are ACHIEVABLE (e.g., "buy a phone", "complete project X")
-- Desires with many attempts but never fully satisfied are ASPIRATIONAL (e.g., "be happy", "achieve mastery")
-
-The nature of a desire emerges from its behavior over time - the same desire might start as achievable
-and reveal itself to be recurring if it keeps coming back after being satisfied.
-
-Based on this information, provide your review in the following JSON format:
-{
-  "verdict": "completed" | "continue" | "retry" | "escalate" | "abandon",
-  "successScore": <0.0-1.0>,
-  "reasoning": "<detailed reasoning for your verdict>",
-  "lessonsLearned": ["<lesson 1>", "<lesson 2>"],
-  "nextAttemptSuggestions": ["<suggestion 1>", "<suggestion 2>"],
-  "adjustedStrength": <0.0-1.0 or null>,
-  "notifyUser": true/false,
-  "userMessage": "<message for user if notifyUser is true>"
-}
-
-VERDICT GUIDELINES:
-- "completed": The desire was fully satisfied and should be archived (for achievable) or reset (for recurring)
-- "continue": Keep pursuing without changes (for aspirational, or recurring that completed a cycle)
-- "retry": Try again with a new approach (include nextAttemptSuggestions)
-- "escalate": Human intervention needed - something unexpected happened
-- "abandon": Cannot be achieved, give up (only after multiple failures or clear impossibility)
-
-Consider:
-1. Was the plan executed successfully?
-2. Did the execution actually satisfy the underlying desire/need?
-3. What can be learned from this attempt?
-4. Should the user be notified of significant events?
-
-Respond ONLY with the JSON object.`;
-}
-
-/**
- * Review a desire's execution outcome using LLM
- */
-export async function reviewOutcome(desire: Desire): Promise<DesireOutcomeReview> {
-  const prompt = buildOutcomeReviewPrompt(desire);
-
-  try {
-    const response = await llm.generateJSON<LLMOutcomeReviewOutput>([
-      { role: 'user', content: prompt },
-    ]);
-
-    if (!response) {
-      throw new Error('No response from LLM');
-    }
-
-    return {
-      id: generateOutcomeReviewId(desire.id),
-      verdict: response.verdict,
-      reasoning: response.reasoning,
-      successScore: response.successScore,
-      lessonsLearned: response.lessonsLearned || [],
-      nextAttemptSuggestions: response.nextAttemptSuggestions,
-      adjustedStrength: response.adjustedStrength,
-      reviewedAt: new Date().toISOString(),
-      notifyUser: response.notifyUser,
-      userMessage: response.userMessage,
-    };
-  } catch (error) {
-    console.error(`${LOG_PREFIX} LLM review failed:`, error);
-
-    // Fallback review based on execution status
-    const wasSuccessful = desire.execution?.status === 'completed';
-    return {
-      id: generateOutcomeReviewId(desire.id),
-      verdict: wasSuccessful ? 'completed' : 'retry',
-      reasoning: wasSuccessful
-        ? 'Execution completed successfully (fallback review)'
-        : `Execution failed: ${desire.execution?.error || 'Unknown error'} (fallback review)`,
-      successScore: wasSuccessful ? 0.8 : 0.2,
-      lessonsLearned: wasSuccessful
-        ? ['Plan executed as expected']
-        : ['Execution encountered errors - may need different approach'],
-      reviewedAt: new Date().toISOString(),
-      notifyUser: !wasSuccessful,
-      userMessage: wasSuccessful ? undefined : `Desire "${desire.title}" needs attention`,
-    };
-  }
 }
 
 // ============================================================================

@@ -8,59 +8,35 @@
  *   npx tsx brain/agents/curator/cli.ts [options]
  *
  * Options:
- *   --username <name>  Process specific user (required unless --single-user)
- *   --single-user      Process only the default user
+ *   --username <name>     Process a specific user (required unless --single-user)
+ *   --single-user         Process only the currently resolved user
+ *   --all                 Drain all available batches instead of one bounded batch
+ *   --limit <count>       Memories per batch (1-500, default 20)
+ *   --max-batches <count> Safety bound for --all (default 100)
+ *   --temperature <0-1>  Curator LLM temperature
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type CuratorOptions } from './core.js';
+import { parseCuratorArgs, runCycle } from './core.js';
 
 const LOG_PREFIX = '[curator]';
 
 async function main(): Promise<void> {
-  console.log(`${LOG_PREFIX} ========== main HIT ==========`);
   initGlobalLogger('curator');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: CuratorOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  // Try environment variable first, then CLI args
-  let username: string | null = process.env.MH_TRIGGER_USERNAME || null;
-
-  if (!username) {
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] === '--username' && i + 1 < args.length) {
-        username = args[i + 1];
-        break;
-      }
-    }
-  }
-
-  if (username) {
-    // Validate username for security (alphanumeric + underscore/hyphen only)
-    if (!/^[a-zA-Z0-9_-]{1,50}$/.test(username)) {
-      console.error(`${LOG_PREFIX} ERROR: Invalid username format. Must be alphanumeric with underscore/hyphen, 1-50 characters.`);
-      process.exit(1);
-    }
-    options.username = username;
-  }
-
-  if (!options.username && !options.singleUser) {
-    console.error(`${LOG_PREFIX} ERROR: --username <name> is required`);
-    console.error(`\nUsage: npx tsx brain/agents/curator/cli.ts --username <username>`);
-    console.error(`Or set MH_TRIGGER_USERNAME environment variable`);
-    process.exit(1);
-  }
-
-  console.log(`${LOG_PREFIX} Starting with options:`, options);
-
   try {
+    const args = process.argv.slice(2);
+    const options = parseCuratorArgs(args, process.env.MH_TRIGGER_USERNAME);
+
+    if (!options.username && !options.singleUser) {
+      throw new Error('--username <name> is required unless --single-user is used');
+    }
+
+    console.log(`${LOG_PREFIX} Starting with options:`, options);
+
     const result = await runCycle(options);
 
-    console.log(`${LOG_PREFIX} Completed: ${result.usersProcessed} users processed`);
+    console.log(`${LOG_PREFIX} Completed: ${result.usersProcessed} user profile processed`);
 
     if (result.errors.length > 0) {
       console.error(`${LOG_PREFIX} Errors:`, result.errors);

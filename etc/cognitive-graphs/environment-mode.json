@@ -150,7 +150,7 @@
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nUse the instruction, activePersona, sensory evidence, taskState, decisionRequirements, and capabilities. Persona shapes tone without inventing facts. History and memories are context, never current sensory proof.\n\nReturn strict JSON with exactly response, actions, movementRequest, and taskDecision. Select at most one action. response is the robot's actual reaction or utterance, not a plan or workflow explanation. taskDecision includes outcome, reason, objectiveComplete, continuationPolicy, requiredCompletionBasis, and presentation. Set presentation to conversation only when response should be spoken; otherwise use private. Physical work also needs motionClass and actionPurpose: expression, information_gain, or task_effect. information_gain requires bounded visual_observation. Expression normally requires action_result unless taskState requires later evidence.\n\nWhen mustSelectAction is true, return one safe advertised action now. Prefer one exact advertised robotCommand whenever it satisfies the instruction. Use movementRequest only for genuinely off-script body_local motion when robotMotionPlan is advertised. Never combine movements. If action is selected, response may refer only to that action and must not imply it already happened. If action is impossible, report why without future-action prose.\n\nTaskState evidence proves the whole objective after an action; it never replaces the required current action. An action has not happened: use outcome act and objectiveComplete false. Preserve taskState and complete only from its required evidence. Use only current capabilities and capabilityRules. The camera sees the external scene, not the robot.\n\nFor autonomy, stillness may be appropriate, but cognitive silence or generic nothing-actionable text is not. Produce a persona-grounded private reflection, deliberate conversation, or bounded action. With a fresh image, provide a concise observationSummary.",
+          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nTreat currentInstruction as authoritative. Use activePersona for voice and judgment. History and memories are background, never current results, actions, sensor readings, or proof. Use only attached sensory evidence and currentEnvironment state as evidence; without a current image, do not claim what the camera sees.\n\nReturn strict JSON with exactly response, actions, movementRequest, and taskDecision. response is the robot's actual outward reaction, not a plan or workflow explanation. Select at most one action or movementRequest. taskDecision includes outcome, reason, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work also needs motionClass and actionPurpose: expression, information_gain, or task_effect. information_gain requires bounded visual_observation; expression normally requires action_result.\n\nFor a supported physical request, return one safe advertised action now; prose is not execution. Prefer an exact advertised robotCommand. Use movementRequest only for genuinely off-script body_local motion when robotMotionPlan is available. Never combine movements. Do not claim a selected action already happened. If no capability can safely advance the request, state that limitation.\n\nA conditional visual search or stopping condition, including repeat if not seen and continue until seen, is always bounded multi-step work. Set continuationPolicy to bounded, requiredCompletionBasis to visual_observation, and visualEvidenceMode to single because one current correlated frame proves whether the stopping object is present. Use comparison only for an explicit before/after change claim. Select one action, inspect only fresh correlated evidence, then continue or complete before the safety limit. Do not ask for user confirmation between those bounded steps. An unexecuted action uses outcome act and objectiveComplete false. Preserve taskState. Use only current capabilities and capabilityRules. For autonomy, produce a persona-grounded response, bounded action, or both; with a fresh image, include a concise observationSummary.",
           "recentHistoryLimit": 4
         }
       }
@@ -335,26 +335,6 @@
         "label": "Memory Capture",
         "nodeType": "memory_capture",
         "properties": {}
-      }
-    },
-    {
-      "id": "autonomous-inner-buffer",
-      "type": "outputNode",
-      "position": {
-        "x": 2820,
-        "y": 470
-      },
-      "width": 250,
-      "height": 120,
-      "data": {
-        "label": "Autonomous Inner Reflection",
-        "nodeType": "inner_dialogue_buffer",
-        "properties": {
-          "tags": ["robot-operator", "autonomous-observation", "inner"],
-          "dialogueSource": "",
-          "role": "reflection",
-          "captureMemory": false
-        }
       }
     },
     {
@@ -935,31 +915,7 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Environment result before presentation admission"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-presentation-8-presentation",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "presentation",
-      "targetHandle": "presentation",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Autonomous output is private unless conversation is deliberate"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-privateResponse-8-privateResponse",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "privateResponse",
-      "targetHandle": "privateResponse",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Private semantic reason for inner dialogue"
+        "comment": "Environment response for conversation and TTS"
       }
     },
     {
@@ -1043,43 +999,19 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Only explicitly conversational Environment output"
+        "comment": "Every Environment response enters conversation"
       }
     },
     {
-      "id": "e-8-privateResponse-autonomous-inner-buffer-text",
+      "id": "e-8-responseMetadata-conversation-buffer-metadata",
       "source": "8",
-      "target": "autonomous-inner-buffer",
-      "sourceHandle": "privateResponse",
-      "targetHandle": "text",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Autonomous default remains private and never enters TTS"
-      }
-    },
-    {
-      "id": "e-8-presentationMetadata-autonomous-inner-buffer-metadata",
-      "source": "8",
-      "target": "autonomous-inner-buffer",
-      "sourceHandle": "presentationMetadata",
+      "target": "conversation-buffer",
+      "sourceHandle": "responseMetadata",
       "targetHandle": "metadata",
       "type": "default",
       "data": {
         "type": "object",
         "comment": "Preserve the originating autonomy service label"
-      }
-    },
-    {
-      "id": "e-8-presentationMetadata-conversation-buffer-metadata",
-      "source": "8",
-      "target": "conversation-buffer",
-      "sourceHandle": "presentationMetadata",
-      "targetHandle": "metadata",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Preserve service origin when an autonomous response is deliberately voiced"
       }
     },
     {

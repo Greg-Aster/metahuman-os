@@ -54,7 +54,6 @@ interface DevelopmentSelectionReport {
     missedPhysicalActions?: number
     wrongPhysicalActions?: number
     unnecessaryCaptures?: number
-    escalationErrors?: number
   }
 }
 
@@ -258,7 +257,6 @@ async function trainFinalAdapter(
         missedPhysicalActions: report.aggregate.missedPhysicalActions,
         wrongPhysicalActions: report.aggregate.wrongPhysicalActions,
         unnecessaryCaptures: report.aggregate.unnecessaryCaptures,
-        escalationErrors: report.aggregate.escalationErrors,
       },
     }, null, 2)}\n`),
   ])

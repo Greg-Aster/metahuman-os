@@ -225,7 +225,6 @@ brain/agents/
 **Misc Unused**:
 - `/api/warmup` (keep `/api/warmup-model`)
 - `/api/memories` (keep `/api/memories_all`)
-- `/api/code-approvals/*`
 - `/api/functions/maintenance`, `/api/functions/stats`
 
 ### Naming Standardization

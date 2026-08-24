@@ -43,7 +43,6 @@ function robotObservation() {
       robotObserver: {
         cycleId: 'cycle-1',
         step: 1,
-        maxSteps: 8,
         triggerSource: 'autonomy' as const,
         graph: 'robot-operator',
         requestedBy: 'robot-observer' as const,
@@ -336,6 +335,8 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
   assert.equal(result.context.recentContextCount, 2);
   assert.equal(result.context.innerContextCount, 1);
   assert.equal(result.context.actionHistoryCount, 1);
+  assert.equal(result.context.historicalLatestActionIncluded, false);
+  assert.equal(result.context.stimulus.verifiedCurrentAction, null);
   assert.equal(result.context.memoryContextCount, 1);
   assert.equal(result.context.stimulusInstruction, 'Let one concrete remembered detail inspire what happens next.');
   const serialized = JSON.stringify(result.messages);
@@ -357,14 +358,64 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
     },
   );
   const taskDecision = (result.jsonSchema as any).properties.taskDecision;
-  assert.ok(taskDecision.required.includes('presentation'));
-  assert.ok(taskDecision.required.includes('actionPurpose'));
+  assert.equal('presentation' in taskDecision.properties, false);
+  assert.equal(taskDecision.required.includes('actionPurpose'), false);
   assert.equal(taskDecision.required.includes('motionClass'), false);
-  assert.deepEqual(
-    (result.jsonSchema as any).properties.actions.items.properties.command.enum,
-    ['walk', 'wave', 'stop'],
-  );
+  assert.ok('actionPurpose' in taskDecision.properties);
+  assert.ok('motionClass' in taskDecision.properties);
+  assert.equal('escalation' in taskDecision.properties, false);
+  assert.equal(taskDecision.properties.outcome.enum.includes('escalate'), false);
+  const actionBranches = (result.jsonSchema as any).properties.actions.items.anyOf;
+  const commandBranch = actionBranches.find((branch: any) => (
+    branch.properties.type.enum.includes('robotCommand')
+  ));
+  assert.deepEqual(commandBranch.properties.command.enum, ['walk', 'wave', 'stop']);
   assert.equal((result.jsonSchema as any).properties.actions.minItems, 1);
+});
+
+test('Boredom Autonomy keeps prior action context without treating it as current episode evidence', async () => {
+  const observation: any = robotObservation();
+  observation.metadata.actionContext = {
+    actionId: 'prior-action',
+    correlationId: 'prior-cycle',
+    status: 'completed',
+    requested: { type: 'robotCommand', command: 'bow' },
+    result: { type: 'completed', message: 'bow completed' },
+  };
+
+  const result = await robotOperatorContextBuilderNode.execute({
+    instruction: 'Continue the evolving boredom episode from all supplied context.',
+    observation,
+  }, {}, {});
+
+  assert.equal(result.context.stimulus.verifiedCurrentAction, null);
+  assert.equal(result.context.historicalLatestActionIncluded, true);
+  const supporting = JSON.parse(String(result.messages[1]?.content));
+  assert.equal(
+    supporting.robotOperatorContext.recentActionContext.entry.requested.command,
+    'bow',
+  );
+  assert.equal(supporting.robotOperatorContext.recentActionContext.currentEvidence, false);
+});
+
+test('Boredom Autonomy exposes the correlated result as current evidence exactly once', async () => {
+  const observation: any = robotObservation();
+  observation.metadata.actionContext = {
+    actionId: 'current-action',
+    correlationId: 'cycle-1',
+    status: 'completed',
+    requested: { type: 'robotCommand', command: 'nod' },
+    result: { type: 'completed', message: 'nod completed' },
+  };
+
+  const result = await robotOperatorContextBuilderNode.execute({
+    instruction: 'Review the verified result and choose the next episode consequence.',
+    observation,
+  }, {}, {});
+
+  assert.equal(result.context.stimulus.verifiedCurrentAction.requested.command, 'nod');
+  assert.equal(result.context.historicalLatestActionIncluded, false);
+  assert.equal(JSON.stringify(result.messages).match(/nod completed/g)?.length, 1);
 });
 
 test('Boredom Reflection places sampled memories in the final deliberation input exactly once', async () => {
@@ -695,9 +746,9 @@ test('boredom triggers stay lean while Boredom Autonomy owns the editable execut
   );
   assert.equal(movementDispatch?.data?.properties?.requireAction, true);
   assert.equal(movementDispatch?.data?.properties?.graph, 'boredom-autonomy');
-  assert.equal(movementDispatch?.data?.properties?.continuationPolicy, 'bounded');
-  assert.equal(movementDispatch?.data?.properties?.requiredCompletionBasis, 'visual_observation');
-  assert.equal(movementDispatch?.data?.properties?.visualEvidenceMode, 'single');
+  assert.equal(movementDispatch?.data?.properties?.continuationPolicy, undefined);
+  assert.equal(movementDispatch?.data?.properties?.requiredCompletionBasis, undefined);
+  assert.equal(movementDispatch?.data?.properties?.visualEvidenceMode, undefined);
   assert.equal(
     graphs['boredom-reflection'].nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'),
     false,
@@ -758,7 +809,6 @@ test('boredom triggers stay lean while Boredom Autonomy owns the editable execut
     'environment_send_action',
     'robot_buffer',
     'conversation_buffer',
-    'inner_dialogue_buffer',
     'tts',
   ]) {
     assert.ok(autonomyTypes.includes(required), `Boredom Autonomy requires ${required}`);
@@ -776,11 +826,15 @@ test('boredom triggers stay lean while Boredom Autonomy owns the editable execut
   const executivePrompt = autonomy.nodes.find((node: any) => node.id === 'executive-policy')?.data?.properties?.message ?? '';
   const promptWords = executivePrompt.trim().split(/\s+/).length;
   assert.ok(promptWords >= 150 && promptWords <= 250, `executive prompt must stay compact; got ${promptWords} words`);
-  assert.match(executivePrompt, /not a user task/i);
-  assert.match(executivePrompt, /author what you want to pursue/i);
-  assert.match(executivePrompt, /taskDecision\.objective is your current short-lived objective/i);
-  assert.match(executivePrompt, /at most one meaningful consequence per pass/i);
-  assert.match(executivePrompt, /complete only when the objective's required evidence exists/i);
+  assert.match(executivePrompt, /not a one-off user task/i);
+  assert.match(executivePrompt, /starts or resumes a self-directed episode/i);
+  assert.match(executivePrompt, /materially shape what Ainekio becomes interested in and does next/i);
+  assert.match(executivePrompt, /verified result re-enters this workflow/i);
+  assert.match(executivePrompt, /Always provide a non-empty outward response/i);
+  assert.match(executivePrompt, /Physical work.+motionClass/i);
+  assert.match(executivePrompt, /Physical work.+continuationPolicy=bounded/i);
+  assert.match(executivePrompt, /expression uses action_result/i);
+  assert.match(executivePrompt, /Historical context must influence interest and continuity/i);
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'task-state-prepare'
     && edge.target === 'autonomy-context'
@@ -810,14 +864,13 @@ test('boredom triggers stay lean while Boredom Autonomy owns the editable execut
   assert.equal(autonomyBridge?.data?.properties?.feedbackGraph, 'boredom-autonomy');
   const tts = autonomy.nodes.find((node: any) => node.id === 'tts-out');
   assert.equal(tts?.data?.properties?.source, 'boredom-autonomy');
-  for (const target of ['inner-buffer', 'conversation-buffer']) {
-    assert.ok(autonomy.edges.some((edge: any) => (
-      edge.source === 'bridge-out'
-      && edge.sourceHandle === 'presentationMetadata'
-      && edge.target === target
-      && edge.targetHandle === 'metadata'
-    )), `Boredom Autonomy presentation metadata must reach ${target}`);
-  }
+  assert.equal(autonomy.nodes.some((node: any) => node.id === 'inner-buffer'), false);
+  assert.ok(autonomy.edges.some((edge: any) => (
+    edge.source === 'bridge-out'
+    && edge.sourceHandle === 'responseMetadata'
+    && edge.target === 'conversation-buffer'
+    && edge.targetHandle === 'metadata'
+  )), 'Boredom Autonomy response metadata must reach the conversation buffer');
 
   const handler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-autonomy-trigger-handler.ts'), 'utf8');
   assert.doesNotMatch(handler, /enqueueEnvironmentAction|type: 'captureImage'|buildBoredom/);

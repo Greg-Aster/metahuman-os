@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Quick Reload - Rebuild handlers and trigger Metro hot reload
+# Quick Reload - Rebuild backend assets and reinstall the APK
 #
 # Use this when you've made changes to @metahuman/core and want to test
-# without restarting the whole dev environment.
+# while keeping the running Metro development server.
 #
 # Prerequisites: Metro must be running (via dev.sh)
 #
@@ -29,29 +29,25 @@ log() {
 log "${GREEN}▶${NC} Quick reload starting..."
 
 # Step 1: Rebuild handlers
-log "${YELLOW}1/3${NC} Rebuilding handlers..."
+log "${YELLOW}1/3${NC} Rebuilding backend assets..."
 cd "$ROOT_DIR"
-node "$SCRIPT_DIR/build-handlers.mjs"
+node "$SCRIPT_DIR/build-backend.mjs"
 
-# Step 2: Send reload command to Metro via adb
 ADB="${ANDROID_HOME:-$HOME/Android/Sdk}/platform-tools/adb"
-
-if command -v "$ADB" &> /dev/null; then
-    log "${YELLOW}2/3${NC} Triggering Metro reload..."
-
-    # Method 1: Send 'R' key to trigger reload in dev menu
-    # Method 2: Use adb reverse to ensure Metro is accessible
-    "$ADB" reverse tcp:8081 tcp:8081 2>/dev/null || true
-
-    # Method 3: Open React Native dev menu and trigger reload
-    "$ADB" shell input keyevent 82 2>/dev/null || true  # Menu key opens dev menu
-    sleep 0.5
-    "$ADB" shell input keyevent 66 2>/dev/null || true  # Enter to select first option (usually Reload)
-
-    log "${YELLOW}3/3${NC} Reload triggered"
-else
-    log "${RED}!${NC} ADB not found, manual reload needed (press R in Metro terminal)"
+if [ ! -x "$ADB" ]; then
+    log "${RED}!${NC} ADB not found at $ADB"
+    exit 1
 fi
+
+log "${YELLOW}2/3${NC} Rebuilding and installing the APK..."
+cd "$RN_DIR/android"
+./gradlew assembleDebug
+"$ADB" install -r "$RN_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+
+log "${YELLOW}3/3${NC} Restarting the app..."
+"$ADB" reverse tcp:8081 tcp:8081 2>/dev/null || true
+"$ADB" shell am force-stop com.metahumanrn
+"$ADB" shell am start -n com.metahumanrn/.MainActivity
 
 echo ""
 log "${GREEN}✓${NC} Quick reload complete!"

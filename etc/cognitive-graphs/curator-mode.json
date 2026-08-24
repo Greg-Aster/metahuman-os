@@ -2,9 +2,9 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Curator Workflow",
-  "description": "LLM-based memory curation for training data preparation - generates conversational exchanges from raw memories",
+  "description": "Validates episodic memories into canonical curated conversation records, then marks only durably saved sources",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-08-24",
   "nodes": [
     {
       "id": "1",
@@ -72,41 +72,11 @@
       "height": 80
     },
     {
-      "id": "6",
-      "type": "curatorNode",
-      "position": {
-        "x": 700,
-        "y": 220
-      },
-      "data": {
-        "label": "Generate Training Pairs",
-        "nodeType": "training_pair_generator",
-        "properties": {}
-      },
-      "width": 220,
-      "height": 100
-    },
-    {
-      "id": "7",
-      "type": "curatorNode",
-      "position": {
-        "x": 1000,
-        "y": 220
-      },
-      "data": {
-        "label": "Append to JSONL",
-        "nodeType": "training_pair_appender",
-        "properties": {}
-      },
-      "width": 220,
-      "height": 100
-    },
-    {
       "id": "8",
       "type": "curatorNode",
       "position": {
-        "x": 700,
-        "y": 360
+        "x": 1000,
+        "y": 200
       },
       "data": {
         "label": "Mark as Curated",
@@ -169,47 +139,25 @@
       }
     },
     {
-      "id": "e-4-curatedMemories-6-curatedMemories",
-      "source": "4",
-      "target": "6",
-      "sourceHandle": "curatedMemories",
-      "targetHandle": "curatedMemories",
-      "data": {
-        "type": "object",
-        "comment": "Curated memories → Training Pair Generator"
-      }
-    },
-    {
-      "id": "e-6-trainingPairs-7-trainingPairs",
-      "source": "6",
-      "target": "7",
-      "sourceHandle": "trainingPairs",
-      "targetHandle": "trainingPairs",
-      "data": {
-        "type": "object",
-        "comment": "Training pairs → Append to JSONL"
-      }
-    },
-    {
-      "id": "e-4-curatedMemories-8-curatedMemories",
-      "source": "4",
+      "id": "e-5-curatedMemories-8-curatedMemories",
+      "source": "5",
       "target": "8",
       "sourceHandle": "curatedMemories",
       "targetHandle": "curatedMemories",
       "data": {
         "type": "object",
-        "comment": "Curated memories → Mark as Curated"
+        "comment": "Durably saved curation results → Mark source memories"
       }
     },
     {
-      "id": "e-7-appendedCount-9-eventType",
-      "source": "7",
+      "id": "e-8-markedCount-9-eventType",
+      "source": "8",
       "target": "9",
-      "sourceHandle": "appendedCount",
+      "sourceHandle": "markedCount",
       "targetHandle": "eventType",
       "data": {
-        "type": "object",
-        "comment": "Append result → Audit Logger"
+        "type": "number",
+        "comment": "Committed source count → Audit Logger"
       }
     }
   ]

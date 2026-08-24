@@ -66,7 +66,9 @@ export {
   claimWorkCoordinatorOwnership,
   isWorkCoordinatorOwner,
   submitCoordinatorWork,
+  submitMemoryIndexRefresh,
 } from './work-submission.js';
+export type { MemoryIndexRefreshSubmission } from './work-submission.js';
 
 // Persistence
 export {

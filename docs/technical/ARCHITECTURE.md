@@ -124,7 +124,7 @@ The core ESM library supplies shared capabilities:
 - **Identity management** (`identity.ts`) — Loads and saves persona profiles and decision rules, exposes `getIdentitySummary()` for CLI/UI status panes, and supports adjusting trust levels safely.【F:packages/core/src/identity.ts†L1-L82】【F:packages/core/src/identity.ts†L100-L124】
 - **Memory operations** (`memory.ts`) — Captures episodic events, CRUDs task files, and hydrates search helpers using JSON storage under `memory/` while updating sync logs and the optional embedding index.【F:packages/core/src/memory.ts†L1-L104】【F:packages/core/src/memory.ts†L126-L206】
 - **LLM + embeddings** (`ollama.ts`, `llm.ts`, `embeddings.ts`) — Wraps the Ollama HTTP API for chat/generation/model management and exposes embedding helpers with a mock fallback when Ollama is offline.【F:packages/core/src/ollama.ts†L1-L110】【F:packages/core/src/embeddings.ts†L1-L24】
-- **Vector index** (`vector-index.ts`) — Builds and queries semantic indexes over episodic memories, tasks, and curated notes stored under `memory/index/` to power RAG prompts.【F:packages/core/src/vector-index.ts†L1-L104】
+- **Vector index** (`vector-index.ts`) — Reconciles and queries semantic indexes over episodic memories, tasks, and curated notes stored under `memory/index/`. Full reconciliation is admitted through the Work Coordinator's exclusive `vector.index-build` lane; incremental appends use the same lane.【F:packages/core/src/vector-index.ts†L1-L104】
 - **Skills & policy enforcement** (`skills.ts`, `policy.ts`) — Registers executable skills, queues approvals, and evaluates whether an action is allowed at the current trust level, auditing every registration and execution.【F:packages/core/src/skills.ts†L1-L86】【F:packages/core/src/policy.ts†L1-L83】
 - **Audit & logging** (`audit.ts`, `logging.ts`, `agent-monitor.ts`) — Writes append-only NDJSON audit trails, streams agent logs, and surfaces run metrics for the UI and CLI dashboards.【F:packages/core/src/audit.ts†L1-L48】【F:packages/core/src/agent-monitor.ts†L1-L61】
 - **Autonomy & configuration** (`autonomy.ts`, `locks.ts`, `adapters.ts`, etc.) — Reads runtime guardrails, coordinates file locks for agents, and adapts third-party integrations.
@@ -142,7 +142,7 @@ Agents are Node scripts (ESM) that import `@metahuman/core` to perform autonomou
 The Astro + Svelte dashboard consumes `@metahuman/core` directly inside API routes and server components. API endpoints (e.g., `pages/api/tasks.ts`) delegate to memory helpers to list/create/update tasks while auditing mutations, and UI components pull persona summaries, logs, and embedding status for real-time monitoring.【F:apps/site/src/pages/api/tasks.ts†L1-L65】 Voice input/output routes also reuse the shared audio modules.
 
 ### Startup Scripts & Tooling
-Cross-platform scripts (`start.sh`, `start.py`, `start.bat`) orchestrate dependency checks, virtualenv creation, and launch the UI/agents. Helper binaries under `bin/` wrap the CLI for convenience, while `scripts/` hosts automation utilities.
+The Linux-first `start.sh` is the production startup owner: it validates the Node runtime, starts configured services, and launches the prebuilt Site. `stop.sh` is the repository-scoped shutdown owner. PM2 may supervise `start.sh` as one forked instance; development commands run the Site without implicitly owning background services. Helper binaries under `bin/` wrap these canonical paths, while `scripts/` contains focused maintenance and validation utilities.
 
 ## Data & Storage Layout
 

@@ -23,7 +23,6 @@ services configured in `etc/services.json`.
 | `psychoanalyzer` | Analyzes behavioral patterns and psychological trends |
 | `audio-organizer` | Processes audio files into structured memories |
 | `transcriber` | Transcribes audio to text |
-| `auto-indexer` | Maintains vector embeddings index automatically |
 | `memory-sync` | Synchronizes memories across devices |
 | `profile-sync` | Synchronizes user profiles across devices |
 | `memory-pruner` | Cleans up old or low-value memories |
@@ -31,9 +30,7 @@ services configured in `etc/services.json`.
 | `train-of-thought` | Generates reasoning chains |
 | `daydreamer` | Creates daydream narratives (lighter than dreams) |
 | `digest` | Generates daily/weekly digests |
-| `desire-explorer` | Explores desire space for new opportunities |
-| `curiosity-researcher` | Researches answers to curiosity questions |
-| `coder` | Auto-generates code fixes and improvements |
+| `curiosity-researcher` | Independently researches pending user-facing questions using local memory |
 
 ## Key Agents
 
@@ -41,6 +38,11 @@ services configured in `etc/services.json`.
 **reflector** - Generates insights from memory patterns
 **desire-generator** - Synthesizes desires from goals/tasks/curiosity
 **curator** - Prepares training data from memories
+
+The curiosity agents remain separate by responsibility: `curiosity` asks the
+user questions, `curiosity-researcher` investigates those pending questions on
+its own hourly schedule, and `inner-curiosity` generates and answers private
+self-directed questions.
 
 ## Configuration
 

@@ -35,7 +35,7 @@
 **Gaps:**
 - ❌ Tool invocations not captured as memories
 - ❌ File operations not captured as memories
-- ❌ Code approvals not captured as memories
+- ❌ Skill approval decisions not captured as memories
 - ❌ No tool output integration in prompts
 - ❌ No persistent chat buffer (in-memory only)
 - ❌ No conversation summarization
@@ -52,7 +52,7 @@
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Event Capture Layer                        │
-│  (Tool invocations, file ops, code approvals, chat)        │
+│  (Tool invocations, file operations, and chat)             │
 └───────────────────────┬─────────────────────────────────────┘
                         │
                         ▼
@@ -108,15 +108,15 @@ All capture, retrieval, and summarization must respect the active cognitive mode
 ```typescript
 import { getCognitiveModeConfig } from './cognitive-mode.js';
 
-type EventType = 'conversation' | 'tool_invocation' | 'file_read' | 'file_write' | 'code_approval' | 'code_rejection' | 'summary';
+type EventType = 'conversation' | 'tool_invocation' | 'file_read' | 'file_write' | 'skill_approval' | 'skill_rejection' | 'summary';
 
 export function canWriteMemory(mode: CognitiveModeId, eventType: EventType): boolean {
   const config = getCognitiveModeConfig(mode);
   if (config.memoryWriteLevel === 'read_only') return false;
   if (config.memoryWriteLevel === 'command_only') {
     return eventType === 'tool_invocation'
-      || eventType === 'code_approval'
-      || eventType === 'code_rejection'
+      || eventType === 'skill_approval'
+      || eventType === 'skill_rejection'
       || eventType === 'summary';
   }
   return true;
@@ -146,7 +146,7 @@ All API routes and agents referenced below should import these helpers instead o
 
 ## Phase 1: Event Capture
 
-**Goal:** Capture every meaningful action (tool invocations, file operations, code approvals) as episodic memories with structured metadata.
+**Goal:** Capture every meaningful action (tool invocations and file operations) as episodic memories with structured metadata.
 
 > **Policy Enforcement:** Every capture call in this phase must first consult `canWriteMemory(mode, eventType)` and `shouldCaptureTool(mode)`. This guarantees that agent mode only records action results and emulation mode stays read-only.
 
@@ -356,7 +356,7 @@ case 'create': {
 
 ---
 
-### Task 1.3: Instrument Code Approvals
+### Task 1.3: Instrument Skill Approvals
 
 **File:** `apps/site/src/pages/api/approvals.ts`
 
@@ -371,12 +371,12 @@ case 'create': {
 ```typescript
 import { canWriteMemory } from '@metahuman/core/memory-policy';
 
-if (!canWriteMemory(context.locals.cognitiveMode, 'code_approval')) {
+if (!canWriteMemory(context.locals.cognitiveMode, 'skill_approval')) {
   return new Response(JSON.stringify(result));
 }
 ```
 
-Use `'code_rejection'` in the reject branch.
+Use `'skill_rejection'` in the reject branch.
 
 ```typescript
 import { captureEvent } from '@metahuman/core';
@@ -392,7 +392,7 @@ case 'approve': {
     captureEvent(
       `Approved: ${approval.skillId}`,
       {
-        type: 'code_approval',
+        type: 'skill_approval',
         tags: ['approval', approval.skillId, 'code'],
         entities: [approval.skillId],
         importance: 0.8,
@@ -421,7 +421,7 @@ case 'reject': {
     captureEvent(
       `Rejected: ${approval.skillId}`,
       {
-        type: 'code_rejection',
+        type: 'skill_rejection',
         tags: ['rejection', approval.skillId, 'code'],
         entities: [approval.skillId],
         importance: 0.9, // Rejections high importance
@@ -441,8 +441,8 @@ case 'reject': {
 ```
 
 **Testing:**
-- Approve a code change → verify `code_approval` event
-- Reject a code change → verify `code_rejection` event
+- Approve a skill execution → verify `skill_approval` event
+- Reject a skill execution → verify `skill_rejection` event
 - Query "approved code changes" → verify returns approval events
 
 ---
@@ -606,7 +606,7 @@ export interface EpisodicEvent {
   id: string;
   timestamp: string;
   content: string;
-  type: 'observation' | 'conversation' | 'tool_invocation' | 'file_read' | 'file_write' | 'code_approval' | 'code_rejection' | 'dream' | 'reflection' | 'task';
+  type: 'observation' | 'conversation' | 'tool_invocation' | 'file_read' | 'file_write' | 'skill_approval' | 'skill_rejection' | 'dream' | 'reflection' | 'task';
   response?: string;
   entities?: string[];
   tags?: string[];
@@ -1869,7 +1869,7 @@ describe('Memory Continuity Pipeline', () => {
 
   // Add more tests for:
   // - File operations capture
-  // - Code approvals capture
+  // - Skill approval capture
   // - Summary generation
   // - Memory retrieval accuracy
 });
@@ -2129,8 +2129,8 @@ describe('Memory Continuity Pipeline', () => {
 - [ ] Execute tool via operator → verify tool_invocation event
 - [ ] Read file → verify file_read event with snippet
 - [ ] Write file → verify file_write event with snippet
-- [ ] Approve code change → verify code_approval event
-- [ ] Reject code change → verify code_rejection event
+- [ ] Approve skill execution → verify skill_approval event
+- [ ] Reject skill execution → verify skill_rejection event
 - [ ] Query semantic search → verify tool events appear
 - [ ] Send 25 messages → verify summary generated
 - [ ] Restart server → verify history restored
@@ -2162,7 +2162,7 @@ describe('Memory Continuity Pipeline', () => {
 
 **Monday-Tuesday:**
 - Task 1.2: Instrument file operations
-- Task 1.3: Instrument code approvals
+- Task 1.3: Instrument skill approvals
 - Deploy and test
 
 **Wednesday-Thursday:**
@@ -2206,7 +2206,7 @@ describe('Memory Continuity Pipeline', () => {
 **Phase 1 Success:**
 - ✅ 100% of tool invocations captured as memories
 - ✅ 100% of file operations captured
-- ✅ 100% of code approvals/rejections captured
+- ✅ 100% of skill approval decisions captured
 - ✅ All memories include conversation session IDs
 - ✅ Vector index coverage > 95%
 

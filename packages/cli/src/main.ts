@@ -31,7 +31,6 @@ import {
   getRunningAgents,
   stopAgent,
   startAgentProcess,
-  buildMemoryIndex,
   queryIndex,
   getIndexStatus,
   buildRagContext,
@@ -58,6 +57,7 @@ import {
   agentTaskType,
   isPersistentService,
   submitCoordinatorWork,
+  submitMemoryIndexRefresh,
 } from '@metahuman/core/queue';
 import { personaCommand } from './commands/persona.js';
 import { adapterCommand } from './commands/adapter.js';
@@ -872,21 +872,19 @@ async function indexCmd(args: string[]): Promise<void> {
         console.error('\nExample: mh --user greggles index build');
         process.exit(1);
       }
-      console.log(`Building memory embeddings index for ${ctx.username}...`);
+      console.log(`Queuing memory index rebuild for ${ctx.username}...`);
       try {
-        // Pass username explicitly to bypass context resolution issues
-        const dest = await buildMemoryIndex({ username: ctx.username });
-        const status = getIndexStatus(undefined, ctx.username);
-        console.log(`✓ Index written: ${dest}`);
-        console.log(`  Items: ${status.items} | Model: ${status.model} | Provider: ${status.provider}`);
+        const task = await submitMemoryIndexRefresh({
+          username: ctx.username,
+          source: 'user',
+          force: true,
+          metadata: { producer: 'cli-index-build' },
+        });
+        console.log(`✓ Index rebuild queued as work ${task.id}`);
       } catch (err) {
         const msg = (err as Error).message;
-        console.error('Failed to build index:', msg);
-        if (msg.includes('storage router')) {
-          console.error('Tip: Ensure you are running with user context: mh --user <username> index build');
-        } else {
-          console.error('Tip: Check your embedding service is running (see Settings → LLM Backend).');
-        }
+        console.error('Failed to queue index rebuild:', msg);
+        console.error('Tip: Ensure the MetaHuman server and Work Coordinator are running.');
         process.exit(1);
       }
       break;
@@ -1697,7 +1695,7 @@ async function main() {
         audioCmd(args);
         break;
       case 'persona':
-        personaCommand(args);
+        await personaCommand(args);
         break;
       case 'adapter':
         adapterCommand(args);

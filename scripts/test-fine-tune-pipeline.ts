@@ -11,9 +11,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { systemPaths } from '../packages/core/src/index.js';
-import { validateModeContamination, calculateQualityMetrics } from '../packages/core/src/mode-validator.js';
-import type { FormattedSample, CuratedSample } from '../packages/core/src/mode-validator.js';
+import {
+  applySchemaBatch,
+  calculateQualityMetrics,
+  systemPaths,
+  validateModeContamination,
+  type CuratedSample,
+  type ValidatorFormattedSample as FormattedSample,
+} from '@metahuman/core';
 
 async function runCommand(command: string, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -65,17 +70,27 @@ async function main() {
   const DATASET_PATH = path.join(testDir, 'fine_tune_dataset.jsonl');
 
   try {
-    // Step 1: Curate memories
-    console.log('\n█████ STEP 1: CURATING MEMORIES █████\n');
+    // Step 1: Curate memories into the canonical store, then aggregate it.
+    console.log('\n█████ STEP 1: CURATING AND AGGREGATING MEMORIES █████\n');
     const curatorCode = await runCommand('tsx', [
-      path.join(systemPaths.brain, 'agents', 'memory-curator.ts'),
+      path.join(systemPaths.brain, 'agents', 'curator', 'cli.ts'),
+      '--username', username,
+      '--all',
+    ]);
+
+    if (curatorCode !== 0) {
+      throw new Error('Memory curation failed');
+    }
+
+    const aggregatorCode = await runCommand('tsx', [
+      path.join(systemPaths.brain, 'training', 'curated-aggregator.ts'),
       '--username', username,
       '--output', CURATED_PATH,
       '--max', String(maxSamples),
     ]);
 
-    if (curatorCode !== 0) {
-      throw new Error('Memory curation failed');
+    if (aggregatorCode !== 0) {
+      throw new Error('Curated conversation aggregation failed');
     }
 
     // Validate curation output
@@ -104,7 +119,7 @@ async function main() {
     // Step 2: Format samples
     console.log('\n\n█████ STEP 2: FORMATTING SAMPLES █████\n');
     const formatterCode = await runCommand('tsx', [
-      path.join(systemPaths.brain, 'agents', 'mode-formatter.ts'),
+      path.join(systemPaths.brain, 'training', 'mode-formatter.ts'),
       '--input', CURATED_PATH,
       '--output', FORMATTED_PATH,
     ]);
@@ -161,7 +176,6 @@ async function main() {
 
     // First apply schema
     console.log('Applying Qwen schema...');
-    const { applySchemaBatch } = await import('../packages/core/src/schema-manager.js');
     const schemaAppliedSamples = applySchemaBatch(formattedSamples, 'Qwen/Qwen3.5-9B');
 
     const SCHEMA_PATH = path.join(testDir, 'schema_applied.json');
@@ -170,7 +184,7 @@ async function main() {
 
     // Then export
     const exporterCode = await runCommand('tsx', [
-      path.join(systemPaths.brain, 'agents', 'training-exporter.ts'),
+      path.join(systemPaths.brain, 'training', 'training-exporter.ts'),
       '--input', SCHEMA_PATH,
       '--output', DATASET_PATH,
     ]);

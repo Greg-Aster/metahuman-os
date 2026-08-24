@@ -56,24 +56,6 @@ export interface RunPodConfig {
   customEndpoint?: string;
 }
 
-export interface RedisConfig {
-  /** Redis connection URL */
-  url: string;
-  /** Key prefix for this deployment */
-  keyPrefix?: string;
-}
-
-export interface ScalingConfig {
-  /** Max concurrent inference requests */
-  maxConcurrentInference: number;
-  /** Queue timeout in milliseconds */
-  queueTimeout: number;
-  /** Show cold start warning after this many ms */
-  coldStartWarningMs: number;
-  /** Keep model warm with periodic pings (ms, 0 = disabled) */
-  keepWarmIntervalMs?: number;
-}
-
 export interface ServerConfig {
   /** LLM provider for server mode */
   llmProvider: 'runpod_serverless' | 'huggingface' | 'ollama';
@@ -86,10 +68,6 @@ export interface ServerConfig {
     apiKey: string;
     endpointUrl: string;
   };
-  /** Redis configuration for request queuing */
-  redis?: RedisConfig;
-  /** Scaling configuration */
-  scaling: ScalingConfig;
 }
 
 export interface DeploymentConfig {
@@ -165,16 +143,6 @@ export function getDefaultDeploymentConfig(): DeploymentConfig {
           embed: '${RUNPOD_ENDPOINT_EMBED}',
         },
       },
-      redis: {
-        url: '${REDIS_URL}',
-        keyPrefix: 'mh:',
-      },
-      scaling: {
-        maxConcurrentInference: 3,
-        queueTimeout: 60000,
-        coldStartWarningMs: 15000,
-        keepWarmIntervalMs: 0, // Disabled by default
-      },
     },
   };
 }
@@ -224,8 +192,6 @@ export function loadDeploymentConfig(): DeploymentConfig {
               ...parsed.server?.runpod?.endpointTiers,
             },
           },
-          redis: { ...config.server.redis, ...parsed.server?.redis },
-          scaling: { ...config.server.scaling, ...parsed.server?.scaling },
         },
       };
 
@@ -343,16 +309,6 @@ export function isRunPodConfigured(): boolean {
   return !!(runpod?.apiKey && runpod?.endpoints?.default);
 }
 
-/**
- * Check if Redis is configured for server mode
- */
-export function isRedisConfigured(): boolean {
-  const config = loadDeploymentConfig();
-  if (config.mode !== 'server') return false;
-
-  return !!config.server.redis?.url;
-}
-
 // ============================================================================
 // Deployment Info (for UI/debugging)
 // ============================================================================
@@ -362,10 +318,7 @@ export interface DeploymentInfo {
   llmProvider: string;
   storagePath: string;
   runpodConfigured: boolean;
-  redisConfigured: boolean;
   features: {
-    queuing: boolean;
-    coldStartHandling: boolean;
     multiUser: boolean;
   };
 }
@@ -382,10 +335,7 @@ export function getDeploymentInfo(): DeploymentInfo {
     llmProvider: isServer ? config.server.llmProvider : config.local.llmProvider,
     storagePath: isServer ? config.server.storagePath : config.local.storagePath,
     runpodConfigured: isRunPodConfigured(),
-    redisConfigured: isRedisConfigured(),
     features: {
-      queuing: isServer && isRedisConfigured(),
-      coldStartHandling: isServer,
       multiUser: isServer,
     },
   };

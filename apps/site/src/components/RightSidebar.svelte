@@ -3,32 +3,24 @@
   import AgentMonitor from './AgentMonitor.svelte';
   import QueuePanel from './QueuePanel.svelte';
   import ServerStatus from './ServerStatus.svelte';
-  import { rightSidebarOpen, systemCoderDisabled } from '../stores/navigation';
+  import { rightSidebarOpen } from '../stores/navigation';
   import { isOwner } from '../stores/security-policy';
 
   let activeTab = 'queue';
   let preferencesLoaded = false;
-
-  // Lazy load SystemCoderDashboard
-  let SystemCoderDashboard: any = null;
-  let coderLoading = false;
 
   // Load preferences from localStorage
   onMount(() => {
     try {
       const savedTab = localStorage.getItem('mh_right_sidebar_tab');
       // Only restore if it's a valid tab (audit was removed)
-      if (savedTab !== null && ['coder', 'queue', 'monitor', 'servers'].includes(savedTab)) {
+      if (savedTab !== null && ['queue', 'monitor', 'servers'].includes(savedTab)) {
         activeTab = savedTab;
       }
-      if (!$isOwner && (activeTab === 'coder' || activeTab === 'monitor')) activeTab = 'queue';
+      if (!$isOwner && activeTab === 'monitor') activeTab = 'queue';
     } catch {}
     preferencesLoaded = true;
   });
-
-  $: if (($systemCoderDisabled || !$isOwner) && activeTab === 'coder') {
-    activeTab = 'queue';
-  }
 
   $: if (!$isOwner && activeTab === 'monitor') activeTab = 'queue';
 
@@ -46,25 +38,10 @@
   }
 
   $: tabs = [
-    ...($systemCoderDisabled || !$isOwner ? [] : [{ id: 'coder', label: 'System Coder', icon: '🔧' }]),
     { id: 'queue', label: 'Queue', icon: '☷' },
     ...($isOwner ? [{ id: 'monitor', label: 'Agent Monitor', icon: '🤖' }] : []),
     { id: 'servers', label: 'Server Status', icon: '🖥️' },
   ] as Tab[];
-
-  // Lazy load SystemCoderDashboard when coder tab is selected
-  $: if ($isOwner && !$systemCoderDisabled && activeTab === 'coder' && !SystemCoderDashboard && !coderLoading) {
-    coderLoading = true;
-    import('./SystemCoderDashboard.svelte')
-      .then(module => {
-        SystemCoderDashboard = module.default;
-        coderLoading = false;
-      })
-      .catch(err => {
-        console.error('[RightSidebar] Failed to load SystemCoderDashboard:', err);
-        coderLoading = false;
-      });
-  }
 </script>
 
 <div class="flex flex-col h-full overflow-hidden">
@@ -84,24 +61,7 @@
 
   <!-- Tab Content -->
   <div class="flex-1 overflow-y-auto overflow-x-hidden">
-    {#if activeTab === 'coder'}
-      <div class="h-full overflow-hidden">
-        {#if coderLoading}
-          <div class="flex items-center justify-center h-full">
-            <div class="text-center">
-              <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-500 mx-auto mb-2"></div>
-              <p class="text-xs text-gray-500 dark:text-gray-400">Loading...</p>
-            </div>
-          </div>
-        {:else if SystemCoderDashboard}
-          <svelte:component this={SystemCoderDashboard} compact={true} />
-        {:else}
-          <div class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 text-sm">
-            Failed to load System Coder
-          </div>
-        {/if}
-      </div>
-    {:else if activeTab === 'monitor'}
+    {#if activeTab === 'monitor'}
       <div class="p-3 h-full overflow-hidden flex flex-col gap-4">
         <AgentMonitor />
       </div>

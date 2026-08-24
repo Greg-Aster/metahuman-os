@@ -115,7 +115,7 @@
     }
 
     // Detect services terminal
-    if (command.includes('start-services') || command.includes('run-with-agents')) {
+    if (command.includes('start-services')) {
       return { title: '⚡ Services', isServices: true, isBigBrother: false };
     }
 

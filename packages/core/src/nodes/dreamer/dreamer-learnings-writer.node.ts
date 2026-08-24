@@ -70,7 +70,7 @@ ${memoryCitations.map((id: string) => `- ${id}`).join('\n') || '- No citations'}
 
 ---
 *This file is generated automatically by the dreamer agent during the nightly sleep cycle.*
-*It is used by the morning-loader agent to compose the daily operator profile.*
+*It remains available as the cited overnight-learning record.*
 `;
 
     fs.writeFileSync(filepath, content, 'utf-8');

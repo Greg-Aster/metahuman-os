@@ -6,34 +6,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { getProfilePaths } from '../../index.js';
-
-interface EpisodicMemory {
-  id: string;
-  timestamp: string;
-  content: string;
-  type?: string;
-  metadata?: {
-    processed?: boolean;
-    curated?: boolean;
-  };
-}
+import { getProfilePaths } from '../../paths.js';
+import type { EpisodicMemory } from './contracts.js';
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
-  const limit = properties?.limit || 50;
+  const requestedLimit = Number(properties?.limit ?? 50);
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 500) {
+    throw new Error(`Curator memory limit must be an integer between 1 and 500, received: ${properties?.limit}`);
+  }
+  const limit = requestedLimit;
 
   if (!context.userId) {
-    return {
-      memories: [],
-      count: 0,
-      hasMore: false,
-      error: 'No userId in context',
-    };
+    throw new Error('Curator requires a userId to load episodic memories');
   }
 
   const profilePaths = getProfilePaths(context.userId);
   const episodicPath = path.join(profilePaths.memory, 'episodic');
-  const memories: (EpisodicMemory & { path: string })[] = [];
+  const candidates: (EpisodicMemory & { path: string })[] = [];
+  const errors: string[] = [];
 
   if (!fs.existsSync(episodicPath)) {
     return {
@@ -44,10 +34,11 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
   }
 
   function walkDirectory(dir: string): void {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
 
     for (const entry of entries) {
-      if (memories.length >= limit) break;
+      if (candidates.length > limit) break;
 
       const fullPath = path.join(dir, entry.name);
 
@@ -59,10 +50,24 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
           const memory = JSON.parse(content) as EpisodicMemory;
 
           if (memory.metadata?.curated) continue;
+          if (memory.metadata?.reinforcementSignal === -1) continue;
+          if (memory.tags?.includes('feedback')) continue;
+          if (typeof memory.id !== 'string' || !memory.id.trim()) {
+            errors.push(`${fullPath}: missing memory id`);
+            continue;
+          }
+          if (typeof memory.timestamp !== 'string' || Number.isNaN(Date.parse(memory.timestamp))) {
+            errors.push(`${fullPath}: invalid timestamp`);
+            continue;
+          }
+          if (typeof memory.content !== 'string' || !memory.content.trim()) {
+            errors.push(`${fullPath}: missing memory content`);
+            continue;
+          }
 
-          memories.push({ ...memory, path: fullPath });
+          candidates.push({ ...memory, path: fullPath });
         } catch (error) {
-          console.error(`[UncuratedMemoryLoader] Failed to load ${entry.name}:`, (error as Error).message);
+          errors.push(`${fullPath}: ${(error as Error).message}`);
         }
       }
     }
@@ -70,10 +75,14 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
 
   walkDirectory(episodicPath);
 
+  if (errors.length > 0) {
+    throw new Error(`Curator found ${errors.length} invalid episodic memory file(s): ${errors.join('; ')}`);
+  }
+
   return {
-    memories,
-    count: memories.length,
-    hasMore: memories.length >= limit,
+    memories: candidates.slice(0, limit),
+    count: Math.min(candidates.length, limit),
+    hasMore: candidates.length > limit,
   };
 };
 

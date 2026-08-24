@@ -21,9 +21,9 @@ Identity & Trust:
   trust <level>       Set trust level (observe|suggest|supervised_auto|bounded_auto)
 
 Persona & Adaptation:
-  persona status      Show active profile and adapter state
-  persona activate    Generate and activate daily profile (run morning-loader)
-  persona diff        Compare base persona vs active profile
+  persona status      Show current persona and adapter state
+  persona generate    Start a persona interview (requires --user)
+  persona sessions    List persona interview sessions
 
 LoRA Adapters:
   adapter list        List all datasets (pending, approved, trained)
@@ -73,7 +73,7 @@ Voice Servers:
   voice-server stop <kokoro|whisper|--all>
 
 Indexing:
-  index build         Build embeddings index over memory
+  index build         Queue an embeddings index rebuild
   index query "text"  Semantic search using the index
 
 Guide:

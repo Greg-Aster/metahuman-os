@@ -127,6 +127,6 @@ PIPELINE STAGES:
   6. (Future) Run remote fine-tuning on RunPod
   7. (Future) Load fine-tuned model to Ollama
 
-For more information, see: docs/fine-tune-implementation-plan.md
+For more information, see: docs/fine-tune-quickstart.md
 `);
 }

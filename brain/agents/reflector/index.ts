@@ -35,9 +35,6 @@ export default agent;
 export {
   runCycle,
   generateUserReflection,
-  getAssociativeMemoryChain,
-  getAllMemories,
-  extractKeywords,
   type ReflectorOptions,
   type ReflectorResult,
 } from './core.js';

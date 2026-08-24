@@ -27,8 +27,11 @@ import {
   ollama,
 } from '../../index.js';
 import {
+  isModelRole,
   invalidateModelCache,
   migrateModelRegistry,
+  parseModelRegistry,
+  type ModelRegistry,
 } from '../../model-resolver.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
@@ -135,8 +138,9 @@ function ensureUserRegistry(username: string): void {
 
   // Copy from system registry ONE TIME
   const systemPath = path.join(systemPaths.etc, 'models.json');
-  let userRegistry: any = {
+  let userRegistry: ModelRegistry = {
     version: '1.0.0',
+    description: 'User model registry',
     globalSettings: {},
     defaults: {},
     models: {},
@@ -147,11 +151,12 @@ function ensureUserRegistry(username: string): void {
 
   if (fs.existsSync(systemPath)) {
     try {
-      const systemRegistry = JSON.parse(fs.readFileSync(systemPath, 'utf-8'));
+      const systemRegistry = parseModelRegistry(JSON.parse(fs.readFileSync(systemPath, 'utf-8')));
 
       // Copy structure from system registry
       userRegistry = {
         version: systemRegistry.version || '1.0.0',
+        description: systemRegistry.description,
         globalSettings: { ...(systemRegistry.globalSettings || {}) },
         defaults: { ...(systemRegistry.defaults || {}) },
         models: { ...(systemRegistry.models || {}) },
@@ -159,15 +164,6 @@ function ensureUserRegistry(username: string): void {
         cognitiveModeMappings: { ...(systemRegistry.cognitiveModeMappings || {}) },
         providers: { ...(systemRegistry.providers || {}) }
       };
-
-      // Remove system warning fields
-      delete userRegistry._WARNING;
-      delete userRegistry._WARNING2;
-      delete userRegistry._WARNING3;
-      delete userRegistry._WARNING4;
-      delete userRegistry._WARNING5;
-      delete userRegistry._WARNING6;
-
     } catch (err) {
       console.error('[model-registry] Failed to read system registry for initialization:', err);
     }
@@ -181,14 +177,14 @@ function ensureUserRegistry(username: string): void {
 /**
  * Read model registry from user's profile
  */
-function readModelRegistry(username: string) {
+function readModelRegistry(username: string): ModelRegistry {
   // Ensure user has their own registry (one-time initialization)
   ensureUserRegistry(username);
 
   try {
     const p = resolveModelsPath(username);
     if (fs.existsSync(p)) {
-      const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      const parsed = parseModelRegistry(JSON.parse(fs.readFileSync(p, 'utf-8')));
       const migration = migrateModelRegistry(parsed);
       if (migration.changed) {
         const temporaryPath = `${p}.migration-${process.pid}`;
@@ -204,21 +200,27 @@ function readModelRegistry(username: string) {
 
   // This should rarely happen after ensureUserRegistry
   console.warn('[model-registry] No registry found after initialization - returning empty');
-  return { globalSettings: {}, defaults: {}, models: {}, cognitiveModeMappings: {}, roleHierarchy: {} };
+  return {
+    version: '1.0.0',
+    description: 'Unavailable user model registry',
+    globalSettings: {},
+    defaults: {},
+    models: {},
+    cognitiveModeMappings: {},
+    roleHierarchy: {},
+  };
 }
 
 /**
  * Write model registry to user's profile
  */
-async function writeModelRegistry(username: string, registry: any) {
+function writeModelRegistry(username: string, registry: ModelRegistry): void {
   const p = resolveModelsPath(username);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(registry, null, 2));
   // Invalidate model cache to force reload
   invalidateModelCache();
 }
-
-const ALL_ROLES = ['persona', 'environmentActionSelector', 'orchestrator', 'coder', 'planner', 'curator', 'summarizer', 'fallback'];
 
 function normalizeProviderCapabilities(value: unknown): Array<'text' | 'image'> {
   if (!Array.isArray(value)) return []
@@ -256,7 +258,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     let availableModels = collapseModelInventory(
       Object.entries(registry.models || {})
         .filter(([id]) => !isRetiredDevelopmentModelId(id))
-        .map(([id, config]: [string, any]) => ({
+        .map(([id, config]) => ({
           id,
           provider: config.provider,
           model: config.model,
@@ -470,6 +472,15 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         error: 'environmentRouter is retired; assign the environmentActionSelector role instead',
       };
     }
+    if (!isModelRole(role)) {
+      return { status: 400, error: `Unsupported model role: ${String(role)}` };
+    }
+    if (typeof modelId !== 'string') {
+      return { status: 400, error: 'modelId must be a string' };
+    }
+    if (cognitiveMode !== undefined && (typeof cognitiveMode !== 'string' || !cognitiveMode.trim())) {
+      return { status: 400, error: 'cognitiveMode must be a non-empty string' };
+    }
     if (isRetiredDevelopmentModelId(modelId)) {
       return {
         status: 400,
@@ -517,12 +528,13 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         // LoRA adapter - runtime discovery
         const adapterName = modelId.replace(/^lora\./, '');
         const backendConfig = loadBackendConfig();
-        const baseModel = backendConfig.activeBackend === 'vllm'
+        const useVllm = backendConfig.activeBackend === 'vllm';
+        const baseModel = useVllm
           ? backendConfig.vllm?.model
           : backendConfig.ollama?.defaultModel;
 
         registry.models[modelId] = {
-          provider: backendConfig.activeBackend || 'ollama',
+          provider: useVllm ? 'vllm' : 'ollama',
           model: adapterName,
           baseModel: baseModel,
           roles: [role],
@@ -594,7 +606,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
       registry.defaults[role] = modelId;
     }
 
-    await writeModelRegistry(user.username, registry);
+    writeModelRegistry(user.username, registry);
 
     // Handle vLLM LoRA - enable adapter and check if restart needed
     let needsRestart = false;
@@ -725,7 +737,7 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
         model.options = { ...(model.options || {}), ...nextOptions };
       }
 
-      await writeModelRegistry(user.username, registry);
+      writeModelRegistry(user.username, registry);
       await audit({
         category: 'data_change',
         level: 'info',
@@ -757,7 +769,7 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
       ...globalSettings
     };
 
-    await writeModelRegistry(user.username, registry);
+    writeModelRegistry(user.username, registry);
 
     await audit({
       category: 'data_change',

@@ -12,37 +12,11 @@ import * as path from 'path';
 import ExifReader from 'exif-reader';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { captureEvent } from '../memory.js';
+import { captureEventWithDetails, toToolParameters } from '../memory.js';
 
 // ============================================================================
 // Types
 // ============================================================================
-
-// Extended EXIF data interface for common tags
-interface ExifData {
-  DateTimeOriginal?: string | number;
-  DateTime?: string | number;
-  Make?: string;
-  Model?: string;
-  LensModel?: string;
-  FocalLength?: number;
-  FNumber?: number;
-  ExposureTime?: number;
-  ISOSpeedRatings?: number | number[];
-  GPSLatitude?: number[];
-  GPSLatitudeRef?: string;
-  GPSLongitude?: number[];
-  GPSLongitudeRef?: string;
-  GPSAltitude?: number;
-  PixelXDimension?: number;
-  PixelYDimension?: number;
-  Orientation?: number;
-  Software?: string;
-  Artist?: string;
-  Copyright?: string;
-  ImageDescription?: string;
-  [key: string]: unknown;
-}
 
 export interface PhotoMetadata {
   // File info
@@ -131,55 +105,58 @@ export async function extractExifMetadata(filepath: string): Promise<PhotoMetada
     const exifOffset = findExifOffset(buffer);
     if (exifOffset !== -1) {
       const exifBuffer = buffer.slice(exifOffset);
-      const exif = ExifReader(exifBuffer) as ExifData;
+      const exif = ExifReader(exifBuffer);
+      const image = exif.Image || {};
+      const photo = exif.Photo || {};
+      const gps = exif.GPSInfo || {};
 
       // Date/Time
-      if (exif.DateTimeOriginal) {
-        metadata.dateOriginal = parseExifDate(exif.DateTimeOriginal);
-        metadata.dateTaken = metadata.dateOriginal;
-      } else if (exif.DateTime) {
-        metadata.dateTaken = parseExifDate(exif.DateTime);
+      const dateOriginal = parseExifDate(photo.DateTimeOriginal);
+      const dateTaken = dateOriginal || parseExifDate(image.DateTime);
+      if (dateOriginal) {
+        metadata.dateOriginal = dateOriginal;
+      }
+      if (dateTaken) {
+        metadata.dateTaken = dateTaken;
       }
 
       // Camera info
-      if (exif.Make) metadata.cameraMake = String(exif.Make).trim();
-      if (exif.Model) metadata.cameraModel = String(exif.Model).trim();
-      if (exif.LensModel) metadata.lens = String(exif.LensModel).trim();
-      if (exif.FocalLength) metadata.focalLength = exif.FocalLength;
-      if (exif.FNumber) metadata.aperture = exif.FNumber;
-      if (exif.ExposureTime) {
-        metadata.shutterSpeed = formatShutterSpeed(exif.ExposureTime);
+      if (image.Make) metadata.cameraMake = String(image.Make).trim();
+      if (image.Model) metadata.cameraModel = String(image.Model).trim();
+      if (photo.LensModel) metadata.lens = String(photo.LensModel).trim();
+      if (photo.FocalLength) metadata.focalLength = photo.FocalLength;
+      if (photo.FNumber) metadata.aperture = photo.FNumber;
+      if (photo.ExposureTime) {
+        metadata.shutterSpeed = formatShutterSpeed(photo.ExposureTime);
       }
-      if (exif.ISOSpeedRatings) {
-        metadata.iso = Array.isArray(exif.ISOSpeedRatings)
-          ? exif.ISOSpeedRatings[0]
-          : exif.ISOSpeedRatings;
+      if (photo.ISOSpeedRatings) {
+        metadata.iso = photo.ISOSpeedRatings;
       }
 
       // GPS
-      if (exif.GPSLatitude && exif.GPSLongitude) {
-        const lat = parseGPSCoordinate(exif.GPSLatitude, exif.GPSLatitudeRef);
-        const lon = parseGPSCoordinate(exif.GPSLongitude, exif.GPSLongitudeRef);
+      if (gps.GPSLatitude && gps.GPSLongitude) {
+        const lat = parseGPSCoordinate(gps.GPSLatitude, gps.GPSLatitudeRef);
+        const lon = parseGPSCoordinate(gps.GPSLongitude, gps.GPSLongitudeRef);
         if (lat !== null && lon !== null) {
           metadata.gps = {
             latitude: lat,
             longitude: lon,
-            altitude: exif.GPSAltitude,
+            altitude: gps.GPSAltitude,
           };
         }
       }
 
       // Dimensions
-      if (exif.PixelXDimension) metadata.width = exif.PixelXDimension;
-      if (exif.PixelYDimension) metadata.height = exif.PixelYDimension;
-      if (exif.Orientation) metadata.orientation = exif.Orientation;
+      if (photo.PixelXDimension) metadata.width = photo.PixelXDimension;
+      if (photo.PixelYDimension) metadata.height = photo.PixelYDimension;
+      if (image.Orientation) metadata.orientation = image.Orientation;
 
       // Additional
-      if (exif.Software) metadata.software = String(exif.Software).trim();
-      if (exif.Artist) metadata.artist = String(exif.Artist).trim();
-      if (exif.Copyright) metadata.copyright = String(exif.Copyright).trim();
-      if (exif.ImageDescription) {
-        metadata.description = String(exif.ImageDescription).trim();
+      if (image.Software) metadata.software = String(image.Software).trim();
+      if (image.Artist) metadata.artist = String(image.Artist).trim();
+      if (image.Copyright) metadata.copyright = String(image.Copyright).trim();
+      if (image.ImageDescription) {
+        metadata.description = String(image.ImageDescription).trim();
       }
     }
   } catch (error) {
@@ -239,26 +216,23 @@ function findExifOffset(buffer: Buffer): number {
 /**
  * Parse EXIF date string to ISO format.
  */
-function parseExifDate(dateStr: string | number[]): string {
-  try {
-    if (typeof dateStr === 'string') {
-      // Format: "YYYY:MM:DD HH:MM:SS"
-      const match = dateStr.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
-      if (match) {
-        const [, year, month, day, hour, min, sec] = match;
-        return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
-      }
-    }
-    return new Date().toISOString();
-  } catch {
-    return new Date().toISOString();
+export function parseExifDate(value: Date | string | undefined): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
   }
+  if (typeof value !== 'string') return null;
+
+  const match = value.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second] = match;
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
 }
 
 /**
  * Parse GPS coordinate from EXIF format.
  */
-function parseGPSCoordinate(
+export function parseGPSCoordinate(
   coord: number[] | undefined,
   ref: string | undefined
 ): number | null {
@@ -416,19 +390,20 @@ export async function ingestPhoto(
     ];
 
     // Create memory event
-    const eventId = captureEvent(content, {
+    const capture = captureEventWithDetails(content, {
       type: 'observation',
       tags,
-      source: options?.source || 'photo-ingestor',
       metadata: {
-        photo: {
+        photo: toToolParameters({
           filepath: storedPath,
           exif: metadata,
-        },
+        }),
         consent: true, // User initiated ingestion
         provenance: 'local-file',
+        source: options?.source || 'photo-ingestor',
       },
     });
+    const eventId = capture.eventId;
 
     // Audit the ingestion
     audit({

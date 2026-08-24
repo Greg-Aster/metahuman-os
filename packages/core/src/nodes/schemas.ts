@@ -395,8 +395,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
       { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
-      { name: 'presentation', type: 'string', optional: true, description: 'Private or conversational output admission' },
-      { name: 'privateResponse', type: 'string', optional: true, description: 'Private autonomous reflection text' },
       { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
       { name: 'taskInstruction', type: 'string', optional: true, description: 'Task contract persisted with action feedback' },
     ],
@@ -412,8 +410,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'message', type: 'string', description: 'Human-readable bridge status message' },
       { name: 'response', type: 'string', description: 'Visible chat warning when the bridge cannot receive the command' },
       { name: 'conversationResponse', type: 'string', description: 'Response admitted to conversation and TTS' },
-      { name: 'privateResponse', type: 'string', description: 'Response admitted only to inner dialogue' },
-      { name: 'presentationMetadata', type: 'object', description: 'Origin metadata for presentation' },
+      { name: 'responseMetadata', type: 'object', description: 'Origin metadata for conversation output' },
       { name: 'familiarityTaskId', type: 'string', description: 'Asynchronous familiarity search work item, when queued' },
       { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
       { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
@@ -1898,21 +1895,6 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     description: 'Saves question to audit log',
   }),
-  defineSchema({
-    id: 'curiosity_activity_check',
-    name: 'Curiosity Activity Check',
-    category: 'curiosity',
-    inputs: [],
-    outputs: [
-      { name: 'canAsk', type: 'boolean' },
-      { name: 'timeSinceLastQuestion', type: 'number', optional: true },
-      { name: 'questionInterval', type: 'number' },
-      { name: 'username', type: 'string' },
-    ],
-    properties: { questionIntervalSeconds: 1800 },
-    description: 'Checks if enough time has passed since last question',
-  }),
-
   // CURATOR NODES
   defineSchema({
     id: 'uncurated_memory_loader',
@@ -1950,22 +1932,6 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [{ name: 'curatedMemories', type: 'array' }],
     outputs: [{ name: 'savedCount', type: 'number' }],
     description: 'Saves curated memories to training data directory',
-  }),
-  defineSchema({
-    id: 'training_pair_generator',
-    name: 'Generate Training Pairs',
-    category: 'curator',
-    inputs: [{ name: 'curatedMemories', type: 'array' }],
-    outputs: [{ name: 'trainingPairs', type: 'array', description: 'User/assistant message pairs' }],
-    description: 'Converts curated memories into training pairs',
-  }),
-  defineSchema({
-    id: 'training_pair_appender',
-    name: 'Append to JSONL',
-    category: 'curator',
-    inputs: [{ name: 'trainingPairs', type: 'array' }],
-    outputs: [{ name: 'appendedCount', type: 'number' }],
-    description: 'Appends training pairs to JSONL file',
   }),
   defineSchema({
     id: 'memory_marker',

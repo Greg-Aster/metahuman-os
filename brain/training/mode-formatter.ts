@@ -15,28 +15,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { audit } from '@metahuman/core/audit';
-
-export type CognitiveMode = 'dual' | 'emulation' | 'agent';
-
-export interface CuratedSample {
-  mode: CognitiveMode;
-  user_text: string;
-  assistant_text: string;
-  metadata: {
-    original_id: string;
-    [key: string]: any;
-  };
-}
-
-export interface FormattedSample {
-  mode: CognitiveMode;
-  input: string;
-  output: string;
-  metadata: {
-    original_id: string;
-    [key: string]: any;
-  };
-}
+import type {
+  CognitiveMode,
+  CuratedSample,
+  FormattedSample,
+} from '@metahuman/core/schema-manager';
 
 /**
  * Apply dual mode formatting
@@ -90,24 +73,23 @@ function formatAgentMode(sample: CuratedSample): FormattedSample {
  * Format a single curated sample based on its mode
  */
 function formatSample(sample: CuratedSample): FormattedSample {
-  // Handle undefined or invalid modes by defaulting to 'dual'
-  const mode = sample.mode || 'dual';
-
-  if (sample.mode !== mode) {
-    console.warn(`[mode-formatter] Invalid cognitive mode "${sample.mode}" for sample ${sample.metadata.original_id}, defaulting to "dual"`);
+  if (sample.mode !== 'dual' && sample.mode !== 'emulation' && sample.mode !== 'agent') {
+    throw new Error(`Invalid cognitive mode "${String(sample.mode)}" for sample ${sample.metadata.original_id || 'unknown'}`);
+  }
+  if (typeof sample.user_text !== 'string' || !sample.user_text.trim()) {
+    throw new Error(`Invalid user text for sample ${sample.metadata.original_id || 'unknown'}`);
+  }
+  if (typeof sample.assistant_text !== 'string' || !sample.assistant_text.trim()) {
+    throw new Error(`Invalid assistant text for sample ${sample.metadata.original_id || 'unknown'}`);
   }
 
-  switch (mode) {
+  switch (sample.mode) {
     case 'dual':
       return formatDualMode(sample);
     case 'emulation':
       return formatEmulationMode(sample);
     case 'agent':
       return formatAgentMode(sample);
-    default:
-      // Final fallback (shouldn't reach here after the fix above)
-      console.warn(`[mode-formatter] Unknown cognitive mode "${mode}", defaulting to dual for sample ${sample.metadata.original_id}`);
-      return formatDualMode(sample);
   }
 }
 
@@ -155,7 +137,7 @@ async function main() {
 
   if (!inputPath || !outputPath) {
     console.error('[mode-formatter] ERROR: --input and --output are required');
-    console.error('\\nUsage: tsx brain/agents/mode-formatter.ts --input <path> --output <path>');
+    console.error('\nUsage: tsx brain/training/mode-formatter.ts --input <path> --output <path>');
     process.exit(1);
   }
 

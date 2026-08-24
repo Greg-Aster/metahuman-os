@@ -479,6 +479,10 @@ export interface DesireOutcomeReview {
   notifyUser: boolean;
   /** Message for user (if notifyUser is true) */
   userMessage?: string;
+  /** Whether the completed execution should advance a long-running milestone */
+  milestoneAdvance?: boolean;
+  /** Whether the long-running desire's ultimate completion criteria were met */
+  completionCriteriaMet?: boolean;
   /** Human-readable summary of what was accomplished during execution */
   executionSummary?: string;
 }

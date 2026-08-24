@@ -97,24 +97,6 @@ export function environmentObservationNeedsCognition(
   const hasText = observation.text?.some(event => event.text.trim().length > 0) === true;
   const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
   const hasFeedback = Boolean(observation.feedback?.length);
-  const robotObserver = readRobotObserverCycle(observation);
-  const autonomousCaptureEndedWithoutVisual = Boolean(
-    (
-      robotObserver?.requestedBy === 'robot-observer'
-      || robotObserver?.requestedBy === 'boredom-observer'
-      || robotObserver?.requestedBy === 'boredom-movement'
-      || robotObserver?.requestedBy === 'boredom-reflection'
-    )
-    && !hasVisual
-    && observation.feedback?.some(feedback => (
-      feedback.type === 'completed'
-      || feedback.type === 'rejected'
-      || feedback.type === 'cancelled'
-      || feedback.type === 'expired'
-      || feedback.type === 'failed'
-    )),
-  );
-  if (!hasText && autonomousCaptureEndedWithoutVisual) return false;
   const hasPerceptionMetadata = Boolean(
     observation.metadata?.robotObserver
     || observation.metadata?.perceptionEvent,

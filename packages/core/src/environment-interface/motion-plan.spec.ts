@@ -35,6 +35,39 @@ function generatedResult(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
+function selectorJson(output: {
+  response: string;
+  actions: Array<Record<string, unknown>>;
+  movementRequest: Record<string, unknown> | null;
+  taskDecision?: Record<string, unknown>;
+}): string {
+  const supplied = output.taskDecision ?? {};
+  const physical = output.actions.length > 0 || output.movementRequest !== null;
+  const targetRelative = ['inspect', 'visualApproach', 'move'].includes(String(output.actions[0]?.type))
+    || supplied.motionClass === 'target_relative'
+    || supplied.requiredCompletionBasis === 'visual_observation';
+  return JSON.stringify({
+    ...output,
+    taskDecision: {
+      objective: 'Exercise the current Environment selection and admission contract.',
+      outcome: physical ? 'act' : 'report',
+      reason: physical ? 'The selected action advances the current objective.' : 'No physical action was selected.',
+      objectiveComplete: false,
+      continuationPolicy: targetRelative ? 'bounded' : 'none',
+      requiredCompletionBasis: targetRelative
+        ? 'visual_observation'
+        : physical ? 'action_result' : 'response',
+      ...(physical
+        ? {
+            motionClass: targetRelative ? 'target_relative' : 'body_local',
+            actionPurpose: targetRelative ? 'information_gain' : 'expression',
+          }
+        : {}),
+      ...supplied,
+    },
+  });
+}
+
 test('normalizes one bounded generated plan and assigns the coordinator session', () => {
   const normalized = normalizeGeneratedMotionPlan(
     JSON.stringify(generatedResult()),
@@ -112,7 +145,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
     },
   };
   const missingSelection = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Walking forward.',
       actions: [],
       movementRequest: null,
@@ -135,7 +168,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(missingSelection.valid, false);
 
   const surprised = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Acting surprised.',
       actions: [{ type: 'robotCommand', command: 'surprised' }],
       movementRequest: null,
@@ -162,7 +195,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(surprised.taskDecision.motionClass, 'body_local');
 
   const turn = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Turning right.',
       actions: [{ type: 'robotCommand', command: 'turn_right_90' }],
       movementRequest: null,
@@ -188,7 +221,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(turn.actionAdmission.motionClass, 'open_loop_displacement');
 
   const anyMotion = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Waving.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
       movementRequest: null,
@@ -214,7 +247,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
     'turn_left_180', 'turn_right_180', 'walk_slow', 'run',
   ]) {
     const permanentCommand = await environmentActionParserNode.execute({
-      response: JSON.stringify({
+      response: selectorJson({
         response: `I will ${command}.`,
         actions: [{ type: 'robotCommand', command }],
         movementRequest: null,
@@ -248,7 +281,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   }
 
   const conversationalCatalogCommand = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Walking forward.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
       movementRequest: null,
@@ -274,7 +307,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(conversationalCatalogCommand.movementRequest, null);
 
   const offScript = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'I will generate that movement.',
       actions: [],
       movementRequest: { description: 'Crouch and lift the front-right leg.' },
@@ -297,7 +330,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(offScript.valid, true);
 
   const conversationalOnly = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'I will do that movement.',
       actions: [],
       movementRequest: { description: 'Crouch low, lift the front-right leg, pause, then return to standing.' },
@@ -321,7 +354,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   );
 
   const upstreamRefusal = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: "I'm afraid I don't have a 'limbo' command available in my current set of movements.",
       actions: [],
       movementRequest: null,
@@ -336,7 +369,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.equal(upstreamRefusal.valid, false);
 
   const performRefusal = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'The Macarena involves movements that I cannot perform with my current configuration.',
       actions: [],
       movementRequest: null,
@@ -351,7 +384,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.match(performRefusal.response, /cannot perform/i);
 
   const unsupported = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Doing a limbo.',
       actions: [{ type: 'robotCommand', command: 'limbo' }],
       movementRequest: null,
@@ -374,10 +407,10 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.match(unsupported.response, /does not advertise/i);
 
   const routerCannotVetoModelAction = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'I am doing well today.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
-      movementRequest: { description: 'raise the left arm' },
+      movementRequest: null,
     }),
     instruction: 'Hello, how are you today?',
     routingAnalysis: conversationRouting,
@@ -404,7 +437,7 @@ test('a named robot command uses its action result instead of asking the robot c
     },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Standing up.',
       actions: [{ type: 'robotCommand', command: 'stand' }],
       movementRequest: null,
@@ -458,10 +491,10 @@ test('target-relative work executes the LLM-selected advertised command without 
     },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'I will walk closer.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
-      movementRequest: { description: 'walk toward the current scene target' },
+      movementRequest: null,
       taskDecision: {
         outcome: 'act',
         reason: 'Walk once, then compare the correlated post-action view with the object.',
@@ -510,9 +543,9 @@ test('an advertised navigation action remains available for a target-relative ob
     },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Beginning the admitted target-relative step.',
-      actions: [{ type: 'move', target: 'current scene target' }],
+      actions: [{ type: 'move', direction: 'forward', target: 'current scene target' }],
       movementRequest: null,
     }),
     instruction: 'Approach the current scene target.',
@@ -552,7 +585,7 @@ test('Robot Operator may execute an LLM-selected advertised open-loop command', 
     },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Walking forward.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
       movementRequest: null,
@@ -587,7 +620,7 @@ test('an advisory movement route cannot block the Environment LLM advertised ope
     },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Taking one open-loop step forward.',
       actions: [{ type: 'robotCommand', command: 'walk', units: 1 }],
       movementRequest: null,
@@ -662,60 +695,6 @@ test('Movement Generator makes one inference attempt and surfaces an invalid pla
   assert.match(result.error, /outside 0\.\.180 degrees/i);
 });
 
-test('Movement Generator stops a repeated cycle-owned plan before physical dispatch', async () => {
-  let calls = 0;
-  const baseObservation: EnvironmentObservation = {
-    environmentId: 'ainekio',
-    adapter: 'ainekio-gateway',
-    sessionId: 'ainekio-sim-1',
-    timestamp: new Date().toISOString(),
-    capabilities: { actions: ['robotMotionPlan'] },
-    metadata: {
-      robotObserver: {
-        cycleId: 'cycle-duplicate-plan',
-        step: 1,
-        maxSteps: 4,
-        triggerSource: 'autonomy',
-        graph: 'environment',
-        requestedBy: 'environment-perception',
-      },
-    },
-  };
-  const execute = (observation: EnvironmentObservation) => movementGeneratorNode.execute({
-    movementRequest: { description: 'perform one body-local pose change', motionClass: 'body_local' },
-    instruction: 'Perform one body-local pose change.',
-    observation,
-    sessionId: observation.sessionId,
-  }, {
-    generateEnvironmentMotionPlan: async () => {
-      calls += 1;
-      return generatedResult();
-    },
-  });
-
-  const first = await execute(baseObservation);
-  assert.equal(first.valid, true);
-  assert.equal(first.controlResult.status, 'ready');
-  assert.equal(first.actions.length, 1);
-  assert.equal(first.actions[0]?.metadata?.motionControl.lastPlanId, first.planSummary.planId);
-
-  const repeated = await execute({
-    ...baseObservation,
-    metadata: {
-      ...baseObservation.metadata,
-      taskValidatorCommand: {
-        motionControl: first.controlResult.state,
-      },
-    },
-  });
-  assert.equal(calls, 2);
-  assert.equal(repeated.valid, false);
-  assert.equal(repeated.actions.length, 0);
-  assert.equal(repeated.controlResult.status, 'stuck');
-  assert.equal(repeated.controlResult.reason, 'duplicate_motion_plan');
-  assert.match(repeated.response, /repeats the previous physical attempt/i);
-});
-
 test('Movement Generator rejects a stale post-motion frame before calling a model', async () => {
   let calls = 0;
   const result = await movementGeneratorNode.execute({
@@ -740,11 +719,9 @@ test('Movement Generator rejects a stale post-motion frame before calling a mode
           motionControl: {
             version: 1,
             cycleId: 'observer-cycle',
-            planIds: ['plan-1'],
             lastPlanId: 'plan-1',
             lastVisualFrameId: 'frame-before-motion',
             lastVisualFrameTimestamp: '2026-08-04T12:00:00.000Z',
-            consecutiveIdentical: 1,
           },
         },
       },
@@ -795,7 +772,7 @@ test('capability absence rejects the generation branch without calling a model',
     capabilities: { actions: ['robotCommand'], robotCommands: ['walk'] },
   };
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Generating.',
       actions: [],
       movementRequest: { description: 'lift one front leg' },
@@ -821,7 +798,7 @@ test('capability absence rejects the generation branch without calling a model',
 
 test('a missing robot session is reported before freestyle capability negotiation', async () => {
   const parsed = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Moving.',
       actions: [],
       movementRequest: { description: 'do the macarena' },

@@ -268,7 +268,7 @@ Robot Observer image
        publish sparse progress and respond immediately to cancellation
   -> one correlated terminal result and best fresh evidence
   -> deterministic lifecycle/result reducer
-  -> optional user-facing presentation
+  -> optional user-facing response
 ```
 
 There must be no LLM call inside the local acquire/track/correct loop. A skill

@@ -18,7 +18,6 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   audit,
-  auditAction,
   callLLM,
   type RouterMessage,
   loadPersonaCache,
@@ -30,6 +29,7 @@ import {
   getTargetUser,
   withUserContext,
 } from '@metahuman/core';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -246,7 +246,7 @@ export async function generateUserDigest(
   username: string,
   days: number = 14
 ): Promise<UserDigestStats> {
-  return await withUserContext(username, async () => {
+  return await withUserContext(requireUserInfo(username), async () => {
     console.log(`[digest] Processing user: ${username}`);
 
     // Load recent memories
@@ -320,13 +320,16 @@ export async function runCycle(options: DigestOptions = {}): Promise<DigestResul
       return result;
     }
 
-    auditAction({
+    audit({
+      category: 'action',
+      level: 'info',
       event: 'digest_started',
       details: {
         timestamp: new Date().toISOString(),
         username,
         days,
       },
+      actor: 'digest',
     });
 
     console.log(`[digest] Processing user: ${username}`);
@@ -337,11 +340,11 @@ export async function runCycle(options: DigestOptions = {}): Promise<DigestResul
       result.usersProcessed++;
 
       audit({
-        category: 'system',
+        category: 'action',
         level: 'info',
-        message: `Digest completed for ${username}: ${stats.memoriesAnalyzed} memories analyzed`,
+        event: 'digest_user_completed',
         actor: 'digest',
-        metadata: stats,
+        details: { username, ...stats },
       });
     } catch (error) {
       const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
@@ -349,12 +352,15 @@ export async function runCycle(options: DigestOptions = {}): Promise<DigestResul
       console.error(`[digest] ${errorMsg}`);
     }
 
-    auditAction({
+    audit({
+      category: 'action',
+      level: result.errors.length > 0 ? 'warn' : 'info',
       event: 'digest_completed',
       details: {
         usersProcessed: result.usersProcessed,
         errors: result.errors.length,
       },
+      actor: 'digest',
     });
   } catch (error) {
     result.success = false;
@@ -379,7 +385,9 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
 
   const options: DigestOptions = {
     singleUser: args.includes('--single-user') || opts.singleUser === true,
-    days: opts.days ?? 14,
+    days: typeof opts.days === 'number' && Number.isFinite(opts.days) && opts.days > 0
+      ? opts.days
+      : 14,
   };
 
   // If context has a specific user, process only that user

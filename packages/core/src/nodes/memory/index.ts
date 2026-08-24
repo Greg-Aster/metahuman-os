@@ -5,4 +5,5 @@
  */
 
 export { MemoryRouterNode } from './memory-router.node.js';
+export { ReflectionMemorySamplerNode } from './reflection-memory-sampler.node.js';
 export { SearchInterpreterNode } from './search-interpreter.node.js';

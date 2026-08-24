@@ -10,8 +10,8 @@
       "cooldownMs": 2000
     },
     "vector-index": {
-      "description": "Vector index capacity",
-      "maxConcurrent": 10,
+      "description": "Exclusive vector index read/write capacity",
+      "maxConcurrent": 1,
       "cooldownMs": 0
     },
     "remote-llm": {

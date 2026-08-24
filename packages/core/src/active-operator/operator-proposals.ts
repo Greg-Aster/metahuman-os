@@ -67,7 +67,6 @@ export type ProposalTaskType =
   | 'desire_advance'
   | 'desire_execute'
   | 'psychoanalyze'
-  | 'code_analyze'
   | 'help_ticket_review'
   | 'custom';
 
@@ -87,7 +86,6 @@ export const TASK_RISK_LEVELS: Record<ProposalTaskType, TaskRisk> = {
   desire_advance: 'medium', // Advances desires through pipeline
   desire_execute: 'high',   // External actions, high impact
   psychoanalyze: 'medium',  // Modifies persona understanding
-  code_analyze: 'medium',   // Analyzes codebase for issues
   help_ticket_review: 'low', // Reviews user feedback
   custom: 'high',           // Unknown, assume high risk
 };
@@ -1276,89 +1274,6 @@ ${proposal.executionResult?.error ? `- **Error**: ${proposal.executionResult.err
     }
   } catch (error) {
     console.error('[operator-proposals] Big Brother review error:', error);
-    return {
-      success: false,
-      error: (error as Error).message,
-    };
-  }
-}
-
-/**
- * Submit an improvement request based on user feedback.
- * This creates a coding request that Big Brother + System Coder can work on.
- */
-export async function submitImprovementRequest(
-  username: string,
-  proposalId: string,
-  userInput: string,
-  context?: {
-    rating?: 'good' | 'neutral' | 'bad';
-    bigBrotherAnalysis?: string;
-  }
-): Promise<{ success: boolean; requestId?: string; error?: string }> {
-  const proposal = getProposal(username, proposalId);
-  if (!proposal) {
-    return { success: false, error: 'Proposal not found' };
-  }
-
-  try {
-    // Import System Coder request functionality
-    const { createCodingRequest } = await import('../system-coder/coding-requests.js');
-
-    // Build a detailed request
-    const requestDescription = `
-## User Improvement Request
-
-**Task Type**: ${proposal.taskType}
-**Task Description**: ${proposal.taskDescription}
-
-### Execution Context
-- Success: ${proposal.executionResult?.success ? 'Yes' : 'No'}
-- Error: ${proposal.executionResult?.error || 'None'}
-
-### User Feedback
-**Rating**: ${context?.rating || 'Not provided'}
-**User Input**: ${userInput}
-
-${context?.bigBrotherAnalysis ? `### Big Brother Analysis\n${context.bigBrotherAnalysis}` : ''}
-
-### Request
-Please implement the improvements suggested by the user to enhance the ${proposal.taskType} task execution.
-`;
-
-    const request = createCodingRequest(username, {
-      type: 'feature',
-      description: requestDescription,
-      context: JSON.stringify({
-        proposalId,
-        taskType: proposal.taskType,
-        userInput,
-        rating: context?.rating,
-        executionResult: proposal.executionResult,
-      }),
-    });
-
-    audit({
-      category: 'action',
-      level: 'info',
-      event: 'improvement_request_created',
-      actor: username,
-      details: {
-        proposalId,
-        requestId: request.id,
-        taskType: proposal.taskType,
-        hasUserInput: true,
-      },
-    });
-
-    console.log(`[operator-proposals] Created improvement request ${request.id} from user feedback`);
-
-    return {
-      success: true,
-      requestId: request.id,
-    };
-  } catch (error) {
-    console.error('[operator-proposals] Failed to create improvement request:', error);
     return {
       success: false,
       error: (error as Error).message,

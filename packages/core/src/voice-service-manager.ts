@@ -90,36 +90,45 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-export function getVoiceServiceConfig(id: VoiceServiceId): VoiceServiceConfig {
+export function normalizeVoiceServiceConfig(
+  id: VoiceServiceId,
+  entry: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv = process.env,
+): VoiceServiceConfig {
   const defaults = DEFAULTS[id]
-  const entry = readServiceEntry(id)
   const envPrefix = id === 'whisper' ? 'MH_WHISPER' : 'MH_KOKORO'
-  const requestedDevice = process.env[`${envPrefix}_DEVICE`] ?? entry.device
+  const requestedDevice = environment[`${envPrefix}_DEVICE`] ?? entry.device
   const device = requestedDevice === 'cuda' ? 'cuda' : 'cpu'
-  const port = positivePort(process.env[`${envPrefix}_PORT`] ?? entry.port, defaults.port)
-  const shared = {
-    enabled: entry.enabled !== false,
-    startOnSystemBoot: entry.startOnSystemBoot !== false,
+  const port = positivePort(environment[`${envPrefix}_PORT`] ?? entry.port, defaults.port)
+  const shared: Pick<VoiceServiceConfig, 'enabled' | 'startOnSystemBoot' | 'port' | 'device'> = {
+    enabled: typeof entry.enabled === 'boolean' ? entry.enabled : defaults.enabled,
+    startOnSystemBoot: typeof entry.startOnSystemBoot === 'boolean'
+      ? entry.startOnSystemBoot
+      : defaults.startOnSystemBoot,
     port,
     device,
   }
 
   if (id === 'whisper') {
-    const requestedCompute = process.env.MH_WHISPER_COMPUTE_TYPE ?? entry.computeType
+    const requestedCompute = environment.MH_WHISPER_COMPUTE_TYPE ?? entry.computeType
     const computeType = requestedCompute === 'float16' || requestedCompute === 'float32'
       ? requestedCompute
       : 'int8'
     return {
       ...shared,
-      model: String(process.env.MH_WHISPER_MODEL ?? entry.model ?? defaults.model),
+      model: String(environment.MH_WHISPER_MODEL ?? entry.model ?? defaults.model),
       computeType: device === 'cuda' && computeType === 'int8' ? 'float16' : computeType,
     }
   }
 
   return {
     ...shared,
-    langCode: String(process.env.MH_KOKORO_LANG ?? entry.langCode ?? defaults.langCode),
+    langCode: String(environment.MH_KOKORO_LANG ?? entry.langCode ?? defaults.langCode),
   }
+}
+
+export function getVoiceServiceConfig(id: VoiceServiceId): VoiceServiceConfig {
+  return normalizeVoiceServiceConfig(id, readServiceEntry(id))
 }
 
 export function getVoiceServiceUrl(id: VoiceServiceId): string {

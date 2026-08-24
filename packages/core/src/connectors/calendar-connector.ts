@@ -12,7 +12,7 @@ import * as path from 'path';
 import ical from 'node-ical';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { captureEvent } from '../memory.js';
+import { captureEventWithDetails, toToolParameters } from '../memory.js';
 
 // ============================================================================
 // Types
@@ -490,22 +490,23 @@ export async function ingestCalendarEvents(
     const content = formatEventAsContent(event);
     const tags = generateEventTags(event);
 
-    const eventId = captureEvent(content, {
+    const capture = captureEventWithDetails(content, {
       type: 'observation',
       tags,
       metadata: {
-        calendar: {
+        calendar: toToolParameters({
           eventId: event.id,
           title: event.title,
           start: event.start.toISOString(),
           end: event.end.toISOString(),
           location: event.location,
-        },
+        }),
         consent: true,
         provenance: 'calendar-sync',
         source: `calendar:${source}`,
       },
     });
+    const eventId = capture.eventId;
 
     eventIds.push(eventId);
   }

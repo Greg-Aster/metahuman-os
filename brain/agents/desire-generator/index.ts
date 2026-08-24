@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
   name: 'Desire Generator',
   description: 'Synthesizes desires from persona goals, tasks, memories, and other sources',
   usesLLM: true,
-  priority: 'medium',
+  priority: 'normal',
   defaultInterval: 1800, // 30 minutes
   tags: ['agency', 'llm', 'background', 'desire'],
 };

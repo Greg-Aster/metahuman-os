@@ -16,6 +16,31 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
+const mobilePages = [
+  ['/', 'index.astro'],
+  ['/debug', 'debug.astro'],
+  ['/guide', 'guide.astro'],
+  ['/persona', 'persona.astro'],
+  ['/tasks', 'tasks.astro'],
+  ['/user-guide', 'user-guide.astro'],
+];
+
+function mobileRoutes() {
+  return {
+    name: 'metahuman-mobile-routes',
+    hooks: {
+      'astro:config:setup': ({ injectRoute }) => {
+        for (const [pattern, page] of mobilePages) {
+          injectRoute({
+            pattern,
+            entrypoint: new URL(`./src/pages/${page}`, import.meta.url),
+            prerender: true,
+          });
+        }
+      },
+    },
+  };
+}
 
 /**
  * Custom Vite plugin to externalize @metahuman/core for CLIENT builds
@@ -42,9 +67,14 @@ function externalizeMetahumanCoreForClient() {
 
 export default defineConfig({
   integrations: [
+    mobileRoutes(),
     tailwind({ applyBaseStyles: true }),
     svelte()
   ],
+
+  // The mobile route table above is the only page surface. Keeping it outside
+  // src/ also excludes server middleware and API routes without mutating source.
+  srcDir: './src-mobile',
 
   // Static output for mobile - no server required
   output: 'static',

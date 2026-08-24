@@ -9,9 +9,8 @@
  * 1. Sample weighted memories
  * 2. Generate an interesting question about patterns/connections
  * 3. Search local memory for relevant information
- * 4. If innerQuestionMode='web' and answer insufficient, search web (TODO)
- * 5. Synthesize answer from findings
- * 6. Save as inner_dialogue event
+ * 4. Synthesize answer from findings
+ * 5. Save as inner_dialogue event
  *
  * This module can be used both:
  * - CLI: via cli.ts wrapper
@@ -23,7 +22,7 @@ import path from 'node:path';
 import {
   callLLM,
   captureEvent,
-  searchMemory,
+  queryIndex,
   storageClient,
   audit,
   getTargetUser,
@@ -31,6 +30,7 @@ import {
   loadCuriosityConfig,
   loadPersonaCore,
   submitInnerReflection,
+  type VectorIndexItem,
 } from '@metahuman/core';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
@@ -246,7 +246,7 @@ What question should I ask myself to deepen my understanding?
   }
 
   // Step 2: Search memory for relevant context
-  let searchResults: any[] = [];
+  let searchResults: VectorIndexItem[] = [];
   try {
     // Extract key terms from question for search
     const keyTerms = question
@@ -258,13 +258,13 @@ What question should I ask myself to deepen my understanding?
 
     for (const term of keyTerms) {
       try {
-        const results = await searchMemory(term, { limit: 3 });
-        searchResults.push(...results);
+        const results = await queryIndex(term, { topK: 3, username });
+        searchResults.push(...results.map(({ item }) => item));
       } catch {}
     }
 
     // Remove duplicates
-    searchResults = [...new Map(searchResults.map(r => [r.id || r.timestamp, r])).values()];
+    searchResults = [...new Map(searchResults.map(result => [result.id, result])).values()];
     console.log(`[inner-curiosity] Found ${searchResults.length} relevant memories`);
   } catch (error) {
     console.warn(`[inner-curiosity] Memory search failed:`, error);
@@ -280,7 +280,7 @@ If the available information is insufficient, acknowledge that and explain what 
   `.trim();
 
   const searchContext = searchResults.length > 0
-    ? `\n\nRelevant memories:\n${searchResults.map((r, i) => `${i + 1}. ${r.content?.substring(0, 200) || ''}`).join('\n')}`
+    ? `\n\nRelevant memories:\n${searchResults.map((result, index) => `${index + 1}. ${result.text.slice(0, 200)}`).join('\n')}`
     : '';
 
   const answerPrompt = `

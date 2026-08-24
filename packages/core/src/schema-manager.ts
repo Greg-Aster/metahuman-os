@@ -23,29 +23,36 @@ export interface ModelSchema {
   notes?: string;
 }
 
+export type CognitiveMode = 'dual' | 'emulation' | 'agent';
+
+export interface TrainingSampleMetadata {
+  original_id: string;
+  source_type: string;
+  [key: string]: unknown;
+}
+
+export interface CuratedSample {
+  mode: CognitiveMode;
+  user_text: string;
+  assistant_text: string;
+  metadata: TrainingSampleMetadata;
+}
+
 export interface FormattedSample {
-  mode: 'dual' | 'emulation' | 'agent';
+  mode: CognitiveMode;
   input: string;
   output: string;
-  metadata: {
-    original_id: string;
-    source_type: string;
-    [key: string]: any;
-  };
+  metadata: TrainingSampleMetadata;
 }
 
 export interface SchemaAppliedSample {
-  mode: 'dual' | 'emulation' | 'agent';
+  mode: CognitiveMode;
   input: string; // Wrapped input
   output: string; // Wrapped output
   raw_input: string; // Original unwrapped input
   raw_output: string; // Original unwrapped output
   schema_family: string;
-  metadata: {
-    original_id: string;
-    source_type: string;
-    [key: string]: any;
-  };
+  metadata: TrainingSampleMetadata;
 }
 
 /**

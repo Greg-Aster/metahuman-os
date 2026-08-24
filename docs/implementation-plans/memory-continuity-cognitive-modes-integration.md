@@ -216,7 +216,7 @@ Establish `packages/core/src/memory-policy.ts` as the single source of truth for
 | `/api/persona_chat` | `canWriteMemory`, `contextDepth`, `conversationVisibility` | Governs chat capture, buffer persistence, prompt assembly, and summary injection. |
 | `/api/operator/react` | `canWriteMemory`, `shouldCaptureTool` | Stops emulation tool writes and limits agent logging to action commands. |
 | `/api/file_operations` | `canWriteMemory`, `conversationVisibility` | Enforces read-only guests and redacts file paths in guest responses. |
-| `/api/approvals`, `/api/code-approvals` | `canWriteMemory`, `contextDepth` | Captures only approved event types and limits history pagination for guests. |
+| `/api/approvals` | `canWriteMemory`, `contextDepth` | Captures only approved event types and limits history pagination for guests. |
 | `/api/voice-settings`, `voice-training.ts` | `canWriteMemory`, `conversationVisibility` | Keeps training data scoped to owners while allowing system-wide TTS voices. |
 | `/api/profiles/list`, guest selector UI | `conversationVisibility` | Hides private profiles from unauthenticated visitors. |
 | Brain agents (`organizer`, `conversation-summarizer`) | `canWriteMemory` | Forces agents to assume owner context or skip writes entirely. |
@@ -498,7 +498,7 @@ if (allowMemoryWrites && cognitiveMode === 'dual') {
 - ✅ Active persona facet
 - ❌ **Tool invocations** (NOT captured - this is a gap)
 - ❌ **File operations** (NOT captured - gap)
-- ❌ **Code approvals** (NOT captured - gap)
+- ❌ **Skill approval decisions** (NOT captured - gap)
 
 ---
 
@@ -1372,12 +1372,12 @@ describe('File Operations API', () => {
   });
 });
 
-describe('Code Approvals API', () => {
+describe('Skill Approvals API', () => {
   it('captures approvals only when canWriteMemory is true', async () => {
     await approveSkill({ mode: 'dual' });
-    expect(await memoryExists('code_approval')).toBe(true);
+    expect(await memoryExists('skill_approval')).toBe(true);
     await approveSkill({ mode: 'emulation' });
-    expect(await memoryExists('code_approval', { mode: 'emulation' })).toBe(false);
+    expect(await memoryExists('skill_approval', { mode: 'emulation' })).toBe(false);
   });
 });
 

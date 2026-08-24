@@ -22,6 +22,7 @@ import {
 
 // Re-export ModelRole for convenience
 export type { ModelRole } from './model-resolver.js';
+export { normalizeModelRole } from './model-resolver.js';
 
 export interface RouterMessage {
   role: 'system' | 'user' | 'assistant';

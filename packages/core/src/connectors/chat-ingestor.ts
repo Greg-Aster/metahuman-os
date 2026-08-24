@@ -9,9 +9,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { captureEvent } from '../memory.js';
+import { captureEventWithDetails, toToolParameters } from '../memory.js';
 
 // ============================================================================
 // Types
@@ -655,8 +654,6 @@ export async function ingestChatExport(
   username: string,
   options: ChatIngestionOptions = {}
 ): Promise<ChatIngestionResult> {
-  const profilePaths = getProfilePaths(username);
-
   try {
     const conversations = await parseChatExport(filepath, options);
     const platform = detectPlatform(filepath);
@@ -685,11 +682,11 @@ export async function ingestChatExport(
           ...(options.additionalTags || []),
         ];
 
-        const eventId = captureEvent(content, {
+        const capture = captureEventWithDetails(content, {
           type: 'observation',
           tags,
           metadata: {
-            chat: {
+            chat: toToolParameters({
               platform: conversation.platform,
               conversationId: conversation.id,
               title: conversation.title,
@@ -699,12 +696,13 @@ export async function ingestChatExport(
               totalChunks: chunks.length,
               startDate: chunk[0]?.timestamp.toISOString(),
               endDate: chunk[chunk.length - 1]?.timestamp.toISOString(),
-            },
+            }),
             consent: true,
             provenance: 'chat-export',
             source: options.source || `chat:${platform}`,
           },
         });
+        const eventId = capture.eventId;
 
         memoryIds.push(eventId);
       }

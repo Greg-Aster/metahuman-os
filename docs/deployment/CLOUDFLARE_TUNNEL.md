@@ -243,16 +243,10 @@ context.cookies.set('mh_session', session.id, {
 
 ## Guest User Management
 
-### Create Guest Accounts for Friends
-
-Option 1: Using CLI (current):
-
-```bash
-# Create a script similar to create-owner.ts
-npx tsx scripts/create-guest.ts
-```
-
-Option 2: Using Security Settings UI (recommended - see next section)
+Owners create named guest accounts in **System → Settings → Security**. Public
+visitors may instead use **Continue as Guest** to select a profile the owner has
+explicitly marked public. Do not edit the user database or embed credentials in
+repository scripts.
 
 ### Guest Access Permissions
 

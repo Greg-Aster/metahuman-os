@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { systemPaths } from '../path-builder.js';
-import type { QueuedTask, TaskInput } from './types.js';
+import type { Priority, QueuedTask, TaskInput, WorkSource } from './types.js';
 
 const TOKEN_FILE = path.join(systemPaths.logs, 'run', 'queue', 'service-token');
 const SUBMISSION_PATH = '/api/internal/work-coordinator/enqueue';
@@ -66,4 +66,33 @@ export async function submitCoordinatorWork(input: TaskInput): Promise<QueuedTas
   const body = await response.json() as { task?: QueuedTask; error?: string };
   if (!response.ok || !body.task) throw new Error(body.error || `Coordinator submission failed (${response.status})`);
   return body.task;
+}
+
+export interface MemoryIndexRefreshSubmission {
+  username: string;
+  source: WorkSource;
+  force?: boolean;
+  maxAgeHours?: number;
+  priority?: Priority;
+  metadata?: Record<string, any>;
+}
+
+/** Admit a full index reconciliation to its one durable execution lane. */
+export function submitMemoryIndexRefresh(input: MemoryIndexRefreshSubmission): Promise<QueuedTask> {
+  const force = input.force === true;
+  return submitCoordinatorWork({
+    type: 'index_build',
+    handler: 'vector.index-build',
+    resource: 'vector-index',
+    source: input.source,
+    username: input.username,
+    priority: input.priority ?? 'normal',
+    input: {
+      force,
+      maxAgeHours: input.maxAgeHours,
+      triggeredBy: input.metadata?.producer || input.source,
+    },
+    idempotencyKey: `vector-index-refresh:${force ? 'force' : 'normal'}`,
+    metadata: { producer: 'vector-index-refresh', ...input.metadata },
+  });
 }

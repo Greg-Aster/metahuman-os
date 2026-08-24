@@ -442,29 +442,6 @@ if ! command_exists pnpm; then
   exit 1
 fi
 
-if ! command_exists python3; then
-  # Python is mandatory because the local voice/model tooling is isolated in venv.
-  print_error "Python 3 is required to create the isolated runtime environment"
-  exit 1
-fi
-
-VENV_PATH="$REPO_ROOT/venv"
-# Use the repository-local virtual environment for Python isolation.
-if [ ! -d "$VENV_PATH" ]; then
-  # Create the venv only if it does not already exist.
-  print_status "Creating isolated Python environment"
-  python3 -m venv "$VENV_PATH"
-  # Build the isolated Python environment without installing packages here.
-fi
-
-# Keep child services isolated without doing dependency installation at startup.
-# Dependency repair belongs to setup/build, not the fast launch path.
-# shellcheck disable=SC1091
-source "$VENV_PATH/bin/activate"
-# Activate the repository-local Python environment for child services.
-print_status "Using Python environment: $VENV_PATH"
-# Show which Python environment is active.
-
 if [ ! -f "$SERVER_ENTRY" ]; then
   # Do not build during startup; fail fast when the server bundle is absent.
   print_error "Production server bundle is missing"

@@ -1,11 +1,10 @@
 /**
  * Curated Aggregator - Aggregates LLM-curated conversations for training
  *
- * This agent replaces the old memory-curator.ts by reading from the
- * curated conversations directory (output of curator.ts) and converting
+ * This worker reads the canonical Curator store and converts
  * them into the training format expected by the rest of the pipeline.
  *
- * Input: /memory/curated/conversations/*.json (from curator.ts)
+ * Input: /memory/curated/conversations/*.json (from brain/agents/curator)
  * Output: CuratedSample[] format for mode-formatter
  */
 
@@ -15,6 +14,15 @@ import { withUserContext, getUserContext } from '@metahuman/core/context';
 import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { audit } from '@metahuman/core/audit';
 import { systemPaths } from '@metahuman/core/paths';
+import {
+  isTrainingCuratedMemory,
+  parseStoredCuratedMemory,
+  type TrainingCuratedMemory,
+} from '@metahuman/core';
+import type {
+  CognitiveMode,
+  CuratedSample,
+} from '@metahuman/core/schema-manager';
 
 interface TrainingDataConfig {
   memoryTypes: {
@@ -191,49 +199,19 @@ function sampleBySourceType(samples: CuratedSample[], config: TrainingDataConfig
   return finalSamples.sort(() => Math.random() - 0.5);
 }
 
-export type CognitiveMode = 'dual' | 'emulation' | 'agent';
-
-export interface CuratedSample {
-  mode: CognitiveMode;
-  user_text: string;
-  assistant_text: string;
-  metadata: {
-    original_id: string;
-    source_type: string;
-    multi_turn: boolean;
-    long_output: boolean;
-    timestamp?: string;
-    curated_at?: string;
-    [key: string]: any;
-  };
-}
-
-interface CuratedConversation {
-  id: string;
-  originalTimestamp: string;
-  conversationalEssence: string;
-  context: string;
-  userMessage: string;
-  assistantResponse: string;
-  curatedAt: string;
-  flags: string[];
-  suitableForTraining: boolean;
-  cognitiveMode: CognitiveMode;
-  memoryType: string;
-}
-
 /**
  * Load all curated conversations from the conversations directory
  */
-function loadCuratedConversations(curatedDir: string): CuratedConversation[] {
-  const conversations: CuratedConversation[] = [];
+export function loadCuratedConversations(curatedDir: string): TrainingCuratedMemory[] {
+  const conversations: TrainingCuratedMemory[] = [];
+  const errors: string[] = [];
 
   if (!fs.existsSync(curatedDir)) {
     console.warn(`[curated-aggregator] Curated directory not found: ${curatedDir}`);
     return conversations;
   }
 
-  const files = fs.readdirSync(curatedDir);
+  const files = fs.readdirSync(curatedDir).sort();
 
   for (const file of files) {
     if (!file.endsWith('.json')) continue;
@@ -242,21 +220,19 @@ function loadCuratedConversations(curatedDir: string): CuratedConversation[] {
 
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      const conversation = JSON.parse(content) as CuratedConversation;
-
-      // Normalize legacy files missing cognitiveMode (pre-Nov 24, 2025)
-      if (!conversation.cognitiveMode) {
-        conversation.cognitiveMode = 'dual'; // Default for legacy files
-        console.warn(`[curated-aggregator] Legacy file ${file} missing cognitiveMode, defaulting to 'dual'`);
-      }
+      const conversation = parseStoredCuratedMemory(JSON.parse(content), `Curator record ${file}`);
 
       // Only include conversations marked suitable for training
-      if (conversation.suitableForTraining) {
+      if (isTrainingCuratedMemory(conversation)) {
         conversations.push(conversation);
       }
     } catch (error) {
-      console.warn(`[curated-aggregator] Failed to load conversation ${file}:`, (error as Error).message);
+      errors.push(`${file}: ${(error as Error).message}`);
     }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Curated conversation store contains ${errors.length} invalid record(s): ${errors.join('; ')}`);
   }
 
   return conversations;
@@ -266,7 +242,7 @@ function loadCuratedConversations(curatedDir: string): CuratedConversation[] {
  * Convert curated conversations to training samples
  */
 function convertToTrainingSamples(
-  conversations: CuratedConversation[],
+  conversations: TrainingCuratedMemory[],
   options: {
     maxSamples?: number;
     modeFilter?: CognitiveMode;
@@ -308,6 +284,7 @@ function convertToTrainingSamples(
         pair_flipped: conversation.cognitiveMode === 'dual',
         conversational_essence: conversation.conversationalEssence,
         context: conversation.context,
+        cognitive_mode_source: conversation.cognitiveModeSource,
       },
     });
 
@@ -377,7 +354,7 @@ async function mainWithContext() {
   if (conversations.length === 0) {
     console.error('[curated-aggregator] ERROR: No curated conversations found!');
     console.error('Run the curator agent first to generate curated conversations:');
-    console.error(`  tsx brain/agents/curator.ts --username ${ctx.username}`);
+    console.error(`  tsx brain/agents/curator/cli.ts --username ${ctx.username} --all`);
     process.exit(1);
   }
 

@@ -151,16 +151,14 @@ The dev server auto-starts `organizer` and `boredom-service`. If you stopped the
 
 ### Semantic Search Not Working
 
-**Cause:** Index not built or `nomic-embed-text` model not installed.
+**Cause:** The index has not been built, the Work Coordinator is unavailable,
+or the configured embedding service is not running.
 
 **Solutions:**
-1. Install embeddings model:
+1. Start the MetaHuman server and the embedding backend selected in Settings → LLM Backend.
+2. Queue an index rebuild for the affected user:
    ```bash
-   ./bin/mh ollama pull nomic-embed-text
-   ```
-2. Build index:
-   ```bash
-   ./bin/mh index build
+   ./bin/mh --user <username> index build
    ```
 
 ### "Base path not allowed"
@@ -243,4 +241,3 @@ Lower thresholds in `etc/auto-approval.json` or improve data quality
 **Status:** Known issue - investigating cache invalidation improvements.
 
 ---
-

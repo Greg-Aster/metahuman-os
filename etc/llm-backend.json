@@ -3,7 +3,7 @@
   "ollama": {
     "endpoint": "http://localhost:11434",
     "autoStart": true,
-    "defaultModel": "qwen3.5:2b",
+    "defaultModel": "qwen3.5:9b",
     "contextWindow": 8192,
     "maxTokens": 2048,
     "temperature": 0.7,

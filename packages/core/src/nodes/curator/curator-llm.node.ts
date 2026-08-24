@@ -6,36 +6,7 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
-
-interface EpisodicMemory {
-  id: string;
-  timestamp: string;
-  content: string;
-  type?: string;
-  response?: string;
-  path?: string;
-  tags?: string[];
-  metadata?: {
-    cognitiveMode?: string;
-    reinforcementSignal?: number;  // -1 = negative feedback, +1 = positive
-    [key: string]: unknown;
-  };
-}
-
-interface CuratedMemory {
-  id: string;
-  originalTimestamp: string;
-  conversationalEssence: string;
-  context?: string;
-  userMessage?: string;
-  assistantResponse?: string;
-  curatedAt: string;
-  flags: string[];
-  suitableForTraining: boolean;
-  rejectionReason?: string;
-  cognitiveMode?: string;
-  memoryType?: string;
-}
+import type { CuratedMemory, CuratorItemResult, EpisodicMemory } from './contracts.js';
 
 const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a memory curator preparing training data for a personal AI assistant.
 
@@ -104,12 +75,103 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `Memory content:
 
 {{responseSection}}`;
 
+function requiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Curator response requires a non-empty ${key}`);
+  }
+  return value.trim();
+}
+
+function optionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') throw new Error(`Curator response ${key} must be a string`);
+  return value.trim() || undefined;
+}
+
+function stringArray(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new Error(`Curator response ${key} must be an array of strings`);
+  }
+  return value.map(item => item.trim()).filter(Boolean);
+}
+
+function cognitiveMode(memory: EpisodicMemory): Pick<CuratedMemory, 'cognitiveMode' | 'cognitiveModeSource'> {
+  const value = memory.metadata?.cognitiveMode;
+  if (value === 'dual' || value === 'agent' || value === 'emulation') {
+    return { cognitiveMode: value, cognitiveModeSource: 'metadata' };
+  }
+  if (value === undefined || value === null || value === '') {
+    return { cognitiveMode: 'dual', cognitiveModeSource: 'legacy-default' };
+  }
+  throw new Error(`Curator source memory ${memory.id} has invalid cognitive mode: ${String(value)}`);
+}
+
+export function parseCuratorResponse(
+  content: string,
+  memory: EpisodicMemory,
+  curatedAt = new Date().toISOString(),
+): CuratedMemory {
+  if (typeof memory.id !== 'string' || !memory.id.trim()) throw new Error('Curator source memory requires an id');
+  if (typeof memory.timestamp !== 'string' || Number.isNaN(Date.parse(memory.timestamp))) {
+    throw new Error(`Curator source memory ${memory.id} has an invalid timestamp`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content.trim());
+  } catch (error) {
+    throw new Error(`Curator response is not valid JSON: ${(error as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Curator response must be a JSON object');
+  }
+
+  const result = parsed as Record<string, unknown>;
+  if (typeof result.suitableForTraining !== 'boolean') {
+    throw new Error('Curator response suitableForTraining must be a boolean');
+  }
+
+  const suitableForTraining = result.suitableForTraining;
+  const rejectionReason = optionalString(result, 'rejectionReason');
+  if (!suitableForTraining && !rejectionReason) {
+    throw new Error('Rejected curator responses require rejectionReason');
+  }
+
+  const mode = cognitiveMode(memory);
+  return {
+    id: memory.id,
+    originalTimestamp: memory.timestamp,
+    conversationalEssence: requiredString(result, 'conversationalEssence'),
+    context: optionalString(result, 'context') ?? '',
+    userMessage: suitableForTraining ? requiredString(result, 'userMessage') : optionalString(result, 'userMessage'),
+    assistantResponse: suitableForTraining
+      ? requiredString(result, 'assistantResponse')
+      : optionalString(result, 'assistantResponse'),
+    curatedAt,
+    flags: stringArray(result, 'flags'),
+    suitableForTraining,
+    rejectionReason,
+    ...mode,
+    memoryType: typeof memory.type === 'string' && memory.type.trim() ? memory.type.trim() : 'conversation',
+  };
+}
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs are keyed by targetHandle name from graph edges, not array index
   const memoriesInput = inputs.memories || inputs[0];
   const memories: (EpisodicMemory & { path: string })[] = memoriesInput?.memories || memoriesInput || [];
   const personaSummary = (inputs.personaSummary || inputs[1]) as string;
-  const temperature = properties?.temperature ?? 0.3;
+  if (typeof personaSummary !== 'string' || !personaSummary.trim()) {
+    throw new Error('Curator requires non-empty persona context');
+  }
+  const temperature = Number(properties?.temperature ?? 0.3);
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 1) {
+    throw new Error(`Curator temperature must be between 0 and 1, received: ${properties?.temperature}`);
+  }
   const role = properties?.role ?? 'curator';
   const systemPromptTemplate = properties?.systemPromptTemplate ?? DEFAULT_SYSTEM_PROMPT_TEMPLATE;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
@@ -120,32 +182,46 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       success: true,
       curatedMemories: [],
       count: 0,
+      acceptedCount: 0,
+      rejectedCount: 0,
+      failedCount: 0,
     };
   }
 
-  const curatedResults: any[] = [];
+  const curatedResults: CuratorItemResult[] = [];
 
   for (const memory of memories) {
-    if (!memory || !memory.content) continue;
+    if (!memory || typeof memory.content !== 'string' || !memory.content.trim()) {
+      curatedResults.push({
+        success: false,
+        originalMemoryPath: memory?.path || '',
+        memoryId: memory?.id || 'unknown',
+        error: 'Curator received a memory without content',
+      });
+      continue;
+    }
 
     // Skip memories with negative feedback - user explicitly marked these as bad
     // They should not influence training data
-    if (memory.metadata?.reinforcementSignal === -1) {
-      console.log(`[curator_llm] ⏭️ Skipping memory ${memory.id}: negative user feedback`);
+    if (memory.metadata?.reinforcementSignal === -1 || memory.tags?.includes('feedback')) continue;
+
+    let sourceCognitiveMode: CuratedMemory['cognitiveMode'];
+    try {
+      sourceCognitiveMode = cognitiveMode(memory).cognitiveMode;
+    } catch (error) {
+      curatedResults.push({
+        success: false,
+        originalMemoryPath: memory.path,
+        memoryId: memory.id,
+        error: (error as Error).message,
+      });
       continue;
     }
-
-    // Skip feedback memories themselves - they're meta-data, not training content
-    if (memory.tags?.includes('feedback')) {
-      continue;
-    }
-
-    const cognitiveMode = memory.metadata?.cognitiveMode || 'emulation';
     const memoryType = memory.type || 'conversation';
 
     const systemPrompt = renderPromptTemplate(systemPromptTemplate, {
       personaSummary,
-      cognitiveMode,
+      cognitiveMode: sourceCognitiveMode,
       memoryType,
     });
     const userPrompt = renderPromptTemplate(userPromptTemplate, {
@@ -166,60 +242,45 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode || 'dual',
-        options: { temperature },
+        options: { temperature, response_format: { type: 'json_object' } },
         keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM
       });
 
-      const result = JSON.parse(response.content);
-
-      const curated: CuratedMemory = {
-        id: memory.id,
-        originalTimestamp: memory.timestamp,
-        conversationalEssence: result.conversationalEssence || memory.content,
-        context: result.context,
-        userMessage: result.userMessage,
-        assistantResponse: result.assistantResponse,
-        curatedAt: new Date().toISOString(),
-        flags: result.flags || [],
-        suitableForTraining: result.suitableForTraining !== false,
-        rejectionReason: result.rejectionReason,
-        cognitiveMode,
-        memoryType,
-      };
+      const curated = parseCuratorResponse(response.content, memory);
 
       // Log rejections for debugging
       if (!curated.suitableForTraining) {
-        console.log(`[curator_llm] ❌ Rejected memory ${memory.id}: ${result.rejectionReason || 'No reason provided'}`);
+        console.log(`[curator_llm] ❌ Rejected memory ${memory.id}: ${curated.rejectionReason || 'No reason provided'}`);
       }
 
       curatedResults.push({
         success: true,
+        disposition: curated.suitableForTraining ? 'accepted' : 'rejected',
         curated,
         originalMemoryPath: memory.path,
+        memoryId: memory.id,
       });
     } catch (error) {
       curatedResults.push({
         success: false,
-        curated: {
-          id: memory.id,
-          originalTimestamp: memory.timestamp,
-          conversationalEssence: memory.content,
-          curatedAt: new Date().toISOString(),
-          flags: ['curator-error'],
-          suitableForTraining: false,
-          cognitiveMode,
-          memoryType,
-        },
         originalMemoryPath: memory.path,
+        memoryId: memory.id,
         error: (error as Error).message,
       });
     }
   }
 
+  const acceptedCount = curatedResults.filter(result => result.disposition === 'accepted').length;
+  const rejectedCount = curatedResults.filter(result => result.disposition === 'rejected').length;
+  const failedCount = curatedResults.filter(result => !result.success).length;
+
   return {
-    success: true,
+    success: failedCount === 0,
     curatedMemories: curatedResults,
     count: curatedResults.length,
+    acceptedCount,
+    rejectedCount,
+    failedCount,
   };
 };
 
@@ -234,6 +295,9 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'curatedMemories', type: 'array' },
     { name: 'count', type: 'number' },
+    { name: 'acceptedCount', type: 'number' },
+    { name: 'rejectedCount', type: 'number' },
+    { name: 'failedCount', type: 'number' },
   ],
   properties: {
     temperature: 0.3,
@@ -246,6 +310,9 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
       type: 'number',
       default: 0.3,
       label: 'Temperature',
+      min: 0,
+      max: 1,
+      step: 0.1,
     },
     role: {
       type: 'string',

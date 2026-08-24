@@ -6,6 +6,7 @@ import type {
 import { validEnvironmentJpegDataUrl } from '../../environment-interface/index.js';
 import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
+  environmentInputSource,
   environmentTaskContractFromObservation,
   environmentTaskContractFromRouting,
   normalizedEnvironmentMotionClass,
@@ -134,25 +135,28 @@ export const environmentActionParserNode = defineNode({
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
     { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task-state reducer' },
     { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
-    { name: 'presentation', type: 'string', description: 'Private or conversational presentation selected by the model' },
-    { name: 'privateResponse', type: 'string', description: 'Response text when private presentation was selected' },
     { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for the Environment Task State owner' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
   description: 'Separates a structured model response into conversational text and validated semantic actions.',
-  async execute(inputs) {
+  async execute(inputs, context) {
     try {
       const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
       const observation = inputs.observation && typeof inputs.observation === 'object'
         ? inputs.observation as EnvironmentObservation
         : undefined;
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
+      const autonomous = environmentInputSource(context, observation) === 'autonomy';
+      const directUserTurn = !autonomous
+        && context.environmentActionSource === undefined
+        && typeof context.userMessage === 'string'
+        && Boolean(context.userMessage.trim());
       const validation = validateEnvironmentSelectorOutput(
         inputs.response,
         sessionId,
-        { requireObjective: readRobotObserverCycle(observation)?.triggerSource === 'autonomy' },
+        { requireObjective: autonomous },
       );
       const validated = validation.value;
       const parsed = validated
@@ -175,14 +179,17 @@ export const environmentActionParserNode = defineNode({
             taskDecisionError: validation.errors.join('; '),
           };
       const routedContract = environmentTaskContractFromRouting(routingAnalysis);
-      const persistedContract = environmentTaskContractFromObservation(observation);
+      const persistedContract = directUserTurn
+        ? null
+        : environmentTaskContractFromObservation(observation);
       const routedMotionClass = isRecord(routingAnalysis?.actionParams)
         ? normalizedEnvironmentMotionClass(routingAnalysis.actionParams.motionClass)
         : null;
       const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
         ?? persistedContract?.motionClass
         ?? routedContract?.motionClass
-        ?? routedMotionClass;
+        ?? routedMotionClass
+        ?? (parsed.movementRequest ? 'body_local' : null);
       const connectedSession = Boolean(sessionId || observation?.sessionId);
       const unsupportedCommand = unsupportedRobotCommand(
         parsed.actions,
@@ -265,26 +272,18 @@ export const environmentActionParserNode = defineNode({
             requiredCapability: null,
           }
         : null;
-      const selectedAdvertisedRobotCommand = actions.length === 1
-        && actions[0]?.type === 'robotCommand';
-      const taskDecision = selectedAdvertisedRobotCommand
+      const physicalWorkSelected = actions.length > 0 || movementRequest !== null;
+      const taskDecision = physicalWorkSelected && parsed.taskDecision
         ? {
-            ...(parsed.taskDecision ?? {}),
+            ...parsed.taskDecision,
             outcome: 'act' as const,
-            reason: parsed.taskDecision?.reason
-              || 'Execute the Environment LLM-selected advertised robot command.',
             objectiveComplete: false,
-            continuationPolicy: parsed.taskDecision?.continuationPolicy ?? 'none' as const,
+            continuationPolicy: parsed.taskDecision.continuationPolicy ?? 'none' as const,
             requiredCompletionBasis: parsed.taskDecision?.requiredCompletionBasis
               ?? 'action_result' as const,
             ...(motionClass ? { motionClass } : {}),
           }
         : parsed.taskDecision;
-      const presentation = taskDecision?.presentation === 'private'
-        || taskDecision?.presentation === 'conversation'
-        ? taskDecision.presentation
-        : '';
-
       return {
         actions,
         firstAction: actions[0] ?? null,
@@ -292,8 +291,6 @@ export const environmentActionParserNode = defineNode({
         movementRequested,
         taskDecision,
         taskDecisionError: parsed.taskDecisionError,
-        presentation,
-        privateResponse: presentation === 'private' ? response : '',
         actionAdmission,
         valid,
         error: valid
@@ -309,8 +306,6 @@ export const environmentActionParserNode = defineNode({
         movementRequested: false,
         taskDecision: null,
         taskDecisionError: '',
-        presentation: '',
-        privateResponse: '',
         actionAdmission: null,
         valid: false,
         error: (error as Error).message,

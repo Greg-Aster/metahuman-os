@@ -85,17 +85,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       const { stripped: continuation, thinking } = parseThinkingBlocks(rawContinuation);
       if (!continuation) break;
 
+      const parentDream = lastDream;
       lastDream = continuation;
       dreams.push(continuation);
       continuationIndex++;
 
-      await captureEvent(continuation, {
+      captureEvent(continuation, {
         type: 'dream',
         metadata: {
           continuation: true,
           confidence: 0.6,
           sources: [],
-          parentDream: dreams[dreams.length - 2] || lastDream,
+          parentDream,
         },
       });
 

@@ -135,7 +135,7 @@ async function main() {
 
   if (passed) {
     console.log('✓ Adapter is ready for activation.');
-    console.log(`  Run morning-loader to activate, or manually activate with:`);
+    console.log('  Activate it with:');
     console.log(`  mh adapter activate ${DATASET_DATE}`);
   } else {
     console.log('⚠ Adapter did not pass evaluation threshold.');

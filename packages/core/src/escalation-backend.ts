@@ -172,7 +172,7 @@ export function getActiveBackend(username?: string): EscalationBackend | undefin
   const config = loadToolExecutorConfig(username);
 
   // Check escalation config first (new schema)
-  const escalationConfig = (config as any).escalation;
+  const escalationConfig = config.escalation;
   if (escalationConfig?.defaultBackend) {
     const backend = backendRegistry.get(escalationConfig.defaultBackend);
     if (backend) return backend;

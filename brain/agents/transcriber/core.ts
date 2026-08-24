@@ -29,6 +29,14 @@ interface AudioConfig {
   };
 }
 
+function resolveVoicePath(subcategory: 'transcripts' | 'archive'): string {
+  const result = storageClient.resolvePath({ category: 'voice', subcategory });
+  if (!result.success || !result.path) {
+    throw new Error(`Cannot resolve voice ${subcategory} path: ${result.error || 'unknown error'}`);
+  }
+  return result.path;
+}
+
 export interface TranscriberOptions {
   oneShot?: boolean;
 }
@@ -92,8 +100,7 @@ async function transcribeAudio(audioPath: string, audioId: string, inboxDir: str
     const result = await transcribe(audioPath, transcriptionOptions);
     const transcriptText = result.text;
 
-    const transcriptsResult = storageClient.resolvePath({ category: 'voice', subcategory: 'transcripts' });
-    const transcriptsDir = transcriptsResult.success && transcriptsResult.path ? transcriptsResult.path : path.join(systemPaths.memory, 'audio', 'transcripts');
+    const transcriptsDir = resolveVoicePath('transcripts');
 
     const transcriptPath = path.join(transcriptsDir, `${audioId}.txt`);
     fs.mkdirSync(transcriptsDir, { recursive: true });
@@ -110,8 +117,7 @@ async function transcribeAudio(audioPath: string, audioId: string, inboxDir: str
     };
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
 
-    const archiveResult = storageClient.resolvePath({ category: 'voice', subcategory: 'archive' });
-    const archiveDir = archiveResult.success && archiveResult.path ? archiveResult.path : path.join(systemPaths.memory, 'audio', 'archive');
+    const archiveDir = resolveVoicePath('archive');
     const archivePath = path.join(archiveDir, path.relative(inboxDir, audioPath));
     fs.mkdirSync(path.dirname(archivePath), { recursive: true });
     fs.renameSync(audioPath, archivePath);

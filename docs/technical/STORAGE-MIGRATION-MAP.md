@@ -84,6 +84,11 @@ These paths are system-wide and don't need to go through the storage router:
 - `sync` - Sync logs
 - `state` - System state
 
+Curiosity question lifecycle state is profile-owned under
+`state/curiosity/questions/{pending,answered}`. Curiosity Researcher reads the
+pending state through the profile path owner and writes its separate typed
+findings under `memory/curiosity/research`.
+
 Use `systemPaths.*` from `@metahuman/core` for these.
 
 ## Migration Status
@@ -122,8 +127,6 @@ Priority files to migrate:
 - `apps/site/src/lib/server/file_operations.ts`
 - `apps/site/src/pages/api/file_operations.ts`
 - `apps/site/src/pages/api/persona-archives.ts`
-- `apps/site/src/pages/api/code-approvals/index.ts`
-- `apps/site/src/pages/api/code-approvals/[...path].ts`
 - `brain/agents/psychoanalyzer.ts`
 - `apps/site/src/pages/api/boredom.ts`
 - `brain/agents/_bootstrap.ts`

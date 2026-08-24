@@ -182,6 +182,50 @@ assert.ok(
 );
 
 assert.ok(
+  source('packages/core/src/queue/execution-engine.ts').includes("registerHandler('vector.index-build'")
+    && source('packages/core/src/queue/execution-engine.ts').includes('refreshMemoryIndex'),
+  'full vector-index reconciliation must execute behind its canonical coordinator handler',
+);
+
+assert.ok(
+  source('packages/core/src/vector-index.ts').includes('callEmbeddings')
+    && !source('packages/core/src/vector-index.ts').includes('embedText(')
+    && source('packages/core/src/vector-index.ts').includes('writeIndexFile'),
+  'the vector index owner must use the configured embedding route without fallback and replace index files atomically',
+);
+
+for (const indexAdmissionPath of [
+  'packages/cli/src/main.ts',
+  'packages/core/src/api/handlers/vector-index.ts',
+  'packages/core/src/system-operator/index-maintenance.ts',
+]) {
+  const contents = source(indexAdmissionPath);
+  assert.ok(
+    contents.includes('submitMemoryIndexRefresh') && !contents.includes('buildMemoryIndex'),
+    `index rebuild admission must use the coordinator contract: ${indexAdmissionPath}`,
+  );
+}
+
+assert.ok(
+  !fs.existsSync(path.join(ROOT, 'brain/agents/auto-indexer'))
+    && !source('etc/agents.json').includes('auto-indexer')
+    && !source('packages/core/src/agent-catalog-definitions.ts').includes('auto-indexer'),
+  'the superseded Auto Indexer agent facade and registration must stay deleted',
+);
+
+assert.equal(
+  JSON.parse(source('etc/queue.json')).lanes['vector-index'].maxConcurrent,
+  1,
+  'vector index reads and writes must use an exclusive resource lane',
+);
+
+assert.ok(
+  source('packages/core/src/queue/sleep-workflow.ts').includes("handler: 'vector.index-build'")
+    && !source('apps/site/src/components/MemoryControls.svelte').includes('setTimeout(() => {\n            buildIndex()'),
+  'Sleep and UI index refreshes must use durable coordinator admission instead of an agent or browser timer',
+);
+
+assert.ok(
   fs.existsSync(path.join(ROOT, 'apps/site/src/pages/api/internal/work-coordinator/enqueue.ts')),
   'the server-owned coordinator handoff must have a thin site transport route',
 );

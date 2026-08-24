@@ -2,7 +2,7 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Boredom Reflection Mode",
-  "description": "Samples historical memory once and delegates the choice of private reflection, conversation, or advertised action to Boredom Autonomy.",
+  "description": "Samples historical memory once and delegates the choice of reflection, conversation, or advertised action to Boredom Autonomy.",
   "cognitiveMode": "environment",
   "last_modified": "2026-08-24",
   "nodes": [

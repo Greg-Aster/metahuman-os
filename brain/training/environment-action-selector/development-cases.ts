@@ -67,8 +67,6 @@ function complete(response: string, basis: 'response' | 'environment_state' | 'v
       objectiveComplete: true,
       continuationPolicy: 'none',
       requiredCompletionBasis: basis,
-      completionBasis: basis,
-      completionEvidence: response.slice(0, 500),
       ...(basis === 'visual_observation' ? { visualEvidenceMode: 'single' as const } : {}),
     },
   };
@@ -125,22 +123,6 @@ function capture(): EnvironmentModelOutput {
       requiredCompletionBasis: 'visual_observation',
       actionPurpose: 'information_gain',
       visualEvidenceMode: 'single',
-    },
-  };
-}
-
-function escalate(reason: string): EnvironmentModelOutput {
-  return {
-    response: '',
-    actions: [],
-    movementRequest: null,
-    taskDecision: {
-      outcome: 'escalate',
-      reason,
-      objectiveComplete: false,
-      continuationPolicy: 'none',
-      requiredCompletionBasis: 'response',
-      escalation: { target: 'general', reason },
     },
   };
 }
@@ -216,18 +198,6 @@ const simpleConversation: Array<[EnvironmentActionSelectorDevelopmentCase['instr
 ];
 for (const [instructions, response] of simpleConversation) {
   add('simple-conversation', 'low', instructions, complete(response));
-}
-
-const substantive: Array<[EnvironmentActionSelectorDevelopmentCase['instructions'], string]> = [
-  [['Explain how sensor fusion works in detail.', 'Give me a careful explanation of sensor fusion.', 'Teach me the principles of combining sensor evidence.', 'Describe sensor fusion and its tradeoffs.'], 'A detailed technical explanation is requested.'],
-  [['Compare three strategies for reducing robot latency.', 'Analyze several ways to lower end-to-end control delay.', 'Give me a thoughtful latency optimization comparison.', 'Reason through alternative robot response-time designs.'], 'The request requires substantive comparative reasoning.'],
-  [['Tell me a long imaginative story about a robot explorer.', 'Write a detailed robot adventure story.', 'Create a substantial fictional story about an explorer robot.', 'Narrate a long original tale about a curious machine.'], 'The request needs substantive conversational generation.'],
-  [['Discuss the ethical limits of autonomous robots.', 'Give a nuanced analysis of robot autonomy ethics.', 'Explain the moral tradeoffs of autonomous machines.', 'Reason carefully about ethical robot decision-making.'], 'The request requires nuanced non-action reasoning.'],
-  [['Summarize the strengths and weaknesses of this architecture.', 'Give a substantive architecture critique.', 'Analyze the design tradeoffs in depth.', 'Provide a careful technical assessment of the system design.'], 'The request requires a substantive technical response.'],
-  [['Help me think through a difficult planning decision.', 'Reason with me about a complex plan.', 'Give me detailed help evaluating a difficult choice.', 'Work through a complicated non-physical decision with me.'], 'The request explicitly calls for complex conversational reasoning.'],
-];
-for (const [instructions, reason] of substantive) {
-  add('explicit-escalation', 'medium', instructions, escalate(reason));
 }
 
 const stateCases: Array<[
@@ -401,7 +371,13 @@ const targetObservation = observation({
     movement: true,
     visual: true,
     navigation: false,
-    visualApproach: { enabled: true, maxFrameAgeMs: 5000 },
+    visualApproach: {
+      maxSteps: 6,
+      maxFrameAgeMs: 5000,
+      minimumConfidence: 0.55,
+      minimumPathConfidence: 0.65,
+      noProgressLimit: 2,
+    },
   },
 });
 add('target-relative', 'high', ['Move closer to the selected visible target.', 'Approach the currently selected object.', 'Use visual feedback to move toward the selected target.', 'Get closer to the frame-bound target.'], {
@@ -669,7 +645,13 @@ for (let fold = 0; fold < 4; fold += 1) {
       movement: true,
       visual: true,
       navigation: false,
-      visualApproach: { enabled: true, maxFrameAgeMs: 5000 },
+      visualApproach: {
+        maxSteps: 6,
+        maxFrameAgeMs: 5000,
+        minimumConfidence: 0.55,
+        minimumPathConfidence: 0.65,
+        noProgressLimit: 2,
+      },
     },
   });
   add('target-relative', 'high', instructionSet(
@@ -713,7 +695,6 @@ const authorityRefinementCases = [
     identityNoun: 'system assistant',
     capability: 'generated body movement',
     capabilityResponse: 'Yes. The robot advertises robotMotionPlan for generated body movement.',
-    escalationSubject: 'the tradeoffs between reactive and deliberative control',
   },
   {
     fold: 1,
@@ -726,7 +707,6 @@ const authorityRefinementCases = [
     identityNoun: 'active robot assistant',
     capability: 'camera capture',
     capabilityResponse: 'Yes. The robot advertises captureImage for camera capture.',
-    escalationSubject: 'several approaches to dependable sensor fusion',
   },
   {
     fold: 2,
@@ -739,7 +719,6 @@ const authorityRefinementCases = [
     identityNoun: 'current environment assistant',
     capability: 'target-aware navigation',
     capabilityResponse: 'No. Target-aware navigation is not advertised.',
-    escalationSubject: 'the advantages and limits of local-first robot systems',
   },
   {
     fold: 3,
@@ -752,7 +731,6 @@ const authorityRefinementCases = [
     identityNoun: 'environment action assistant',
     capability: 'the wave command',
     capabilityResponse: 'Yes. The robot advertises the wave command.',
-    escalationSubject: 'multiple strategies for reducing end-to-end response latency',
   },
 ];
 
@@ -904,15 +882,6 @@ for (const entry of authorityRefinementCases) {
         data: { command: entry.positiveCommand },
       }],
     }),
-  });
-
-  add('explicit-escalation', 'medium', instructionSet(
-    `Give a detailed comparison of ${entry.escalationSubject}.`,
-    `Analyze ${entry.escalationSubject} with several concrete tradeoffs.`,
-    `Provide a substantive technical explanation of ${entry.escalationSubject}.`,
-    `Reason carefully about ${entry.escalationSubject}.`,
-  ), escalate(`The request needs substantive reasoning about ${entry.escalationSubject}.`), {
-    fold: entry.fold,
   });
 }
 

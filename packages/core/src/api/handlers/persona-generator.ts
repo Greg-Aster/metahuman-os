@@ -33,13 +33,6 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 
-type PersonaGeneratorSession = Omit<Session, 'status'> & {
-  status: Session['status'] | 'finalized' | 'applied';
-  finalizedAt?: string;
-  appliedAt?: string;
-  appliedStrategy?: MergeStrategy;
-};
-
 const DEFAULT_PERSONA = {
   version: '1.0.0',
   identity: {
@@ -144,7 +137,7 @@ async function loadOwnedSession(
   username: string,
   userId: string,
   sessionId: string
-): Promise<{ session?: PersonaGeneratorSession; response?: UnifiedResponse }> {
+): Promise<{ session?: Session; response?: UnifiedResponse }> {
   const session = await loadSession(username, sessionId);
   if (!session) {
     return { response: error('Session not found', 404) };
@@ -154,7 +147,7 @@ async function loadOwnedSession(
     return { response: error('Access denied - session belongs to another user', 403) };
   }
 
-  return { session: session as PersonaGeneratorSession };
+  return { session };
 }
 
 export async function handlePersonaGeneratorStart(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -235,18 +228,18 @@ export async function handlePersonaGeneratorAnswer(req: UnifiedRequest): Promise
 
     await recordAnswer(req.user.username, sessionId, questionId, answerContent);
 
-    const updatedSession = await loadSession(req.user.username, sessionId) as PersonaGeneratorSession | null;
+    const updatedSession = await loadSession(req.user.username, sessionId);
     if (!updatedSession) {
       throw new Error('Failed to reload session after recording answer');
     }
 
-    const status = getCompletionStatus(updatedSession as Session);
+    const status = getCompletionStatus(updatedSession);
     let nextQuestion = null;
     let reasoning = null;
 
     if (!status.isComplete) {
       try {
-        const result = await generateNextQuestion(updatedSession as Session);
+        const result = await generateNextQuestion(updatedSession);
         if (result) {
           await addQuestion(req.user.username, sessionId, result.question);
           nextQuestion = result.question;
@@ -254,7 +247,7 @@ export async function handlePersonaGeneratorAnswer(req: UnifiedRequest): Promise
         } else {
           status.isComplete = true;
           updatedSession.status = 'completed';
-          await saveSession(req.user.username, updatedSession as Session);
+          await saveSession(req.user.username, updatedSession);
         }
       } catch (err) {
         console.error('[persona/generator/answer] Error generating next question:', err);
@@ -267,7 +260,7 @@ export async function handlePersonaGeneratorAnswer(req: UnifiedRequest): Promise
       }
     } else {
       updatedSession.status = 'completed';
-      await saveSession(req.user.username, updatedSession as Session);
+      await saveSession(req.user.username, updatedSession);
     }
 
     return json({
@@ -312,7 +305,7 @@ export async function handlePersonaGeneratorUpdateAnswer(req: UnifiedRequest): P
     session!.answers[answerIndex].content = content;
     session!.answers[answerIndex].editedAt = new Date().toISOString();
 
-    await saveSession(req.user.username, session! as Session);
+    await saveSession(req.user.username, session!);
 
     return json({
       success: true,
@@ -346,7 +339,7 @@ export async function handlePersonaGeneratorFinalize(req: UnifiedRequest): Promi
       return error('Session already finalized', 400);
     }
 
-    const extracted = await extractPersonaFromSession(session! as Session);
+    const extracted = await extractPersonaFromSession(session!);
     const personaCorePath = resolvePersonaPath('core.json');
     if (!personaCorePath) {
       throw new Error('Failed to resolve persona core path');
@@ -380,7 +373,7 @@ export async function handlePersonaGeneratorFinalize(req: UnifiedRequest): Promi
 
     session!.status = 'finalized';
     session!.finalizedAt = new Date().toISOString();
-    await saveSession(req.user.username, session! as Session);
+    await saveSession(req.user.username, session!);
 
     let trainingPath: string | null = null;
     if (copyToTraining) {
@@ -517,7 +510,7 @@ export async function handlePersonaGeneratorApply(req: UnifiedRequest): Promise<
     session!.status = 'applied';
     session!.appliedAt = new Date().toISOString();
     session!.appliedStrategy = strategy;
-    await saveSession(req.user.username, session! as Session);
+    await saveSession(req.user.username, session!);
 
     await audit({
       category: 'data_change',

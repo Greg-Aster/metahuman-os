@@ -110,7 +110,7 @@ deleted only after static references and real entrypoints or registrations agree
    service packages.
 7. `apps/site` transport, client stores, components, and public assets.
 8. `brain/*` agents, services, training, scripts, policies, and rules.
-9. React Native, robot-friend, and other maintained interface applications.
+9. React Native and other maintained interface applications.
 10. `etc`, `scripts`, `bin`, `docker`, plugins, tests, fixtures, and maintained docs.
 11. Final cross-repository orphan, duplicate-owner, dependency, configuration,
     documentation, and end-to-end validation pass.

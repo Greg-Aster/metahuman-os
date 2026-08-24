@@ -18,7 +18,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, SafetyReviewOutput } from '../../agency/types.js';
-import { callLLM, type RouterMessage } from '../../model-router.js';
+import { callLLM, normalizeModelRole, type RouterMessage } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Safety Review module of MetaHuman OS. Your job is to evaluate plans for safety, risk, and policy compliance.
@@ -80,12 +80,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
   // slot 0: {desire, found} from desire_loader
   // slot 2: formatted decision rules string from policy_loader
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
-  const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+  const slot0 = (inputs.slot_0 ?? inputs.desire ?? inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
+  const slot2 = (inputs.slot_2 ?? inputs.decisionRules ?? inputs[2]) as string | { formatted?: string } | undefined;
   const username = context.userId || context.username;
 
   // Extract desire and plan (plan is embedded in desire)
-  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
+  const desire: Desire | undefined = (slot0 as { desire?: Desire } | undefined)?.desire
+    ?? slot0 as Desire | undefined;
   const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
 
   // Get decision rules from slot or named input
@@ -99,7 +100,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   const temperature = (properties?.temperature as number) ?? 0.1;
-  const role = properties?.role ?? 'orchestrator';
+  const role = normalizeModelRole(properties?.role, 'orchestrator');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 

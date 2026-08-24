@@ -189,7 +189,6 @@ function autonomySelectorSchema(
     actions: observation.capabilities.actions,
     robotCommands: observation.capabilities.robotCommands,
     requireAction: robotOperatorActionRequirement(observation) === true,
-    requireMotionClass: false,
     requireObjective: true,
   });
 }
@@ -296,7 +295,7 @@ export const robotOperatorContextBuilderNode = defineNode({
     const conversationContext = consolidatedHistory(inputs.conversationHistory).slice(-4);
     const innerContext = consolidatedInnerHistory(inputs.innerHistory).slice(-2);
     const recentContext = [...conversationContext, ...innerContext];
-    const actionHistory = verifiedActionHistory(inputs.actionHistory);
+    const allActionHistory = verifiedActionHistory(inputs.actionHistory);
     const innerContextCount = recentContext.filter(entry => (
       isRecord(entry.context) && entry.context.isInnerDialogue === true
     )).length;
@@ -328,6 +327,29 @@ export const robotOperatorContextBuilderNode = defineNode({
       .map(frameSummary);
     const trigger = robotTrigger(observation);
     const cycleId = cleanText(trigger.cycleId, 200);
+    const latestActionContext = isRecord(observation.metadata?.actionContext)
+      ? observation.metadata.actionContext
+      : null;
+    const latestActionCorrelationId = cleanText(latestActionContext?.correlationId, 200);
+    const currentActionContext = latestActionContext
+      && cycleId
+      && latestActionCorrelationId === cycleId
+      ? latestActionContext
+      : null;
+    const currentActionId = cleanText(currentActionContext?.actionId, 200);
+    const actionHistory = currentActionId
+      ? allActionHistory.filter(entry => cleanText(entry.actionId, 200) !== currentActionId)
+      : allActionHistory;
+    const latestActionAlreadyInHistory = latestActionContext
+      ? allActionHistory.some(entry => (
+          cleanText(entry.actionId, 200) === cleanText(latestActionContext.actionId, 200)
+        ))
+      : false;
+    const historicalLatestAction = latestActionContext
+      && !currentActionContext
+      && !latestActionAlreadyInHistory
+      ? boundedObject(latestActionContext, 2_000)
+      : null;
     const taskState = isRecord(inputs.taskState)
       ? boundedObject(inputs.taskState, 4_000)
       : null;
@@ -347,7 +369,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       map: boundedObject(observation.map, 4_000),
       capabilities: boundedObject(observation.capabilities, 4_000),
       feedback: compactFeedback(observation),
-      verifiedCurrentAction: boundedObject(observation.metadata?.actionContext, 2_000),
+      verifiedCurrentAction: boundedObject(currentActionContext, 2_000),
       text: (observation.text ?? []).slice(-8).map(event => ({
         source: event.source,
         sender: event.senderName ?? event.senderId ?? null,
@@ -394,6 +416,15 @@ export const robotOperatorContextBuilderNode = defineNode({
             provenance: 'canonical_robot_buffer',
             entries: actionHistory,
           },
+          ...(historicalLatestAction
+            ? {
+                recentActionContext: {
+                  provenance: 'latest_environment_action_context',
+                  currentEvidence: false,
+                  entry: historicalLatestAction,
+                },
+              }
+            : {}),
           ...(supportingMemoryContext.length > 0
             ? {
                 sampledMemories: {
@@ -425,6 +456,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         recentContextCount: recentContext.length,
         innerContextCount,
         actionHistoryCount: actionHistory.length,
+        historicalLatestActionIncluded: Boolean(historicalLatestAction),
         memoryContextCount: memoryContext.length,
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,

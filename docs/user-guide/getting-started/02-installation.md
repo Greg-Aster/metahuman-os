@@ -11,7 +11,6 @@ Install MetaHuman OS on your Linux server.
 ### Required
 - **Node.js 22.3+ (22.x)** — JavaScript runtime (the repository includes an `.nvmrc`)
 - **pnpm** — Package manager (`npm install -g pnpm`)
-- **Python 3** — Required by `./start.sh` (creates a virtual env and installs deps)
 - **Git** — Version control
 
 ### Required for AI Features
@@ -19,6 +18,7 @@ Install MetaHuman OS on your Linux server.
 - At least 8GB RAM (16GB+ recommended for larger models)
 
 ### Optional (for Training & Voice)
+- **Python 3** — Required by the relevant isolated setup command
 - **NVIDIA GPU** — Required for local training (or use RunPod cloud)
 
 ---
@@ -48,22 +48,24 @@ Ollama runs as a background service and auto-starts on boot.
 
 ---
 
-## 3. Start MetaHuman OS
+## 3. Install, Build, and Start MetaHuman OS
 
-The startup script handles everything automatically:
-- Installs Node.js dependencies (`pnpm install`)
-- Sets up the Python virtual environment (`venv/`)
-- Installs Python dependencies (`requirements.txt`)
-- Initializes the system (creates directories, config files)
-- Starts all services and agents
+Setup and startup are separate. Install dependencies and build the production
+Site explicitly:
+
+```bash
+pnpm install
+pnpm --dir apps/site build
+```
+
+The startup owner validates Node, starts configured services, and launches the
+prebuilt Site. It does not install packages or build source.
 
 ### Option A: Simple Start (Recommended)
 
 ```bash
 ./start.sh
 ```
-
-First run takes a few minutes to install dependencies and build the application.
 
 ### Option B: PM2 (Production)
 
@@ -77,7 +79,9 @@ PM2 provides:
 - Auto-restart on crash
 - Centralized logging (`pm2 logs`)
 - Monitoring dashboard (`pm2 monit`)
-- Zero-downtime reloads (`pm2 reload all`)
+
+PM2 supervises the same `start.sh` path as one forked process; it does not start
+a parallel service stack.
 
 To enable auto-start on system boot:
 ```bash
@@ -90,8 +94,7 @@ pm2 save
 For development with hot-reload:
 
 ```bash
-pnpm install  # Required for dev mode
-cd apps/site && pnpm dev
+pnpm --dir apps/site dev
 ```
 
 ---

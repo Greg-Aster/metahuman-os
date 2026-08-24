@@ -2,16 +2,13 @@
 /**
  * Reflector Agent — CLI Entry Point
  *
- * Generates internal reflections from associative memory chains.
- * Saves as inner_dialogue type (never shown in main chat).
+ * Invokes the editable, persona-aware Reflector graph for the active user.
  *
  * Usage:
  *   npx tsx brain/agents/reflector/cli.ts [options]
  *
  * Options:
- *   --train-of-thought  Use recursive train-of-thought mode
- *   --chain=N           Set chain length (default: random 3-5)
- *   --single-user       Process only the default user
+ *   --single-user       Process only the active authenticated user
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
@@ -23,15 +20,8 @@ async function main() {
   // Parse arguments
   const args = process.argv.slice(2);
   const options: ReflectorOptions = {
-    useTrainOfThought: args.includes('--train-of-thought'),
     singleUser: args.includes('--single-user'),
   };
-
-  // Parse chain length
-  const chainArg = args.find(a => a.startsWith('--chain='));
-  if (chainArg) {
-    options.chainLength = parseInt(chainArg.split('=')[1], 10);
-  }
 
   console.log('[reflector] Starting with options:', options);
 

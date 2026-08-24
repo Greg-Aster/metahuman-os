@@ -136,7 +136,9 @@ Commands:
 ## Indexing
 
 ### `./bin/mh index build`
-Build embeddings index for the current user. Requires `--user`.
+Queue a full embeddings-index rebuild for the current user. Requires `--user`
+and a running MetaHuman server/Work Coordinator. The configured embedding
+service must be available when the queued job executes.
 
 Example:
 ```bash

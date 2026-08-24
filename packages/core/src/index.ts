@@ -59,8 +59,6 @@ export * from './recent-tools-cache';
 export * from './summary-state';
 export * from './function-memory';
 export * from './audit';
-export * from './llm';
-export * from './environment-classifier';
 export {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorSystemPrompt,
@@ -70,7 +68,6 @@ export {
 export type {
   EnvironmentActionPurpose,
   EnvironmentModelOutput,
-  EnvironmentPresentation,
   EnvironmentSelectorEnvelopeInput,
   EnvironmentSelectorSystemInput,
   EnvironmentSelectorValidationResult,
@@ -138,7 +135,6 @@ export {
   approveSkillExecution,
   rejectSkillExecution,
   isPathAllowed,
-  isCoderWriteAllowed,
   isWriteAllowed,
   isCommandWhitelisted,
   validateInputs,
@@ -272,6 +268,9 @@ export * from './cognitive-layers';
 // Schema manager - rename FormattedSample to avoid conflict with mode-validator
 export type {
   ModelSchema,
+  CognitiveMode,
+  TrainingSampleMetadata,
+  CuratedSample,
   FormattedSample as SchemaFormattedSample,
   SchemaAppliedSample,
 } from './schema-manager.js';
@@ -286,12 +285,10 @@ export {
 
 // Mode validator - rename conflicting exports
 export type {
-  CognitiveMode,
   ValidationError,
   ValidationResult as ModeValidationResult,
   QualityMetrics,
   FormattedSample as ValidatorFormattedSample,
-  CuratedSample,
 } from './mode-validator.js';
 export {
   validateModeContamination,
@@ -299,6 +296,17 @@ export {
   validateJSONLine,
   validateJSONLDataset,
 } from './mode-validator.js';
+
+// Canonical durable Curator record contract used by training consumers.
+export type {
+  CuratedMemory,
+  CuratorDisposition,
+  TrainingCuratedMemory,
+} from './nodes/curator/contracts.js';
+export {
+  isTrainingCuratedMemory,
+  parseStoredCuratedMemory,
+} from './nodes/curator/contracts.js';
 
 // Model registry - rename ModelRegistry to avoid conflict with model-resolver
 export type {
@@ -506,7 +514,6 @@ export * from './graph-streaming';
 export * from './nodes/index.js';
 
 export * from './graph-error-handler';
-export * from './plugin-system';
 
 // Agency System
 export * from './agency/index.js';
@@ -631,14 +638,10 @@ export {
   // Big Brother execution review
   type ExecutionReviewResult,
   triggerBigBrotherExecutionReview,
-  submitImprovementRequest,
 } from './active-operator/index.js';
 
 // Drift System (voice/style consistency monitoring)
 export * from './drift/index.js';
-
-// System Coder (error capture, fix management, maintenance)
-export * from './system-coder/index.js';
 
 // Escalation backends (Big Brother mode - external LLM tool executors)
 export * from './tool-executor-config.js';

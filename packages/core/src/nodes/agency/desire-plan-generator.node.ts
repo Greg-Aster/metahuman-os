@@ -27,7 +27,7 @@ import type {
 } from '../../agency/types.js';
 import type { TrustLevel } from '../../skills.js';
 import { generatePlanId, initializeGoalProgress } from '../../agency/types.js';
-import { callLLM, type RouterMessage } from '../../model-router.js';
+import { callLLM, normalizeModelRole, type RouterMessage } from '../../model-router.js';
 import { loadExecutionAttempts } from '../../agency/storage.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -228,7 +228,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const decisionRules = policyOutput?.formatted || '';
   const relevantMemories = JSON.stringify(searchOutput?.memories || [], null, 2);
   const temperature = (properties?.temperature as number) ?? 0.3;
-  const role = properties?.role ?? 'orchestrator';
+  const role = normalizeModelRole(properties?.role, 'orchestrator');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
   const revisionContextTemplate = properties?.revisionContextTemplate ?? DEFAULT_REVISION_CONTEXT_TEMPLATE;
@@ -312,12 +312,13 @@ Consider:
       const successfulExecution = executions.find(e => e.status === 'completed');
       if (successfulExecution && successfulExecution.stepResults) {
         const accomplishments = successfulExecution.stepResults
-          .filter(r => r.success && r.result?.response)
-          .map((r, i) => {
-            const response = r.result.response || '';
+          .flatMap((result, i) => {
+            if (!result.success || !result.result || typeof result.result !== 'object') return [];
+            const response = (result.result as Record<string, unknown>).response;
+            if (typeof response !== 'string' || !response) return [];
             // Truncate to first 1500 chars to avoid bloating the prompt
             const truncated = response.length > 1500 ? response.slice(0, 1500) + '...' : response;
-            return `### Step ${i + 1} Results\n${truncated}`;
+            return [`### Step ${i + 1} Results\n${truncated}`];
           });
 
         if (accomplishments.length > 0) {

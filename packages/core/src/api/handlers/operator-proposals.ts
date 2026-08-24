@@ -13,7 +13,6 @@ import {
   getUserTrustLevel,
   proposalEvents,
   respondToProposal,
-  submitImprovementRequest,
   submitPostFeedback,
   triggerBigBrotherExecutionReview,
 } from '../../active-operator/index.js';
@@ -40,7 +39,6 @@ const COORDINATED_PROPOSAL_TYPES = new Set<TaskType>([
   'desire_generate',
   'desire_execute',
   'psychoanalyze',
-  'code_analyze',
   'custom',
 ]);
 
@@ -347,75 +345,6 @@ export async function handleReviewOperatorProposal(req: UnifiedRequest): Promise
     });
   } catch (error) {
     return serverError('operator-proposals/review', error);
-  }
-}
-
-/**
- * POST /api/operator-proposals/improve
- */
-export async function handleImproveOperatorProposal(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const writeError = requireWrite('operator-proposals/improve');
-  if (writeError) return writeError;
-
-  try {
-    if (!req.user.isAuthenticated) {
-      return errorData('Authentication required', 403);
-    }
-
-    const { proposalId, userInput, rating, bigBrotherAnalysis } = (req.body || {}) as {
-      proposalId?: string;
-      userInput?: string;
-      rating?: 'good' | 'neutral' | 'bad';
-      bigBrotherAnalysis?: string;
-    };
-
-    if (!proposalId) {
-      return errorData('proposalId is required', 400);
-    }
-
-    if (!userInput || userInput.trim().length === 0) {
-      return errorData('userInput is required', 400);
-    }
-
-    const proposal = getProposal(req.user.username, proposalId);
-    if (!proposal) {
-      return errorData('Proposal not found', 404);
-    }
-
-    console.log(`[operator-proposals/improve] Submitting improvement request for proposal ${proposalId}`);
-    const result = await submitImprovementRequest(
-      req.user.username,
-      proposalId,
-      userInput,
-      {
-        rating,
-        bigBrotherAnalysis,
-      },
-    );
-
-    audit({
-      category: 'action',
-      level: 'info',
-      event: 'improvement_request_submitted',
-      actor: req.user.username,
-      details: {
-        proposalId,
-        taskType: proposal.taskType,
-        success: result.success,
-        requestId: result.requestId,
-      },
-    });
-
-    return json({
-      success: result.success,
-      requestId: result.requestId,
-      error: result.error,
-      message: result.success
-        ? 'Improvement request created. System Coder will process it.'
-        : 'Failed to create improvement request',
-    });
-  } catch (error) {
-    return serverError('operator-proposals/improve', error);
   }
 }
 

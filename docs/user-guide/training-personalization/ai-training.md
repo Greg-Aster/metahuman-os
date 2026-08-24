@@ -180,15 +180,15 @@ Newest Memory: 2025-11-25
 
 ### 1. Dataset Building
 
-**Curator Agent** (`curator.ts`):
-- Reads episodic memories from `profiles/<username>/memory/episodic/`
-- Filters by date range (30 days for recent, all for historical)
-- Extracts conversation pairs
-- Assigns confidence scores based on:
-  - Message clarity
-  - Persona relevance
-  - Conversation coherence
-  - Cognitive mode appropriateness
+**Curator Agent** (`brain/agents/curator/cli.ts`):
+- Reads uncurated episodic memories from `profiles/<username>/memory/episodic/`
+- Requires an explicit LLM accept/reject decision for every processed memory
+- Writes validated records to `profiles/<username>/memory/curated/conversations/`
+- Marks a source as curated only after its record is durably saved
+- Leaves model or write failures unmarked so the Sleep workflow can retry them
+- Preserves source cognitive-mode metadata and labels legacy defaulting explicitly
+
+The training orchestrator then uses `brain/training/curated-aggregator.ts` to select accepted records and `brain/training/mode-formatter.ts` to prepare the training shape.
 
 **Schema Application** (`schema-manager.ts`):
 - Converts memories to training format

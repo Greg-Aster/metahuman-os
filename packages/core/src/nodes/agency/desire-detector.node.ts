@@ -17,7 +17,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { callLLM, type RouterMessage } from '../../model-router.js';
+import { callLLM, normalizeModelRole, type RouterMessage } from '../../model-router.js';
 import { generateDesireId } from '../../agency/types.js';
 import { findSimilarDesires, reinforceDesire } from '../../agency/storage.js';
 import { renderPromptTemplate } from '../prompt-template.js';
@@ -94,8 +94,8 @@ Analyze whether this input contains a desire that should become an autonomous go
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract inputs
-  const slot0 = inputs[0] as { message?: string; userInput?: string } | string | undefined;
-  const slot1 = inputs[1] as { context?: string } | string | undefined;
+  const slot0 = (inputs.userInput ?? inputs.slot_0 ?? inputs[0]) as { message?: string; userInput?: string } | string | undefined;
+  const slot1 = (inputs.conversationContext ?? inputs.slot_1 ?? inputs[1]) as { context?: string } | string | undefined;
 
   let userInput: string;
   if (typeof slot0 === 'string') {
@@ -127,7 +127,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const similarityThreshold = (properties?.similarityThreshold as number) ?? 0.4;
   const reinforcementBoost = (properties?.reinforcementBoost as number) ?? 0.1;
   const temperature = (properties?.temperature as number) ?? 0.2;
-  const role = properties?.role ?? 'orchestrator';
+  const role = normalizeModelRole(properties?.role, 'orchestrator');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 

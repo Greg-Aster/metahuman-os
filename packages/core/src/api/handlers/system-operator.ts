@@ -254,10 +254,8 @@ export async function handleRunIndexMaintenance(req: UnifiedRequest): Promise<Un
 
     const options: IndexMaintenanceOptions = {
       username: req.user.username,
-      model: body?.model,
       forceRebuild: body?.forceRebuild ?? false,
       rebuildThreshold: body?.rebuildThreshold ?? 20,
-      removeOrphans: body?.removeOrphans ?? true,
       dryRun: body?.dryRun ?? false,
     };
 
@@ -276,7 +274,7 @@ export async function handleRunIndexMaintenance(req: UnifiedRequest): Promise<Un
     return successResponse({
       success: result.success,
       result,
-    });
+    }, result.details.rebuildQueued ? 202 : 200);
   } catch (error) {
     return errorResponse((error as Error).message, 500);
   }

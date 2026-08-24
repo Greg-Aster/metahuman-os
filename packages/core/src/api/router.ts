@@ -36,28 +36,6 @@ import {
   handleDeleteCredentials,
 } from './handlers/chat.js';
 import {
-  handleGetStatus as handleGetSystemCoderStatus,
-  handleCaptureError,
-  handleListErrors,
-  handleGetError,
-  handleIgnoreError,
-  handleRequestFix,
-  handleSubmitRequest,
-  handleListRequests,
-  handleGetRequest,
-  handleUpdateRequest,
-  handleListFixes,
-  handleGetFix,
-  handleApproveFix,
-  handleRejectFix,
-  handleApplyFix,
-  handleRevertFix,
-  handleGetMaintenanceStatus,
-  handleRunMaintenance,
-  handleGetMaintenanceReport,
-  handleListMaintenanceReports,
-} from './handlers/system-coder.js';
-import {
   handleListDesires,
   handleGetDesire,
   handleCreateDesire,
@@ -101,12 +79,6 @@ import {
   handleMarkAddonInstalled,
   handleUninstallAddon,
 } from './handlers/addons.js';
-import {
-  handleListCodeApprovals,
-  handleGetCodeApproval,
-  handleApproveCodeChange,
-  handleRejectCodeChange,
-} from './handlers/code-approvals.js';
 import {
   handleGetTrainingConfig,
   handleUpdateTrainingConfig,
@@ -522,7 +494,6 @@ import {
 } from './handlers/active-operator.js';
 import {
   handleGetOperatorProposals,
-  handleImproveOperatorProposal,
   handleOperatorProposalsStream,
   handlePostOperatorProposalFeedback,
   handleRespondToOperatorProposal,
@@ -732,7 +703,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/operator-proposals/respond', handler: handleRespondToOperatorProposal, requiresAuth: true },
   { method: 'POST', pattern: '/api/operator-proposals/post-feedback', handler: handlePostOperatorProposalFeedback, requiresAuth: true },
   { method: 'POST', pattern: '/api/operator-proposals/review', handler: handleReviewOperatorProposal, requiresAuth: true },
-  { method: 'POST', pattern: '/api/operator-proposals/improve', handler: handleImproveOperatorProposal, requiresAuth: true },
 
   // Agent process controls
   { method: 'POST', pattern: '/api/agents/control', handler: handleAgentsControl, requiresAuth: true, guard: 'owner' },
@@ -787,32 +757,6 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/embeddings', handler: handleGetEmbeddingsConfig },
   { method: 'POST', pattern: '/api/embeddings', handler: handleUpdateEmbeddingsConfig, requiresAuth: true, guard: 'owner' },
 
-  // System Coder
-  { method: 'GET', pattern: '/api/system-coder/status', handler: handleGetSystemCoderStatus, requiresAuth: true },
-  { method: 'POST', pattern: '/api/system-coder/capture-error', handler: handleCaptureError, requiresAuth: true },
-  { method: 'GET', pattern: '/api/system-coder/errors', handler: handleListErrors, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/system-coder\/errors\/[^\/]+$/, handler: handleGetError, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/errors\/[^\/]+\/ignore$/, handler: handleIgnoreError, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/errors\/[^\/]+\/fix$/, handler: handleRequestFix, requiresAuth: true },
-  { method: 'POST', pattern: '/api/system-coder/request', handler: handleSubmitRequest, requiresAuth: true },
-  { method: 'GET', pattern: '/api/system-coder/requests', handler: handleListRequests, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/system-coder\/requests\/[^\/]+$/, handler: handleGetRequest, requiresAuth: true },
-  { method: 'PUT', pattern: /^\/api\/system-coder\/requests\/[^\/]+$/, handler: handleUpdateRequest, requiresAuth: true },
-
-  // System Coder - Fixes
-  { method: 'GET', pattern: '/api/system-coder/fixes', handler: handleListFixes, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/system-coder\/fixes\/[^\/]+$/, handler: handleGetFix, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/fixes\/[^\/]+\/approve$/, handler: handleApproveFix, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/fixes\/[^\/]+\/reject$/, handler: handleRejectFix, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/fixes\/[^\/]+\/apply$/, handler: handleApplyFix, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/system-coder\/fixes\/[^\/]+\/revert$/, handler: handleRevertFix, requiresAuth: true },
-
-  // System Coder - Maintenance
-  { method: 'GET', pattern: '/api/system-coder/maintenance/status', handler: handleGetMaintenanceStatus, requiresAuth: true },
-  { method: 'POST', pattern: '/api/system-coder/maintenance/run', handler: handleRunMaintenance, requiresAuth: true },
-  { method: 'GET', pattern: '/api/system-coder/maintenance/report', handler: handleGetMaintenanceReport, requiresAuth: true },
-  { method: 'GET', pattern: '/api/system-coder/maintenance/reports', handler: handleListMaintenanceReports, requiresAuth: true },
-
   // Agency - Desires
   { method: 'GET', pattern: '/api/agency/desires', handler: handleListDesires, requiresAuth: true },
   { method: 'POST', pattern: '/api/agency/desires', handler: handleCreateDesire, requiresAuth: true },
@@ -854,12 +798,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/addons/toggle', handler: handleToggleAddon, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/addons/mark-installed', handler: handleMarkAddonInstalled, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/addons/uninstall', handler: handleUninstallAddon, requiresAuth: true, guard: 'owner' },
-
-  // Code Approvals
-  { method: 'GET', pattern: '/api/code-approvals', handler: handleListCodeApprovals, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/code-approvals\/[^\/]+$/, handler: handleGetCodeApproval, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/code-approvals\/[^\/]+\/approve$/, handler: handleApproveCodeChange, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/code-approvals\/[^\/]+\/reject$/, handler: handleRejectCodeChange, requiresAuth: true },
 
   // Training
   { method: 'GET', pattern: '/api/training-config', handler: handleGetTrainingConfig, requiresAuth: true, guard: 'owner' },

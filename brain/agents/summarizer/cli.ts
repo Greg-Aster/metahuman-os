@@ -13,39 +13,34 @@ import {
   getTargetUser,
   withUserContext,
 } from '@metahuman/core';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { summarizeSession, autoSummarize } from './core.js';
 
 async function main() {
-  initGlobalLogger();
+  initGlobalLogger('summarizer');
 
   const args = process.argv.slice(2);
   const sessionArg = args.find(a => a.startsWith('--session='));
   const autoMode = args.includes('--auto');
   const userArg = args.find(a => a.startsWith('--user='));
 
-  let targetUserId: string | undefined;
+  let targetUsername: string | undefined;
   if (userArg) {
-    targetUserId = userArg.split('=')[1];
+    targetUsername = userArg.split('=')[1];
   }
 
   // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-  let userId = targetUserId;
-  if (!userId) {
-    const activeUser = getTargetUser();
-    if (activeUser) {
-      userId = activeUser.userId;
-    }
-  }
+  const user = targetUsername ? requireUserInfo(targetUsername) : getTargetUser();
 
-  if (!userId) {
+  if (!user) {
     console.log('[summarizer] No active user found');
     return;
   }
 
   try {
-    console.log(`[summarizer] Processing user: ${userId}`);
+    console.log(`[summarizer] Processing user: ${user.username}`);
 
-    await withUserContext({ userId, username: userId, role: 'owner' }, async () => {
+    await withUserContext(user, async () => {
       if (sessionArg) {
         const sessionId = sessionArg.split('=')[1];
         await summarizeSession(sessionId);
@@ -53,7 +48,7 @@ async function main() {
         await autoSummarize();
       } else {
         console.error('[summarizer] Usage: --session=<id> OR --auto');
-        console.error('[summarizer] Optional: --user=<userId>');
+        console.error('[summarizer] Optional: --user=<username>');
       }
     });
   } catch (error) {

@@ -6,7 +6,8 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, errorResponse, unauthorizedResponse, badRequestResponse } from '../types.js';
-import { getIndexStatus, buildMemoryIndex } from '../../vector-index.js';
+import { getIndexStatus } from '../../vector-index.js';
+import { submitMemoryIndexRefresh } from '../../queue/index.js';
 import { getSecurityPolicy } from '../../security-policy.js';
 import { audit } from '../../audit.js';
 
@@ -46,37 +47,39 @@ export async function handleBuildIndex(req: UnifiedRequest): Promise<UnifiedResp
   }
 
   try {
-    console.log('[api/index] Starting index build...');
-    // buildMemoryIndex returns the file path as a string
-    await buildMemoryIndex({ username: req.user.username });
-
-    // Get the status to know how many items were indexed
-    const status = await getIndexStatus(undefined, req.user.username);
+    const task = await submitMemoryIndexRefresh({
+      username: req.user.username,
+      source: 'user',
+      force: true,
+      metadata: { producer: 'api-index-build' },
+    });
+    const status = getIndexStatus(undefined, req.user.username);
 
     audit({
       level: 'info',
       category: 'action',
-      event: 'index_built',
+      event: 'index_build_queued',
       details: {
-        items: status.items,
-        model: status.model,
-        provider: status.provider,
+        taskId: task.id,
+        currentItems: status.exists ? status.items : 0,
       },
       actor: req.user.username,
     });
 
     return successResponse({
       success: true,
-      message: `Index built with ${status.items || 0} items`,
+      queued: true,
+      taskId: task.id,
+      message: 'Index rebuild queued',
       status,
-    });
+    }, 202);
   } catch (error) {
     console.error('[api/index] POST error:', error);
 
     audit({
       level: 'error',
       category: 'system',
-      event: 'index_build_error',
+      event: 'index_build_queue_error',
       details: { error: (error as Error).message },
       actor: req.user.username,
     });

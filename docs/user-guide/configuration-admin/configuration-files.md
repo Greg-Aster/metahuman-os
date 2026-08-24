@@ -407,14 +407,15 @@ Controls how often the reflector agent runs:
 ```
 
 ### `profiles/<username>/etc/curiosity.json` - Curiosity System
-Controls the curiosity system behavior, which asks thoughtful questions during idle periods:
+Controls three separate curiosity behaviors: asking the user questions during
+idle periods, independently researching pending user-facing questions, and
+private self-directed Q&A.
 
 ```json
 {
   "maxOpenQuestions": 1,
   "researchMode": "local",
-  "inactivityThresholdSeconds": 900,
-  "questionTopics": [],
+  "innerQuestionMode": "local",
   "minTrustLevel": "observe"
 }
 ```
@@ -425,23 +426,20 @@ Controls the curiosity system behavior, which asks thoughtful questions during i
   - `1` = Gentle (recommended default)
   - `3` = Moderate
   - `5` = Chatty (may feel intrusive)
-- `researchMode`: How deeply to research questions
-  - `"off"` = No research, just ask questions
-  - `"local"` = Search memories for context (recommended)
-  - `"web"` = Search web for additional context (requires `supervised_auto` trust level, not yet implemented)
-- `inactivityThresholdSeconds`: How long to wait after last activity before asking questions (default: 900 = 15 minutes)
-- `questionTopics`: Array of topic strings to focus on (empty = all topics). Future feature for filtering question domains.
+- `researchMode`: Controls the separate hourly Curiosity Researcher
+  - `"off"` = Do not independently research pending user-facing questions
+  - `"local"` = Search local memories, persist a typed finding, record it as learned inner dialogue, and reuse relevant prior findings in later research
+- `innerQuestionMode`: Controls the separate Inner Curiosity agent's private self-directed Q&A (`"off"` or `"local"`)
 - `minTrustLevel`: Minimum trust level required to ask questions (default: `"observe"`)
   - Valid levels: `"observe"`, `"suggest"`, `"trusted"`, `"supervised_auto"`, `"bounded_auto"`, `"adaptive_auto"`
 
 **UI Controls:**
 - Navigate to **System → Settings** in the web UI
-- Use the "Curiosity Level" slider to adjust `maxOpenQuestions`
+- Use Trigger Manager to configure inactivity admission and the Curiosity settings to adjust `maxOpenQuestions`
 - Select research mode from dropdown
 
 **See Also:**
-- Agent documentation: [Autonomous Agents - Curiosity System](08-autonomous-agents.md#25-curiosity-system-3-agents)
-- Full implementation docs: `docs/curiosity-system-COMPLETED.md`
+- Agent documentation: [MetaHuman agents](../../agents.md)
 
 ### `profiles/<username>/etc/models.json` - Model Roles
 Assigns the authenticated user's chat roles to configured providers and models:

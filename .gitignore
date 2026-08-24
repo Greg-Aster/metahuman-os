@@ -156,6 +156,7 @@ apps/react-native/android/app/src/main/assets/nodejs-project/
 apps/react-native/nodejs-assets/nodejs-project/www/
 apps/react-native/nodejs-assets/nodejs-project/.env
 apps/react-native/nodejs-assets/nodejs-project/dist/
+apps/react-native/nodejs-assets/nodejs-project/etc/
 apps/react-native/android/.gradle/
 apps/react-native/android/app/src/main/assets/*.bundle
 apps/react-native/ios/Pods/

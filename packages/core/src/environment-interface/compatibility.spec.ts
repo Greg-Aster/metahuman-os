@@ -407,7 +407,6 @@ try {
       robotObserver: {
         cycleId: 'observer-capture-cycle',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'user',
         graph: 'robot-operator',
         requestedBy: 'robot-observer',
@@ -437,17 +436,16 @@ try {
     (contextualExpiry.metadata?.robotObserver as { requestedBy?: string })?.requestedBy,
     'robot-observer',
   );
-  assert.equal(environmentObservationNeedsCognition(contextualExpiry), false);
+  assert.equal(environmentObservationNeedsCognition(contextualExpiry), true);
   const expiredCaptureResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
     Authorization: 'Bearer bridge-secret',
   }, expiredCaptureObservation as unknown as Record<string, unknown>), () => 'robot-owner');
   assert.equal(expiredCaptureResponse.status, 200);
-  assert.equal(expiredCaptureResponse.data.graphQueued, false);
-  assert.equal(expiredCaptureResponse.data.reason, 'state_only_observation');
+  assert.equal(expiredCaptureResponse.data.graphQueued, true);
   assert.equal(
     manager.getAllTasks().filter(task => task.type === 'environment_observation').length,
-    0,
-    'an initial Robot Observer capture failure must remain lifecycle telemetry instead of becoming a chat prompt',
+    1,
+    'an initial Robot Observer capture failure must return to the correlated workflow for revision',
   );
 
   const rejectedPersistence = await handleEnvironmentBridgeActionResult(bridgeRequest({
@@ -567,7 +565,6 @@ try {
       requiredCompletionBasis: 'action_result',
       motionClass: 'open_loop_displacement',
       actionPurpose: 'task_effect',
-      presentation: 'private',
     },
   }), 'robot-1');
   assert.equal(structured.valid, true);
@@ -591,7 +588,6 @@ try {
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
       actionPurpose: 'expression',
-      presentation: 'private',
     },
   }), 'robot-1').valid, false, 'a robot command cannot masquerade as a generic move');
 
@@ -603,16 +599,14 @@ try {
   assert.equal(conversationOnly.status, 'no_actions');
   assert.equal(conversationOnly.response, 'Hello from Environment Mode.');
   assert.equal(conversationOnly.conversationResponse, 'Hello from Environment Mode.');
-  assert.equal(conversationOnly.privateResponse, '');
   assert.equal(conversationOnly.bridgeRecord.status, 'no_actions');
   assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
   assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
   assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
 
-  const autonomousPrivate = await environmentSendActionNode.execute({
+  const autonomousResponse = await environmentSendActionNode.execute({
     actions: [],
     response: 'A new shape is visible.',
-    privateResponse: 'The shape may be worth remembering.',
     familiarityQuery: 'An unfamiliar rounded shape is visible near the robot.',
     sessionId: 'robot-1',
   }, {
@@ -623,20 +617,18 @@ try {
       metadata: { autonomousStimulus: 'boredom-observer' },
     },
   } as never, {});
-  assert.equal(autonomousPrivate.conversationResponse, '');
-  assert.equal(autonomousPrivate.privateResponse, 'The shape may be worth remembering.');
-  assert.equal(autonomousPrivate.presentationMetadata.dialogueSource, 'boredom-observer');
-  assert.deepEqual(autonomousPrivate.presentationMetadata.tags, [
+  assert.equal(autonomousResponse.conversationResponse, 'A new shape is visible.');
+  assert.equal(autonomousResponse.responseMetadata.dialogueSource, 'boredom-observer');
+  assert.deepEqual(autonomousResponse.responseMetadata.tags, [
     'robot-operator',
     'boredom-observer',
     'autonomy-trigger',
   ]);
-  assert.match(String(autonomousPrivate.familiarityTaskId), /^task-/);
+  assert.match(String(autonomousResponse.familiarityTaskId), /^task-/);
 
   const autonomousConversation = await environmentSendActionNode.execute({
     actions: [],
     response: 'I found something you may want to see.',
-    presentation: 'conversation',
     sessionId: 'robot-1',
   }, {
     username: 'bridge-spec',
@@ -644,7 +636,6 @@ try {
     environmentActionSource: 'autonomy',
   } as never, {});
   assert.equal(autonomousConversation.conversationResponse, 'I found something you may want to see.');
-  assert.equal(autonomousConversation.privateResponse, '');
 
   const emptyConversation = await environmentSendActionNode.execute({
     actions: [],
@@ -762,8 +753,6 @@ try {
     action: observerCaptureAction.data,
     sessionId: 'robot-1',
     response: 'I captured and understood the image.',
-    privateResponse: 'The image was fully interpreted.',
-    presentation: 'conversation',
     taskInstruction: 'Interpret the returned image as one autonomous observation.',
   }, {
     username: 'bridge-spec',
@@ -772,7 +761,6 @@ try {
     robotObserver: {
       cycleId: 'observer-cycle-1',
       step: 1,
-      maxSteps: 4,
       triggerSource: 'autonomy',
       graph: 'boredom-observer',
       requestedBy: 'boredom-observer',
@@ -785,9 +773,8 @@ try {
   assert.equal(observerWorkflowCapture.status, 'coordinated_for_adapter');
   assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.graph, 'environment');
   assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.requestedBy, 'boredom-observer');
-  assert.equal(observerWorkflowCapture.presentationMetadata.dialogueSource, 'boredom-observer');
-  assert.equal(observerWorkflowCapture.conversationResponse, '');
-  assert.equal(observerWorkflowCapture.privateResponse, '');
+  assert.equal(observerWorkflowCapture.responseMetadata.dialogueSource, 'boredom-observer');
+  assert.equal(observerWorkflowCapture.conversationResponse, 'Camera request queued; waiting for a fresh image.');
   assert.equal(
     manager.getTask(observerWorkflowCapture.commands[0]?.id)?.metadata?.originatingInstruction,
     'Interpret the returned image as one autonomous observation.',
@@ -846,7 +833,6 @@ try {
         robotObserver: {
           cycleId: 'utterance-1',
           step: 2,
-          maxSteps: 3,
           triggerSource: 'user',
           graph: 'environment',
           requestedBy: 'environment-perception',
@@ -870,7 +856,6 @@ try {
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
         actionPurpose: 'expression',
-        presentation: 'conversation',
       },
     }),
     instruction: continuationInstruction.instruction,
@@ -919,7 +904,6 @@ try {
     robotObserver: {
       cycleId: 'continuation-cycle-1',
       step: 1,
-      maxSteps: 3,
       triggerSource: 'user',
       graph: 'environment',
       requestedBy: 'environment-perception',
@@ -973,7 +957,6 @@ try {
   const captureCycle = {
     cycleId: 'capture-cycle-1',
     step: 2,
-    maxSteps: 3,
     triggerSource: 'user' as const,
     graph: 'environment',
     requestedBy: 'environment-perception' as const,
@@ -1047,10 +1030,7 @@ try {
         objectiveComplete: true,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'response',
-        completionBasis: 'response',
-        completionEvidence: 'The response reports the current correlated image.',
         actionPurpose: 'information_gain',
-        presentation: 'conversation',
       },
     }),
     instruction: satisfiedCaptureInstruction.instruction,

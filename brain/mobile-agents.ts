@@ -47,7 +47,7 @@ import { generateUserDigest } from './agents/digest/core.js';
 
 // Agency system agents (new modular structure)
 import { generateDesiresForUser } from './agents/desire-generator/core.js';
-import { processPlanningDesires } from './agents/desire-planner/core.js';
+import { runCycle as runDesirePlannerCycle } from './agents/desire-planner/core.js';
 import { processApprovedDesires } from './agents/desire-executor/core.js';
 import { processDesires as processDesireOutcomes } from './agents/desire-outcome-reviewer/core.js';
 
@@ -211,7 +211,7 @@ async function runDigestWrapper(context: MobileAgentContext): Promise<void> {
     async () => {
       try {
         const digest = await generateUserDigest(context.username!);
-        console.log(`[mobile-digest] Complete: ${digest?.themes?.length || 0} themes analyzed`);
+        console.log(`[mobile-digest] Complete: ${digest.themesIdentified} themes analyzed`);
       } catch (error) {
         console.error('[mobile-digest] Error:', (error as Error).message);
       }
@@ -262,8 +262,11 @@ async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<voi
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
       try {
-        const result = await processPlanningDesires(context.username!);
-        console.log(`[mobile-desire-planner] Complete: ${result.planned} planned, ${result.approved} approved`);
+        const result = await runDesirePlannerCycle({
+          singleUser: true,
+          username: context.username!,
+        });
+        console.log(`[mobile-desire-planner] Complete: ${result.stats.planned} planned, ${result.stats.approved} approved`);
       } catch (error) {
         console.error('[mobile-desire-planner] Error:', (error as Error).message);
       }

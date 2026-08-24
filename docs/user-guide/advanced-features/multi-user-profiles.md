@@ -255,13 +255,11 @@ All requests resolve within a user context that carries:
 - Session metadata
 - Audit trail attribution
 
-### Migration from Single-User
+### Profile Storage Migration
 
-Existing single-user installations can be migrated using:
-```bash
-pnpm tsx scripts/migrate-to-profiles.ts --username <owner>
-```
-This moves the root-level memory, persona, and etc directories into `profiles/<owner>/` while preserving shared assets like voice models.
+Move an existing profile through **Settings → Profile Location** or with
+`mh profile path set <path>`. Both use the canonical profile migration service;
+keep the source until validation succeeds.
 
 ---
 

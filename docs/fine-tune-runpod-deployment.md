@@ -423,6 +423,5 @@ profiles/greggles/out/fine-tuned-models/2025-11-21/2025-11-21-214447-cd70d7/
 
 - [Mode Configurations Guide](fine-tune-mode-configs.md) - Hyperparameter tuning for each cognitive mode
 - [Quick Start Guide](fine-tune-quickstart.md)
-- [Implementation Plan](fine-tune-implementation-plan.md)
 - [Master Specification](model-fine-tune-overview.md)
 - [RunPod Documentation](https://docs.runpod.io/)

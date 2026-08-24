@@ -68,7 +68,6 @@ test('corpus balances positive work with negative authority and covers required 
   assert.ok(cases.some(value => value.expected.actions[0]?.type === 'robotCommand'))
   assert.ok(cases.some(value => value.expected.movementRequest !== null))
   assert.ok(cases.some(value => value.expected.actions[0]?.type === 'captureImage'))
-  assert.ok(cases.some(value => value.expected.taskDecision.outcome === 'escalate'))
   assert.ok(cases.some(value => value.suite === 'negation'))
   assert.ok(cases.some(value => value.suite === 'quoted'))
   assert.ok(cases.some(value => value.suite === 'hypothetical'))

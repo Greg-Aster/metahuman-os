@@ -2,8 +2,8 @@
  * LLM Backend Manager
  *
  * Manages switching between local LLM backends (Ollama and vLLM).
- * This is SEPARATE from server providers (RunPod, HuggingFace) which are
- * managed by packages/server/provider-bridge.ts.
+ * This is separate from cloud providers (RunPod, HuggingFace), which are
+ * managed by the Core provider layer.
  *
  * Local backends: Run on the user's machine, toggled in Settings UI
  * Server providers: Cloud services for deployment, controlled by etc/deployment.json

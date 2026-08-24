@@ -60,7 +60,6 @@ function validateRegisteredNodeContracts(graph: SvelteFlowGraph): void {
 function validateDualArtifacts(graph: SvelteFlowGraph): void {
   const artifactPaths = [
     join('apps', 'site', 'public', 'cognitive-graphs', 'dual-mode.json'),
-    join('apps', 'react-native', 'nodejs-assets', 'nodejs-project', 'etc', 'cognitive-graphs', 'dual-mode.json'),
   ];
   const canonical = JSON.stringify(graph);
 

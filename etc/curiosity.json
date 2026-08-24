@@ -5,10 +5,6 @@
   "_TEMPLATE_WARNING4": "══════════════════════════════════════════════════════════════════════════",
   "maxOpenQuestions": 3,
   "researchMode": "local",
-  "inactivityThresholdSeconds": 1800,
-  "questionTopics": [],
-  "minTrustLevel": "observe",
-  "questionIntervalSeconds": 900,
   "innerQuestionMode": "local",
-  "innerQuestionIntervalSeconds": 3600
+  "minTrustLevel": "observe"
 }

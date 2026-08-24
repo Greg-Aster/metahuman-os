@@ -29,6 +29,7 @@ test('sleep workflow admits exactly one ordered stage at a time', async () => {
       const active = manager.getAllTasks()
       assert.equal(active.length, 1)
       assert.equal(active[0].handler, stage.handler)
+      if (stage.handler === 'vector.index-build') assert.equal(active[0].input.agentId, undefined)
       const task = manager.claim(active[0].id)
       assert.ok(task)
       manager.complete(task.id, true, {})
@@ -46,17 +47,16 @@ test('sleep workflow admits exactly one ordered stage at a time', async () => {
   }
 })
 
-test('sleep-owned agents have no independent autonomy schedules', () => {
+test('sleep-owned agents have no independent autonomy schedules', async () => {
+  const { SLEEP_WORKFLOW_STAGES } = await import('./sleep-workflow.js')
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'agents.json'), 'utf8'))
   const sleepOwned = [
     'organizer',
     'curator',
     'desire-generator',
-    'desire-explorer',
     'desire-executor',
     'desire-planner',
     'desire-outcome-reviewer',
-    'auto-indexer',
   ]
   for (const id of sleepOwned) assert.equal(config.agents[id].type, 'manual', id)
 
@@ -65,6 +65,7 @@ test('sleep-owned agents have no independent autonomy schedules', () => {
   assert.ok(scheduledAwake.length > 0)
   assert.ok(scheduledAwake.every(agent => JSON.stringify(agent.allowedModes) === JSON.stringify(['semi'])))
   assert.deepEqual(config.agents['sleep-workflow'].allowedModes, ['semi', 'full'])
+  assert.equal(SLEEP_WORKFLOW_STAGES.at(-1)?.handler, 'vector.index-build')
 })
 
 test('Full autonomy proposal set excludes sleep-owned work', async () => {

@@ -2,7 +2,7 @@
  * Provider Types
  *
  * Unified interface for ALL LLM providers (local and cloud).
- * Both core (Ollama) and server (RunPod, HuggingFace) implement this.
+ * Core owns the contracts and implementations for local and cloud inference.
  */
 
 export interface ProviderTextContentPart {
@@ -238,7 +238,7 @@ export interface ProviderConfig {
     embeddingModel?: string;
     llmModel?: string;
   };
-  // Cloud config (only used if server package is installed)
+  // Cloud config
   runpod?: {
     apiKey: string;
     endpoints: Record<string, string | undefined>;
@@ -254,14 +254,16 @@ export interface ProviderConfig {
  * Provider type - determines where requests are routed
  *
  * Local providers: ollama, vllm, mock, local-models (handled by core bridge)
- * Cloud providers: runpod_serverless, huggingface (handled by @metahuman/server)
+ * Cloud providers: runpod_serverless, huggingface
  */
 export type ProviderType = 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server' | 'local-models';
 
 /**
- * Check if a provider is a cloud provider (requires server package)
+ * Check if a provider is a cloud provider.
  */
-export function isCloudProvider(provider: ProviderType): boolean {
+export function isCloudProvider(
+  provider: ProviderType,
+): provider is Extract<ProviderType, 'runpod_serverless' | 'huggingface'> {
   return provider === 'runpod_serverless' || provider === 'huggingface';
 }
 

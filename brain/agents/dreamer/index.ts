@@ -37,8 +37,9 @@ export {
   generateUserDreams,
   loadSleepConfig,
   loadDreamerGraph,
-  type SleepConfig,
   type DreamerOptions,
   type DreamerResult,
   type UserDreamerStats,
 } from './core.js';
+
+export type { SleepConfig } from '@metahuman/core/sleep-config';

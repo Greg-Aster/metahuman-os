@@ -8,8 +8,8 @@ MetaHuman OS now ships with a fully integrated authentication layer. Every reque
 
 | Role        | How it is created                         | Session Length | Capabilities                                                               |
 |-------------|-------------------------------------------|----------------|-----------------------------------------------------------------------------|
-| **Owner**   | First account created via UI (or script)  | 24 hours       | Full read/write access to their profile; can adjust settings, trust levels, and profile visibility. |
-| **Guest**   | Owner-created account (future UI) or existing credentials | 1 hour | Must authenticate via auth gate. Always forced into emulation mode with read-only access to the selected public profile. |
+| **Owner**   | First account created via the auth gate   | 24 hours       | Full read/write access to their profile; can adjust settings, trust levels, and profile visibility. |
+| **Guest**   | Owner-created named account or public guest session | 1 hour | Read-only access in emulation mode to an allowed public profile. |
 
 > **Important:** ALL users must be authenticated. There are no anonymous users in the system. Even guests require authentication through the auth gate with owner-created credentials or existing login credentials.
 
@@ -28,13 +28,9 @@ Session cookies (`mh_session`) are HTTPOnly. Closing the browser does not log ou
 3. Fill in the username, password, and optional display name. The first account automatically receives the `owner` role.
 4. After registration you are redirected to the dashboard and a profile folder is created at `profiles/<owner>/`.
 
-#### Legacy Installations
-
-Upgrading from the single-user layout? Run the migration script before launching the UI:
-```bash
-pnpm tsx scripts/migrate-to-profiles.ts --username <owner>
-```
-This moves `memory/`, `persona/`, `logs/`, `etc/`, and voice-training data into `profiles/<owner>/…` while keeping shared voices under `out/voices/`.
+Additional named profiles are created by an owner in **System → Settings →
+Security**. Profile storage moves are owned by **Settings → Profile Location**
+or `mh profile path set`; both use the same validated migration service.
 
 ---
 
@@ -173,7 +169,7 @@ This eliminates authentication friction during development. The session persists
 | **Guest can't see a persona** | Confirm the owner marked the profile as `Public`. Visibility changes take effect immediately. |
 | **Session expires unexpectedly** | Check system clock, review `logs/run/sessions.json`, and confirm `pnpm dev` output for validation errors. |
 | **Forgot owner password** | Stop the server, run a short script using `deleteUser(userId)` then re-run `createUser()` with new credentials, or temporarily remove the entry from `persona/users.json` and restart. |
-| **Legacy data still in root directories** | Re-run `pnpm tsx scripts/migrate-to-profiles.ts --username <owner>` and verify symlinks/old folders were moved. |
+| **Profile data is in another location** | Use **Settings → Profile Location** or `mh profile path set <path>`; keep the source until migration validation succeeds. |
 
 ---
 

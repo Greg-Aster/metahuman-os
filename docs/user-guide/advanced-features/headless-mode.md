@@ -116,7 +116,7 @@ Headless Mode is a runtime state that:
 3. **Startup Guards**
    - CLI: `mh start` checks mode before spawning agents
    - Web UI: `/api/boot` checks mode before auto-start
-   - Dev Server: `bin/run-with-agents` respects mode
+   - Site development runs independently and does not start agents
 
 ---
 

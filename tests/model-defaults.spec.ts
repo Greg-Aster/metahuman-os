@@ -44,7 +44,6 @@ for (const relativeRoot of [
   'etc',
   'packages/core/src',
   'apps/site/src',
-  'apps/react-native/nodejs-assets/nodejs-project/etc',
   'brain',
   'docker/runpod-trainer',
   'scripts',
@@ -71,10 +70,7 @@ assert.match(fullTrainer, /AutoModelForMultimodalLM/)
 assert.match(fullTrainer, /AutoProcessor/)
 assert.match(fullTrainer, /transformers>=5/)
 
-for (const relativePath of [
-  'etc/models.json',
-  'apps/react-native/nodejs-assets/nodejs-project/etc/models.json',
-]) {
+for (const relativePath of ['etc/models.json']) {
   const registry = JSON.parse(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'))
   assert.equal(registry.globalSettings?.useAdapter, false, `${relativePath} must not enable a personal adapter`)
   assert.equal(registry.globalSettings?.activeAdapter, null, `${relativePath} must not copy personal adapter state`)
@@ -88,10 +84,7 @@ for (const relativePath of [
   }
 }
 
-for (const relativePath of [
-  'etc/llm-backend.json',
-  'apps/react-native/nodejs-assets/nodejs-project/etc/llm-backend.json',
-]) {
+for (const relativePath of ['etc/llm-backend.json']) {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'))
   assert.equal(config.ollama.defaultModel, CORE_OLLAMA_MODEL, `${relativePath} Ollama default drifted`)
   assert.equal(config.vllm.model, CORE_VLLM_MODEL, `${relativePath} vLLM default drifted`)

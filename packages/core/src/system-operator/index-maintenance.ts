@@ -8,17 +8,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getProfilePaths } from '../paths.js';
-import { listEpisodicFiles } from '../memory.js';
-import { buildMemoryIndex, getIndexStatus, loadIndex, clearIndexCache } from '../vector-index.js';
+import { getIndexStatus, indexFilePath, loadIndex } from '../vector-index.js';
+import { submitMemoryIndexRefresh } from '../queue/index.js';
 import { audit } from '../audit.js';
 import type { IndexMaintenanceResult } from './types.js';
 
 export interface IndexMaintenanceOptions {
   username: string;
-  model?: string;
   forceRebuild?: boolean;
   rebuildThreshold?: number; // Rebuild if stale % exceeds this
-  removeOrphans?: boolean;
   dryRun?: boolean;
 }
 
@@ -32,99 +30,75 @@ interface IndexHealthCheck {
   needsRebuild: boolean;
 }
 
+function listJsonFiles(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string) => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(entryPath);
+      else if (entry.isFile() && entry.name.endsWith('.json')) files.push(entryPath);
+    }
+  };
+  visit(root);
+  return files.sort();
+}
+
+function readMemoryId(filePath: string): string | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { id?: unknown };
+    return typeof value.id === 'string' && value.id ? value.id : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Check the health of the index.
  */
 export function checkIndexHealth(
   username: string,
-  model?: string
+  model?: string,
+  rebuildThreshold = 20,
 ): IndexHealthCheck {
   const profilePaths = getProfilePaths(username);
 
-  // Get all episodic memory files (uses storage router internally)
-  const memoryFiles = listEpisodicFiles();
-  const memoryIds = new Set(memoryFiles.map(f => path.basename(f, '.json')));
+  const memoryFiles = listJsonFiles(profilePaths.episodic);
+  const memoryIds = new Set(memoryFiles.map(readMemoryId).filter((id): id is string => Boolean(id)));
 
   // Load the current index
   const index = loadIndex(model, username);
 
   if (!index) {
     return {
-      totalMemories: memoryFiles.length,
+      totalMemories: memoryIds.size,
       indexedMemories: 0,
-      missingFromIndex: memoryFiles.length,
+      missingFromIndex: memoryIds.size,
       orphanedEntries: 0,
       stalePercentage: 100,
       lastUpdated: null,
-      needsRebuild: memoryFiles.length > 0,
+      needsRebuild: memoryIds.size > 0,
     };
   }
 
-  // Check which memories are indexed
-  const indexedIds = new Set(index.data.map(item => item.id));
+  const indexedIds = new Set(index.data
+    .filter(item => item.path.startsWith(`${profilePaths.episodic}${path.sep}`))
+    .map(item => item.id));
   const missingFromIndex = [...memoryIds].filter(id => !indexedIds.has(id)).length;
-  const orphanedEntries = [...indexedIds].filter(id => !memoryIds.has(id)).length;
+  const orphanedEntries = index.data.filter(item => Boolean(item.path) && !fs.existsSync(item.path)).length;
 
   const stalePercentage = memoryIds.size > 0
     ? Math.round((missingFromIndex / memoryIds.size) * 100)
     : 0;
 
   return {
-    totalMemories: memoryFiles.length,
-    indexedMemories: index.data.length,
+    totalMemories: memoryIds.size,
+    indexedMemories: Math.max(0, memoryIds.size - missingFromIndex),
     missingFromIndex,
     orphanedEntries,
     stalePercentage,
     lastUpdated: index.meta?.createdAt || null,
-    needsRebuild: stalePercentage > 20 || orphanedEntries > 10,
-  };
-}
-
-/**
- * Remove orphaned entries from the index (entries without corresponding memories).
- */
-function removeOrphanedEntries(
-  username: string,
-  model?: string,
-  dryRun = true
-): { removed: number; ids: string[] } {
-  const profilePaths = getProfilePaths(username);
-  const memoryFiles = listEpisodicFiles();
-  const memoryIds = new Set(memoryFiles.map(f => path.basename(f, '.json')));
-
-  const index = loadIndex(model, username);
-  if (!index) {
-    return { removed: 0, ids: [] };
-  }
-
-  const orphanedIds: string[] = [];
-  const validItems = index.data.filter(item => {
-    if (memoryIds.has(item.id)) {
-      return true;
-    }
-    orphanedIds.push(item.id);
-    return false;
-  });
-
-  if (!dryRun && orphanedIds.length > 0) {
-    // Update the index file
-    index.data = validItems;
-    const indexPath = path.join(
-      profilePaths.root,
-      'memory',
-      'index',
-      `${model || 'default'}-index.json`
-    );
-
-    if (fs.existsSync(indexPath)) {
-      fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
-      clearIndexCache();
-    }
-  }
-
-  return {
-    removed: orphanedIds.length,
-    ids: orphanedIds,
+    needsRebuild: stalePercentage > rebuildThreshold || orphanedEntries > 0,
   };
 }
 
@@ -140,18 +114,18 @@ export async function runIndexMaintenance(
 
   const {
     username,
-    model,
     forceRebuild = false,
     rebuildThreshold = 20,
-    removeOrphans = true,
     dryRun = false,
   } = options;
 
-  // Check index health
-  const health = checkIndexHealth(username, model);
-  const indexesRebuilt: string[] = [];
-  let memoriesReindexed = 0;
-  let orphanedEntriesRemoved = 0;
+  if (!Number.isFinite(rebuildThreshold) || rebuildThreshold < 0 || rebuildThreshold > 100) {
+    throw new Error('rebuildThreshold must be a number from 0 to 100');
+  }
+
+  const health = checkIndexHealth(username, undefined, rebuildThreshold);
+  let taskId: string | undefined;
+  let rebuildQueued = false;
 
   // Decide if rebuild is needed
   const shouldRebuild = forceRebuild ||
@@ -160,64 +134,28 @@ export async function runIndexMaintenance(
 
   if (shouldRebuild && !dryRun) {
     try {
-      // Rebuild the index - returns path on success, throws on failure
-      await buildMemoryIndex({
+      const task = await submitMemoryIndexRefresh({
         username,
         force: true,
+        source: 'system',
+        metadata: { producer: 'system-operator-index-maintenance' },
       });
-
-      indexesRebuilt.push(model || 'default');
-      // Get count from the rebuilt index
-      const newStatus = getIndexStatus(model, username);
-      memoriesReindexed = newStatus.items || 0;
-    } catch (error) {
-      errors.push(`Index rebuild error: ${(error as Error).message}`);
-    }
-  } else if (shouldRebuild && dryRun) {
-    // Dry run - would rebuild
-    indexesRebuilt.push(model || 'default');
-    memoriesReindexed = health.missingFromIndex;
-  }
-
-  // Remove orphaned entries if not rebuilding
-  if (removeOrphans && !shouldRebuild) {
-    const orphanResult = removeOrphanedEntries(username, model, dryRun);
-    orphanedEntriesRemoved = orphanResult.removed;
-
-    if (orphanResult.removed > 0 && !dryRun) {
+      taskId = task.id;
+      rebuildQueued = true;
       audit({
         category: 'action',
         level: 'info',
-        event: 'index_orphans_removed',
+        event: 'index_maintenance_queued',
         actor: 'system-operator',
-        details: {
-          username,
-          model: model || 'default',
-          removed: orphanResult.removed,
-        },
+        details: { username, taskId, forceRebuild, missingFromIndex: health.missingFromIndex, orphanedEntries: health.orphanedEntries },
       });
+    } catch (error) {
+      errors.push(`Index rebuild queue error: ${(error as Error).message}`);
     }
   }
 
-  // Get final index size
-  const status = getIndexStatus(model, username);
-  const indexSize = status.items || 0;
-
-  if (!dryRun && (indexesRebuilt.length > 0 || orphanedEntriesRemoved > 0)) {
-    audit({
-      category: 'action',
-      level: 'info',
-      event: 'index_maintenance_completed',
-      actor: 'system-operator',
-      details: {
-        username,
-        indexesRebuilt,
-        memoriesReindexed,
-        orphanedEntriesRemoved,
-        indexSize,
-      },
-    });
-  }
+  const status = getIndexStatus(undefined, username);
+  const indexSize = status.exists ? status.items : 0;
 
   return {
     success: errors.length === 0,
@@ -226,9 +164,11 @@ export async function runIndexMaintenance(
     completedAt: new Date().toISOString(),
     durationMs: Date.now() - startTime,
     details: {
-      indexesRebuild: indexesRebuilt,
-      memoriesReindexed,
-      orphanedEntriesRemoved,
+      rebuildNeeded: shouldRebuild,
+      rebuildQueued,
+      taskId,
+      missingFromIndex: health.missingFromIndex,
+      orphanedEntries: health.orphanedEntries,
       indexSize,
     },
     errors,
@@ -247,15 +187,9 @@ export function getIndexStatistics(username: string, model?: string): {
   fileSizeBytes: number;
 } {
   const status = getIndexStatus(model, username);
-  const profilePaths = getProfilePaths(username);
 
   // Get file size
-  const indexPath = path.join(
-    profilePaths.root,
-    'memory',
-    'index',
-    `${model || 'default'}-index.json`
-  );
+  const indexPath = indexFilePath(model, username);
 
   let fileSizeBytes = 0;
   if (fs.existsSync(indexPath)) {
@@ -270,10 +204,10 @@ export function getIndexStatistics(username: string, model?: string): {
     : 0;
 
   return {
-    totalItems: status.items || 0,
+    totalItems: status.exists ? status.items : 0,
     uniqueItems,
     averageVectorDimension: avgDimension,
-    lastUpdated: status.createdAt || null,
+    lastUpdated: status.exists ? status.createdAt : null,
     fileSizeBytes,
   };
 }

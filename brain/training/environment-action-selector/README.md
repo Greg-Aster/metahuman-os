@@ -11,7 +11,8 @@ Ownership:
   strict output validation, and semantic decision view used by training and
   evaluation.
 - This directory owns sanitized source cases, controlled development
-  variations, LoRA training, and benchmark tooling.
+variations, LoRA training, benchmark tooling, and the retired Context Router's
+immutable held-out lock.
 - Profile, persona, memory, and user LoRA data are not inputs.
 - `out/environment-action-selector/` owns generated checkpoints and reports.
 

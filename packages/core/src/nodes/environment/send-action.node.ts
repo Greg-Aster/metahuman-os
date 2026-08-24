@@ -64,8 +64,6 @@ export const environmentSendActionNode = defineNode({
     { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
-    { name: 'presentation', type: 'string', optional: true, description: 'Private or conversational output admission' },
-    { name: 'privateResponse', type: 'string', optional: true, description: 'Private reflection text for autonomous output' },
     { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
     { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
   ],
@@ -81,8 +79,7 @@ export const environmentSendActionNode = defineNode({
     { name: 'message', type: 'string', description: 'Human-readable bridge status message' },
     { name: 'response', type: 'string', description: 'Visible chat warning when the bridge cannot receive the command' },
     { name: 'conversationResponse', type: 'string', description: 'Response admitted to conversation and TTS' },
-    { name: 'privateResponse', type: 'string', description: 'Response admitted only to inner dialogue' },
-    { name: 'presentationMetadata', type: 'object', description: 'Origin metadata for conversation or inner-dialogue presentation' },
+    { name: 'responseMetadata', type: 'object', description: 'Origin metadata for conversation output' },
     { name: 'familiarityTaskId', type: 'string', description: 'Asynchronous familiarity search work item, when queued' },
     { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
     { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
@@ -180,14 +177,10 @@ export const environmentSendActionNode = defineNode({
       : continuedCycle;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
-    const requestedPresentation = inputs.presentation === 'private' || inputs.presentation === 'conversation'
-      ? inputs.presentation
-      : undefined;
     const autonomous = existingCycle?.triggerSource === 'autonomy'
       || context.environmentActionSource === 'autonomy';
-    const presentation = requestedPresentation ?? (autonomous ? 'private' : 'conversation');
     const dialogueSource = robotOperatorSource(context, existingCycle);
-    const presentationMetadata = autonomous
+    const responseMetadata = autonomous
       ? {
           dialogueSource,
           correlationId: existingCycle?.cycleId ?? null,
@@ -196,9 +189,6 @@ export const environmentSendActionNode = defineNode({
             : ['robot-operator', dialogueSource, 'autonomy-trigger'],
         }
       : {};
-    const privateInput = typeof inputs.privateResponse === 'string'
-      ? inputs.privateResponse.trim()
-      : '';
     const familiarityQuery = typeof inputs.familiarityQuery === 'string'
       ? inputs.familiarityQuery.replace(/\s+/g, ' ').trim().slice(0, 300)
       : '';
@@ -359,8 +349,6 @@ export const environmentSendActionNode = defineNode({
     const response = ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
       ? message
       : status === 'coordinated_for_adapter' ? queuedResponse : visibleResponse;
-    const actionPending = autonomous && commands.length > 0;
-    const presentedResponse = actionPending ? '' : response;
     let familiarityTaskId = '';
     if (autonomous && familiarityQuery && context.username) {
       const familiarityTask = getQueueManager().enqueue({
@@ -390,11 +378,8 @@ export const environmentSendActionNode = defineNode({
       reason,
       message,
       response,
-      conversationResponse: presentation === 'conversation' ? presentedResponse : '',
-      privateResponse: presentation === 'private' && !actionPending
-        ? privateInput || response
-        : '',
-      presentationMetadata,
+      conversationResponse: response,
+      responseMetadata,
       familiarityTaskId,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,

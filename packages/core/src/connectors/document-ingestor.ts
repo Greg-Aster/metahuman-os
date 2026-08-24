@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as mammothModule from 'mammoth';
 import { getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { captureEvent } from '../memory.js';
+import { captureEventWithDetails, toToolParameters } from '../memory.js';
 
 // Handle ESM/CJS compatibility
 const mammoth = (mammothModule as any).default || mammothModule;
@@ -69,6 +69,17 @@ export interface DocumentIngestionOptions {
   storeFullContent?: boolean;
 }
 
+type ExtractedDocumentMetadata = Pick<DocumentMetadata, 'extractionMethod'> & Partial<Pick<
+  DocumentMetadata,
+  | 'title'
+  | 'author'
+  | 'subject'
+  | 'keywords'
+  | 'creationDate'
+  | 'modificationDate'
+  | 'pageCount'
+>>;
+
 // ============================================================================
 // MIME Type Detection
 // ============================================================================
@@ -103,7 +114,7 @@ function isSupported(ext: string): boolean {
  */
 async function extractPdfText(filepath: string): Promise<{
   text: string;
-  metadata: Partial<DocumentMetadata>;
+  metadata: ExtractedDocumentMetadata;
 }> {
   const buffer = fs.readFileSync(filepath);
   const { PDFParse } = await import('pdf-parse');
@@ -140,7 +151,7 @@ async function extractPdfText(filepath: string): Promise<{
  */
 async function extractDocxText(filepath: string): Promise<{
   text: string;
-  metadata: Partial<DocumentMetadata>;
+  metadata: ExtractedDocumentMetadata;
 }> {
   const result = await mammoth.extractRawText({ path: filepath });
 
@@ -157,7 +168,7 @@ async function extractDocxText(filepath: string): Promise<{
  */
 async function extractPlainText(filepath: string): Promise<{
   text: string;
-  metadata: Partial<DocumentMetadata>;
+  metadata: ExtractedDocumentMetadata;
 }> {
   const text = fs.readFileSync(filepath, 'utf-8');
 
@@ -196,7 +207,7 @@ export async function extractDocumentContent(filepath: string): Promise<{
   }
 
   // Extract text based on file type
-  let extraction: { text: string; metadata: Partial<DocumentMetadata> };
+  let extraction: { text: string; metadata: ExtractedDocumentMetadata };
 
   switch (ext) {
     case '.pdf':
@@ -366,20 +377,20 @@ export async function ingestDocument(
     ];
 
     // Create memory event
-    const eventId = captureEvent({
+    const capture = captureEventWithDetails(content, {
       type: 'observation',
-      content,
       tags,
-      source: options?.source || 'document-ingestor',
       metadata: {
-        document: {
-          filepath: storedPath,
+        document: toToolParameters({
           ...metadata,
-        },
+          filepath: storedPath,
+        }),
         consent: true,
         provenance: 'local-file',
+        source: options?.source || 'document-ingestor',
       },
     });
+    const eventId = capture.eventId;
 
     // Audit the ingestion
     audit({

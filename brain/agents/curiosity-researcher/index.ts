@@ -14,10 +14,10 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'curiosity-researcher',
   name: 'Curiosity Researcher',
-  description: 'Performs deeper research on curiosity questions using memory and web searches',
+  description: 'Independently researches pending user-facing curiosity questions using local memory',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 1800, // 30 minutes
+  defaultInterval: 3600,
   tags: ['curiosity', 'research', 'llm', 'background'],
 };
 

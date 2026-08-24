@@ -3,18 +3,14 @@
  *
  * Unified entry point for ALL LLM providers.
  * - Local providers (ollama, vllm, mock) are handled here
- * - Cloud providers (runpod, huggingface) are delegated to @metahuman/server
+ * - Cloud providers (RunPod, HuggingFace) are owned by the Core provider layer
  *
  * model-router.ts calls this ONE function - it knows nothing about specific providers.
  *
  * BACKEND-AWARE: Automatically routes to Ollama or vLLM based on etc/llm-backend.json
  * AUTO-START: Automatically starts the configured backend if not running
  *
- * UNIFIED CODEBASE:
- * With the React Native migration, both web and mobile use the same code path.
- * Feature detection determines if native fetch is available:
- * - Runtimes with native fetch: Uses @metahuman/server
- * - Legacy runtimes without native fetch: Falls back to mobile-providers.ts
+ * Web and mobile use the same provider implementations.
  */
 
 import {
@@ -28,21 +24,17 @@ import { vllm, isVLLMRunning, type VLLMConfig } from '../vllm.js';
 import { buildVLLMStartConfig, loadBackendConfig, getBackendStatus } from '../llm-backend.js';
 import { generateWithLocalService, isLocalModelServiceRunning } from './local-models.js';
 import { loadDeploymentConfig } from '../deployment.js';
-import { callMobileProvider } from '../mobile-providers.js';
+import { callCloudProvider, isCloudProviderAvailable } from './cloud.js';
+import {
+  callRemoteProvider as callDirectRemoteProvider,
+  type RemoteProviderCredentials,
+  type RemoteProviderName,
+} from './remote.js';
 import { getUserContext } from '../context.js';
 import { getProfilePaths } from '../path-builder.js';
 import { getAdaptersToLoad, getVllmLoraConfig } from '../vllm-lora.js';
 import { resolveCredentials } from '../llm-config.js';
 import { loadFreshOperatorConfig } from '../config.js';
-
-// Feature detection keeps the shared provider path independent of runtime version labels.
-// This determines whether to use @metahuman/server (native fetch) or mobile-providers.ts (https module)
-const hasNativeFetch = typeof globalThis.fetch === 'function';
-
-// Log once at startup
-if (process.env.METAHUMAN_MOBILE === 'true') {
-  console.log(`[provider-bridge] Mobile runtime - Node.js ${process.version}, native fetch: ${hasNativeFetch}`);
-}
 
 // Track if we've already logged the active backend
 let backendLoggedOnce = false;
@@ -285,18 +277,6 @@ export async function callProvider(
 
   if (isCloudProvider(providerName)) {
     assertAdapterPreservesImageInput(providerName, contentInspection.imageCount)
-    // UNIFIED CODEBASE: Use feature detection instead of platform check
-    // - Native fetch: Use @metahuman/server
-    // - No native fetch: Use the legacy https-module provider
-    const shouldUseMobileProvider = !hasNativeFetch;
-
-    if (shouldUseMobileProvider && providerName === 'runpod_serverless' && config.runpod?.apiKey) {
-      // Legacy path: Node.js 12 doesn't have native fetch
-      console.log('[provider-bridge] Using legacy mobile provider (Node.js 12 fallback)');
-      return callMobileRunPodProvider(messages, options, config.runpod, onProgress);
-    }
-
-    // Unified path: Both web and React Native mobile use @metahuman/server
     return callCloudProvider(providerName, messages, options, config, onProgress);
   }
 
@@ -408,12 +388,6 @@ async function callRemoteProvider(
 
   onProgress?.({ phase: 'running', message: `Using remote provider: ${remoteConfig.provider}` });
 
-  // Convert messages to mobile provider format
-  const mobileMessages = messages.map(m => ({
-    role: m.role,
-    content: messageText(m),
-  }));
-
   // Get credentials from user profile (same pattern as model-router.ts)
   const ctx = getUserContext();
   const username = ctx?.username;
@@ -421,18 +395,23 @@ async function callRemoteProvider(
   // Resolve credentials: user profile → system config → env vars
   const resolved = username ? resolveCredentials(username, remoteConfig.provider) : null;
 
-  const credentials = {
-    provider: remoteConfig.provider,
+  const supportedProviders: RemoteProviderName[] = ['runpod', 'claude', 'openrouter', 'openai']
+  if (!supportedProviders.includes(remoteConfig.provider as RemoteProviderName)) {
+    throw new Error(`Unsupported remote provider: ${remoteConfig.provider}`)
+  }
+
+  const credentials: RemoteProviderCredentials = {
+    provider: remoteConfig.provider as RemoteProviderName,
     apiKey: resolved?.apiKey || process.env[`${remoteConfig.provider.toUpperCase()}_API_KEY`] || '',
     endpoint: resolved?.endpoint || remoteConfig.serverUrl,
     model: remoteConfig.model || options.model,
   };
 
-  if (!credentials.apiKey && remoteConfig.provider !== 'server') {
+  if (!credentials.apiKey) {
     throw new Error(`No API key found for ${remoteConfig.provider}. Configure credentials in Settings or set ${remoteConfig.provider.toUpperCase()}_API_KEY environment variable.`);
   }
 
-  const response = await callMobileProvider(credentials, mobileMessages, {
+  const response = await callDirectRemoteProvider(credentials, messages, {
     model: options.model,
     temperature: options.temperature,
     maxTokens: options.maxTokens,
@@ -882,126 +861,6 @@ async function callMockProvider(
 }
 
 /**
- * Mobile RunPod provider - uses mobile-providers.ts which works on Node.js 12
- * This is used on mobile instead of @metahuman/server which requires native fetch
- */
-async function callMobileRunPodProvider(
-  messages: ProviderMessage[],
-  options: ProviderOptions,
-  runpodConfig: { apiKey: string; endpoints: Record<string, string | undefined> },
-  onProgress?: ProviderProgressCallback
-): Promise<ProviderResponse> {
-  onProgress?.({ phase: 'loading', message: `Connecting to RunPod (mobile)...` });
-
-  const mobileMessages = messages.map(m => ({
-    role: m.role,
-    content: messageText(m),
-  }));
-
-  const endpoint = runpodConfig.endpoints.default || '';
-  console.log(`[provider-bridge] callMobileRunPodProvider - endpoint: ${endpoint}, apiKey: ${runpodConfig.apiKey?.substring(0, 10)}...`);
-
-  const credentials = {
-    provider: 'runpod' as const,
-    apiKey: runpodConfig.apiKey,
-    endpoint,
-    model: options.model,
-  };
-
-  onProgress?.({ phase: 'running', message: `Generating with RunPod...` });
-
-  const response = await callMobileProvider(credentials, mobileMessages, {
-    model: options.model,
-    temperature: options.temperature,
-    maxTokens: options.maxTokens,
-    topP: options.topP,
-  });
-
-  onProgress?.({ phase: 'completed', message: `RunPod response received` });
-
-  return {
-    content: response.content,
-    model: response.model,
-    provider: 'runpod_serverless',
-    usage: response.usage,
-  };
-}
-
-/**
- * Cloud provider delegation
- *
- * Dynamically imports @metahuman/server and delegates to its bridge.
- * Server package handles all cloud-specific logic.
- */
-async function callCloudProvider(
-  providerName: ProviderType,
-  messages: ProviderMessage[],
-  options: ProviderOptions,
-  config: ProviderConfig,
-  onProgress?: ProviderProgressCallback
-): Promise<ProviderResponse> {
-  // Progress: connecting
-  onProgress?.({
-    phase: 'loading',
-    message: `Connecting to cloud GPU (${options.model})...`,
-  });
-
-  // Dynamic import - only loads server package when cloud provider is used
-  let serverModule: any;
-  try {
-    serverModule = await import('@metahuman/server');
-  } catch {
-    throw new Error(
-      `Cloud provider "${providerName}" requires @metahuman/server package. ` +
-      'Install it with: pnpm add @metahuman/server'
-    );
-  }
-
-  // Convert progress callback
-  const serverProgress = onProgress
-    ? (event: { phase: string; message: string; elapsedMs?: number }) => {
-        onProgress({
-          phase: event.phase as ProviderResponse['provider'] extends string ? 'queued' | 'loading' | 'running' | 'completed' | 'failed' : never,
-          message: event.message,
-          elapsedMs: event.elapsedMs,
-        });
-      }
-    : undefined;
-
-  // Delegate to server's provider bridge
-  const response = await serverModule.callServerProvider(
-    providerName,
-    messages,
-    {
-      model: options.model,
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
-      format: options.format,
-      endpointTier: options.endpointTier,
-    },
-    {
-      provider: providerName,
-      runpod: config.runpod,
-      huggingface: config.huggingface,
-    },
-    serverProgress
-  );
-
-  // Progress: completed
-  onProgress?.({
-    phase: 'completed',
-    message: `${options.model} ready (cloud)`,
-  });
-
-  return {
-    content: response.content,
-    model: response.model,
-    provider: providerName,
-    usage: response.usage,
-  };
-}
-
-/**
  * Check if a provider is available
  */
 export async function isProviderAvailable(providerName: ProviderType): Promise<boolean> {
@@ -1023,18 +882,11 @@ export async function isProviderAvailable(providerName: ProviderType): Promise<b
 
     case 'runpod_serverless':
     case 'huggingface':
-      // Check if server package is installed
-      try {
-        const serverModule = await import('@metahuman/server');
-        const deploymentConfig = loadDeploymentConfig();
-        return serverModule.isServerProviderAvailable(providerName, {
-          provider: providerName,
-          runpod: deploymentConfig.server?.runpod,
-          huggingface: deploymentConfig.server?.huggingface,
-        });
-      } catch {
-        return false;
-      }
+      const deploymentConfig = loadDeploymentConfig();
+      return isCloudProviderAvailable(providerName, {
+        runpod: deploymentConfig.server?.runpod,
+        huggingface: deploymentConfig.server?.huggingface,
+      });
 
     default:
       return false;

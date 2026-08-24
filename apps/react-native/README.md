@@ -1,85 +1,62 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# MetaHuman Android App
 
-# Getting Started
+This package is the Android interface for MetaHuman OS. React Native owns the
+native shell, WebView, microphone permission, and device speech recognition.
+The embedded Node 18 process serves the built Site UI and delegates API work to
+the same Core HTTP adapter used by the web application.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Ownership
 
-## Step 1: Start Metro
+- `App.tsx`: native shell and WebView/native-device bridge.
+- `nodejs-assets/nodejs-project/main.js`: Android-local HTTP/static transport and
+  agent lifecycle bridge.
+- `brain/mobile-handlers.ts`: mobile agent registrations.
+- `packages/core/src/api/adapters/http.ts`: canonical API dispatch.
+- root `etc/`: canonical model, agent, and cognitive-graph configuration.
+- `scripts/build-backend.mjs`: generates ignored backend bundles and mobile
+  configuration assets from those owners.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+Do not edit `nodejs-assets/nodejs-project/dist`, `etc`, or `www` directly. They
+are generated build inputs and are intentionally untracked.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Development
 
-```sh
-pnpm start
+Requirements: Node 22, pnpm 10, JDK 17+, Android SDK/platform tools, and an
+Android emulator or connected device.
+
+```bash
+pnpm install
+pnpm --dir apps/react-native android
 ```
 
-## Step 2: Build and run your app
+The Android command prepares current backend assets, rebuilds and installs the
+APK when required, starts Metro, launches the app, and streams filtered logs.
+Use `pnpm --dir apps/react-native dev:device` for a connected physical device or
+`pnpm --dir apps/react-native dev:rebuild` to force backend regeneration.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+For a complete standalone debug APK:
 
-### Android
-
-```sh
-pnpm android
+```bash
+pnpm --dir apps/react-native build
 ```
 
-### iOS
+Output: `apps/react-native/android/app/build/outputs/apk/debug/app-debug.apk`.
+The normal build uses the Android debug key and never mutates release state.
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+`build:release` is the sole APK publication owner. It requires
+`METAHUMAN_ANDROID_KEYSTORE_PATH`, `METAHUMAN_ANDROID_KEYSTORE_PASSWORD`,
+`METAHUMAN_ANDROID_KEY_ALIAS`, and `METAHUMAN_ANDROID_KEY_PASSWORD`; it refuses
+to publish a debug-signed artifact. Version metadata advances only after the
+signed build succeeds.
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+## Validation
 
-```sh
-bundle install
+```bash
+pnpm --dir apps/react-native typecheck
+pnpm --dir apps/react-native lint
+pnpm --dir apps/react-native test
+node apps/react-native/scripts/build-backend.mjs
 ```
 
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-pnpm ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+The repository currently maintains Android only. iOS is not an advertised or
+partially scaffolded product surface.

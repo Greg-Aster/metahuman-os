@@ -2,7 +2,7 @@
  * Curator Agent — Module Definition
  *
  * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * Optional in-process Agent Runtime adapter around the canonical core.
  */
 
 import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
@@ -16,8 +16,7 @@ export const meta: AgentMeta = {
   name: 'Curator',
   description: 'Prepares clean, persona-friendly training data from memories',
   usesLLM: true,
-  priority: 'medium',
-  defaultInterval: 3600, // 1 hour
+  priority: 'normal',
   tags: ['curator', 'llm', 'training', 'background'],
 };
 
@@ -36,6 +35,8 @@ export {
   runCycle,
   runCuratorForUser,
   loadCuratorGraph,
+  parseCuratorArgs,
+  normalizeCuratorOptions,
   type CuratorOptions,
   type CuratorResult,
   type UserCuratorStats,

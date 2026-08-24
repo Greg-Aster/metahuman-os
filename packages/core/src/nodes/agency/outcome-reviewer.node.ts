@@ -16,7 +16,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict, FailureCategory } from '../../agency/types.js';
-import { callLLM, type RouterMessage } from '../../model-router.js';
+import { callLLM, normalizeModelRole, type ModelRole, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -160,7 +160,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
 interface OutcomeReviewOptions {
   systemPrompt?: string;
   userPromptTemplate?: string;
-  role?: string;
+  role?: ModelRole;
   temperature?: number;
 }
 
@@ -337,7 +337,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const reviewResult = await runOutcomeReview(desire, execution, username, {
       systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
       userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
-      role: properties?.role ?? 'persona',
+      role: normalizeModelRole(properties?.role, 'persona'),
       temperature: properties?.temperature ?? 0.3,
     });
 
@@ -356,6 +356,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       reviewedAt: new Date().toISOString(),
       notifyUser: reviewResult.notifyUser,
       userMessage: reviewResult.userMessage,
+      milestoneAdvance: reviewResult.milestoneAdvance,
+      completionCriteriaMet: reviewResult.completionCriteriaMet,
     };
 
     console.log(`[outcome-reviewer]    Verdict: ${reviewResult.verdict}`);

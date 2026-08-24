@@ -11,7 +11,7 @@
  * 7. Load fine-tuned model to Ollama
  *
  * Usage:
- *   tsx brain/agents/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
+ *   pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --base-model Qwen/Qwen3.5-9B
  */
 
 import fs from 'node:fs';
@@ -154,26 +154,18 @@ async function mainWithContext(options: FineTuneOptions) {
       console.log('\n[fine-tune-cycle] ⚠️ PREPROCESSING DISABLED BY USER');
       console.log('[fine-tune-cycle] Skipping LLM curator - will use all existing curated conversations');
       console.log('[fine-tune-cycle] WARNING: No new memories will be curated. Only previously curated conversations will be used.');
-      console.log('[fine-tune-cycle] To curate more memories, enable preprocessing or run: tsx brain/agents/curator.ts --username', ctx.username);
+      console.log('[fine-tune-cycle] To curate more memories, enable preprocessing or run: tsx brain/agents/curator/cli.ts --username', ctx.username, '--all');
     } else {
       // Step 0: Pre-curation pass - LLM curator finishes any uncurated memories
       console.log('\n[fine-tune-cycle] ===== STEP 0: PRE-CURATION PASS =====');
       console.log('[fine-tune-cycle] Processing remaining uncurated memories before aggregation');
 
-      try {
-        const llmCuratorCode = await runAgent('curator', ['--username', ctx.username]);
-        if (llmCuratorCode === 0) {
-          console.log('[fine-tune-cycle] ✅ Pre-curation pass completed successfully');
-        } else {
-          console.warn(`[fine-tune-cycle] ⚠️  Pre-curation pass exited with code ${llmCuratorCode}, continuing...`);
-        }
-      } catch (curatorError) {
-        console.warn('[fine-tune-cycle] ⚠️  Pre-curation pass failed:', (curatorError as Error).message);
-        console.warn('[fine-tune-cycle] Continuing with available curated memories...');
-      }
+      const llmCuratorCode = await runAgent('curator', ['--username', ctx.username, '--all']);
+      if (llmCuratorCode !== 0) throw new Error(`Pre-curation pass failed with exit code ${llmCuratorCode}`);
+      console.log('[fine-tune-cycle] ✅ Pre-curation pass completed successfully');
     }
 
-    // Step 1: Aggregate curated conversations from curator.ts output
+    // Step 1: Aggregate the canonical curated-conversation store
     console.log('\n[fine-tune-cycle] ===== STEP 1: AGGREGATING CURATED CONVERSATIONS =====');
     if (!skipPreprocessing) {
       console.log('[fine-tune-cycle] Using LLM-curated conversations from curator agent');
@@ -184,9 +176,7 @@ async function mainWithContext(options: FineTuneOptions) {
       '--output', CURATED_PATH,
     ];
 
-    // Note: Monthly training strategy is handled by curator.ts incrementally
-    // The curator processes ~50 memories per run and maintains quality over time
-    // For training, we simply aggregate all available curated conversations
+    // The bounded --all pass above drains available memories before aggregation.
 
     if (options.maxSamples) {
       aggregatorArgs.push('--max', String(options.maxSamples));
@@ -399,7 +389,7 @@ async function mainWithContext(options: FineTuneOptions) {
         samples_trained: datasetLines,
         mode_filter: options.modeFilter,
         training_success: true,
-      }, options.username);
+      }, ctx.username);
 
       console.log(`[fine-tune-cycle] Registered training run in model registry`);
       console.log(`[fine-tune-cycle] Next fine-tune will build on this model (continuous learning)`);
@@ -410,7 +400,7 @@ async function mainWithContext(options: FineTuneOptions) {
 
     console.log('\n[fine-tune-cycle] ===== PIPELINE COMPLETE =====');
     console.log(`[fine-tune-cycle] Fine-tuned model ready!`);
-    console.log(`[fine-tune-cycle] Model path: ${trainingResult.modelPath}`);
+    console.log(`[fine-tune-cycle] Model path: ${trainingResult.gguf_path ?? trainingResult.ollama_model ?? FINAL_MODEL_DIR}`);
     console.log(`[fine-tune-cycle] Next step: Load to Ollama`);
 
     audit({
@@ -486,33 +476,9 @@ async function main() {
     }
   }
 
-  // Determine base model: user override → model registry → hardcoded default
-  let finalBaseModel: string;
-  let modelSource: 'user' | 'registry' | 'default';
-
-  if (baseModel) {
-    finalBaseModel = baseModel;
-    modelSource = 'user';
-  } else {
-    try {
-      const registryModel = getCurrentBaseModel(options.username);
-      finalBaseModel = registryModel.model;
-      modelSource = 'registry';
-      console.log(`[fine-tune-cycle] Using base model from registry: ${finalBaseModel}`);
-      if (registryModel.type === 'local') {
-        console.log(`[fine-tune-cycle] Building on previously trained model (continuous learning)`);
-      }
-    } catch (error) {
-      // Registry not found or error reading, use default
-      finalBaseModel = DEFAULT_TRAINING_MODEL;
-      modelSource = 'default';
-      console.log(`[fine-tune-cycle] Registry not available, using default: ${finalBaseModel}`);
-    }
-  }
-
   if (!username) {
     console.error('[fine-tune-cycle] ERROR: --username <name> is required');
-    console.error('\nUsage: tsx brain/agents/fine-tune-cycle.ts --username <username> [options]');
+    console.error('\nUsage: pnpm exec tsx brain/training/fine-tune-cycle.ts --username <username> [options]');
     console.error('\nOptions:');
     console.error('  --base-model <model>     Base model to fine-tune (default: from registry)');
     console.error('  --max <count>            Maximum samples to process');
@@ -524,12 +490,32 @@ async function main() {
     console.error('  --old-samples <count>    Mix in N random old samples');
     console.error('\nExamples:');
     console.error('  # Full dataset (initial training)');
-    console.error('  tsx brain/agents/fine-tune-cycle.ts --username greggles');
+    console.error('  pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles');
     console.error('\n  # Monthly update (recommended after foundation model)');
-    console.error('  tsx brain/agents/fine-tune-cycle.ts --username greggles --monthly');
+    console.error('  pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --monthly');
     console.error('\n  # Custom monthly strategy');
-    console.error('  tsx brain/agents/fine-tune-cycle.ts --username greggles --days-recent 45 --old-samples 4000');
+    console.error('  pnpm exec tsx brain/training/fine-tune-cycle.ts --username greggles --days-recent 45 --old-samples 4000');
     process.exit(1);
+  }
+
+  // Determine base model: user override → model registry → hardcoded default
+  let finalBaseModel: string;
+
+  if (baseModel) {
+    finalBaseModel = baseModel;
+  } else {
+    try {
+      const registryModel = getCurrentBaseModel(username);
+      finalBaseModel = registryModel.model;
+      console.log(`[fine-tune-cycle] Using base model from registry: ${finalBaseModel}`);
+      if (registryModel.type === 'local') {
+        console.log(`[fine-tune-cycle] Building on previously trained model (continuous learning)`);
+      }
+    } catch (error) {
+      // Registry not found or error reading, use default
+      finalBaseModel = DEFAULT_TRAINING_MODEL;
+      console.log(`[fine-tune-cycle] Registry not available, using default: ${finalBaseModel}`);
+    }
   }
 
   const userInfo = requireUserInfo(username);

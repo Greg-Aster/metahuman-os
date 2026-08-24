@@ -241,7 +241,6 @@ async function validateRoutingExecutors(): Promise<void> {
 async function validateArtifacts(graph: SvelteFlowGraph): Promise<void> {
   const paths = [
     path.join(ROOT, 'apps', 'site', 'public', 'cognitive-graphs', 'dual-mode.json'),
-    path.join(ROOT, 'apps', 'react-native', 'nodejs-assets', 'nodejs-project', 'etc', 'cognitive-graphs', 'dual-mode.json'),
   ]
 
   for (const artifactPath of paths) {

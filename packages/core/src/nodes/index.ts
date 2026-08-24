@@ -239,45 +239,6 @@ export function hasNode(id: string): boolean {
   return nodeRegistry.has(cleanId);
 }
 
-// ============================================================================
-// PLUGIN SUPPORT (runtime registration)
-// ============================================================================
-
-/**
- * Register a custom node at runtime
- * Used for plugins/extensions
- */
-export function registerNode(node: NodeDefinition): void {
-  allNodes.push(node);
-  nodeRegistry.set(node.id, node);
-  nodeExecutors.set(node.id, node.execute);
-  nodeSchemas.set(node.id, extractSchema(node));
-
-  if (node.aliases) {
-    for (const alias of node.aliases) {
-      nodeRegistry.set(alias, node);
-      nodeExecutors.set(alias, node.execute);
-      nodeSchemas.set(alias, extractSchema(node));
-    }
-  }
-}
-
-/**
- * Register a plugin executor (backward compatibility)
- * @deprecated Use registerNode() instead
- */
-export function registerPluginExecutor(pluginId: string, executor: NodeExecutor): void {
-  nodeExecutors.set(pluginId, executor);
-}
-
-/**
- * Unregister a plugin executor (called when plugin is unloaded)
- */
-export function unregisterPluginExecutor(pluginId: string): void {
-  nodeExecutors.delete(pluginId);
-  nodeSchemas.delete(pluginId);
-  nodeRegistry.delete(pluginId);
-}
 
 // ============================================================================
 // DEBUG / INSPECTION

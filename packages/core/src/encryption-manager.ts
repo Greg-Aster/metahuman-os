@@ -30,7 +30,13 @@
 import fs from 'fs';
 import path from 'path';
 import { audit } from './audit.js';
-import { getUser, updateUserMetadata, type ProfileEncryptionConfig, type ProfileStorageConfig } from './users.js';
+import {
+  getUser,
+  updateUserMetadata,
+  type ProfileEncryptionConfig,
+  type ProfileStorageConfig,
+  type SafeUser,
+} from './users.js';
 import { getProfilePaths } from './paths.js';
 
 // Import encryption modules
@@ -84,6 +90,52 @@ export interface EncryptionCapabilities {
   veracrypt: { available: boolean; version?: string };
 }
 
+const PROFILE_STORAGE_TYPES = new Set<ProfileStorageConfig['type']>([
+  'internal',
+  'external',
+  'encrypted',
+]);
+const ENCRYPTION_TYPES = new Set<ProfileEncryptionConfig['type']>([
+  'none',
+  'aes256',
+  'luks',
+  'veracrypt',
+]);
+
+export function isProfileStorageConfig(value: unknown): value is ProfileStorageConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+
+  const storage = value as Record<string, unknown>;
+  if (typeof storage.path !== 'string' || !storage.path.trim()) return false;
+  if (typeof storage.type !== 'string' || !PROFILE_STORAGE_TYPES.has(storage.type as ProfileStorageConfig['type'])) {
+    return false;
+  }
+
+  if (storage.encryption !== undefined) {
+    if (!storage.encryption || typeof storage.encryption !== 'object' || Array.isArray(storage.encryption)) {
+      return false;
+    }
+    const encryptionType = (storage.encryption as Record<string, unknown>).type;
+    if (typeof encryptionType !== 'string' || !ENCRYPTION_TYPES.has(encryptionType as ProfileEncryptionConfig['type'])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function resolveProfileStorage(user: Pick<SafeUser, 'metadata'>): {
+  storage: ProfileStorageConfig | null;
+  error?: string;
+} {
+  const candidate: unknown = user.metadata?.profileStorage;
+  if (candidate === undefined) return { storage: null };
+  if (!isProfileStorageConfig(candidate)) {
+    return { storage: null, error: 'Profile storage configuration is invalid' };
+  }
+  return { storage: candidate };
+}
+
 /**
  * Get available encryption capabilities on this system
  */
@@ -107,7 +159,11 @@ export async function getEncryptionStatus(userId: string): Promise<EncryptionSta
     return { type: 'none', unlocked: true, available: false, error: 'User not found' };
   }
 
-  const encConfig = user.metadata?.profileStorage?.encryption;
+  const storageResult = resolveProfileStorage(user);
+  if (storageResult.error) {
+    return { type: 'none', unlocked: false, available: false, error: storageResult.error };
+  }
+  const encConfig = storageResult.storage?.encryption;
 
   if (!encConfig || encConfig.type === 'none') {
     return { type: 'none', unlocked: true, available: true };
@@ -219,7 +275,12 @@ export async function unlockProfile(
     return { success: false, error: 'User not found' };
   }
 
-  const encConfig = user.metadata?.profileStorage?.encryption;
+  const storageResult = resolveProfileStorage(user);
+  if (storageResult.error) {
+    return { success: false, error: storageResult.error };
+  }
+  const profileStorage = storageResult.storage;
+  const encConfig = profileStorage?.encryption;
 
   if (!encConfig || encConfig.type === 'none') {
     return { success: true }; // Nothing to unlock
@@ -263,7 +324,7 @@ export async function unlockProfile(
         // Update user config with mount point
         updateUserMetadata(userId, {
           profileStorage: {
-            ...user.metadata?.profileStorage,
+            ...profileStorage,
             path: mountPoint,
             encryption: {
               ...encConfig,
@@ -305,7 +366,7 @@ export async function unlockProfile(
         // Update user config with mount point
         updateUserMetadata(userId, {
           profileStorage: {
-            ...user.metadata?.profileStorage,
+            ...profileStorage,
             path: mountPoint,
             encryption: {
               ...encConfig,
@@ -343,7 +404,12 @@ export async function lockProfile(userId: string): Promise<UnlockResult> {
     return { success: false, error: 'User not found' };
   }
 
-  const encConfig = user.metadata?.profileStorage?.encryption;
+  const storageResult = resolveProfileStorage(user);
+  if (storageResult.error) {
+    return { success: false, error: storageResult.error };
+  }
+  const profileStorage = storageResult.storage;
+  const encConfig = profileStorage?.encryption;
 
   if (!encConfig || encConfig.type === 'none') {
     return { success: true }; // Nothing to lock
@@ -372,7 +438,7 @@ export async function lockProfile(userId: string): Promise<UnlockResult> {
         // Update user config
         updateUserMetadata(userId, {
           profileStorage: {
-            ...user.metadata?.profileStorage,
+            ...profileStorage,
             encryption: {
               ...encConfig,
               unlocked: false,
@@ -407,7 +473,7 @@ export async function lockProfile(userId: string): Promise<UnlockResult> {
         // Update user config
         updateUserMetadata(userId, {
           profileStorage: {
-            ...user.metadata?.profileStorage,
+            ...profileStorage,
             encryption: {
               ...encConfig,
               unlocked: false,
@@ -663,6 +729,8 @@ export async function shouldEncryptFiles(userId: string): Promise<boolean> {
     return false;
   }
 
-  const encConfig = user.metadata?.profileStorage?.encryption;
+  const storageResult = resolveProfileStorage(user);
+  if (storageResult.error) return false;
+  const encConfig = storageResult.storage?.encryption;
   return encConfig?.type === 'aes256';
 }

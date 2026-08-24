@@ -16,7 +16,7 @@ import {
   saveUserCredentials,
   type UserCredentials,
 } from '../../llm-config.js';
-import { testProvider } from '../../mobile-providers.js';
+import { testRemoteProvider, type RemoteProviderName } from '../../providers/remote.js';
 
 // ============================================================================
 // Handlers
@@ -126,8 +126,8 @@ export async function handleSaveCredentials(req: UnifiedRequest): Promise<Unifie
   try {
     console.log(`[chat-handler] Testing ${provider} credentials for ${user.username}...`);
 
-    const testResult = await testProvider({
-      provider,
+    const testResult = await testRemoteProvider({
+      provider: provider as RemoteProviderName,
       apiKey,
       endpoint,
     });

@@ -6,7 +6,7 @@ export const meta: AgentMeta = {
   name: 'Mood',
   description: 'Selects an active persona facet from recent conversation and inner-dialogue context.',
   usesLLM: true,
-  priority: 'medium',
+  priority: 'normal',
   tags: ['persona', 'mood', 'graph'],
 };
 

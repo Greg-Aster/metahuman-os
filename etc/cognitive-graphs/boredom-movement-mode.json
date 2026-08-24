@@ -34,10 +34,7 @@
         "nodeType": "robot_operator_environment_dispatch",
         "properties": {
           "graph": "boredom-autonomy",
-          "requireAction": true,
-          "continuationPolicy": "bounded",
-          "requiredCompletionBasis": "visual_observation",
-          "visualEvidenceMode": "single"
+          "requireAction": true
         }
       }
     }

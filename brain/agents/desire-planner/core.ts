@@ -381,7 +381,13 @@ async function processDesire(
             metadata: {
               source: 'desire-planner',
               desireId: desire.id,
-              feasibility,
+              feasibility: {
+                feasible: feasibility.feasible,
+                confidence: feasibility.confidence,
+                reasoning: feasibility.reasoning,
+                blockers: feasibility.blockers ?? [],
+                suggestedApproach: feasibility.suggestedApproach ?? null,
+              },
             },
           }
         );

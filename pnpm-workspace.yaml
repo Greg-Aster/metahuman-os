@@ -1,14 +1,9 @@
 packages:
   - packages/*
+  - brain
   - apps/site
   - apps/react-native
-  - apps/robot-friend
 
 ignoredBuiltDependencies:
   - esbuild
-  - node-pty
   - sharp
-  - electron
-
-onlyBuiltDependencies:
-  - bcrypt

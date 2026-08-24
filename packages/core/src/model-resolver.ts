@@ -18,7 +18,27 @@ import {
 
 const LOG_PREFIX = '[model-resolver]';
 
-export type ModelRole = 'orchestrator' | 'persona' | 'environmentActionSelector' | 'curator' | 'coder' | 'planner' | 'summarizer' | 'psychotherapist' | 'embedder';
+export const MODEL_ROLES = [
+  'orchestrator',
+  'persona',
+  'environmentActionSelector',
+  'curator',
+  'coder',
+  'planner',
+  'summarizer',
+  'psychotherapist',
+  'embedder',
+] as const;
+
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
+export function isModelRole(value: unknown): value is ModelRole {
+  return typeof value === 'string' && (MODEL_ROLES as readonly string[]).includes(value);
+}
+
+export function normalizeModelRole(value: unknown, fallback: ModelRole): ModelRole {
+  return isModelRole(value) ? value : fallback;
+}
 export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
@@ -59,15 +79,33 @@ export interface ModelRegistry {
     useAdapter?: boolean;
     activeAdapter?: unknown; // Can be various adapter configuration formats
   };
-  defaults: Record<ModelRole, string>;
+  defaults: Partial<Record<ModelRole, string>>;
   models: Record<string, ModelDefinition>;
-  roleHierarchy?: Record<ModelRole, string[]>;
+  roleHierarchy?: Partial<Record<ModelRole, string[]>>;
   cognitiveModeMappings?: Record<string, Record<string, string | null | undefined>>;
-  providers?: Record<ModelProvider, {
+  providers?: Partial<Record<ModelProvider, {
     baseUrl: string;
     timeout: number;
     retries: number;
-  }>;
+  }>>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function parseModelRegistry(value: unknown): ModelRegistry {
+  if (!isRecord(value)) throw new Error('Invalid model registry: expected an object');
+  if (typeof value.version !== 'string' || !value.version) {
+    throw new Error('Invalid model registry: version must be a non-empty string');
+  }
+  if (typeof value.description !== 'string') {
+    throw new Error('Invalid model registry: description must be a string');
+  }
+  if (!isRecord(value.defaults) || !isRecord(value.models)) {
+    throw new Error('Invalid model registry: missing required fields (defaults, models)');
+  }
+  return value as unknown as ModelRegistry;
 }
 
 export interface ResolvedModel {
@@ -312,12 +350,7 @@ export function loadModelRegistry(forceFresh = false, username?: string): ModelR
 
   try {
     const content = fs.readFileSync(registryPath, 'utf-8');
-    const parsedRegistry = JSON.parse(content) as ModelRegistry;
-
-    // Validate required fields
-    if (!parsedRegistry.defaults || !parsedRegistry.models) {
-      throw new Error('Invalid model registry: missing required fields (defaults, models)');
-    }
+    const parsedRegistry = parseModelRegistry(JSON.parse(content));
     const migration = migrateModelRegistry(parsedRegistry);
     const registry = migration.registry;
     if (migration.changed) persistMigratedRegistry(registryPath, registry);

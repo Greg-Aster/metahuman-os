@@ -89,10 +89,9 @@ The default is intentionally simple: an existing file returned by `git ls-files`
 - `packages/server` and `packages/local-model-service`: maintained deployment and local-model service packages.
 - `apps/site`: Astro/Svelte interface and thin server transport for the web app.
 - `apps/react-native`: maintained React Native interface shell and its bundled mobile runtime entrypoints.
-- `apps/robot-friend`: maintained standalone robot conversation interface. Its local credentials and certificates remain excluded by `.gitignore`.
 - `brain/*`: workers, services, training, scripts, policies, rules, and the React Native bridge entrypoints above the engine. `brain/journal` and `brain/state` are runtime/history areas excluded by the policy.
 - `external/kokoro`, `external/whisper`, and `external/open-interpreter`: tracked integration entrypoints maintained by this repository. Their virtual environments, downloaded dependencies, models, caches, and generated outputs are not maintained source.
-- `etc`, `scripts`, `bin`, `docker`, `plugins/examples`, `tests`, and remote-safe documentation and fixtures that describe or validate maintained behavior.
+- `etc`, `scripts`, `bin`, `docker`, `tests`, and remote-safe documentation and fixtures that describe or validate maintained behavior.
 - Tracked interface assets such as icons and images are maintained when they are not generated or otherwise excluded by the policy.
 
 ## Critical Runtime Ownership Boundaries

@@ -808,14 +808,16 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
       curator: {
         id: 'curator',
         enabled: true,
-        type: 'activity',
+        type: 'manual',
         priority: 'normal',
-        agentPath: 'curator.ts',
+        agentPath: 'curator/index.ts',
         usesLLM: true,
-        inactivityThreshold: 600,
         startupPolicy: 'skip',
         maxRetries: 2,
-        comment: 'LLM-based memory curation - processes 5 memories per run after 10 minutes of user inactivity',
+        lifecycle: 'scheduled-work',
+        handler: 'agent.curator',
+        allowedModes: ['reactive', 'semi', 'full'],
+        comment: 'Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.',
       },
       'sleep-workflow': {
         id: 'sleep-workflow',
@@ -857,12 +859,15 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'interval',
         priority: 'low',
-        agentPath: 'curiosity-researcher.ts',
+        agentPath: 'curiosity-researcher/cli.ts',
         usesLLM: true,
         interval: 3600,
         startupPolicy: 'skip',
         maxRetries: 2,
-        comment: 'Performs research on pending curiosity questions by searching memories',
+        lifecycle: 'scheduled-work',
+        handler: 'agent.curiosity-researcher',
+        allowedModes: ['semi'],
+        comment: 'Independently researches one pending user-facing curiosity question per cycle using local memory',
       },
       'inner-curiosity': {
         id: 'inner-curiosity',
@@ -1101,10 +1106,8 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
   const curiosity = {
     maxOpenQuestions: 5,
     researchMode: 'local',
-    inactivityThresholdSeconds: 1800,
-    questionTopics: [],
+    innerQuestionMode: 'local',
     minTrustLevel: 'observe',
-    questionIntervalSeconds: 120,
   };
 
   await writeJsonIfMissing(path.join(etcDir, 'curiosity.json'), curiosity);
@@ -1286,26 +1289,6 @@ export function profileExists(username: string): boolean {
   }
 }
 
-/**
- * Ensure an existing profile has all required directories/configs.
- * Safe to run multiple times; only creates missing pieces.
- * Uses storage router to respect external/encrypted storage configuration.
- */
-export async function ensureProfileIntegrity(username: string): Promise<void> {
-  // Use storage router to get correct profile location (respects external/encrypted storage)
-  const profilePaths = getProfilePaths(username);
-  const profileRoot = profilePaths.root;
-
-  if (!(await fs.pathExists(profileRoot))) {
-    throw new Error(`Profile directory not found: ${profileRoot}`);
-  }
-
-  await ensureProfileDirectories(profileRoot);
-  await createDefaultPersona(profileRoot, username);
-  await createDefaultConfigs(profileRoot, username);
-  loadSleepConfigFile(path.join(profileRoot, 'etc', 'sleep.json'));
-}
-
 async function ensureProfileDirectories(profileRoot: string): Promise<void> {
   const dirs = [
     // Memory directories
@@ -1354,7 +1337,6 @@ async function ensureProfileDirectories(profileRoot: string): Promise<void> {
     path.join(profileRoot, 'out', 'summaries'),
     path.join(profileRoot, 'out', 'progress'),
     path.join(profileRoot, 'out', 'approval-queue'),
-    path.join(profileRoot, 'out', 'code-drafts'),
     // Log directories
     path.join(profileRoot, 'logs', 'audit'),
     path.join(profileRoot, 'logs', 'decisions'),

@@ -58,7 +58,6 @@ export type TaskType =
   | 'desire_checkin'
   | 'big_brother_escalation'
   | 'runpod_inference'
-  | 'code_analyze'
   | 'environment_command'
   | 'environment_observation'
   | 'sleep_workflow'
@@ -90,7 +89,6 @@ export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
   big_brother_escalation: 'remote-llm',
   runpod_inference: 'remote-llm',
   desire_execute: 'remote-llm',
-  code_analyze: 'remote-llm',
 };
 
 export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
@@ -117,7 +115,6 @@ export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
   mood_review: 'normal',
   sleep_workflow: 'background',
   operator_policy: 'background',
-  code_analyze: 'background',
 };
 
 export const DEFAULT_HANDLERS: Record<TaskType, string> = {
@@ -138,7 +135,6 @@ export const DEFAULT_HANDLERS: Record<TaskType, string> = {
   desire_checkin: 'agency.desire-checkin',
   big_brother_escalation: 'remote.big-brother',
   runpod_inference: 'remote.runpod',
-  code_analyze: 'agent.coder',
   environment_command: 'environment.command',
   environment_observation: 'environment.observation',
   sleep_workflow: 'workflow.sleep',

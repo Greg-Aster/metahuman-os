@@ -4,7 +4,6 @@
   import ActiveOperatorSettings from './ActiveOperatorSettings.svelte';
   import ModelRegistrySettings from './ModelRegistrySettings.svelte';
   import { apiFetch } from '../lib/client/api-config';
-  import { systemCoderDisabled } from '../stores/navigation';
 
   // Welcome modal toggle
   let showWelcomeModal = false;
@@ -68,9 +67,9 @@
   let reflectorContentModeLoading = false;
   let reflectorContentModeSaving = false;
   const contentModeOptions: Record<ContentMode, string> = {
-    all: 'All content - includes both user messages and AI responses',
+    all: 'User and AI history - generated dreams, reflections, and inner dialogue are excluded',
     user: 'User only - reflects on user inputs, excluding verbose AI responses (recommended)',
-    agent: 'Agent only - reflects on AI responses, dreams, and system outputs'
+    agent: 'Agent only - reflects on AI responses and system outputs; generated inner content is excluded'
   };
 
   // Index content mode (what gets embedded for semantic search)
@@ -837,37 +836,8 @@
 
   <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4">Developer Settings</h3>
 
-  <!-- System Coder Visibility -->
-  <div class="setting-group">
-    <label class="setting-label">System Coder</label>
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center justify-between">
-        <span class="setting-label">Disable System Coder</span>
-        <label
-          class="toggle-switch"
-          for="system-coder-disabled-toggle"
-          aria-label="Disable System Coder tab"
-        >
-          <input
-            id="system-coder-disabled-toggle"
-            type="checkbox"
-            bind:checked={$systemCoderDisabled}
-          />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
-        {#if $systemCoderDisabled}
-          System Coder is hidden from the right sidebar.
-        {:else}
-          System Coder is visible in the right sidebar.
-        {/if}
-      </p>
-    </div>
-  </div>
-
   <!-- Node Pipeline Toggle -->
-  <div class="setting-group mt-6">
+  <div class="setting-group">
     <label class="setting-label">Node Pipeline</label>
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between">

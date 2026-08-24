@@ -34,7 +34,11 @@ export interface Answer {
 /**
  * Session status
  */
-export type SessionStatus = 'active' | 'completed' | 'aborted';
+export type SessionStatus = 'active' | 'completed' | 'finalized' | 'applied' | 'aborted';
+
+export function isCompletedPersonaSession(status: SessionStatus): boolean {
+  return status === 'completed' || status === 'finalized' || status === 'applied';
+}
 
 /**
  * Category coverage tracking
@@ -57,6 +61,10 @@ export interface Session {
   status: SessionStatus;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string;
+  finalizedAt?: string;
+  appliedAt?: string;
+  appliedStrategy?: 'replace' | 'merge' | 'append';
   questions: Question[];
   answers: Answer[];
   categoryCoverage: CategoryCoverage;
@@ -71,6 +79,9 @@ export interface SessionMetadata {
   status: SessionStatus;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string;
+  finalizedAt?: string;
+  appliedAt?: string;
   questionCount: number;
   answerCount: number;
 }
@@ -85,6 +96,33 @@ export interface SessionIndex {
   sessions: SessionMetadata[];
 }
 
+export function getPersonaSessionStoragePaths(interviewsDir: string, sessionId: string) {
+  return {
+    session: path.join(interviewsDir, `${sessionId}.json`),
+    artifacts: path.join(interviewsDir, sessionId),
+  };
+}
+
+export function applySessionLifecycleTimestamps(session: Session, now: string): void {
+  session.updatedAt = now;
+  if (session.status === 'completed' && !session.completedAt) session.completedAt = now;
+  if (session.status === 'finalized' && !session.finalizedAt) session.finalizedAt = now;
+  if (session.status === 'applied' && !session.appliedAt) session.appliedAt = now;
+}
+
+export function resolvePersonaInterviewsPath(username: string): string {
+  const result = storageClient.resolvePath({
+    username,
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'therapy',
+  });
+  if (!result.success || !result.path) {
+    throw new Error(`Cannot resolve persona interview storage: ${result.error || 'unknown error'}`);
+  }
+  return result.path;
+}
+
 /**
  * Start a new persona interview session
  */
@@ -94,17 +132,7 @@ export async function startSession(userId: string, username: string): Promise<Se
     throw new Error('User context mismatch');
   }
 
-  // Resolve interviews directory path
-  const interviewsPathResult = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'therapy',
-  });
-  if (!interviewsPathResult.success || !interviewsPathResult.path) {
-    throw new Error('Cannot resolve interviews path for user');
-  }
-
-  const interviewsDir = interviewsPathResult.path;
+  const interviewsDir = resolvePersonaInterviewsPath(username);
 
   // Create interviews directory if it doesn't exist
   if (!fs.existsSync(interviewsDir)) {
@@ -135,7 +163,7 @@ export async function startSession(userId: string, username: string): Promise<Se
   };
 
   // Save session file
-  const sessionPath = path.join(interviewsDir, `${sessionId}.json`);
+  const sessionPath = getPersonaSessionStoragePaths(interviewsDir, sessionId).session;
   fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
 
   // Update index
@@ -160,16 +188,10 @@ export async function startSession(userId: string, username: string): Promise<Se
  * Load an existing session by ID
  */
 export async function loadSession(username: string, sessionId: string): Promise<Session | null> {
-  const interviewsPathResult = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'therapy',
-  });
-  if (!interviewsPathResult.success || !interviewsPathResult.path) {
-    return null;
-  }
-
-  const sessionPath = path.join(interviewsPathResult.path, `${sessionId}.json`);
+  const sessionPath = getPersonaSessionStoragePaths(
+    resolvePersonaInterviewsPath(username),
+    sessionId,
+  ).session;
 
   if (!fs.existsSync(sessionPath)) {
     return null;
@@ -189,24 +211,19 @@ export async function loadSession(username: string, sessionId: string): Promise<
  * Save updated session
  */
 export async function saveSession(username: string, session: Session): Promise<void> {
-  const interviewsPathResult = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'therapy',
-  });
-  if (!interviewsPathResult.success || !interviewsPathResult.path) {
-    throw new Error('Cannot resolve interviews path');
-  }
-
   // Verify ownership
   if (session.username !== username) {
     throw new Error('Session does not belong to this user');
   }
 
-  const sessionPath = path.join(interviewsPathResult.path, `${session.sessionId}.json`);
+  const sessionPath = getPersonaSessionStoragePaths(
+    resolvePersonaInterviewsPath(username),
+    session.sessionId,
+  ).session;
 
-  // Update timestamp
-  session.updatedAt = new Date().toISOString();
+  // Update lifecycle timestamps at the canonical persistence boundary.
+  const now = new Date().toISOString();
+  applySessionLifecycleTimestamps(session, now);
 
   // Save
   fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
@@ -218,21 +235,13 @@ export async function saveSession(username: string, session: Session): Promise<v
 /**
  * List all sessions for a user
  */
-export async function listSessions(_username: string): Promise<SessionMetadata[]> {
-  const indexPathResult = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'therapy/index.json',
-  });
-  if (!indexPathResult.success || !indexPathResult.path) {
+export async function listSessions(username: string): Promise<SessionMetadata[]> {
+  const indexPath = path.join(resolvePersonaInterviewsPath(username), 'index.json');
+  if (!fs.existsSync(indexPath)) {
     return [];
   }
 
-  if (!fs.existsSync(indexPathResult.path)) {
-    return [];
-  }
-
-  const index: SessionIndex = JSON.parse(fs.readFileSync(indexPathResult.path, 'utf-8'));
+  const index: SessionIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
   return index.sessions;
 }
 
@@ -378,17 +387,8 @@ function updateCategoryCoverage(session: Session): void {
 /**
  * Update session index
  */
-async function updateSessionIndex(_username: string, session: Session): Promise<void> {
-  const indexPathResult = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'therapy/index.json',
-  });
-  if (!indexPathResult.success || !indexPathResult.path) {
-    throw new Error('Cannot resolve index path');
-  }
-
-  const indexPath = indexPathResult.path;
+async function updateSessionIndex(username: string, session: Session): Promise<void> {
+  const indexPath = path.join(resolvePersonaInterviewsPath(username), 'index.json');
   const indexDir = path.dirname(indexPath);
 
   // Create directory if needed
@@ -416,6 +416,9 @@ async function updateSessionIndex(_username: string, session: Session): Promise<
     status: session.status,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    completedAt: session.completedAt,
+    finalizedAt: session.finalizedAt,
+    appliedAt: session.appliedAt,
     questionCount: session.questions.length,
     answerCount: session.answers.length,
   };
@@ -431,7 +434,7 @@ async function updateSessionIndex(_username: string, session: Session): Promise<
 
   // Update counters
   index.latestSessionId = session.sessionId;
-  index.completedCount = index.sessions.filter((s) => s.status === 'completed').length;
+  index.completedCount = index.sessions.filter((session) => isCompletedPersonaSession(session.status)).length;
 
   // Sort by createdAt descending (newest first)
   index.sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -454,7 +457,7 @@ export async function getSessionStats(username: string): Promise<{
   return {
     totalSessions: sessions.length,
     activeSessions: sessions.filter((s) => s.status === 'active').length,
-    completedSessions: sessions.filter((s) => s.status === 'completed').length,
+    completedSessions: sessions.filter((session) => isCompletedPersonaSession(session.status)).length,
     abortedSessions: sessions.filter((s) => s.status === 'aborted').length,
   };
 }

@@ -2,7 +2,7 @@
  * Help Ticket System
  *
  * Manages help tickets created from negative user feedback.
- * Integrates with Lizard Brain for periodic review and System Coder for fixes.
+ * Integrates with Lizard Brain for periodic review.
  */
 
 import * as fs from 'node:fs';
@@ -232,8 +232,6 @@ export function getTicketSummary(username: string): TicketSummary {
     needs_fix: 0,
     needs_training: 0,
     investigating: 0,
-    fix_proposed: 0,
-    fix_approved: 0,
     resolved: 0,
     wont_fix: 0,
     duplicate: 0,

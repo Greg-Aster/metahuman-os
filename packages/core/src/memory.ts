@@ -159,6 +159,41 @@ function isDuplicateContent(content: string): boolean {
 export type ToolParameter = string | number | boolean | null | ToolParameter[] | { [key: string]: ToolParameter };
 export type ToolParameters = Record<string, ToolParameter>;
 
+function toToolParameter(value: unknown): ToolParameter | undefined {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    return undefined;
+  }
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => toToolParameter(item) ?? null);
+  }
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, nestedValue]) => {
+        const serialized = toToolParameter(nestedValue);
+        return serialized === undefined ? [] : [[key, serialized]];
+      }),
+    );
+  }
+  return undefined;
+}
+
+/** Convert a structured value into JSON-safe episodic metadata. */
+export function toToolParameters(value: object): ToolParameters {
+  return toToolParameter(value) as ToolParameters;
+}
+
 /**
  * Enhanced metadata schema for episodic events
  * Supports memory continuity features and mode-aware capture
@@ -209,7 +244,7 @@ export interface EpisodicEventMetadata {
 
   // Allow additional custom fields for flexibility
   // This is needed for future extensibility without breaking changes
-  [key: string]: string | number | boolean | undefined | ToolParameters;
+  [key: string]: ToolParameter | undefined;
 }
 
 export interface EpisodicEvent {

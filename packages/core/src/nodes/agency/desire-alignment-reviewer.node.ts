@@ -18,7 +18,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, AlignmentReviewOutput } from '../../agency/types.js';
-import { callLLM, type RouterMessage } from '../../model-router.js';
+import { callLLM, normalizeModelRole, type RouterMessage } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Alignment Review module of MetaHuman OS. Your job is to evaluate whether a planned action aligns with the persona's values, goals, and identity.
@@ -66,12 +66,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // Inputs come via slot positions from graph links:
   // slot 0: {desire, found} from desire_loader
   // slot 2: formatted persona values string from persona_formatter
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
-  const slot2 = inputs[2] as string | { formatted?: string } | undefined;
+  const slot0 = (inputs.slot_0 ?? inputs.desire ?? inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
+  const slot2 = (inputs.slot_2 ?? inputs.personaValues ?? inputs[2]) as string | { formatted?: string } | undefined;
   const username = context.userId || context.username;
 
   // Extract desire and plan (plan is embedded in desire)
-  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
+  const desire: Desire | undefined = (slot0 as { desire?: Desire } | undefined)?.desire
+    ?? slot0 as Desire | undefined;
   const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
 
   // Get persona values from slot or named input
@@ -86,7 +87,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const personaGoals = (inputs.personaGoals as string) || '';
   const temperature = (properties?.temperature as number) ?? 0.2;
-  const role = properties?.role ?? 'persona';
+  const role = normalizeModelRole(properties?.role, 'persona');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 

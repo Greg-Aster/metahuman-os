@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "../../bin/run-with-agents astro dev",
-    "dev:no-hmr": "DISABLE_HMR=true ../../bin/run-with-agents astro dev",
+    "dev": "../../bin/run-site astro dev",
+    "dev:no-hmr": "DISABLE_HMR=true ../../bin/run-site astro dev",
     "build": "astro build",
-    "preview": "../../bin/run-with-agents astro preview"
+    "preview": "../../bin/run-site astro preview"
   },
   "dependencies": {
     "@astrojs/svelte": "^7.2.4",
@@ -18,11 +18,11 @@
     "autoprefixer": "^10.4.20",
     "idb": "^8.0.3",
     "marked": "^12.0.2",
-    "node-fetch": "^2.7.0",
     "postcss": "^8.4.47",
     "shiki": "^3.14.0",
     "tailwindcss": "^3.4.14",
-    "vite": "^6.4.1"
+    "vite": "^6.4.1",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

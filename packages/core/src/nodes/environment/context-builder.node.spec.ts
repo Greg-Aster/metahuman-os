@@ -37,7 +37,6 @@ function correlatedObservation(
       robotObserver: {
         cycleId: 'cycle-1',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'user',
         graph: 'environment',
         requestedBy,
@@ -134,6 +133,37 @@ test('action-required command-only autonomy is structurally bound to advertised 
   assert.equal(schema.properties.movementRequest.type, 'null');
 });
 
+test('mixed action schema keeps robot command fields off captureImage actions', async () => {
+  const current = correlatedObservation('environment-perception');
+  current.capabilities = {
+    actions: ['captureImage', 'robotCommand', 'sendText'],
+    robotCommands: ['neutral', 'wave'],
+    text: true,
+    movement: true,
+    visual: true,
+  };
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Please take a picture.',
+    observation: current,
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+      needsAction: true,
+    },
+  }, { userMessage: 'Please take a picture.' }, { systemPrompt: '', recentHistoryLimit: 4 });
+  const branches = (result.jsonSchema as any).properties.actions.items.anyOf;
+  const nonCommandBranch = branches.find((branch: any) => (
+    branch.properties.type.enum.includes('captureImage')
+  ));
+  const commandBranch = branches.find((branch: any) => (
+    branch.properties.type.enum.includes('robotCommand')
+  ));
+
+  assert.equal('command' in nonCommandBranch.properties, false);
+  assert.deepEqual(commandBranch.required, ['type', 'command']);
+  assert.deepEqual(commandBranch.properties.command.enum, ['neutral', 'wave']);
+});
+
 test('explicit Robot Observer work retains its visual-evidence admission', async () => {
   const result = await buildContext('robot-observer');
 
@@ -161,6 +191,112 @@ test('selector receives history once inside its bounded envelope', async () => {
   const selectorEnvelope = JSON.parse(String(result.messages[1]?.content));
   assert.equal(selectorEnvelope.currentInstruction, 'Please wave now.');
   assert.equal(selectorEnvelope.recentConversation.length, 2);
+});
+
+test('a fresh user control turn retains memory context without unrelated action lineage', async () => {
+  const current = correlatedObservation('environment-perception');
+  current.feedback = [{
+    id: 'old-feedback',
+    actionId: 'old-action',
+    timestamp: '2026-08-04T11:59:00.000Z',
+    type: 'completed',
+    message: 'An unrelated autonomous walk completed.',
+    data: { command: 'walk_forward' },
+  }];
+  current.metadata = {
+    ...current.metadata,
+    actionId: 'old-action',
+    correlationId: 'old-cycle',
+    originatingInstruction: 'An unrelated autonomous objective.',
+  };
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Please turn left ninety degrees.',
+    observation: current,
+    conversationHistory: [
+      { role: 'user', content: 'Please turn until you see a foot.' },
+      { role: 'assistant', content: 'My sensors indicate the room remains empty.' },
+    ],
+    memories: [{ content: 'My sensors indicate the room remains empty.' }],
+    personaText: '## Identity\n- Name: Ainekio',
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+      needsMemory: true,
+      isFollowUp: true,
+    },
+  }, {
+    userMessage: 'Please turn left ninety degrees.',
+    username: 'greggles',
+  }, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  const selectorEnvelope = JSON.parse(String(result.messages[1]?.content));
+  assert.equal(selectorEnvelope.recentConversation.length, 2);
+  assert.deepEqual(selectorEnvelope.memories, [
+    'My sensors indicate the room remains empty.',
+  ]);
+  assert.deepEqual(selectorEnvelope.currentEnvironment.feedback, []);
+  assert.equal('actionId' in selectorEnvelope.currentEnvironment, false);
+  assert.equal('correlationId' in selectorEnvelope.currentEnvironment, false);
+  assert.match(selectorEnvelope.activePersona, /Name: Ainekio/);
+  assert.equal(result.context.contextSelection.recentHistory, true);
+  assert.equal(result.context.contextSelection.semanticMemory, true);
+});
+
+test('a bounded feedback pass must return completion or one next action', async () => {
+  const current = correlatedObservation('environment-perception');
+  current.capabilities = {
+    actions: ['captureImage', 'robotCommand'],
+    robotCommands: ['wave'],
+    movement: true,
+    visual: true,
+  };
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Evaluate the current frame and continue the same objective.',
+    observation: current,
+    taskState: {
+      version: 1,
+      objective: 'Wave until a hand is visible.',
+      phase: 'evaluating_evidence',
+      step: 1,
+      maxSteps: 8,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
+      selectedAction: { type: 'robotCommand', command: 'wave' },
+    },
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+      needsVision: true,
+    },
+  }, {
+    environmentActionSource: 'user',
+    username: 'greggles',
+  }, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  const envelope = JSON.parse(String(result.message));
+  const schema = result.jsonSchema as any;
+  const progressBranches = schema.allOf[0].anyOf;
+  const actionBranch = progressBranches.find((branch: any) => (
+    branch.properties?.actions?.minItems === 1
+  ));
+  const completionBranch = progressBranches.find((branch: any) => (
+    branch.properties?.taskDecision?.properties?.outcome?.enum?.[0] === 'complete'
+  ));
+
+  assert.equal(envelope.decisionRequirements.mustAdvanceTask, true);
+  assert.deepEqual(envelope.currentEnvironment.feedback, []);
+  assert.equal(envelope.currentEnvironment.actionId, undefined);
+  assert.equal(envelope.currentEnvironment.correlationId, 'cycle-1');
+  assert.match(String(result.messages[0]?.content), /incomplete response with no action is invalid/i);
+  assert.equal(actionBranch.properties.actions.minItems, 1);
+  assert.deepEqual(completionBranch.properties.taskDecision.properties.outcome.enum, ['complete']);
+  assert.deepEqual(completionBranch.properties.taskDecision.properties.objectiveComplete.enum, [true]);
+  assert.deepEqual(
+    completionBranch.properties.taskDecision.properties.requiredCompletionBasis.enum,
+    ['response', 'action_result', 'visual_observation', 'environment_state', 'user_input'],
+  );
+  assert.equal(completionBranch.properties.taskDecision.properties.completionEvidence.minLength, 1);
 });
 
 test('autonomous observations exclude conversation history by default', async () => {

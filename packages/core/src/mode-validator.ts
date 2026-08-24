@@ -5,7 +5,13 @@
  * and that formatting rules are correctly applied.
  */
 
-export type CognitiveMode = 'dual' | 'emulation' | 'agent';
+import type {
+  CognitiveMode,
+  CuratedSample,
+  FormattedSample,
+} from './schema-manager.js';
+
+export type { CognitiveMode, CuratedSample, FormattedSample } from './schema-manager.js';
 
 export interface ValidationError {
   sampleId: string;
@@ -31,26 +37,6 @@ export interface QualityMetrics {
     dual: number;
     emulation: number;
     agent: number;
-  };
-}
-
-export interface FormattedSample {
-  mode: CognitiveMode;
-  input: string;
-  output: string;
-  metadata: {
-    original_id: string;
-    [key: string]: any;
-  };
-}
-
-export interface CuratedSample {
-  mode: CognitiveMode;
-  user_text: string;
-  assistant_text: string;
-  metadata: {
-    original_id: string;
-    [key: string]: any;
   };
 }
 

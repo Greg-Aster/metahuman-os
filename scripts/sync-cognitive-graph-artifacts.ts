@@ -27,7 +27,6 @@ async function main(): Promise<void> {
     const normalized = `${JSON.stringify(graph, null, 2)}\n`
     const destinations = [
       join(ROOT, 'apps', 'site', 'public', 'cognitive-graphs', `${graphName}.json`),
-      join(ROOT, 'apps', 'react-native', 'nodejs-assets', 'nodejs-project', 'etc', 'cognitive-graphs', `${graphName}.json`),
     ]
 
     await Promise.all(destinations.map(destination => writeFile(destination, normalized)))

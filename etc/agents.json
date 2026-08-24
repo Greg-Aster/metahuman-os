@@ -177,9 +177,9 @@
       "comment": "70% chance to reflect after 15 min of inactivity - not guaranteed, feels more organic",
       "contentMode": "user",
       "contentModeOptions": {
-        "all": "All content - includes both user messages and AI responses",
+        "all": "User and AI history - generated dreams, reflections, and inner dialogue are excluded",
         "user": "User only - reflects on user inputs, excluding verbose AI responses (recommended)",
-        "agent": "Agent only - reflects on AI responses, dreams, and system outputs"
+        "agent": "Agent only - reflects on AI responses and system outputs; generated inner content is excluded"
       },
       "lifecycle": "scheduled-work",
       "handler": "agent.reflector",
@@ -198,7 +198,7 @@
       "inactivityThreshold": 900,
       "pauseCategory": "interactive",
       "maxRetries": 2,
-      "comment": "Triggers only after conversation inactivity. Threshold (900s = 15min) controlled by questionIntervalSeconds in curiosity.json.",
+      "comment": "Trigger Manager admits this agent after 15 minutes of conversation inactivity.",
       "lifecycle": "scheduled-work",
       "handler": "agent.curiosity-service",
       "allowedModes": [
@@ -211,11 +211,11 @@
       "enabled": true,
       "type": "interval",
       "priority": "low",
-      "agentPath": "curiosity-researcher.ts",
+      "agentPath": "curiosity-researcher/cli.ts",
       "usesLLM": true,
       "interval": 3600,
       "maxRetries": 2,
-      "comment": "Performs research on pending curiosity questions by searching memories and generating context notes. Processes one question per cycle.",
+      "comment": "Independently researches one pending user-facing curiosity question per cycle using local memory. Curiosity Service remains the separate question-asking owner.",
       "lifecycle": "scheduled-work",
       "handler": "agent.curiosity-researcher",
       "allowedModes": [
@@ -271,24 +271,6 @@
       "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-generator",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
-    },
-    "desire-explorer": {
-      "id": "desire-explorer",
-      "enabled": true,
-      "type": "manual",
-      "priority": "normal",
-      "agentPath": "desire-explorer/run.ts",
-      "usesLLM": true,
-      "maxRetries": 2,
-      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
-      "lifecycle": "scheduled-work",
-      "handler": "agent.desire-explorer",
       "allowedModes": [
         "reactive",
         "semi",
@@ -409,24 +391,6 @@
       "startupPolicy": "skip",
       "maxRetries": 1,
       "comment": "Disabled by default. When enabled, queues one Mood graph review after every 10 user messages. After 30 minutes without a conversation event, queues the same graph in baseline-reset mode."
-    },
-    "auto-indexer": {
-      "id": "auto-indexer",
-      "enabled": true,
-      "type": "manual",
-      "priority": "low",
-      "agentPath": "auto-indexer.ts",
-      "usesLLM": false,
-      "maxRetries": 1,
-      "comment": "Final Sleep Workflow child. It can still be run manually and skips a recent index, but has no independent nightly timer.",
-      "lifecycle": "scheduled-work",
-      "handler": "agent.auto-indexer",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
     },
     "daydreamer": {
       "id": "daydreamer",

@@ -1,8 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { audit } from './audit.js'
 import { storageClient } from './storage-client.js'
-import { embedText, cosineSimilarity } from './embeddings.js'
+import { cosineSimilarity } from './embeddings.js'
 import { extractMemoryContent, type ContentMode } from './memory-content-filter.js'
+import { callEmbeddings, isEmbeddingServiceAvailable } from './model-router.js'
 import { ROOT } from './paths.js'
 
 // ============================================================================
@@ -81,8 +84,42 @@ export interface VectorIndexFile {
   data: VectorIndexItem[]
 }
 
+export type MemoryIndexStatus =
+  | { exists: false }
+  | {
+      exists: true
+      model: string
+      provider: string
+      items: number
+      dimensions?: number
+      createdAt: string
+    }
+
+export interface MemoryIndexRefreshOptions {
+  username: string
+  force?: boolean
+  maxAgeHours?: number
+  source?: string
+}
+
+export interface MemoryIndexRefreshResult {
+  username: string
+  rebuilt: boolean
+  skipped: boolean
+  reason: 'forced' | 'missing' | 'stale' | 'recent'
+  indexPath?: string
+  status: MemoryIndexStatus
+}
+
 // Default model name for index filename - must match embeddings.ts DEFAULTS.model
 const DEFAULT_INDEX_MODEL = 'qwen3-embedding-0.6b'
+const MAX_EMBEDDING_TEXT_LENGTH = 32_000
+
+function prepareEmbeddingText(text: string): string {
+  if (text.length <= MAX_EMBEDDING_TEXT_LENGTH) return text
+  console.warn(`[vector-index] Embedding text too long (${text.length} chars), truncating to ${MAX_EMBEDDING_TEXT_LENGTH}`)
+  return `${text.slice(0, MAX_EMBEDDING_TEXT_LENGTH)}... [truncated]`
+}
 
 export function indexFilePath(model?: string, username?: string): string {
   const { indexDir } = resolveMemoryPaths(username);
@@ -97,6 +134,21 @@ function readJSON<T>(p: string): T | null {
     return JSON.parse(fs.readFileSync(p, 'utf8')) as T
   } catch {
     return null
+  }
+}
+
+function readRequiredJSON<T>(p: string): T {
+  return JSON.parse(fs.readFileSync(p, 'utf8')) as T
+}
+
+function writeIndexFile(dest: string, index: VectorIndexFile): void {
+  const tempPath = `${dest}.${randomUUID()}.tmp`
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(index, null, 2))
+    fs.renameSync(tempPath, dest)
+  } catch (error) {
+    try { fs.unlinkSync(tempPath) } catch {}
+    throw error
   }
 }
 
@@ -141,11 +193,9 @@ function walkFiles(dir: string, filter: (p: string) => boolean): string[] {
  * the user's profile models.json, routing to local-models (llama.cpp)
  * or other configured providers.
  *
- * @param options.force - Force rebuild even if index exists
  * @param options.include - Which memory types to include
  */
-export async function buildMemoryIndex(options: {
-  force?: boolean
+async function buildMemoryIndex(options: {
   include?: { episodic?: boolean; tasks?: boolean; curated?: boolean; functions?: boolean }
   username?: string  // Explicit username (use when context isn't available, e.g., CLI)
 } = {}): Promise<string> {
@@ -156,8 +206,10 @@ export async function buildMemoryIndex(options: {
   const username = options.username
 
   const items: VectorIndexItem[] = []
+  const indexingErrors: Array<{ path: string; message: string }> = []
   let dimensions = 0
-  let firstVector: number[] | null = null
+  let embeddingModel: string | undefined
+  let embeddingProvider: string | undefined
 
   const memPaths = resolveMemoryPaths(username);
 
@@ -166,14 +218,20 @@ export async function buildMemoryIndex(options: {
   console.log(`[vector-index] Index content mode: ${indexContentMode}`)
 
   // Helper to get embedding and track dimensions
-  // Note: embeddings.ts handles truncation at 32K chars if needed
   const getEmbedding = async (text: string): Promise<number[]> => {
-    const vector = await embedText(text)
-    if (!firstVector) {
-      firstVector = vector
-      dimensions = vector.length
+    const response = await callEmbeddings({ text: prepareEmbeddingText(text), userId: username })
+    if (!embeddingModel) {
+      embeddingModel = response.model
+      embeddingProvider = response.provider
+      dimensions = response.dimensions
+    } else if (
+      embeddingModel !== response.model
+      || embeddingProvider !== response.provider
+      || dimensions !== response.dimensions
+    ) {
+      throw new Error('Embedding route changed during index build')
     }
-    return vector
+    return response.embeddings
   }
 
   if (includeEpisodic) {
@@ -184,7 +242,7 @@ export async function buildMemoryIndex(options: {
     let embeddingErrors = 0
     for (const f of files) {
       try {
-        const obj = readJSON<any>(f)
+        const obj = readRequiredJSON<any>(f)
         if (!obj || !obj.id || !obj.content) continue
         if (obj.validation && obj.validation.status === 'incorrect') continue
 
@@ -231,6 +289,7 @@ export async function buildMemoryIndex(options: {
         }
       } catch (err) {
         embeddingErrors++
+        indexingErrors.push({ path: f, message: (err as Error).message })
         // Log first few errors then summarize
         if (embeddingErrors <= 3) {
           console.error(`[vector-index] Embedding error: ${(err as Error).message}`)
@@ -254,14 +313,16 @@ export async function buildMemoryIndex(options: {
     let processed = 0
     for (const f of files) {
       try {
-        const obj = readJSON<any>(f)
+        const obj = readRequiredJSON<any>(f)
         if (!obj || !obj.id || !obj.title) continue
         const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
         const text = [obj.title, obj.description || '', tags ? `Tags: ${tags}` : ''].join(' ').trim()
         const vector = await getEmbedding(text)
         items.push({ id: obj.id, path: f, type: 'task', timestamp: obj.updated || obj.created, text, vector })
         processed++
-      } catch {}
+      } catch (error) {
+        indexingErrors.push({ path: f, message: (error as Error).message })
+      }
     }
     console.log(`[vector-index] ✓ Indexed ${processed} tasks`)
   }
@@ -278,7 +339,7 @@ export async function buildMemoryIndex(options: {
       let processed = 0
       for (const f of files) {
         try {
-          const obj = readJSON<any>(f)
+          const obj = readRequiredJSON<any>(f)
           if (!obj || !obj.id || !obj.title) continue
           const tags = Array.isArray(obj.tags) ? obj.tags.join(' ') : ''
           const skillsUsed = Array.isArray(obj.skillsUsed) ? obj.skillsUsed.join(' ') : ''
@@ -303,10 +364,14 @@ export async function buildMemoryIndex(options: {
             vector,
           })
           processed++
-        } catch {}
+        } catch (error) {
+          indexingErrors.push({ path: f, message: (error as Error).message })
+        }
       }
       console.log(`[vector-index] ✓ Indexed ${processed} functions`)
-    } catch {}
+    } catch (error) {
+      indexingErrors.push({ path: memPaths.functions, message: (error as Error).message })
+    }
   }
 
   if (includeCurated) {
@@ -317,7 +382,7 @@ export async function buildMemoryIndex(options: {
     for (const f of files) {
       try {
         const base = f.replace(/\.meta\.json$/, '')
-        const meta = readJSON<any>(f)
+        const meta = readRequiredJSON<any>(f)
         if (!meta) continue
         const highlights = readJSON<string[]>(`${base}.highlights.json`) || []
         const title = meta.title || path.basename(base)
@@ -327,15 +392,15 @@ export async function buildMemoryIndex(options: {
         const vector = await getEmbedding(text)
         items.push({ id: `cur-${path.basename(base)}`, path: f, type: 'episodic', timestamp: meta?.timestamp, text, vector })
         processed++
-      } catch {}
+      } catch (error) {
+        indexingErrors.push({ path: f, message: (error as Error).message })
+      }
     }
     console.log(`[vector-index] ✓ Indexed ${processed} curated items`)
   }
 
-  // Determine model/provider from first embedding (set by model router)
-  // The model router uses user profile to resolve 'embedder' role
-  const model = DEFAULT_INDEX_MODEL  // From user profile via model router
-  const provider = 'local-models'    // Default provider for embeddings
+  const model = embeddingModel || DEFAULT_INDEX_MODEL
+  const provider = embeddingProvider || 'unknown'
 
   const out: VectorIndexFile = {
     meta: {
@@ -348,15 +413,18 @@ export async function buildMemoryIndex(options: {
     data: items,
   }
 
-  // Fail if we found files but indexed nothing (indicates embedding service failure)
-  if (items.length === 0 && dimensions === 0) {
-    const errorMsg = '[vector-index] ERROR: No items indexed - embedding service may be unavailable or all files failed to process'
-    console.error(errorMsg)
-    throw new Error('Index build failed: 0 items indexed. Check embedding service availability.')
+  if (indexingErrors.length > 0) {
+    const examples = indexingErrors
+      .slice(0, 3)
+      .map(error => `${path.basename(error.path)}: ${error.message}`)
+      .join('; ')
+    throw new Error(`Index build failed for ${indexingErrors.length} item(s); existing index preserved. ${examples}`)
   }
 
-  const dest = indexFilePath(model, username)
-  fs.writeFileSync(dest, JSON.stringify(out, null, 2))
+  // The canonical index filename is a stable role slot. The actual configured
+  // model and provider are recorded in metadata and may change between builds.
+  const dest = indexFilePath(undefined, username)
+  writeIndexFile(dest, out)
 
   // Clear cache so next query loads fresh index
   clearIndexCache()
@@ -447,10 +515,19 @@ export async function queryIndex(
     console.log('[vector-index] No index found - returning empty results. Build with: mh --user <username> index build')
     return []
   }
+  if (idx.data.length === 0) return []
 
   // Step 2: Generate embedding for query using model router
   const embedStart = Date.now()
-  const qvec = await embedText(query)
+  const queryEmbedding = await callEmbeddings({ text: prepareEmbeddingText(query), userId: options.username })
+  if (
+    queryEmbedding.model !== idx.meta.model
+    || queryEmbedding.provider !== idx.meta.provider
+    || (idx.meta.dimensions && queryEmbedding.dimensions !== idx.meta.dimensions)
+  ) {
+    throw new Error('The configured embedding model does not match this index; queue a full index rebuild')
+  }
+  const qvec = queryEmbedding.embeddings
   const embedTime = Date.now() - embedStart
 
   // Step 3: Compute HYBRID scores (vector + keyword)
@@ -478,7 +555,7 @@ export async function queryIndex(
   return scored.slice(0, topK).map(s => ({ item: s.item, score: s.score }))
 }
 
-export function getIndexStatus(model?: string, username?: string) {
+export function getIndexStatus(model?: string, username?: string): MemoryIndexStatus {
   const idx = loadIndex(model, username)
   if (!idx) return { exists: false }
   return {
@@ -488,6 +565,102 @@ export function getIndexStatus(model?: string, username?: string) {
     items: idx.meta.items,
     dimensions: idx.meta.dimensions,
     createdAt: idx.meta.createdAt
+  }
+}
+
+export function decideMemoryIndexRefresh(
+  status: MemoryIndexStatus,
+  options: Pick<MemoryIndexRefreshOptions, 'force' | 'maxAgeHours'> = {},
+  now = Date.now(),
+): { refresh: boolean; reason: MemoryIndexRefreshResult['reason'] } {
+  if (options.force) return { refresh: true, reason: 'forced' }
+  if (!status.exists) return { refresh: true, reason: 'missing' }
+
+  const maxAgeHours = options.maxAgeHours ?? 24
+  if (!Number.isFinite(maxAgeHours) || maxAgeHours < 0) {
+    throw new Error('maxAgeHours must be a non-negative number')
+  }
+  const createdAt = new Date(status.createdAt).getTime()
+  const recent = Number.isFinite(createdAt) && now - createdAt < maxAgeHours * 60 * 60 * 1000
+  return recent
+    ? { refresh: false, reason: 'recent' }
+    : { refresh: true, reason: 'stale' }
+}
+
+/**
+ * Reconcile the complete memory index behind the coordinator-owned
+ * `vector.index-build` handler.
+ */
+export async function refreshMemoryIndex(options: MemoryIndexRefreshOptions): Promise<MemoryIndexRefreshResult> {
+  if (!/^[a-zA-Z0-9_-]{1,50}$/.test(options.username)) {
+    throw new Error('A valid username is required to refresh the memory index')
+  }
+
+  const status = getIndexStatus(undefined, options.username)
+  const decision = decideMemoryIndexRefresh(status, options)
+  if (!decision.refresh) {
+    audit({
+      level: 'info',
+      category: 'system',
+      event: 'memory_index_refresh_skipped',
+      actor: options.username,
+      details: { username: options.username, reason: decision.reason, source: options.source || 'unknown' },
+    })
+    return {
+      username: options.username,
+      rebuilt: false,
+      skipped: true,
+      reason: decision.reason,
+      status,
+    }
+  }
+
+  if (!await isEmbeddingServiceAvailable(options.username)) {
+    const error = new Error(`Embedding service is unavailable for ${options.username}`)
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'memory_index_refresh_failed',
+      actor: options.username,
+      details: { username: options.username, reason: error.message, source: options.source || 'unknown' },
+    })
+    throw error
+  }
+
+  try {
+    const indexPath = await buildMemoryIndex({ username: options.username })
+    const refreshedStatus = getIndexStatus(undefined, options.username)
+    if (!refreshedStatus.exists) throw new Error('Index build completed without a readable index')
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'memory_index_refreshed',
+      actor: options.username,
+      details: {
+        username: options.username,
+        reason: decision.reason,
+        source: options.source || 'unknown',
+        items: refreshedStatus.items,
+        model: refreshedStatus.model,
+      },
+    })
+    return {
+      username: options.username,
+      rebuilt: true,
+      skipped: false,
+      reason: decision.reason,
+      indexPath,
+      status: refreshedStatus,
+    }
+  } catch (error) {
+    audit({
+      level: 'error',
+      category: 'system',
+      event: 'memory_index_refresh_failed',
+      actor: options.username,
+      details: { username: options.username, reason: (error as Error).message, source: options.source || 'unknown' },
+    })
+    throw error
   }
 }
 
@@ -523,7 +696,7 @@ export async function appendEventToIndex(event: {
   let idx = loadIndex(options.model, options.username)
   if (!idx) {
     console.log(`[vector-index] No index found for ${options.username || 'current user'}; building the base index before appending ${event.id}`)
-    await buildMemoryIndex({ force: true, username: options.username })
+    await buildMemoryIndex({ username: options.username })
     idx = loadIndex(options.model, options.username)
     if (!idx) return false
 
@@ -564,7 +737,26 @@ export async function appendEventToIndex(event: {
     .join(' ')
 
   // Use model router for embeddings
-  const vector = await embedText(text)
+  const embedding = await callEmbeddings({ text: prepareEmbeddingText(text), userId: options.username })
+  if (
+    embedding.model !== idx.meta.model
+    || embedding.provider !== idx.meta.provider
+    || (idx.meta.dimensions && embedding.dimensions !== idx.meta.dimensions)
+  ) {
+    console.log('[vector-index] Embedding route changed; rebuilding before incremental append')
+    await buildMemoryIndex({ username: options.username })
+    idx = loadIndex(options.model, options.username)
+    if (!idx) return false
+    if (idx.data.some(item => item.id === event.id)) return true
+    if (
+      embedding.model !== idx.meta.model
+      || embedding.provider !== idx.meta.provider
+      || (idx.meta.dimensions && embedding.dimensions !== idx.meta.dimensions)
+    ) {
+      throw new Error('The configured embedding model still does not match the requested index')
+    }
+  }
+  const vector = embedding.embeddings
   idx.data.push({
     id: event.id,
     path: event.path || '',
@@ -577,7 +769,7 @@ export async function appendEventToIndex(event: {
   idx.meta.items = idx.data.length
 
   const indexPath = indexFilePath(options.model, options.username)
-  fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2))
+  writeIndexFile(indexPath, idx)
 
   // Update cache in place (avoid full reload for single append)
   if (indexCache && indexCache.path === indexPath) {

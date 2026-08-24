@@ -59,7 +59,7 @@
     "showPostExecutionFeedback": true,
     "feedbackBackend": {
       "provider": "memory",
-      "availableProviders": ["memory", "big-brother", "runpod", "system-coder"],
+      "availableProviders": ["memory", "big-brother", "runpod"],
       "escalateRejections": true,
       "escalateNegativeFeedback": true,
       "escalationThreshold": 3

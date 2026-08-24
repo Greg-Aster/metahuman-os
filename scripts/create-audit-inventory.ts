@@ -40,7 +40,6 @@ function isMaintained(file: string): boolean {
 function areaFor(file: string): string {
   if (file.startsWith('packages/core/')) return 'core-engine';
   if (file.startsWith('apps/site/')) return 'web-interface';
-  if (file.startsWith('apps/robot-friend/')) return 'robot-interface';
   if (file.startsWith('brain/agents/')) return 'agents';
   if (file.startsWith('brain/services/')) return 'brain-services';
   if (file.startsWith('brain/training/')) return 'training';
@@ -49,7 +48,6 @@ function areaFor(file: string): string {
   if (file.startsWith('brain/policies/') || file.startsWith('brain/rules/')) return 'brain-policy';
   if (file.startsWith('packages/cli/')) return 'cli';
   if (file.startsWith('packages/agent-runtime/')) return 'agent-runtime';
-  if (file.startsWith('packages/server/')) return 'server-package';
   if (file.startsWith('packages/local-model-service/')) return 'local-model-service';
   if (file.startsWith('apps/react-native/')) return 'mobile-interface';
   if (file.startsWith('external/')) return 'external-integration';

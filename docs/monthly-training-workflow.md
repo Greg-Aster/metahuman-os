@@ -254,11 +254,9 @@ tsx brain/agents/fine-tune-cycle.ts --username greggles \
    find profiles/greggles/memory/episodic -name "*.json" | wc -l
    ```
 
-2. Review quality metrics:
+2. Review quality metrics with a bounded aggregate:
    ```bash
-   tsx brain/agents/memory-curator.ts \
-     --username greggles \
-     --output /tmp/test.json
+   pnpm exec tsx scripts/test-fine-tune-pipeline.ts --username greggles --max 100
    ```
 
 **Run foundation training**:
@@ -424,9 +422,7 @@ Set a consistent training schedule:
 
 Before each training run:
 ```bash
-tsx brain/agents/memory-curator.ts \
-  --username greggles \
-  --output /tmp/preview.json
+pnpm exec tsx scripts/test-fine-tune-pipeline.ts --username greggles --max 100
 ```
 
 Review the quality metrics and only proceed if:

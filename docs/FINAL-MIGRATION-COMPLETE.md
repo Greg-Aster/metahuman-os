@@ -170,7 +170,6 @@ export const POST = handler; // Clean, no wrapper
 - apps/site/src/pages/api/audit/clear.ts:55
 - apps/site/src/pages/api/auth/logout.ts:25
 - apps/site/src/pages/api/conversation-buffer.ts:232
-- apps/site/src/pages/api/code-approvals/[...path].ts:191, 242, 275
 - apps/site/src/pages/api/lora-toggle.ts:29
 
 **Files with `actor: 'human'` (6 instances)**:

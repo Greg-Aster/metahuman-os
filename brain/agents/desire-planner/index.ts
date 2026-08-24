@@ -4,7 +4,7 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'desire-planner', name: 'Desire Planner',
   description: 'Generates execution plans for desires using cognitive graphs',
-  usesLLM: true, priority: 'medium', defaultInterval: 1800,
+  usesLLM: true, priority: 'normal', defaultInterval: 1800,
   tags: ['agency', 'llm', 'background', 'desire', 'planning'],
 };
 

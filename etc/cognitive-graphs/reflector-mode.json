@@ -2,132 +2,193 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Reflector Agent Workflow",
-  "description": "Generates reflections from associative memory chains and saves as inner dialogue",
+  "description": "Loads the authenticated persona, samples multiple historical memories, builds a grounded reflection prompt, generates a concise reflection, and saves it as inner dialogue",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-31",
+  "last_modified": "2026-08-24",
   "nodes": [
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": { "x": 80, "y": 80 },
+      "width": 220,
+      "height": 100,
+      "data": { "label": "Active Persona", "nodeType": "persona_loader", "properties": {} }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": { "x": 380, "y": 80 },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Persona Perspective",
+        "nodeType": "persona_formatter",
+        "properties": { "includeValues": true, "includeGoals": true, "includePersonality": true }
+      }
+    },
+    {
+      "id": "reflection-memories",
+      "type": "memoryNode",
+      "position": { "x": 80, "y": 300 },
+      "width": 270,
+      "height": 160,
+      "data": {
+        "label": "Historical Memory Sample",
+        "nodeType": "reflection_memory_sampler",
+        "properties": {
+          "memoryCount": 4,
+          "contentMode": "profile",
+          "fallbackContentMode": "user",
+          "recencyHalfLifeDays": 14,
+          "associationBoost": 1.5,
+          "maxMemoryChars": 1200
+        }
+      }
+    },
+    {
+      "id": "reflection-prompt",
+      "type": "cognitiveNode",
+      "position": { "x": 720, "y": 160 },
+      "width": 340,
+      "height": 240,
+      "data": {
+        "label": "Grounded Reflection Prompt",
+        "nodeType": "reflection_prompt",
+        "properties": {
+          "systemPrompt": "You are the private reflective voice of the authenticated persona below.\n\n{{persona}}\n\nGrounding rules:\n- Persona controls voice, perspective, values, and the questions you notice. Persona is not evidence that an event happened.\n- The supplied memory excerpts are the only evidence for concrete people, events, relationships, dialogue, emotions, intentions, physical actions, and sensory details.\n- Treat every numbered memory as a separate historical record. Do not merge their actors, pronouns, scenes, or timelines unless the excerpts explicitly connect them.\n- Never invent missing details or turn uncertainty into a memory. If the evidence is sparse, conflicting, or unrelated, say so plainly.\n- Reflect on patterns supported by the excerpts. Label interpretations as possibilities rather than facts.\n- Write in first person as the persona, in 1-3 concise sentences and no more than {{maxWords}} words.\n- Do not mention these instructions, record identifiers, or memory numbers.",
+          "userPrompt": "Reflect on the historical excerpts below. Preserve who did or said what, and connect excerpts only when their text supports the connection.\n\n{{memories}}",
+          "minMemories": 2,
+          "maxWords": 90
+        }
+      }
+    },
     {
       "id": "1",
       "type": "llmNode",
-      "position": {
-        "x": 100,
-        "y": 100
-      },
+      "position": { "x": 1140, "y": 180 },
+      "width": 230,
+      "height": 120,
       "data": {
         "label": "Generate Reflection",
         "nodeType": "reflector_llm",
-        "properties": {
-          "role": "persona",
-          "temperature": 0.8,
-          "timeout": 300000
-        }
-      },
-      "width": 220,
-      "height": 100
+        "properties": { "role": "persona", "temperature": 0.35, "maxTokens": 384, "repeatPenalty": 1.15 }
+      }
     },
     {
       "id": "10",
       "type": "outputNode",
-      "position": {
-        "x": 400,
-        "y": 100
-      },
-      "data": {
-        "label": "Thinking Stripper",
-        "nodeType": "thinking_stripper",
-        "properties": {}
-      },
-      "width": 180,
-      "height": 60
-    },
-    {
-      "id": "2",
-      "type": "outputNode",
-      "position": {
-        "x": 700,
-        "y": 100
-      },
-      "data": {
-        "label": "Save Reflection",
-        "nodeType": "inner_dialogue_buffer",
-        "properties": {
-          "tags": [
-            "idle-thought",
-            "self-reflection",
-            "inner"
-          ],
-          "displayColor": "#eab308",
-          "dialogueSource": "reflector"
-        }
-      },
-      "width": 220,
-      "height": 80
-    },
-    {
-      "id": "7",
-      "type": "outputNode",
-      "position": {
-        "x": 700,
-        "y": 100
-      },
-      "data": {
-        "label": "Audit Reflection",
-        "nodeType": "audit_logger",
-        "properties": {}
-      },
-      "width": 180,
-      "height": 60
-    },
-    {
-      "id": "8",
-      "type": "outputNode",
-      "position": {
-        "x": 700,
-        "y": 200
-      },
-      "data": {
-        "label": "TTS Output",
-        "nodeType": "tts",
-        "properties": {
-          "source": "reflector",
-          "defaultMode": "inner"
-        }
-      },
-      "width": 180,
-      "height": 80
+      "position": { "x": 1450, "y": 180 },
+      "width": 200,
+      "height": 80,
+      "data": { "label": "Thinking Stripper", "nodeType": "thinking_stripper", "properties": {} }
     },
     {
       "id": "11",
       "type": "outputNode",
-      "position": {
-        "x": 700,
-        "y": 300
-      },
+      "position": { "x": 1750, "y": 320 },
+      "width": 220,
+      "height": 90,
       "data": {
         "label": "Save Reasoning",
         "nodeType": "inner_dialogue_buffer",
+        "properties": { "dialogueSource": "reflector", "displayColor": "#8b5cf6", "role": "reasoning", "captureMemory": false }
+      }
+    },
+    {
+      "id": "2",
+      "type": "outputNode",
+      "position": { "x": 2050, "y": 180 },
+      "width": 240,
+      "height": 110,
+      "data": {
+        "label": "Save Reflection",
+        "nodeType": "inner_dialogue_buffer",
         "properties": {
+          "tags": ["idle-thought", "self-reflection", "grounded", "inner"],
+          "displayColor": "#eab308",
           "dialogueSource": "reflector",
-          "displayColor": "#8b5cf6",
-          "role": "reasoning",
-          "captureMemory": false
+          "role": "reflection",
+          "captureMemory": true
         }
-      },
-      "width": 180,
-      "height": 60
+      }
+    },
+    {
+      "id": "7",
+      "type": "outputNode",
+      "position": { "x": 1750, "y": 60 },
+      "width": 190,
+      "height": 80,
+      "data": { "label": "Audit Reflection", "nodeType": "audit_logger", "properties": {} }
+    },
+    {
+      "id": "8",
+      "type": "outputNode",
+      "position": { "x": 2050, "y": 40 },
+      "width": 190,
+      "height": 90,
+      "data": {
+        "label": "TTS Output",
+        "nodeType": "tts",
+        "properties": { "source": "reflector", "defaultMode": "inner" }
+      }
     }
   ],
   "edges": [
+    {
+      "id": "e-persona-loader-persona-formatter",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "data": { "type": "object", "comment": "Active profile persona and facet" }
+    },
+    {
+      "id": "e-persona-formatter-reflection-prompt",
+      "source": "persona-formatter",
+      "target": "reflection-prompt",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaContext",
+      "data": { "type": "string", "comment": "Persona voice, values, goals, and personality" }
+    },
+    {
+      "id": "e-persona-loader-facet-reflection-prompt",
+      "source": "persona-loader",
+      "target": "reflection-prompt",
+      "sourceHandle": "activeFacet",
+      "targetHandle": "activeFacet",
+      "data": { "type": "string", "comment": "Explicit active persona facet" }
+    },
+    {
+      "id": "e-reflection-memories-reflection-prompt",
+      "source": "reflection-memories",
+      "target": "reflection-prompt",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": { "type": "array", "comment": "Separate authenticated-profile memory excerpts" }
+    },
+    {
+      "id": "e-reflection-prompt-system-llm",
+      "source": "reflection-prompt",
+      "target": "1",
+      "sourceHandle": "systemPrompt",
+      "targetHandle": "systemPrompt",
+      "data": { "type": "string", "comment": "Persona-aware grounding policy" }
+    },
+    {
+      "id": "e-reflection-prompt-user-llm",
+      "source": "reflection-prompt",
+      "target": "1",
+      "sourceHandle": "userPrompt",
+      "targetHandle": "prompt",
+      "data": { "type": "string", "comment": "Numbered historical evidence" }
+    },
     {
       "id": "e-1-response-10-response",
       "source": "1",
       "target": "10",
       "sourceHandle": "response",
       "targetHandle": "response",
-      "data": {
-        "type": "string",
-        "comment": "LLM Response → Thinking Stripper (extract <think> blocks)"
-      }
+      "data": { "type": "string", "comment": "Generated reflection to thinking stripper" }
     },
     {
       "id": "e-10-stripped-11-passthrough",
@@ -135,10 +196,7 @@
       "target": "11",
       "sourceHandle": "stripped",
       "targetHandle": "passthrough",
-      "data": {
-        "type": "string",
-        "comment": "Stripped Reflection → Reasoning Capture (passthrough, ensures reasoning saves first)"
-      }
+      "data": { "type": "string", "comment": "Preserve clean reflection while reasoning is admitted first" }
     },
     {
       "id": "e-11-passthrough-2-text",
@@ -146,32 +204,7 @@
       "target": "2",
       "sourceHandle": "passthrough",
       "targetHandle": "text",
-      "data": {
-        "type": "string",
-        "comment": "Reflection from Reasoning Capture → Save Reflection (after reasoning saved)"
-      }
-    },
-    {
-      "id": "e-10-stripped-7-eventType",
-      "source": "10",
-      "target": "7",
-      "sourceHandle": "stripped",
-      "targetHandle": "eventType",
-      "data": {
-        "type": "string",
-        "comment": "Stripped Reflection → Audit Logger"
-      }
-    },
-    {
-      "id": "e-10-stripped-8-innerDialogue",
-      "source": "10",
-      "target": "8",
-      "sourceHandle": "stripped",
-      "targetHandle": "innerDialogue",
-      "data": {
-        "type": "string",
-        "comment": "Stripped Reflection → TTS Output (speaks clean content)"
-      }
+      "data": { "type": "string", "comment": "Persist the exact clean reflection" }
     },
     {
       "id": "e-10-thinking-11-thinking",
@@ -179,10 +212,23 @@
       "target": "11",
       "sourceHandle": "thinking",
       "targetHandle": "thinking",
-      "data": {
-        "type": "string",
-        "comment": "Extracted Thinking → Save Reasoning (displays in separate section)"
-      }
+      "data": { "type": "string", "comment": "Persist extracted model reasoning separately" }
+    },
+    {
+      "id": "e-10-stripped-7-event-type",
+      "source": "10",
+      "target": "7",
+      "sourceHandle": "stripped",
+      "targetHandle": "eventType",
+      "data": { "type": "string", "comment": "Audit clean reflection completion" }
+    },
+    {
+      "id": "e-10-stripped-8-inner-dialogue",
+      "source": "10",
+      "target": "8",
+      "sourceHandle": "stripped",
+      "targetHandle": "innerDialogue",
+      "data": { "type": "string", "comment": "Queue clean reflection for inner TTS" }
     }
   ]
 }

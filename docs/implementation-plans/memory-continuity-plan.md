@@ -9,7 +9,7 @@ This document captures the phased approach for upgrading MetaHuman OS’s conver
 | Task | Details |
 |------|---------|
 | Instrument file APIs | Update `/api/files/*` endpoints so each read/write creates a structured `captureEvent` (`type: 'file_read' | 'file_write'`). Include path, snippet/summary, initiating command. |
-| Log code approvals | When `/api/code-approvals/*` applies or rejects a patch, emit events describing the change and outcome. |
+| Log skill approvals | When `/api/approvals` approves or rejects a skill execution, emit an event describing the decision and outcome. |
 | Log tool outputs | For search, web calls, or agents, generate synthetic events summarising inputs + outputs. |
 | Synthetic chat messages | In `ChatInterface.svelte`, append hidden `role: 'tool'` messages whenever a tool action returns data so the LLM sees them in conversation. |
 | Update vector index | After `captureEvent` writes to `profiles/<user>/memory/episodic`, append the entry to the embedding index (incremental insert or schedule). |

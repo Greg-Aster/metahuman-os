@@ -215,14 +215,6 @@ async function main() {
     ));
   }
 
-  const coderCatalogEntry = getAgentCatalogSnapshot().agents.find(agent => agent.id === 'coder');
-  checks.push(check(
-    'privileged coder requires explicit catalog registration before Agent Monitor can run it',
-    Boolean(coderCatalogEntry)
-      && snapshot.startableAgents.some(agent => agent.id === 'coder') === coderCatalogEntry?.canRun,
-    `catalogCanRun=${coderCatalogEntry?.canRun} startable=${snapshot.startableAgents.some(agent => agent.id === 'coder')}`,
-  ));
-
   checks.push(check(
     'bootAgents are exposed for System Settings',
     snapshot.bootAgents.length > 0,
@@ -443,8 +435,7 @@ async function main() {
 
   checks.push(check(
     'active docs no longer instruct headless-watcher runtime use',
-    !fs.existsSync(path.join(ROOT, 'docs', 'SYSTEM-CODER-ANALYSIS.md'))
-      && sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'advanced-features', 'headless-mode.md'), /headless-watcher/)
+    sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'advanced-features', 'headless-mode.md'), /headless-watcher/)
       && sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'advanced-features', 'autonomous-agents.md'), /headless-watcher/)
       && sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'configuration-admin', 'configuration-files.md'), /headless-watcher/),
   ));

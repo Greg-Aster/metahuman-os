@@ -257,7 +257,7 @@ export interface OperatorConfig {
     proposalExpiry: number; // ms before proposal expires
     showPostExecutionFeedback: boolean;
     feedbackBackend: {
-      provider: 'memory' | 'big-brother' | 'runpod' | 'system-coder';
+      provider: 'memory' | 'big-brother' | 'runpod';
       availableProviders: string[];
       escalateRejections: boolean;
       escalateNegativeFeedback: boolean;
@@ -426,9 +426,8 @@ export function listUserConfigs(username?: string): string[] {
 
 export interface CuriosityConfig {
   maxOpenQuestions: number;          // 0 = off, 1 = gentle, 3 = chatty
-  researchMode: 'off' | 'local' | 'web';
-  inactivityThresholdSeconds: number; // How long to wait before asking
-  questionTopics: string[];           // Filter topics (empty = all)
+  researchMode: 'off' | 'local';
+  innerQuestionMode: 'off' | 'local';
   minTrustLevel: string;              // Minimum trust to ask questions
 }
 
@@ -473,8 +472,7 @@ export function getDefaultCuriosityConfig(): CuriosityConfig {
   return {
     maxOpenQuestions: 1,
     researchMode: 'local',
-    inactivityThresholdSeconds: 1800, // 30 minutes
-    questionTopics: [],
+    innerQuestionMode: 'local',
     minTrustLevel: 'observe'
   };
 }

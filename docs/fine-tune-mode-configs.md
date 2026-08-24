@@ -296,4 +296,3 @@ This validates:
 
 - [RunPod Deployment Guide](fine-tune-runpod-deployment.md)
 - [Quick Start Guide](fine-tune-quickstart.md)
-- [Implementation Plan](fine-tune-implementation-plan.md)

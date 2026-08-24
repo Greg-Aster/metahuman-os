@@ -51,7 +51,6 @@ test('completed robot actions do not synthesize a workflow-specific recapture', 
         robotObserver: {
           cycleId: 'observer-cycle',
           step: 2,
-          maxSteps: 8,
           triggerSource: 'autonomy',
           graph: 'environment',
           requestedBy: 'environment-perception',
@@ -82,11 +81,9 @@ test('completed motion carries cycle-owned control state into the correlated obs
     const motionControl = {
       version: 1 as const,
       cycleId: 'observer-cycle',
-      planIds: ['plan-1'],
       lastPlanId: 'plan-1',
       lastVisualFrameId: 'frame-before-motion',
       lastVisualFrameTimestamp: '2026-08-04T12:00:00.000Z',
-      consecutiveIdentical: 1,
     }
     const action = enqueueEnvironmentAction({
       type: 'robotCommand',
@@ -121,7 +118,7 @@ test('completed motion carries cycle-owned control state into the correlated obs
   }
 })
 
-test('a failed Boredom Movement stimulus capture remains lifecycle telemetry instead of invoking its graph', () => {
+test('a failed Boredom Movement stimulus capture returns to its autonomy graph for revision', () => {
   const manager = getQueueManager()
   const originalState = manager.exportState()
   try {
@@ -133,7 +130,6 @@ test('a failed Boredom Movement stimulus capture remains lifecycle telemetry ins
         robotObserver: {
           cycleId: 'boredom-failed-capture',
           step: 1,
-          maxSteps: 8,
           triggerSource: 'autonomy',
           requestedBy: 'boredom-movement',
           graph: 'robot-operator',
@@ -159,7 +155,7 @@ test('a failed Boredom Movement stimulus capture remains lifecycle telemetry ins
         actionId: capture.id,
       }],
     })
-    assert.equal(environmentObservationNeedsCognition(observation), false)
+    assert.equal(environmentObservationNeedsCognition(observation), true)
   } finally {
     manager.importState(originalState)
   }

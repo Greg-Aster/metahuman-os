@@ -9,13 +9,12 @@
  * - HTTP health check endpoint
  */
 
-// ws is CommonJS - use createRequire for tsx compatibility
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const ws = require('ws');
-const WebSocketServer = ws.Server || ws.WebSocketServer;
-const WebSocket = ws;
-import type { WebSocketServer as WSServer, WebSocket as WSWebSocket, RawData } from 'ws';
+import WebSocket, {
+  WebSocketServer,
+  type RawData,
+  type WebSocket as WSWebSocket,
+  type WebSocketServer as WSServer,
+} from 'ws';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,11 +48,16 @@ export class EventBusServer {
    * Start the event bus server.
    */
   start(): Promise<void> {
+    if (this.httpServer || this.wss) {
+      return Promise.reject(new Error('Event bus server is already started'));
+    }
+
     return new Promise((resolve, reject) => {
       const port = this.options.port ?? DEFAULT_PORT;
+      this.startTime = new Date();
 
       // Create HTTP server for health checks
-      this.httpServer = http.createServer((req, res) => {
+      const httpServer = http.createServer((req, res) => {
         if (req.url === '/health') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -72,9 +76,11 @@ export class EventBusServer {
       });
 
       // Create WebSocket server
-      this.wss = new WebSocketServer({ server: this.httpServer });
+      const wss = new WebSocketServer({ server: httpServer });
+      this.httpServer = httpServer;
+      this.wss = wss;
 
-      this.wss.on('connection', (ws: WSWebSocket, req: http.IncomingMessage) => {
+      wss.on('connection', (ws: WSWebSocket, req: http.IncomingMessage) => {
         const clientAddr = req.socket.remoteAddress || 'unknown';
         console.log(`${LOG_PREFIX} Client connected from ${clientAddr}`);
 
@@ -101,21 +107,27 @@ export class EventBusServer {
         });
       });
 
-      this.httpServer.on('error', (error) => {
+      httpServer.on('error', (error) => {
         console.error(`${LOG_PREFIX} Server error:`, error);
+        if (!httpServer.listening) {
+          this.httpServer = null;
+          this.wss = null;
+        }
         reject(error);
       });
 
-      this.httpServer.listen(port, () => {
+      httpServer.listen(port, () => {
+        const address = httpServer.address();
+        const boundPort = typeof address === 'object' && address ? address.port : port;
         console.log(`${LOG_PREFIX} ========================================`);
-        console.log(`${LOG_PREFIX} Event Bus Server started on port ${port}`);
-        console.log(`${LOG_PREFIX} WebSocket: ws://localhost:${port}`);
-        console.log(`${LOG_PREFIX} Health: http://localhost:${port}/health`);
+        console.log(`${LOG_PREFIX} Event Bus Server started on port ${boundPort}`);
+        console.log(`${LOG_PREFIX} WebSocket: ws://localhost:${boundPort}`);
+        console.log(`${LOG_PREFIX} Health: http://localhost:${boundPort}/health`);
         console.log(`${LOG_PREFIX} ========================================`);
 
         // Emit startup event
         this.handleEvent(createEvent('core', EventTypes.CORE_STARTED, {
-          data: { component: 'event-bus', port },
+          data: { component: 'event-bus', port: boundPort },
         }));
 
         resolve();
@@ -231,41 +243,49 @@ export class EventBusServer {
   /**
    * Stop the event bus server.
    */
-  stop(): Promise<void> {
-    return new Promise((resolve) => {
-      // Emit shutdown event
-      this.handleEvent(createEvent('core', EventTypes.CORE_SHUTDOWN, {
-        data: { component: 'event-bus', eventCount: this.eventCount },
-      }));
+  async stop(): Promise<void> {
+    if (!this.httpServer && !this.wss) {
+      return;
+    }
 
-      // Close log stream
-      if (this.logStream) {
-        this.logStream.end();
-        this.logStream = null;
-      }
+    // Emit shutdown event before closing the owned log stream.
+    this.handleEvent(createEvent('core', EventTypes.CORE_SHUTDOWN, {
+      data: { component: 'event-bus', eventCount: this.eventCount },
+    }));
 
-      // Close all WebSocket connections
-      for (const ws of this.subscribers) {
-        ws.close();
-      }
-      this.subscribers.clear();
+    const logStream = this.logStream;
+    this.logStream = null;
+    const logClosed = logStream
+      ? new Promise<void>(resolve => logStream.end(resolve))
+      : Promise.resolve();
 
-      // Close WebSocket server
-      if (this.wss) {
-        this.wss.close();
-        this.wss = null;
-      }
+    // Terminate subscribers so shutdown cannot wait on remote close handshakes.
+    for (const ws of this.subscribers) {
+      ws.terminate();
+    }
+    this.subscribers.clear();
 
-      // Close HTTP server
-      if (this.httpServer) {
-        this.httpServer.close(() => {
+    const wss = this.wss;
+    this.wss = null;
+    const webSocketClosed = wss
+      ? new Promise<void>((resolve, reject) => {
+          wss.close(error => error ? reject(error) : resolve());
+        })
+      : Promise.resolve();
+
+    const httpServer = this.httpServer;
+    this.httpServer = null;
+    const httpClosed = httpServer
+      ? new Promise<void>((resolve, reject) => {
+        httpServer.close(() => {
           console.log(`${LOG_PREFIX} Server stopped`);
           resolve();
         });
-      } else {
-        resolve();
-      }
-    });
+        httpServer.once('error', reject);
+      })
+      : Promise.resolve();
+
+    await Promise.all([logClosed, webSocketClosed, httpClosed]);
   }
 
   /**

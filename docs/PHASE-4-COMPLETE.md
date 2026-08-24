@@ -82,10 +82,9 @@ export const POST = requireWriteMode(postHandler);
 - `conversation-buffer.ts`: Inline exports refactored to named handlers
 - `node-pipeline.ts`: Inline exports + getUserContext() replacement
 
-### Phase 4.5: Remaining Mixed Endpoints (4 files)
+### Phase 4.5: Remaining Mixed Endpoints (3 files)
 - `apps/site/src/pages/api/tts.ts`
 - `apps/site/src/pages/api/kokoro-training.ts`
-- `apps/site/src/pages/api/code-approvals/index.ts`
 - `apps/site/src/pages/api/operator/react.ts`
 
 **Special Pattern**: Files with inline export patterns requiring manual refactoring

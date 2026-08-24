@@ -10,6 +10,7 @@ import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
+  environmentInputSource,
   environmentTaskContractFromObservation,
   type EnvironmentTaskState,
 } from './helpers.js';
@@ -180,14 +181,24 @@ export const environmentContextBuilderNode = defineNode({
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
-    const validatorCommand = isRecord(observation.metadata?.taskValidatorCommand)
+    const inputSource = environmentInputSource(context, effectiveObservation);
+    const autonomous = inputSource === 'autonomy';
+    const directUserTurn = inputSource === 'user'
+      && context.environmentActionSource === undefined
+      && typeof context.userMessage === 'string'
+      && Boolean(context.userMessage.trim());
+    const validatorCommand = !directUserTurn && isRecord(observation.metadata?.taskValidatorCommand)
       ? observation.metadata.taskValidatorCommand
       : null;
     const queuedContinuation = Boolean(validatorCommand || taskState?.phase === 'evaluating_evidence' || taskState?.phase === 'awaiting_action');
+    const boundedContinuation = queuedContinuation
+      && taskState?.continuationPolicy === 'bounded';
     // Context routing may select history, memory, and vision, but it never owns
     // semantic action authority. The Environment LLM must always see the
     // adapter-advertised action contract so it can decide whether and how to act.
-    const taskContract = environmentTaskContractFromObservation(effectiveObservation);
+    const taskContract = directUserTurn
+      ? null
+      : environmentTaskContractFromObservation(effectiveObservation);
     const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
       && typeof routingAnalysis.needsEnvironment === 'boolean'
       && typeof routingAnalysis.needsVision === 'boolean';
@@ -205,15 +216,18 @@ export const environmentContextBuilderNode = defineNode({
       typeof frame.metadata?.correlationId === 'string'
     )) || typeof effectiveObservation.metadata?.correlationId === 'string';
     const robotObserver = readRobotObserverCycle(effectiveObservation);
-    const includeRecentHistory = requestedRecentHistory
-      && robotObserver?.triggerSource !== 'autonomy';
+    const includeRecentHistory = requestedRecentHistory && !autonomous;
     // environment-perception metadata is attached to ordinary correlated audio
     // so later work can retain lifecycle identity. It is not, by itself, a request
     // to inspect the camera. Only an explicit boredom observation run bypasses typed
     // vision admission; ordinary audio remains owned by needsVision.
-    const observerVisualEvidence = robotObserver?.requestedBy === 'robot-observer'
-      || robotObserver?.requestedBy === 'boredom-observer';
-    const visualRequiredByTask = taskContract?.requiredCompletionBasis === 'visual_observation';
+    const observerVisualEvidence = !directUserTurn && (
+      robotObserver?.requestedBy === 'robot-observer'
+      || robotObserver?.requestedBy === 'boredom-observer'
+    );
+    const visualRequiredByTask = taskState?.requiredCompletionBasis === 'visual_observation'
+      || taskContract?.requiredCompletionBasis === 'visual_observation';
+    const visualContinuation = queuedContinuation && visualRequiredByTask;
     const useImages = correlatedVisual && (
       !hasTypedContextAdmission
       || routingAnalysis.needsVision === true
@@ -221,9 +235,26 @@ export const environmentContextBuilderNode = defineNode({
       || observerVisualEvidence
     );
     const selectedImages = useImages ? images : [];
-    const promptObservation = useImages
+    const visualPromptObservation = useImages
       ? effectiveObservation
       : { ...effectiveObservation, visual: undefined, visuals: undefined };
+    // Direct conversation starts a new Environment objective. Retain current
+    // body state and capabilities, but do not project unrelated action lineage
+    // from the adapter's latest observation into the selector prompt. During a
+    // visual continuation, Task State owns motor lifecycle feedback; exposing
+    // "completed" or "done" beside the frame can be mistaken for visual proof.
+    const promptObservation = directUserTurn
+      ? {
+          ...visualPromptObservation,
+          feedback: [],
+          metadata: {},
+        }
+      : visualContinuation
+        ? {
+            ...visualPromptObservation,
+            feedback: [],
+          }
+      : visualPromptObservation;
     const history = conversationMessages(
       inputs.conversationHistory,
       includeRecentHistory,
@@ -232,12 +263,13 @@ export const environmentContextBuilderNode = defineNode({
     );
     const routedMemories = includeSemanticMemory ? inputs.memories : [];
     const memoryItems = [...new Set([
-      ...relevantMemoryItems(observation.metadata?.robotOperatorMemories),
+      ...(autonomous ? relevantMemoryItems(observation.metadata?.robotOperatorMemories) : []),
       ...relevantMemoryItems(routedMemories),
     ])].slice(0, 3);
     const selectorContext = buildEnvironmentSelectorSystemPrompt({
       systemPrompt,
       queuedContinuation,
+      mustAdvanceTask: boundedContinuation,
     });
     const renderedContent = (content: string) => selectedImages.length
       ? [{ type: 'text' as const, text: content }, ...selectedImages]
@@ -250,11 +282,15 @@ export const environmentContextBuilderNode = defineNode({
       memories: memoryItems,
       personaText,
       mustSelectAction: routingAnalysis.needsAction === true,
+      mustAdvanceTask: boundedContinuation,
+      inputSource,
     });
     const jsonSchema = buildEnvironmentSelectorJsonSchema({
       actions: promptObservation.capabilities.actions,
       robotCommands: promptObservation.capabilities.robotCommands,
       requireAction: routingAnalysis.needsAction === true,
+      requireObjective: autonomous,
+      requireProgress: boundedContinuation,
     });
 
     return {

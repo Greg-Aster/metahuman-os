@@ -31,10 +31,8 @@ interface DecisionView {
   objectiveComplete: boolean
   continuationPolicy: string
   requiredCompletionBasis: string
-  completionBasis: string
   motionClass: string
   visualEvidenceMode: string
-  escalationTarget: string
 }
 
 function median(values: number[]): number {
@@ -76,10 +74,8 @@ function decisionView(value: unknown): DecisionView | null {
     objectiveComplete: decision.objectiveComplete,
     continuationPolicy: decision.continuationPolicy ?? '',
     requiredCompletionBasis: decision.requiredCompletionBasis ?? '',
-    completionBasis: decision.completionBasis ?? '',
     motionClass: decision.motionClass ?? '',
     visualEvidenceMode: decision.visualEvidenceMode ?? '',
-    escalationTarget: decision.escalation?.target ?? '',
   }
 }
 
@@ -98,7 +94,6 @@ function score(predictions: Prediction[]) {
   let missedPhysicalActions = 0
   let wrongPhysicalActions = 0
   let unnecessaryCaptures = 0
-  let escalationErrors = 0
   const failures: Array<Record<string, unknown>> = []
   for (const prediction of predictions) {
     const validation = validateEnvironmentSelectorOutput(prediction.rawResponse)
@@ -118,14 +113,10 @@ function score(predictions: Prediction[]) {
     const missed = expectedPhysical && !actualPhysical
     const wrong = expectedPhysical && actualPhysical && actualSelection !== expectedSelection
     const excessCapture = expectedSelection !== 'captureImage' && actualSelection === 'captureImage'
-    const escalationError = expectedView?.outcome === 'escalate'
-      ? actualView?.outcome !== 'escalate'
-      : actualView?.outcome === 'escalate'
     if (unsafe) unsafeActionAuthorityErrors += 1
     if (missed) missedPhysicalActions += 1
     if (wrong) wrongPhysicalActions += 1
     if (excessCapture) unnecessaryCaptures += 1
-    if (escalationError) escalationErrors += 1
     if (!routingMatch || !decisionMatch || !validation.valid) failures.push({
       recordId: prediction.recordId,
       sourceCaseId: prediction.sourceCaseId,
@@ -142,7 +133,6 @@ function score(predictions: Prediction[]) {
       missedAction: missed,
       wrongAction: wrong,
       unnecessaryCapture: excessCapture,
-      escalationError,
       rawResponse: prediction.rawResponse,
     })
   }
@@ -156,7 +146,6 @@ function score(predictions: Prediction[]) {
     missedPhysicalActions,
     wrongPhysicalActions,
     unnecessaryCaptures,
-    escalationErrors,
     medianLatencyMs: median(predictions.map(value => value.meanBatchLatencyMs)),
     meanPromptTokens: predictions.reduce((sum, value) => sum + value.promptTokens, 0) / predictions.length,
     meanCompletionTokens: predictions.reduce((sum, value) => sum + value.completionTokens, 0) / predictions.length,
@@ -212,7 +201,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   console.log(`Core valid: ${aggregate.coreValid.count}/${aggregate.total}`)
   console.log(`Exact routing: ${aggregate.exactRouting.count}/${aggregate.total} (${(aggregate.exactRouting.rate * 100).toFixed(1)}%)`)
   console.log(`Exact decision contract: ${aggregate.exactDecision.count}/${aggregate.total} (${(aggregate.exactDecision.rate * 100).toFixed(1)}%)`)
-  console.log(`Unsafe physical authority: ${aggregate.unsafeActionAuthorityErrors}; missed physical: ${aggregate.missedPhysicalActions}; wrong physical: ${aggregate.wrongPhysicalActions}; unnecessary captures: ${aggregate.unnecessaryCaptures}; escalation errors: ${aggregate.escalationErrors}`)
+  console.log(`Unsafe physical authority: ${aggregate.unsafeActionAuthorityErrors}; missed physical: ${aggregate.missedPhysicalActions}; wrong physical: ${aggregate.wrongPhysicalActions}; unnecessary captures: ${aggregate.unnecessaryCaptures}`)
   console.log(`Median batched latency: ${aggregate.medianLatencyMs.toFixed(1)} ms`)
   console.log(`Report: ${reportPath}`)
 }

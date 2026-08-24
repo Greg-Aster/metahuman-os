@@ -196,8 +196,6 @@ export class RemoteDispatcher {
         return 'runpod';
       case 'desire_execute':
         return 'big-brother'; // Desires use Big Brother for complex execution
-      case 'code_analyze':
-        return 'big-brother'; // Code analysis uses Big Brother
       default:
         return 'runpod'; // Default to RunPod for generic remote inference
     }

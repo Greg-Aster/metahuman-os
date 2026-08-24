@@ -4,7 +4,7 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'transcriber', name: 'Transcriber',
   description: 'Monitors audio inbox and transcribes files using Whisper',
-  usesLLM: false, priority: 'medium', defaultInterval: 10,
+  usesLLM: false, priority: 'normal', defaultInterval: 10,
   tags: ['audio', 'transcription', 'background'],
 };
 

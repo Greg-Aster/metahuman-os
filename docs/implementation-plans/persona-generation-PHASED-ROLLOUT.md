@@ -424,17 +424,11 @@ Phase 3 complete
      ```
    - Useful for migrating from other systems
 
-3. **Persona Diff Utility**
-   - Standalone function to compare any two persona files:
-     ```bash
-     ./bin/mh persona diff current.json draft.json
-     ```
-
-4. **Auto-Resume on Login**
+3. **Auto-Resume on Login**
    - If user has incomplete session, show notification in UI
    - "You have an unfinished persona interview. Resume?"
 
-5. **Expiration & Cleanup**
+4. **Expiration & Cleanup**
    - Add cron-style cleanup for sessions older than 30 days
    - Mark as expired in index, optionally auto-archive
 

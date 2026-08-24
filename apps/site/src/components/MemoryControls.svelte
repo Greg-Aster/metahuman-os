@@ -10,9 +10,10 @@
   type IndexStatus = { exists: boolean; model?: string; provider?: string; items?: number; createdAt?: string }
   let loadingIndex = false, buildingIndex = false, indexError: string | null = null
   let indexStatus: IndexStatus | null = null
+  let indexNotice: string | null = null
 
   async function loadIndexStatus() {
-    loadingIndex = true; indexError = null
+    loadingIndex = true; indexError = null; indexNotice = null
     try {
       const res = await apiFetch('/api/index')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -26,7 +27,7 @@
   }
 
   async function buildIndex() {
-    buildingIndex = true; indexError = null
+    buildingIndex = true; indexError = null; indexNotice = null
     try {
       const res = await apiFetch('/api/index', {
         method: 'POST',
@@ -34,8 +35,9 @@
         body: JSON.stringify({ action: 'build' })
       })
       const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error || 'Build failed')
+      if (!res.ok || !data.success) throw new Error(data.error || 'Queue request failed')
       indexStatus = data.status
+      indexNotice = `Rebuild queued as ${data.taskId}`
     } catch (e) {
       indexError = (e as Error).message
     } finally {
@@ -77,8 +79,6 @@
   // Pruner settings
   let prunerMinLength = 10
   let prunerSimilarity = 0.85
-  let prunerAutoRebuild = true
-
   async function runPruner(dryRun: boolean = false) {
     prunerRunning = true
     prunerError = null
@@ -93,12 +93,6 @@
       })
       if (success) {
         prunerSuccess = true
-        // Auto-rebuild index if enabled and not a dry run
-        if (!dryRun && prunerAutoRebuild) {
-          setTimeout(() => {
-            buildIndex()
-          }, 2000) // Give pruner a moment to finish
-        }
       } else {
         prunerError = 'Failed to start pruner'
       }
@@ -217,12 +211,6 @@
                 <span class="text-xs text-gray-500 dark:text-gray-400 min-w-[50px] text-right">{(prunerSimilarity * 100).toFixed(0)}%</span>
               </div>
             </div>
-            <div class="setting-row">
-              <label for="auto-rebuild" class="flex items-center gap-2">
-                <input type="checkbox" id="auto-rebuild" bind:checked={prunerAutoRebuild} />
-                Auto-rebuild search index after pruning
-              </label>
-            </div>
             <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
               <strong>Detection patterns:</strong>
               <ul class="mt-1 ml-4 list-disc">
@@ -327,12 +315,14 @@
         </div>
         <div class="flex items-center gap-2">
           <button class="btn-secondary text-sm py-1.5 px-3" on:click={loadIndexStatus} disabled={loadingIndex}>{loadingIndex ? '…' : 'Refresh'}</button>
-          <button class="btn-primary text-sm py-1.5 px-3" on:click={buildIndex} disabled={buildingIndex}>{buildingIndex ? 'Building…' : 'Rebuild'}</button>
+          <button class="btn-primary text-sm py-1.5 px-3" on:click={buildIndex} disabled={buildingIndex}>{buildingIndex ? 'Queuing…' : 'Queue rebuild'}</button>
         </div>
       </div>
       <div class="p-3.5">
         {#if indexError}
           <div class="banner banner-error text-sm">⚠️ {indexError}</div>
+        {:else if indexNotice}
+          <div class="banner banner-success text-sm">✓ {indexNotice}</div>
         {:else if loadingIndex}
           <div class="text-gray-500 dark:text-gray-400 text-sm">Loading index status…</div>
         {:else if indexStatus}

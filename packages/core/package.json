@@ -16,8 +16,7 @@
     "./context": "./src/context.ts",
     "./ollama": "./src/ollama.ts",
     "./vllm": "./src/vllm.ts",
-    "./environment-classifier": "./src/environment-classifier.ts",
-    "./llm": "./src/llm.ts",
+    "./llm-config": "./src/llm-config.ts",
     "./agent-monitor": "./src/agent-monitor.ts",
     "./agent-catalog-definitions": "./src/agent-catalog-definitions.ts",
     "./agent-executable-resolver": "./src/agent-executable-resolver.ts",
@@ -86,6 +85,7 @@
     "./deployment": "./src/deployment.ts",
     "./environment-interface": "./src/environment-interface/index.ts",
     "./providers": "./src/providers/index.ts",
+    "./providers/types": "./src/providers/types.ts",
     "./local-model-service": "./src/local-model-service-manager.ts",
     "./voice-service-manager": "./src/voice-service-manager.ts",
     "./cognitive-layers": "./src/cognitive-layers/index.ts",
@@ -111,9 +111,6 @@
     "tsx": "^4.20.6",
     "uuid": "^13.0.0",
     "ws": "^8.19.0"
-  },
-  "optionalDependencies": {
-    "@metahuman/server": "workspace:*"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

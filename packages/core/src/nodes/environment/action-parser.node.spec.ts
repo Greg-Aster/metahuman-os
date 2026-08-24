@@ -33,7 +33,6 @@ test('an advertised command is admitted only with the strict selector lifecycle 
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
         actionPurpose: 'expression',
-        presentation: 'private',
       },
     }),
     observation,
@@ -59,6 +58,32 @@ test('an advertised command is admitted only with the strict selector lifecycle 
   assert.match(malformed.taskDecisionError, /strict JSON/i);
 });
 
+test('the parser normalizes selected physical work and leaves completion evidence judgment to Task State', async () => {
+  const result = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I am standing now.',
+      actions: [{ type: 'robotCommand', command: 'stand' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'complete',
+        reason: 'Standing is the selected consequence.',
+        objectiveComplete: true,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'open_loop_displacement',
+        actionPurpose: 'expression',
+      },
+    }),
+    observation,
+    sessionId: observation.sessionId,
+  }, {}, {});
+
+  assert.equal(result.taskDecisionError, '');
+  assert.equal(result.actions[0]?.command, 'stand');
+  assert.equal(result.taskDecision?.outcome, 'act');
+  assert.equal(result.taskDecision?.objectiveComplete, false);
+});
+
 test('autonomous selector output must author an objective', async () => {
   const autonomousObservation: EnvironmentObservation = {
     ...observation,
@@ -67,7 +92,6 @@ test('autonomous selector output must author an objective', async () => {
       robotObserver: {
         cycleId: 'autonomy-objective',
         step: 1,
-        maxSteps: 8,
         triggerSource: 'autonomy',
         graph: 'boredom-autonomy',
         requestedBy: 'boredom-movement',
@@ -87,7 +111,6 @@ test('autonomous selector output must author an objective', async () => {
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
         actionPurpose: 'expression',
-        presentation: 'private',
       },
     }),
     observation: autonomousObservation,
@@ -120,7 +143,6 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
-        presentation: 'private',
         visualEvidenceMode: 'single',
       },
     }),
@@ -130,6 +152,26 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   assert.equal(capture.actions[0]?.type, 'captureImage');
   assert.equal(capture.taskDecision?.continuationPolicy, 'bounded');
   assert.equal(capture.taskDecision?.requiredCompletionBasis, 'visual_observation');
+
+  const malformedCapture = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I will take a picture.',
+      actions: [{ type: 'captureImage', command: 'neutral' }],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The user requested a picture.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        actionPurpose: 'information_gain',
+      },
+    }),
+    observation: visualObservation,
+    sessionId: visualObservation.sessionId,
+  }, {}, {});
+  assert.deepEqual(malformedCapture.actions, []);
+  assert.match(malformedCapture.taskDecisionError, /valid typed Environment action/i);
 
   const boundedWave = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -144,7 +186,6 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
         requiredCompletionBasis: 'visual_observation',
         motionClass: 'open_loop_displacement',
         actionPurpose: 'information_gain',
-        presentation: 'private',
         visualEvidenceMode: 'single',
       },
     }),
@@ -156,32 +197,109 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   assert.equal(boundedWave.taskDecision?.objectiveComplete, false);
   assert.equal(boundedWave.taskDecision?.continuationPolicy, 'bounded');
   assert.equal(boundedWave.taskDecision?.requiredCompletionBasis, 'visual_observation');
+
+  const decoderPlaceholder = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I will continue waving because no hand is visible.',
+      actions: [{ type: 'robotCommand', command: 'wave' }],
+      movementRequest: { description: 'Stand still and wave until the hand is visible.' },
+      taskDecision: {
+        outcome: 'continue',
+        reason: 'No hand is visible in the current correlated frame.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        motionClass: 'body_local',
+        actionPurpose: 'information_gain',
+        visualEvidenceMode: 'single',
+      },
+    }),
+    observation: visualObservation,
+    sessionId: visualObservation.sessionId,
+  }, {}, {});
+  assert.equal(decoderPlaceholder.actions[0]?.command, 'wave');
+  assert.equal(decoderPlaceholder.movementRequest, null);
+  assert.equal(decoderPlaceholder.taskDecisionError, '');
 });
 
-test('autonomy presentation leaves the parser without a second response-routing node', async () => {
-  const privateReflection = await environmentActionParserNode.execute({
+test('action purpose and evidence reach canonical Task State without competing parser policy', async () => {
+  const movementObservation: EnvironmentObservation = {
+    ...observation,
+    capabilities: {
+      ...observation.capabilities,
+      actions: ['robotMotionPlan'],
+      motionClasses: ['body_local'],
+    },
+  };
+  const result = await environmentActionParserNode.execute({
     response: JSON.stringify({
-      response: 'The quiet room makes me think of the slow afternoon light.',
+      response: 'I will perform one expressive posture change.',
+      actions: [],
+      movementRequest: { description: 'Shift into one bounded expressive posture.' },
+      taskDecision: {
+        outcome: 'act',
+        reason: 'The posture change is an expressive consequence.',
+        objectiveComplete: false,
+        continuationPolicy: 'bounded',
+        requiredCompletionBasis: 'visual_observation',
+        motionClass: 'body_local',
+        actionPurpose: 'expression',
+      },
+    }),
+    observation: movementObservation,
+    sessionId: movementObservation.sessionId,
+  }, {}, {});
+
+  assert.equal(result.movementRequest?.description, 'Shift into one bounded expressive posture.');
+  assert.equal(result.taskDecisionError, '');
+  assert.equal(result.taskDecision?.actionPurpose, 'expression');
+  assert.equal(result.taskDecision?.requiredCompletionBasis, 'visual_observation');
+});
+
+test('the Environment selector contract has no unconsumed escalation output', async () => {
+  const result = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I will keep this as a reflection.',
       actions: [],
       movementRequest: null,
       taskDecision: {
-        outcome: 'complete',
-        reason: 'A private reflection is the meaningful consequence for this pass.',
+        outcome: 'report',
+        reason: 'A reflective response is the selected consequence.',
         objectiveComplete: true,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'response',
-        completionBasis: 'response',
-        completionEvidence: 'The private reflection itself is the consequence.',
         actionPurpose: 'expression',
-        presentation: 'private',
+        escalation: { target: 'general', reason: 'No runtime owner exists.' },
       },
     }),
     observation,
     sessionId: observation.sessionId,
   }, {}, {});
 
-  assert.equal(privateReflection.presentation, 'private');
-  assert.equal(privateReflection.privateResponse, privateReflection.response);
+  assert.equal(result.taskDecision, null);
+  assert.match(result.taskDecisionError, /taskDecision\.escalation is not supported/);
+});
+
+test('autonomy responses remain on the parser single response path', async () => {
+  const reflection = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'The quiet room makes me think of the slow afternoon light.',
+      actions: [],
+      movementRequest: null,
+      taskDecision: {
+        outcome: 'complete',
+        reason: 'A reflection is the meaningful consequence for this pass.',
+        objectiveComplete: true,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'response',
+        actionPurpose: 'expression',
+      },
+    }),
+    observation,
+    sessionId: observation.sessionId,
+  }, {}, {});
+
+  assert.equal(reflection.response, 'The quiet room makes me think of the slow afternoon light.');
 
   const spoken = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -195,13 +313,11 @@ test('autonomy presentation leaves the parser without a second response-routing 
         continuationPolicy: 'none',
         requiredCompletionBasis: 'response',
         actionPurpose: 'expression',
-        presentation: 'conversation',
       },
     }),
     observation,
     sessionId: observation.sessionId,
   }, {}, {});
 
-  assert.equal(spoken.presentation, 'conversation');
-  assert.equal(spoken.privateResponse, '');
+  assert.equal(spoken.response, 'That patch of light looks especially warm today.');
 });

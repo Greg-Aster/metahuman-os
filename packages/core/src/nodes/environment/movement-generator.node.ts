@@ -137,9 +137,6 @@ function motionControlState(observation: EnvironmentObservation | undefined): En
       ? observation.metadata.motionControl
       : null;
   if (!candidate) return null;
-  const planIds = Array.isArray(candidate.planIds)
-    ? candidate.planIds.filter((id): id is string => typeof id === 'string').slice(-8)
-    : [];
   const lastPlanId = typeof candidate.lastPlanId === 'string' ? candidate.lastPlanId : undefined;
   const lastVisualFrameId = typeof candidate.lastVisualFrameId === 'string'
     ? candidate.lastVisualFrameId
@@ -150,13 +147,9 @@ function motionControlState(observation: EnvironmentObservation | undefined): En
   return {
     version: 1,
     ...(typeof candidate.cycleId === 'string' ? { cycleId: candidate.cycleId } : {}),
-    planIds,
     ...(lastPlanId ? { lastPlanId } : {}),
     ...(lastVisualFrameId ? { lastVisualFrameId } : {}),
     ...(lastVisualFrameTimestamp ? { lastVisualFrameTimestamp } : {}),
-    consecutiveIdentical: Number.isInteger(candidate.consecutiveIdentical)
-      ? Math.max(0, Number(candidate.consecutiveIdentical))
-      : 0,
   };
 }
 
@@ -358,32 +351,10 @@ export const movementGeneratorNode = defineNode({
         ...(typeof cycle?.cycleId === 'string'
           ? { cycleId: cycle.cycleId }
           : previous?.cycleId ? { cycleId: previous.cycleId } : {}),
-        planIds: [...(previous?.planIds ?? []), planId].slice(-8),
         lastPlanId: planId,
         ...(visualFrame?.id ? { lastVisualFrameId: visualFrame.id } : {}),
         ...(visualFrame?.timestamp ? { lastVisualFrameTimestamp: visualFrame.timestamp } : {}),
-        consecutiveIdentical: previous?.lastPlanId === planId
-          ? previous.consecutiveIdentical + 1
-          : 1,
       };
-      if (previous?.lastPlanId === planId) {
-        const error = 'Motion stopped because the generated plan repeats the previous physical attempt without new progress evidence.';
-        return {
-          action: null,
-          actions: [],
-          valid: false,
-          rejected: true,
-          error,
-          response: error,
-          planSummary: {
-            planId,
-            frameCount: normalized.action.frames?.length ?? 0,
-            durationMs: normalized.totalDurationMs,
-            endPose: normalized.action.endPose,
-          },
-          controlResult: { status: 'stuck', reason: 'duplicate_motion_plan', planId, state },
-        };
-      }
       const action = {
         ...normalized.action,
         metadata: {

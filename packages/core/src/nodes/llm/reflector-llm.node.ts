@@ -1,49 +1,29 @@
 /**
  * Reflector LLM Node
  *
- * Generates reflections/summaries with custom prompts
+ * Generates a reflection from graph-owned persona and memory prompts
  * Used by reflector agent for inner dialogue
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
-import { renderPromptTemplate } from '../prompt-template.js';
-
-const DEFAULT_FALLBACK_SYSTEM_PROMPT = 'You are an introspective assistant.';
-const DEFAULT_EXTENDED_SUMMARY_SYSTEM_PROMPT = `You are consolidating a reflective train of thought into a coherent conclusion.
-Write in the first person.
-Use two or three sentences (<= 120 words) to capture the main insight, emotional tone, and any next step.`;
-const DEFAULT_EXTENDED_SUMMARY_USER_TEMPLATE = `Here is the full reflection:
-{{reflection}}
-
-Compose an extended conclusion (2-3 sentences, <= 120 words) that captures the essence and next steps.`;
-const DEFAULT_CONCISE_SUMMARY_SYSTEM_TEMPLATE = `You distill reflections into concise first-person takeaways.
-{{conciseHint}}`;
-const DEFAULT_CONCISE_SUMMARY_USER_TEMPLATE = `Here is the reflection:
-{{reflection}}
-
-Summarize the core takeaway. {{conciseHint}}`;
 
 export const ReflectorLLMNode: NodeDefinition = defineNode({
   id: 'reflector_llm',
   name: 'Reflector LLM',
   category: 'chat',
   inputs: [
-    { name: 'prompt', type: 'string', description: 'User prompt or reflection text' },
+    { name: 'systemPrompt', type: 'string', description: 'Persona-aware grounding instructions from the graph' },
+    { name: 'prompt', type: 'string', description: 'Historical memory excerpts from the graph' },
   ],
   outputs: [
     { name: 'response', type: 'llm_response', description: 'Generated reflection' },
   ],
   properties: {
     systemPrompt: '',
-    fallbackSystemPrompt: DEFAULT_FALLBACK_SYSTEM_PROMPT,
-    extendedSummarySystemPrompt: DEFAULT_EXTENDED_SUMMARY_SYSTEM_PROMPT,
-    extendedSummaryUserTemplate: DEFAULT_EXTENDED_SUMMARY_USER_TEMPLATE,
-    conciseSummarySystemTemplate: DEFAULT_CONCISE_SUMMARY_SYSTEM_TEMPLATE,
-    conciseSummaryUserTemplate: DEFAULT_CONCISE_SUMMARY_USER_TEMPLATE,
     role: 'persona',
-    temperature: 0.7,
-    maxTokens: 2048,
+    temperature: 0.35,
+    maxTokens: 384,
     repeatPenalty: 1.15,
   },
   propertySchemas: {
@@ -51,41 +31,8 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: '',
       label: 'System Prompt',
-      description: 'Custom system prompt for reflection',
+      description: 'Optional graph-level fallback; the connected prompt node is authoritative',
       rows: 4,
-    },
-    fallbackSystemPrompt: {
-      type: 'text_multiline',
-      default: DEFAULT_FALLBACK_SYSTEM_PROMPT,
-      label: 'Fallback System Prompt',
-      rows: 3,
-    },
-    extendedSummarySystemPrompt: {
-      type: 'text_multiline',
-      default: DEFAULT_EXTENDED_SUMMARY_SYSTEM_PROMPT,
-      label: 'Extended Summary System Prompt',
-      rows: 5,
-    },
-    extendedSummaryUserTemplate: {
-      type: 'text_multiline',
-      default: DEFAULT_EXTENDED_SUMMARY_USER_TEMPLATE,
-      label: 'Extended Summary User Template',
-      description: 'Template variables: {{reflection}}.',
-      rows: 7,
-    },
-    conciseSummarySystemTemplate: {
-      type: 'text_multiline',
-      default: DEFAULT_CONCISE_SUMMARY_SYSTEM_TEMPLATE,
-      label: 'Concise Summary System Template',
-      description: 'Template variables: {{conciseHint}}.',
-      rows: 4,
-    },
-    conciseSummaryUserTemplate: {
-      type: 'text_multiline',
-      default: DEFAULT_CONCISE_SUMMARY_USER_TEMPLATE,
-      label: 'Concise Summary User Template',
-      description: 'Template variables: {{reflection}}, {{conciseHint}}.',
-      rows: 6,
     },
     role: {
       type: 'select',
@@ -95,7 +42,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
     },
     temperature: {
       type: 'slider',
-      default: 0.7,
+      default: 0.35,
       label: 'Temperature',
       min: 0,
       max: 1,
@@ -103,7 +50,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
     },
     maxTokens: {
       type: 'slider',
-      default: 2048,
+      default: 384,
       label: 'Max Tokens',
       min: 256,
       max: 4096,
@@ -115,45 +62,27 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
       label: 'Repeat Penalty',
     },
   },
-  description: 'Generates reflections/summaries with custom prompts',
+  description: 'Generates a reflection from graph-owned persona and historical-memory prompts',
 
   execute: async (inputs, context, properties) => {
     const promptInput = inputs.prompt ?? inputs[0];
-    let userPrompt = typeof promptInput === 'string' ? promptInput : promptInput?.text || promptInput?.prompt || promptInput?.response || '';
-    let systemPrompt = properties?.systemPrompt ?? '';
+    const systemPromptInput = inputs.systemPrompt;
+    const userPrompt = typeof promptInput === 'string' ? promptInput : promptInput?.text || promptInput?.prompt || '';
+    const systemPrompt = typeof systemPromptInput === 'string' && systemPromptInput.trim()
+      ? systemPromptInput
+      : properties?.systemPrompt ?? '';
     const role = properties?.role ?? 'persona';
-    const temperature = properties?.temperature ?? 0.7;
-    const maxTokens = properties?.maxTokens ?? 2048;
+    const temperature = properties?.temperature ?? 0.35;
+    const maxTokens = properties?.maxTokens ?? 384;
     const repeatPenalty = properties?.repeatPenalty ?? 1.15;
     const username = context.userId || context.username;
-
-    if (userPrompt && userPrompt.trim().length > 0 && role === 'summarizer') {
-      const reflection = userPrompt;
-      const conciseHint = context.conciseHint || 'Keep it concise.';
-
-      if (temperature >= 0.4) {
-        userPrompt = renderPromptTemplate(properties?.extendedSummaryUserTemplate ?? DEFAULT_EXTENDED_SUMMARY_USER_TEMPLATE, { reflection });
-        systemPrompt = systemPrompt || (properties?.extendedSummarySystemPrompt ?? DEFAULT_EXTENDED_SUMMARY_SYSTEM_PROMPT);
-      } else {
-        userPrompt = renderPromptTemplate(properties?.conciseSummaryUserTemplate ?? DEFAULT_CONCISE_SUMMARY_USER_TEMPLATE, { reflection, conciseHint });
-        systemPrompt = systemPrompt || renderPromptTemplate(
-          properties?.conciseSummarySystemTemplate ?? DEFAULT_CONCISE_SUMMARY_SYSTEM_TEMPLATE,
-          { conciseHint },
-        );
-      }
-    } else if (!userPrompt || userPrompt.trim().length === 0) {
-      if (context.reflectionPrompt) {
-        userPrompt = context.reflectionPrompt;
-        systemPrompt = systemPrompt || context.reflectionSystemPrompt || '';
-      }
-    }
 
     if (!userPrompt || userPrompt.trim().length === 0) {
       return { response: '', error: 'No prompt provided' };
     }
 
     if (!systemPrompt || systemPrompt.trim().length === 0) {
-      systemPrompt = properties?.fallbackSystemPrompt ?? DEFAULT_FALLBACK_SYSTEM_PROMPT;
+      return { response: '', error: 'No persona-aware system prompt provided' };
     }
 
     try {

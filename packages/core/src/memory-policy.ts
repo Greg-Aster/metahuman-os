@@ -26,8 +26,6 @@ export type EventType =
   | 'tool_invocation'
   | 'file_read'
   | 'file_write'
-  | 'code_approval'
-  | 'code_rejection'
   | 'summary'
   | 'observation'
   | 'reflection'
@@ -75,8 +73,6 @@ export function canWriteMemory(mode: CognitiveModeId, eventType: EventType): boo
     // Allow only action-oriented events
     const allowedEvents: EventType[] = [
       'tool_invocation',
-      'code_approval',
-      'code_rejection',
       'summary',
       'file_write', // Write operations are actions
     ];

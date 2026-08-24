@@ -35,7 +35,7 @@ Date: 2026-08-06
 ## `packages/core/src/nodes/environment/task-state.node.ts`
 
 - Owner: Typed Environment objective lifecycle.
-- Summary: Prepares and reduces task state, persists evidence requirements with actions, bypasses model inference for exact `action_result` completion, admits one next action, and emits explicit failures.
+- Summary: Prepares and reduces task state, persists evidence requirements with actions, bypasses model inference for exact reactive one-step `action_result` completion, returns autonomous results for semantic review, admits one next action, and emits explicit failures.
 - Boundary issues: None introduced; the node consumes public Core environment and robot-operator interfaces.
 - Technical debt: Baseline image data is retained in a bounded in-process cache while only the frame reference is persisted. A server restart during an action intentionally makes comparison evidence unavailable instead of inventing success.
 - Security/privacy notes: The cache is memory-only, bounded to 24 JPEG frames, and is not tracked source.

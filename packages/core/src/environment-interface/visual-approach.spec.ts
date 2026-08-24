@@ -32,6 +32,28 @@ const inspectionTarget = {
 };
 const TEST_JPEG = 'data:image/jpeg;base64,/9j/2gAA/9k=';
 
+function selectorJson(output: {
+  response: string;
+  actions: Array<Record<string, unknown>>;
+  movementRequest: null;
+}): string {
+  const actionType = String(output.actions[0]?.type ?? '');
+  const informationGain = actionType === 'inspect' || actionType === 'visualApproach';
+  return JSON.stringify({
+    ...output,
+    taskDecision: {
+      objective: 'Exercise the current frame-bound Environment action contract.',
+      outcome: 'act',
+      reason: 'The selected action advances the current visual objective.',
+      objectiveComplete: false,
+      continuationPolicy: informationGain ? 'bounded' : 'none',
+      requiredCompletionBasis: informationGain ? 'visual_observation' : 'action_result',
+      motionClass: informationGain ? 'target_relative' : 'open_loop_displacement',
+      actionPurpose: informationGain ? 'information_gain' : 'expression',
+    },
+  });
+}
+
 test('normalizes one generic frame-bound target and typed progress result', () => {
   assert.deepEqual(normalizeEnvironmentVisualTarget(target), target);
   assert.deepEqual(
@@ -176,7 +198,6 @@ test('active inspection is admitted only from an exact frame and truthful active
       robotObserver: {
         cycleId: 'cycle-inspect',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'environment-perception',
@@ -193,7 +214,7 @@ test('active inspection is admitted only from an exact frame and truthful active
     },
   };
   const inspect = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: '',
       actions: [{ type: 'inspect', inspectionTarget }],
       movementRequest: null,
@@ -208,7 +229,7 @@ test('active inspection is admitted only from an exact frame and truthful active
   assert.equal(inspect.actionAdmission.admitted, true);
 
   const missingController = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: '',
       actions: [{ type: 'inspect', inspectionTarget }],
       movementRequest: null,
@@ -229,7 +250,7 @@ test('active inspection is admitted only from an exact frame and truthful active
   );
 
   const staleFrame = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: '',
       actions: [{
         type: 'inspect',
@@ -276,7 +297,6 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
       robotObserver: {
         cycleId: 'cycle-1',
         step: 1,
-        maxSteps: 4,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'environment-perception',
@@ -293,7 +313,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
     },
   };
   const admitted = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Beginning a bounded camera-feedback approach.',
       actions: [{ type: 'visualApproach', visualTarget: target }],
       movementRequest: null,
@@ -309,7 +329,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
   assert.equal(admitted.actionAdmission.admitted, true);
 
   const equivalentTimestamp = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Beginning from the exact current frame.',
       actions: [{
         type: 'visualApproach',
@@ -328,7 +348,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
   assert.equal(equivalentTimestamp.actionAdmission.admitted, true);
 
   const openLoop = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Walking open loop.',
       actions: [{ type: 'robotCommand', command: 'walk' }],
       movementRequest: null,
@@ -352,7 +372,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
   assert.equal(openLoop.actionAdmission.reason, '');
 
   const staleTarget = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Using an old target frame.',
       actions: [{
         type: 'visualApproach',
@@ -370,7 +390,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
   assert.equal(staleTarget.actionAdmission.reason, 'target_relative_frame_unavailable');
 
   const uncorrelatedTarget = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Using an unrelated current-looking frame.',
       actions: [{ type: 'visualApproach', visualTarget: target }],
       movementRequest: null,
@@ -391,7 +411,7 @@ test('target-relative camera feedback is admitted only as an advertised visualAp
   assert.equal(uncorrelatedTarget.actionAdmission.reason, 'target_relative_frame_unavailable');
 
   const unconfiguredCapability = await environmentActionParserNode.execute({
-    response: JSON.stringify({
+    response: selectorJson({
       response: 'Trying an unconfigured controller.',
       actions: [{ type: 'visualApproach', visualTarget: target }],
       movementRequest: null,

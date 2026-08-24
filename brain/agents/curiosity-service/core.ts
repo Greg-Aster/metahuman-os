@@ -103,22 +103,12 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
       userId: username,
       allowMemoryWrites: true,
       cognitiveMode: 'agent' as const,
-      questionIntervalSeconds: config.questionIntervalSeconds || 1800, // 30 min default
     };
 
     console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
     const graphResult = await runGraph({ graph, context: graphContext });
 
     // Extract results from graph execution (node IDs are strings in Svelte Flow format)
-    const activityCheckNode = graphResult.nodes.get('1');
-    const canAsk = activityCheckNode?.outputs?.canAsk;
-
-    if (!canAsk) {
-      const timeSince = activityCheckNode?.outputs?.timeSinceLastQuestion;
-      console.log(`[curiosity-service] Cannot ask yet - only ${Math.round((timeSince || 0) / 60)}min since last question`);
-      return false;
-    }
-
     const samplerNode = graphResult.nodes.get('2');
     const questionGeneratorNode = graphResult.nodes.get('3');
     const saverNode = graphResult.nodes.get('4');

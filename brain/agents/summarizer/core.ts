@@ -9,6 +9,7 @@
  */
 
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
+import fs from 'node:fs/promises';
 import {
   callLLM,
   type RouterMessage,
@@ -27,6 +28,7 @@ import {
   submitConversationSummary,
 } from '@metahuman/core';
 import { canWriteMemory } from '@metahuman/core/cognitive-mode';
+import { requireUserInfo } from '@metahuman/core/user-resolver';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -436,14 +438,16 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   const opts = input.options || {};
 
   const sessionArg = args.find(a => a.startsWith('--session='));
-  const sessionId = sessionArg?.split('=')[1] || opts.sessionId as string;
+  const sessionId = sessionArg?.split('=')[1]
+    || (typeof opts.sessionId === 'string' ? opts.sessionId : undefined);
   const autoMode = args.includes('--auto') || opts.auto === true;
-  const username = args.find(a => a.startsWith('--user='))?.split('=')[1] || opts.username as string;
+  const username = args.find(a => a.startsWith('--user='))?.split('=')[1]
+    || (typeof opts.username === 'string' ? opts.username : ctx.username);
 
   try {
     if (sessionId) {
       const summary = await withUserContext(
-        { userId: username || ctx.userId, username: username || ctx.userId, role: 'owner' },
+        requireUserInfo(username),
         async () => summarizeSession(sessionId, { username })
       );
 

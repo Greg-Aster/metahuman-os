@@ -18,7 +18,6 @@ import {
   readRobotObserverCycle,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
-  robotOperatorChildMaxSteps,
   robotOperatorFullDueAt,
   loadRobotOperatorConfig,
 } from './robot-operator.js'
@@ -92,7 +91,6 @@ test('movement and reflection stimuli exclude old frames while preserving timest
   const cycle = {
     cycleId: 'movement-1',
     step: 1,
-    maxSteps: 3,
     triggerSource: 'autonomy' as const,
     graph: 'boredom-movement',
     requestedBy: 'boredom-movement' as const,
@@ -146,14 +144,13 @@ test('movement and reflection stimuli exclude old frames while preserving timest
   assert.deepEqual(reflectionStimulus.capabilities.robotCommands, ['gesture_alpha', 'gesture_beta'])
 })
 
-test('robot observer correlation advances only within its bounded cycle', () => {
+test('robot observer correlation advances without owning the Task State action budget', () => {
   const cycle = readRobotObserverCycle({
     metadata: {
       correlationId: 'cycle-1',
       robotObserver: {
         cycleId: 'cycle-1',
         step: 1,
-        maxSteps: 3,
         triggerSource: 'autonomy',
         graph: 'environment',
         requestedBy: 'robot-observer',
@@ -162,22 +159,20 @@ test('robot observer correlation advances only within its bounded cycle', () => 
   })
   assert.ok(cycle)
   assert.equal(nextRobotObserverCycle(cycle)?.step, 2)
-  assert.equal(nextRobotObserverCycle({ ...cycle, step: 3 }), null)
+  assert.equal(nextRobotObserverCycle({ ...cycle, step: 3 }).step, 4)
   assert.equal(readRobotObserverCycle({
     metadata: { robotObserver: { ...cycle, step: 4 } },
-  }), null)
+  })?.step, 4)
 })
 
-test('robot audio perception reuses the finite observer counter without depending on the observer agent lifecycle', () => {
+test('robot audio perception starts correlated Environment feedback without a second action budget', () => {
   const cycle = beginEnvironmentPerceptionCycle(
     'utterance-1',
     'environment',
-    3,
   )
   assert.deepEqual(cycle, {
     cycleId: 'utterance-1',
     step: 1,
-    maxSteps: 3,
     triggerSource: 'user',
     graph: 'environment',
     requestedBy: 'environment-perception',
@@ -289,9 +284,6 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.equal(config.autonomyGraph, 'boredom-autonomy')
   assert.equal(config.environmentGraph, 'environment')
   assert.equal(robotOperatorChildGraph(config, 'boredom-observer'), 'boredom-observer')
-  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-observer'), 8)
-  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-movement'), 8)
-  assert.equal(robotOperatorChildMaxSteps(config, 'boredom-reflection'), 8)
 
   const engine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8')
   const observerHandler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-autonomy-trigger-handler.ts'), 'utf8')
@@ -336,7 +328,6 @@ test('structured captureImage remains available and capability gated', async () 
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
-        presentation: 'private',
       },
     }),
     instruction: 'describe the current physical surroundings using your available senses',
@@ -365,7 +356,6 @@ test('structured captureImage remains available and capability gated', async () 
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
-        presentation: 'private',
       },
     }),
     instruction: 'inspect the current physical environment',
@@ -379,18 +369,16 @@ test('structured captureImage remains available and capability gated', async () 
   assert.match(unavailable.response, /camera is not currently available/i)
 })
 
-test('Boredom Autonomy presentation keeps cycle correlation in canonical buffer metadata', async () => {
+test('Boredom Autonomy response keeps cycle correlation in canonical buffer metadata', async () => {
   const result = await environmentSendActionNode.execute({
     response: 'The changed view gave me a new detail worth sharing.',
-    presentation: 'conversation',
   }, {
     username: 'owner',
     environmentActionSource: 'autonomy',
     environmentObservation: { metadata: { autonomousStimulus: 'boredom-observer' } },
     robotObserver: {
-      cycleId: 'episode-presentation',
+      cycleId: 'episode-response',
       step: 3,
-      maxSteps: 8,
       triggerSource: 'autonomy',
       graph: 'boredom-autonomy',
       requestedBy: 'boredom-observer',
@@ -398,9 +386,9 @@ test('Boredom Autonomy presentation keeps cycle correlation in canonical buffer 
   }, {})
   assert.equal(result.status, 'no_actions')
   assert.equal(result.conversationResponse, 'The changed view gave me a new detail worth sharing.')
-  assert.equal(result.presentationMetadata.correlationId, 'episode-presentation')
-  assert.equal('episodeId' in result.presentationMetadata, false)
-  assert.equal('episodeStatus' in result.presentationMetadata, false)
+  assert.equal(result.responseMetadata.correlationId, 'episode-response')
+  assert.equal('episodeId' in result.responseMetadata, false)
+  assert.equal('episodeStatus' in result.responseMetadata, false)
 })
 
 test('Active Operator dashboard exposes Robot Operator children without private payloads', () => {

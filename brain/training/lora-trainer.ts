@@ -51,6 +51,7 @@ interface RunRemoteTrainingResult {
   ollama_loaded?: boolean;
   s3_url?: string;
   s3_key?: string;
+  error?: string;
 }
 
 // Helper to write logs to a dedicated file
@@ -1032,7 +1033,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
 
         // Stream all output to console for detailed logging
         // Split by lines and log each line to preserve formatting
-        const lines = text.split('\n').filter(line => line.trim());
+        const lines = text.split('\n').filter((line: string) => line.trim());
         for (const line of lines) {
           console.log(line);
         }
@@ -1062,7 +1063,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
         const text = data.toString();
         stderr += text;
         // Stream stderr to console for detailed logging
-        const lines = text.split('\n').filter(line => line.trim());
+        const lines = text.split('\n').filter((line: string) => line.trim());
         for (const line of lines) {
           console.error(line);
         }

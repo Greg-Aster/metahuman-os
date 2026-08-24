@@ -48,18 +48,6 @@
     "huggingface": {
       "apiKey": "${HF_API_KEY}",
       "endpointUrl": "${HF_ENDPOINT_URL}"
-    },
-
-    "redis": {
-      "url": "${REDIS_URL}",
-      "keyPrefix": "mh:"
-    },
-
-    "scaling": {
-      "maxConcurrentInference": 3,
-      "queueTimeout": 60000,
-      "coldStartWarningMs": 15000,
-      "keepWarmIntervalMs": 0
     }
   }
 }
