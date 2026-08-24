@@ -32,7 +32,8 @@ Current phase:
 6. Agent graph executor ownership slice: complete.
 7. Node property-schema vocabulary slice: complete.
 8. Cognitive-layer persona contract slice: complete.
-9. Identity and decision-rule consumer contract slice: active.
+9. Identity and decision-rule consumer contract slice: complete.
+10. Connector ingestion contract slice: active.
 
 No production source was changed while establishing this goal and baseline.
 
@@ -276,6 +277,47 @@ Validation:
   or array-values reads remain.
 - `pnpm -s typecheck:core`: all seven cognitive-layer diagnostics are removed;
   unrelated owner groups remain red.
+- `git diff --check`: pass.
+
+## System-Wide Refactor Slice 6 - Identity and Decision-Rule Consumers
+
+Scope and owner:
+
+- `packages/core/src/identity.ts` owns persona goals and decision-rule shapes.
+- Context Builder, Policy Loader, and Goal Manager consume those public contracts.
+
+Baseline findings:
+
+- Context Builder placed the complete values configuration object into a
+  `string[]` summary, which later formatted as `[object Object]` rather than value
+  names.
+- Policy Loader formatted structured hard rules and preferences as strings,
+  producing `[object Object]` prompt entries.
+- Goal Manager indexed goal tiers with an unchecked property value, ignored its
+  named input, omitted `midTerm` from the editor, and matched mutations only by
+  mutable goal text.
+- The proposed-goal API promised required IDs while admitting entries whose ID
+  was absent.
+
+Implementation and cleanup:
+
+- Moved the pure persona projection helper beside the identity owner and reused
+  it from Context Builder and cognitive-layer consumers.
+- Exported the canonical goal and decision-rule contracts; updated policy prompts
+  to render descriptions and honor the explicit soft-preferences selection.
+- Restricted Goal Manager to canonical tiers, added `midTerm`, honored named and
+  positional inputs, normalized legacy string goals, defaulted missing statuses,
+  and matched updates/removals by stable ID or exact name.
+- Limited the proposed-goal result to actionable entries with non-empty IDs.
+
+Validation:
+
+- `node --import tsx --test packages/core/src/persona-summary.spec.ts packages/core/src/nodes/persona/goal-manager.node.spec.ts`:
+  pass, two files including canonical, compatibility, tier, and selector cases.
+- `pnpm -s typecheck:core`: all ten context, identity, policy, and goal-manager
+  diagnostics are removed; unrelated owner groups remain red.
+- `pnpm -s typecheck:site`: pass, 402 files with zero diagnostics.
+- `pnpm -s check:architecture`: pass with zero current architecture violations.
 - `git diff --check`: pass.
 
 ## Previous Consolidation Work
