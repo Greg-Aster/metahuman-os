@@ -38,6 +38,101 @@ interface OutcomeReviewOutput {
   completionCriteriaMet?: boolean;  // True only if ultimate goal is achieved
 }
 
+const OUTCOME_VERDICTS = new Set<OutcomeVerdict>([
+  'completed', 'continue', 'retry', 'escalate', 'abandon',
+]);
+const FAILURE_CATEGORIES = new Set<FailureCategory>([
+  'none', 'plan_error', 'system_error', 'external_error', 'timeout', 'partial',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new Error(`Outcome review ${name} must be a string`);
+  return value.trim() || undefined;
+}
+
+function optionalBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw new Error(`Outcome review ${name} must be a boolean`);
+  return value;
+}
+
+function stringArray(value: unknown, name: string, optional = false): string[] | undefined {
+  if (value === undefined && optional) return undefined;
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) {
+    throw new Error(`Outcome review ${name} must be an array of non-empty strings`);
+  }
+  return value.map(item => String(item).trim());
+}
+
+export function parseOutcomeReviewResponse(content: string): OutcomeReviewOutput {
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Outcome review response did not contain a JSON object');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    throw new Error(`Outcome review response was not valid JSON: ${(error as Error).message}`);
+  }
+
+  if (!isRecord(parsed)) throw new Error('Outcome review response must be an object');
+  if (typeof parsed.verdict !== 'string' || !OUTCOME_VERDICTS.has(parsed.verdict as OutcomeVerdict)) {
+    throw new Error('Outcome review verdict is invalid');
+  }
+  if (typeof parsed.reasoning !== 'string' || !parsed.reasoning.trim()) {
+    throw new Error('Outcome review reasoning is required');
+  }
+  if (typeof parsed.successScore !== 'number'
+    || !Number.isFinite(parsed.successScore)
+    || parsed.successScore < 0
+    || parsed.successScore > 1) {
+    throw new Error('Outcome review successScore must be between 0 and 1');
+  }
+  if (typeof parsed.failureCategory !== 'string'
+    || !FAILURE_CATEGORIES.has(parsed.failureCategory as FailureCategory)) {
+    throw new Error('Outcome review failureCategory is invalid');
+  }
+  if (typeof parsed.isFixableBug !== 'boolean' || typeof parsed.notifyUser !== 'boolean') {
+    throw new Error('Outcome review requires boolean isFixableBug and notifyUser fields');
+  }
+  if (parsed.adjustedStrength !== undefined
+    && (typeof parsed.adjustedStrength !== 'number'
+      || !Number.isFinite(parsed.adjustedStrength)
+      || parsed.adjustedStrength < 0
+      || parsed.adjustedStrength > 1)) {
+    throw new Error('Outcome review adjustedStrength must be between 0 and 1');
+  }
+
+  return {
+    verdict: parsed.verdict as OutcomeVerdict,
+    reasoning: parsed.reasoning.trim(),
+    successScore: parsed.successScore,
+    failureCategory: parsed.failureCategory as FailureCategory,
+    errorType: optionalString(parsed.errorType, 'errorType'),
+    isFixableBug: parsed.isFixableBug,
+    suggestedFix: optionalString(parsed.suggestedFix, 'suggestedFix'),
+    lessonsLearned: stringArray(parsed.lessonsLearned, 'lessonsLearned')!,
+    nextAttemptSuggestions: stringArray(
+      parsed.nextAttemptSuggestions,
+      'nextAttemptSuggestions',
+      true,
+    ),
+    adjustedStrength: parsed.adjustedStrength as number | undefined,
+    notifyUser: parsed.notifyUser,
+    userMessage: optionalString(parsed.userMessage, 'userMessage'),
+    milestoneAdvance: optionalBoolean(parsed.milestoneAdvance, 'milestoneAdvance'),
+    completionCriteriaMet: optionalBoolean(
+      parsed.completionCriteriaMet,
+      'completionCriteriaMet',
+    ),
+  };
+}
+
 const SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal, and critically analyze any failures.
 
 ## Your Role
@@ -76,7 +171,7 @@ When the execution fails, you MUST categorize the failure:
 
 - **none**: No failure - execution succeeded
 - **plan_error**: The strategy/approach was wrong. Need a different plan. Example: tried to use an API that doesn't exist, wrong sequence of steps
-- **system_error**: Internal bug or code error in MetaHuman OS itself. Example: null pointer, missing function, type error, file not found where it should exist. The system (Big Brother) may be able to fix this.
+- **system_error**: Internal bug or code error in MetaHuman OS itself. Record the evidence precisely for user review; this reviewer has no authority to repair code.
 - **external_error**: External dependency failed. Example: API rate limited, server down, network error, missing credentials, permission denied. User needs to help.
 - **timeout**: Took too long. May need simplification or retry.
 - **partial**: Some steps succeeded, some failed. May continue or retry.
@@ -85,7 +180,7 @@ When the execution fails, you MUST categorize the failure:
 If you detect what appears to be a code bug in MetaHuman OS:
 - Set isFixableBug: true
 - Provide suggestedFix with actionable guidance
-- This will route to Big Brother (Claude) for self-repair
+- The canonical Agency transition will pause for explicit user review. Do not claim that a repair was created or executed.
 
 Examples of fixable bugs:
 - "TypeError: Cannot read property X of undefined" → missing null check
@@ -135,7 +230,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
 
 1. Did the desire's goal get achieved?
 2. If failed: What category of failure is this? (plan_error, system_error, external_error, timeout, partial)
-3. If system_error: Is this a bug that Big Brother (Claude with full code access) could fix?
+3. If system_error: What concrete evidence and possible repair should the user review?
 4. What specific lessons should inform the next attempt?
 
 ## Output JSON Schema
@@ -146,7 +241,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
   "successScore": 0.0-1.0,
   "failureCategory": "none" | "plan_error" | "system_error" | "external_error" | "timeout" | "partial",
   "errorType": "specific error type if identifiable (e.g., TypeError, ENOENT, 403 Forbidden)",
-  "isFixableBug": true/false - is this a code bug Big Brother could fix?,
+  "isFixableBug": true/false - is this a possible code bug requiring user review?,
   "suggestedFix": "If isFixableBug, describe what needs to be fixed",
   "lessonsLearned": ["specific lesson 1", "specific lesson 2"],
   "nextAttemptSuggestions": ["actionable suggestion 1", "actionable suggestion 2"],
@@ -223,73 +318,14 @@ async function runOutcomeReview(
     { role: 'user', content: userPrompt },
   ];
 
-  try {
-    const response = await callLLM({
-      role: options.role ?? 'persona',
-      messages,
-      userId: username,
-      options: { temperature: options.temperature ?? 0.3, responseFormat: 'json' },
-    });
-
-    if (!response.content) {
-      return {
-        verdict: 'escalate',
-        reasoning: 'Failed to get outcome review response',
-        successScore: 0,
-        failureCategory: 'system_error',
-        isFixableBug: false,
-        lessonsLearned: ['Outcome review failed - LLM returned empty response'],
-        notifyUser: true,
-        userMessage: 'Outcome review could not be completed automatically.',
-      };
-    }
-
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return {
-        verdict: 'escalate',
-        reasoning: 'Could not parse outcome review response',
-        successScore: 0,
-        failureCategory: 'system_error',
-        isFixableBug: true,
-        suggestedFix: 'LLM response parsing failed - may need to improve JSON extraction in outcome-reviewer.node.ts',
-        lessonsLearned: ['Outcome review parsing failed'],
-        notifyUser: true,
-        userMessage: 'Outcome review response was invalid.',
-      };
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]) as OutcomeReviewOutput;
-    return {
-      verdict: parsed.verdict,
-      reasoning: parsed.reasoning,
-      successScore: Math.max(0, Math.min(1, parsed.successScore)),
-      failureCategory: parsed.failureCategory || 'none',
-      errorType: parsed.errorType,
-      isFixableBug: parsed.isFixableBug ?? false,
-      suggestedFix: parsed.suggestedFix,
-      lessonsLearned: parsed.lessonsLearned || [],
-      nextAttemptSuggestions: parsed.nextAttemptSuggestions,
-      adjustedStrength: parsed.adjustedStrength,
-      notifyUser: parsed.notifyUser ?? false,
-      userMessage: parsed.userMessage,
-      // Long-running goal support
-      milestoneAdvance: parsed.milestoneAdvance ?? false,
-      completionCriteriaMet: parsed.completionCriteriaMet ?? false,
-    };
-  } catch (error) {
-    return {
-      verdict: 'escalate',
-      reasoning: `Outcome review error: ${(error as Error).message}`,
-      successScore: 0,
-      failureCategory: 'system_error',
-      isFixableBug: true,
-      suggestedFix: 'The outcome review process itself failed - check outcome-reviewer.node.ts',
-      lessonsLearned: ['Outcome review threw an error - this is a system issue'],
-      notifyUser: true,
-      userMessage: `Outcome review failed: ${(error as Error).message}`,
-    };
-  }
+  const response = await callLLM({
+    role: options.role ?? 'persona',
+    messages,
+    userId: username,
+    options: { temperature: options.temperature ?? 0.3, responseFormat: 'json' },
+  });
+  if (!response.content) throw new Error('Outcome review model returned an empty response');
+  return parseOutcomeReviewResponse(response.content);
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -313,33 +349,17 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     (slot0 as { execution?: DesireExecution })?.execution ||
     desire?.execution;
 
-  if (!desire) {
-    return {
-      outcomeReview: null,
-      verdict: null,
-      success: false,
-      error: 'No desire provided',
-    };
-  }
-
-  if (!execution) {
-    return {
-      outcomeReview: null,
-      verdict: null,
-      success: false,
-      error: 'No execution data available',
-    };
-  }
+  if (!desire) throw new Error('Outcome review requires a desire');
+  if (!execution) throw new Error('Outcome review requires execution data');
 
   console.log(`[outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
 
-  try {
-    const reviewResult = await runOutcomeReview(desire, execution, username, {
+  const reviewResult = await runOutcomeReview(desire, execution, username, {
       systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
       userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
       role: normalizeModelRole(properties?.role, 'persona'),
       temperature: properties?.temperature ?? 0.3,
-    });
+  });
 
     const outcomeReview: DesireOutcomeReview = {
       id: `outcome-${desire.id}-${Date.now()}`,
@@ -404,25 +424,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       summary += ` Milestone completed, advancing to next phase.`;
     }
 
-    return {
-      outcomeReview,
-      verdict: reviewResult.verdict,
-      success: true,
-      desire, // Pass through for downstream nodes
-      summary, // Human-readable summary for inner dialogue and TTS
-      // Long-running goal outputs
-      milestoneAdvance: reviewResult.milestoneAdvance,
-      completionCriteriaMet: reviewResult.completionCriteriaMet,
-    };
-  } catch (error) {
-    console.error(`[outcome-reviewer] ❌ Error:`, error);
-    return {
-      outcomeReview: null,
-      verdict: null,
-      success: false,
-      error: (error as Error).message,
-    };
-  }
+  return {
+    outcomeReview,
+    verdict: reviewResult.verdict,
+    success: true,
+    desire,
+    summary,
+    milestoneAdvance: reviewResult.milestoneAdvance,
+    completionCriteriaMet: reviewResult.completionCriteriaMet,
+  };
 };
 
 export const OutcomeReviewerNode: NodeDefinition = defineNode({

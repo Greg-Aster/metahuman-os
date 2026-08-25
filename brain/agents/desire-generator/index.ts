@@ -13,7 +13,6 @@ export const meta: AgentMeta = {
   description: 'Synthesizes desires from persona goals, tasks, memories, and other sources',
   usesLLM: true,
   priority: 'normal',
-  defaultInterval: 1800, // 30 minutes
   tags: ['agency', 'llm', 'background', 'desire'],
 };
 
@@ -25,6 +24,10 @@ export {
   generateDesiresForUser,
   gatherInputs,
   identifyDesires,
+  parseDesireCandidates,
+  parseDesireGeneratorArgs,
+  parseReinforcementResponse,
+  validateCandidateSources,
   type DesireGeneratorOptions,
   type DesireGeneratorResult,
 } from './core.js';

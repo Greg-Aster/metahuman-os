@@ -1,8 +1,8 @@
 /**
  * Agency Executor
  *
- * Graph-based execution functions for desires and outcome reviews.
- * Single source of truth - used by both API endpoints and agents.
+ * Graph-level execution functions for the canonical desire execution and
+ * outcome-review services.
  */
 
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict } from './types.js';
@@ -11,6 +11,7 @@ import type { ExecutionEventHandler } from '../graph-executor.js';
 import {
   cognitiveGraphPath,
   loadGraphFile,
+  requireGraphNodeOutput,
   runGraph,
   type CachedGraphEntry,
 } from '../graph-runtime.js';
@@ -86,6 +87,7 @@ export function clearGraphCache(): void {
 
 export interface ExecuteDesireResult {
   success: boolean;
+  graphCompleted: boolean;
   execution?: DesireExecution;
   error?: string;
 }
@@ -102,7 +104,8 @@ export interface ExecuteDesireResult {
 export async function executeDesireViaGraph(
   desire: Desire,
   username: string,
-  onProgress?: DesireProgressCallback
+  onProgress?: DesireProgressCallback,
+  signal?: AbortSignal,
 ): Promise<ExecuteDesireResult> {
   try {
     const graph = await loadDesireExecutorGraph();
@@ -128,11 +131,21 @@ export async function executeDesireViaGraph(
       desire,
       // Pass progress callback for nodes to emit progress
       onDesireProgress: onProgress,
+      abortSignal: signal,
     };
+
+    const executorGraphNode = graph.nodes.find(node => node.data.nodeType === 'desire_executor');
+    if (!executorGraphNode) {
+      throw new Error('Desire executor graph has no desire_executor node');
+    }
+    let graphError: string | undefined;
 
     // Create event handler that forwards graph events to progress callback
     const eventHandler: ExecutionEventHandler = (event) => {
-      if (event.type === 'node_start' && event.nodeId === '3') {
+      if (event.type === 'graph_error') {
+        graphError = typeof event.data?.error === 'string' ? event.data.error : 'Graph execution failed';
+      }
+      if (event.type === 'node_start' && event.nodeId === executorGraphNode.id) {
         // Desire executor node starting
         onProgress?.({
           type: 'claude_working',
@@ -143,13 +156,22 @@ export async function executeDesireViaGraph(
     };
 
     console.log(`${LOG_PREFIX} Executing via graph pipeline for: ${desire.title}`);
-    const graphResult = await runGraph({ graph, context: graphContext, eventHandler });
+    const graphResult = await runGraph({ graph, context: graphContext, eventHandler, signal });
 
-    // Extract results from the desire_executor node (node 3 in our graph)
-    const executorNode = graphResult.nodes.get('3');
+    if (graphResult.status !== 'completed') {
+      return {
+        success: false,
+        graphCompleted: false,
+        error: graphError || 'Desire executor graph did not complete',
+      };
+    }
+
+    // Extract results from the graph's declared desire_executor owner.
+    const executorNode = graphResult.nodes.get(executorGraphNode.id);
     if (!executorNode?.outputs) {
       return {
         success: false,
+        graphCompleted: false,
         error: 'Graph execution failed - no executor output',
       };
     }
@@ -157,6 +179,32 @@ export async function executeDesireViaGraph(
     const execution = executorNode.outputs.execution as DesireExecution | undefined;
     const success = executorNode.outputs.success as boolean;
     const error = executorNode.outputs.error as string | undefined;
+
+    const auditGraphNode = graph.nodes.find(node => node.data.nodeType === 'audit_logger');
+    const auditOutputs = auditGraphNode ? graphResult.nodes.get(auditGraphNode.id)?.outputs : undefined;
+    if (auditGraphNode && auditOutputs?.success !== true) {
+      return {
+        success: false,
+        graphCompleted: false,
+        execution,
+        error: typeof auditOutputs?.error === 'string'
+          ? `Execution audit failed: ${auditOutputs.error}`
+          : 'Execution audit was not durably recorded',
+      };
+    }
+
+    const innerGraphNode = graph.nodes.find(node => node.data.nodeType === 'inner_dialogue_buffer');
+    const innerOutputs = innerGraphNode ? graphResult.nodes.get(innerGraphNode.id)?.outputs : undefined;
+    if (innerGraphNode && innerOutputs?.saved !== true) {
+      return {
+        success: false,
+        graphCompleted: false,
+        execution,
+        error: typeof innerOutputs?.error === 'string'
+          ? `Execution inner-dialogue persistence failed: ${innerOutputs.error}`
+          : `Execution inner-dialogue persistence failed: ${innerOutputs?.reason || 'not saved'}`,
+      };
+    }
 
     // Emit completion event
     onProgress?.({
@@ -171,6 +219,7 @@ export async function executeDesireViaGraph(
 
     return {
       success,
+      graphCompleted: true,
       execution,
       error,
     };
@@ -188,6 +237,7 @@ export async function executeDesireViaGraph(
 
     return {
       success: false,
+      graphCompleted: false,
       error: `Graph execution failed: ${errorMsg}`,
     };
   }
@@ -199,8 +249,11 @@ export async function executeDesireViaGraph(
 
 export interface ReviewOutcomeResult {
   success: boolean;
+  desire?: Desire;
   outcomeReview?: DesireOutcomeReview;
   verdict?: OutcomeVerdict;
+  action?: string;
+  summary?: string;
   error?: string;
 }
 
@@ -214,7 +267,8 @@ export interface ReviewOutcomeResult {
  */
 export async function reviewOutcomeViaGraph(
   desire: Desire,
-  username: string
+  username: string,
+  signal?: AbortSignal,
 ): Promise<ReviewOutcomeResult> {
   try {
     const graph = await loadOutcomeReviewerGraph();
@@ -228,30 +282,32 @@ export async function reviewOutcomeViaGraph(
       cognitiveMode: 'dual' as const,
       // Pass desire in context - desire_loader checks context.desire
       desire,
+      abortSignal: signal,
     };
 
     console.log(`${LOG_PREFIX} Reviewing outcome via graph pipeline for: ${desire.title}`);
-    const graphResult = await runGraph({ graph, context: graphContext });
-
-    // Extract results from the outcome_reviewer node (node 2 in outcome-reviewer.json)
-    const reviewerNode = graphResult.nodes.get('2');
-    if (!reviewerNode?.outputs) {
-      return {
-        success: false,
-        error: 'Graph execution failed - no reviewer output',
-      };
+    const graphResult = await runGraph({ graph, context: graphContext, signal });
+    if (graphResult.status !== 'completed') {
+      throw new Error('Outcome reviewer graph did not complete');
     }
 
-    const outcomeReview = reviewerNode.outputs.outcomeReview as DesireOutcomeReview | undefined;
-    const verdict = reviewerNode.outputs.verdict as OutcomeVerdict | undefined;
-    const success = reviewerNode.outputs.success as boolean;
-    const error = reviewerNode.outputs.error as string | undefined;
+    const reviewerOutputs = requireGraphNodeOutput(graphResult, 'outcome_reviewer');
+    const transitionOutputs = requireGraphNodeOutput(graphResult, 'desire_updater');
+    const outcomeReview = reviewerOutputs.outcomeReview as DesireOutcomeReview | undefined;
+    const verdict = reviewerOutputs.verdict as OutcomeVerdict | undefined;
+    const updatedDesire = transitionOutputs.desire as Desire | undefined;
+    if (reviewerOutputs.success !== true || transitionOutputs.success !== true
+      || !outcomeReview || !verdict || !updatedDesire) {
+      throw new Error('Outcome reviewer graph did not produce a durable Agency transition');
+    }
 
     return {
-      success,
+      success: true,
+      desire: updatedDesire,
       outcomeReview,
       verdict,
-      error,
+      action: transitionOutputs.action as string | undefined,
+      summary: transitionOutputs.summary as string | undefined,
     };
   } catch (graphError) {
     console.error(`${LOG_PREFIX} Graph review failed:`, (graphError as Error).message);

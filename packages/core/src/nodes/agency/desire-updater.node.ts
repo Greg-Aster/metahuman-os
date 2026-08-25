@@ -24,6 +24,7 @@ import type {
   DesireGoalType,
   DesireMilestone,
   DesireGoalProgress,
+  DesireOutcomeReview,
 } from '../../agency/types.js';
 import {
   saveDesireManifest,
@@ -32,6 +33,7 @@ import {
   addScratchpadEntryToFolder,
 } from '../../agency/storage.js';
 import { audit } from '../../audit.js';
+import { applyDesireOutcomeReview } from '../../agency/desire-outcome-transition.js';
 
 interface RejectionInput {
   reason: string;
@@ -75,6 +77,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   // Extract review from reviewer output or named input
   const review = reviewerOutput?.review || (inputs.review as DesireReview | undefined);
+  const outcomeReview = (inputs.outcomeReview
+    || (inputs.review as DesireOutcomeReview | undefined)) as DesireOutcomeReview | undefined;
   const rejection = inputs.rejection as RejectionInput | undefined;
 
   // Status can come from:
@@ -91,6 +95,24 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       desire: null,
       success: false,
       error: 'No desire provided',
+    };
+  }
+
+  if (properties?.applyOutcomePolicy === true) {
+    if (!outcomeReview) {
+      throw new Error('Outcome transition requires a validated outcomeReview input');
+    }
+    if (!username) {
+      throw new Error('Outcome transition requires a user context');
+    }
+    const applied = await applyDesireOutcomeReview(desire, outcomeReview, username);
+    return {
+      desire: applied.desire,
+      outcomeReview: applied.review,
+      verdict: applied.review.verdict,
+      action: applied.action,
+      summary: applied.summary,
+      success: true,
     };
   }
 
@@ -278,14 +300,29 @@ export const DesireUpdaterNode: NodeDefinition = defineNode({
     { name: 'newStatus', type: 'string', optional: true, description: 'New status to set' },
     { name: 'plan', type: 'object', optional: true, description: 'Plan to attach' },
     { name: 'review', type: 'object', optional: true, description: 'Review to attach' },
+    { name: 'outcomeReview', type: 'object', optional: true, description: 'Validated execution outcome review' },
     { name: 'rejection', type: 'object', optional: true, description: 'Rejection info' },
   ],
   outputs: [
     { name: 'desire', type: 'object', description: 'Updated desire' },
+    { name: 'outcomeReview', type: 'object', optional: true, description: 'Applied outcome review' },
+    { name: 'verdict', type: 'string', optional: true, description: 'Applied outcome verdict' },
+    { name: 'action', type: 'string', optional: true, description: 'Canonical transition action' },
+    { name: 'summary', type: 'string', optional: true, description: 'Human-readable transition summary' },
     { name: 'success', type: 'boolean', description: 'Whether update succeeded' },
     { name: 'error', type: 'string', optional: true, description: 'Error message if failed' },
   ],
-  properties: {},
+  properties: {
+    applyOutcomePolicy: false,
+  },
+  propertySchemas: {
+    applyOutcomePolicy: {
+      type: 'boolean',
+      default: false,
+      label: 'Apply Outcome Policy',
+      description: 'Apply the canonical Agency outcome transition to a validated outcome review',
+    },
+  },
   execute,
 });
 

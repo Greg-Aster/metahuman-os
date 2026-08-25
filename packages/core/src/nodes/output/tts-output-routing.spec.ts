@@ -186,7 +186,7 @@ test('Inner Dialogue speech remains local when outward speech targets the robot'
       username: 'test-user',
       text: 'I notice the room is dark.',
       mode: 'inner',
-      source: 'robot-operator-mode',
+      source: 'boredom-autonomy',
     },
     {
       getSettings: () => ({

@@ -26,9 +26,11 @@ import { submitExecutionProgress } from '../../buffer-admission.js';
 import {
   escalate,
   getActiveBackend,
+  getBackend,
   ensureBackendsInitialized,
 } from '../../escalation-backend.js';
-import { loadFreshOperatorConfig, loadUserConfig } from '../../config.js';
+import { loadFreshOperatorConfig } from '../../config.js';
+import { loadConfig as loadAgencyConfig } from '../../agency/config.js';
 import type { AgencyExecutionConfig } from '../../agency/types.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -86,31 +88,21 @@ function buildTaskPrompt(step: PlanStep, desire: Desire, taskPromptTemplate = DE
 }
 
 /**
- * Load agency execution config with defaults
+ * Load the canonical agency execution config.
  */
-function getAgencyExecutionConfig(username?: string): AgencyExecutionConfig {
-  const defaults: AgencyExecutionConfig = {
-    preferredBackend: 'claude-code',
-    fallbackBackend: 'codex',
-    availableBackends: ['claude-code', 'codex', 'open-interpreter', 'aider'],
-    delegateToToolExecutor: true,
-    localExecutionEnabled: false,
-    plannerIncludesToolCapabilities: true,
-    feasibilityCheckEnabled: true,
-    maxPlanRetries: 3,
-    taskGenerationEnabled: true,
-  };
-
-  try {
-    const agencyConfig = loadUserConfig<{ execution?: AgencyExecutionConfig }>(
-      'agency.json',
-      { execution: defaults },
-      username
-    );
-    return agencyConfig.execution || defaults;
-  } catch {
-    return defaults;
+async function getAgencyExecutionConfig(username?: string): Promise<AgencyExecutionConfig> {
+  const agencyConfig = await loadAgencyConfig(username);
+  if (!agencyConfig.execution) {
+    throw new Error('Agency execution configuration is missing');
   }
+  return agencyConfig.execution;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Desire execution cancelled', 'AbortError');
 }
 
 /**
@@ -123,41 +115,44 @@ async function executeStep(
   username?: string,
   onProgress?: DesireProgressCallback,
   taskPromptTemplate?: string,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  throwIfAborted(signal);
   const prompt = buildTaskPrompt(step, desire, taskPromptTemplate);
 
   // Ensure backends are loaded before checking
   await ensureBackendsInitialized();
 
   // Load agency execution config to get preferred backend
-  const execConfig = getAgencyExecutionConfig(username);
+  const execConfig = await getAgencyExecutionConfig(username);
   const preferredBackendId = execConfig.preferredBackend;
 
-  // Get the backend - prefer agency config, fall back to tool-executor config
+  // Resolve one backend before execution begins. A configured fallback may replace
+  // an unavailable primary, but an attempted external action is never replayed.
+  let selectedBackendId = preferredBackendId;
   let backend = preferredBackendId ?
-    (await import('../../escalation-backend.js')).getBackend(preferredBackendId) :
-    undefined;
+    getBackend(preferredBackendId) :
+    getActiveBackend(username);
 
-  if (!backend) {
-    backend = getActiveBackend(username);
-  }
-
-  if (!backend) {
-    console.log(`[desire-executor] ❌ No execution backend configured`);
-    return {
-      success: false,
-      error: 'No execution backend configured. Enable one in Settings.',
-    };
-  }
-
-  // Check if backend is available
-  const available = await backend.isAvailable();
-  if (!available) {
-    console.log(`[desire-executor] ❌ Backend ${backend.name} is not available`);
-    return {
-      success: false,
-      error: `Backend ${backend.name} is not available. Check installation.`,
-    };
+  if (!backend || !await backend.isAvailable()) {
+    const primaryError = backend
+      ? `Backend ${backend.name} is not available`
+      : preferredBackendId
+        ? `Configured backend '${preferredBackendId}' is not registered`
+        : 'No execution backend is configured';
+    const fallbackBackend = execConfig.fallbackBackend
+      && execConfig.fallbackBackend !== preferredBackendId
+      ? getBackend(execConfig.fallbackBackend)
+      : undefined;
+    if (!fallbackBackend || !await fallbackBackend.isAvailable()) {
+      return {
+        success: false,
+        error: `${primaryError}; configured fallback backend is unavailable`,
+      };
+    }
+    backend = fallbackBackend;
+    selectedBackendId = fallbackBackend.id;
+    console.log(`[desire-executor] ⚠️ ${primaryError}; using configured fallback ${fallbackBackend.name}`);
   }
 
   console.log(`[desire-executor] 🤖 Using ${backend.name}...`);
@@ -188,34 +183,20 @@ async function executeStep(
 
   try {
     // Get configurable timeout from operator config
-    let timeout = DEFAULT_EXECUTION_TIMEOUT;
-    if (username) {
-      try {
-        const config = loadFreshOperatorConfig(username);
-        timeout = config.bigBrotherMode?.executionTimeout || DEFAULT_EXECUTION_TIMEOUT;
-      } catch {
-        // Use default if config load fails
-      }
-    }
+    const timeout = username
+      ? loadFreshOperatorConfig(username).bigBrotherMode?.executionTimeout || DEFAULT_EXECUTION_TIMEOUT
+      : DEFAULT_EXECUTION_TIMEOUT;
 
-    // Execute via unified backend abstraction with agency's preferred backend
+    // Execute exactly once through the backend selected before the external action.
     const timeoutMins = Math.round(timeout / 60000);
     console.log(`[desire-executor] ⏳ Waiting for response (${timeoutMins} min timeout)...`);
-    let result = await escalate(prompt, {
+    const result = await escalate(prompt, {
       timeout,
       username,
-      preferredBackend: preferredBackendId,
+      preferredBackend: selectedBackendId,
+      signal,
     });
-
-    // Try fallback backend if primary fails and fallback is configured
-    if (!result.success && execConfig.fallbackBackend && execConfig.fallbackBackend !== preferredBackendId) {
-      console.log(`[desire-executor] ⚠️ Primary backend failed, trying fallback: ${execConfig.fallbackBackend}`);
-      result = await escalate(prompt, {
-        timeout,
-        username,
-        preferredBackend: execConfig.fallbackBackend,
-      });
-    }
+    throwIfAborted(signal);
 
     if (!result.success) {
       console.log(`[desire-executor] ❌ Execution failed: ${result.error}`);
@@ -224,12 +205,6 @@ async function executeStep(
         error: result.error || 'Execution failed',
       };
     }
-
-    // Log response summary
-    const responseLines = result.output.split('\n').filter((l: string) => l.trim());
-    const responseSummary = responseLines.slice(0, 5).join('\n   ');
-    console.log(`[desire-executor] 📥 Response (${result.output.length} chars):`);
-    console.log(`[desire-executor]    ${responseSummary}${responseLines.length > 5 ? '\n   ...(truncated)' : ''}`);
 
     return {
       success: true,
@@ -241,6 +216,7 @@ async function executeStep(
       },
     };
   } catch (error) {
+    if ((error as Error).name === 'AbortError' || signal?.aborted) throw error;
     console.log(`[desire-executor] ❌ Execution error: ${(error as Error).message}`);
     return {
       success: false,
@@ -256,6 +232,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const slot0 = (inputs['slot_0'] || inputs[0]) as { desire?: Desire } | Desire | undefined;
   const slot1 = (inputs['slot_1'] || inputs[1]) as { userId?: string; cognitiveMode?: string } | undefined;
   const taskPromptTemplate = properties?.taskPromptTemplate ?? DEFAULT_TASK_PROMPT_TEMPLATE;
+  const signal = context.abortSignal as AbortSignal | undefined;
 
   // Handle both wrapped { desire } format and direct Desire object
   // Also check context.desire for cases where desire is injected directly
@@ -309,6 +286,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   // Execute each step sequentially
   for (const step of plan.steps) {
+    throwIfAborted(signal);
     console.log(`[desire-executor] 📍 Step ${step.order}: ${step.action}`);
     execution.currentStep = step.order;
 
@@ -335,7 +313,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     }
 
     try {
-      const result = await executeStep(step, desire, username, onProgress, taskPromptTemplate);
+      const result = await executeStep(step, desire, username, onProgress, taskPromptTemplate, signal);
 
       const stepResult: StepResult = {
         stepOrder: step.order,
@@ -404,6 +382,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         break;
       }
     } catch (error) {
+      if ((error as Error).name === 'AbortError' || signal?.aborted) throw error;
       execution.status = 'failed';
       execution.error = `Step ${step.order} threw error: ${(error as Error).message}`;
       console.log(`[desire-executor]    ❌ Step ${step.order} error: ${(error as Error).message}`);
@@ -442,71 +421,52 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     console.log(`[desire-executor] 🎉 All ${plan.steps.length} steps completed!`);
   }
 
-  // Save execution to desire folder
-  try {
-    // Calculate attempt number from metrics
-    const attemptNumber = (desire.metrics?.executionAttemptCount || 0) + 1;
+  // Persist the canonical manifest before secondary execution history and audit data.
+  // Any persistence failure fails the graph; callers must never report success for an
+  // external effect that was not durably recorded.
+  const attemptNumber = (desire.metrics?.executionAttemptCount || 0) + 1;
+  const now = new Date().toISOString();
+  const updatedDesire: Desire = {
+    ...desire,
+    execution,
+    updatedAt: now,
+    status: 'awaiting_review',
+    currentStage: 'outcome_review',
+    metrics: desire.metrics
+      ? {
+          ...desire.metrics,
+          executionAttemptCount: desire.metrics.executionAttemptCount + 1,
+          executionSuccessCount: desire.metrics.executionSuccessCount + (execution.status === 'completed' ? 1 : 0),
+          executionFailCount: desire.metrics.executionFailCount + (execution.status === 'completed' ? 0 : 1),
+          lastActivityAt: now,
+        }
+      : desire.metrics,
+    stageIterations: {
+      planning: desire.stageIterations?.planning || 0,
+      planReview: desire.stageIterations?.planReview || 0,
+      userApproval: desire.stageIterations?.userApproval || 0,
+      executing: (desire.stageIterations?.executing || 0) + 1,
+      outcomeReview: desire.stageIterations?.outcomeReview || 0,
+    },
+  };
 
-    // Save execution to folder
-    await saveExecutionToFolder(desire.id, execution, attemptNumber, username);
-    console.log(`[desire-executor] 💾 Saved execution attempt #${attemptNumber} to folder`);
-
-    // Update desire with execution result and metrics
-    const now = new Date().toISOString();
-    const executionSucceeded = execution.status === 'completed';
-    desire.execution = execution;
-    desire.updatedAt = now;
-    // Always send to outcome review; failures are handled there (retry/escalate/abandon).
-    desire.status = 'awaiting_review';
-    desire.currentStage = 'outcome_review';
-
-    // Update metrics
-    if (desire.metrics) {
-      desire.metrics.executionAttemptCount++;
-      desire.metrics.lastActivityAt = now;
-      if (execution.status === 'completed') {
-        desire.metrics.executionSuccessCount++;
-      } else {
-        desire.metrics.executionFailCount++;
-      }
-    }
-
-    // Update stage iterations
-    if (!desire.stageIterations) {
-      desire.stageIterations = {
-        planning: 0,
-        planReview: 0,
-        userApproval: 0,
-        executing: 0,
-        outcomeReview: 0,
-      };
-    }
-    desire.stageIterations.executing++;
-
-    // Save updated desire manifest
-    await saveDesireManifest(desire, username);
-
-    // Add scratchpad entry
-    await addScratchpadEntryToFolder(desire.id, {
-      timestamp: now,
-      type: execution.status === 'completed' ? 'execution_completed' : 'execution_failed',
-      description: execution.status === 'completed'
-        ? `Execution completed successfully (${execution.stepsCompleted}/${execution.stepsTotal} steps)`
-        : `Execution failed: ${execution.error}`,
-      actor: 'system',
-      data: {
-        attemptNumber,
-        stepsCompleted: execution.stepsCompleted,
-        stepsTotal: execution.stepsTotal,
-        status: execution.status,
-        error: execution.error,
-      },
-    }, username);
-
-  } catch (saveError) {
-    console.error(`[desire-executor] ⚠️ Failed to save execution to folder:`, saveError);
-    // Don't fail the whole execution just because of save error
-  }
+  await saveDesireManifest(updatedDesire, username);
+  await saveExecutionToFolder(desire.id, execution, attemptNumber, username);
+  await addScratchpadEntryToFolder(desire.id, {
+    timestamp: now,
+    type: execution.status === 'completed' ? 'execution_completed' : 'execution_failed',
+    description: execution.status === 'completed'
+      ? `Execution completed successfully (${execution.stepsCompleted}/${execution.stepsTotal} steps)`
+      : `Execution failed: ${execution.error}`,
+    actor: 'system',
+    data: {
+      attemptNumber,
+      stepsCompleted: execution.stepsCompleted,
+      stepsTotal: execution.stepsTotal,
+      status: execution.status,
+      error: execution.error,
+    },
+  }, username);
 
   // Generate human-readable summary for inner dialogue and TTS
   let summary = '';
@@ -542,7 +502,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     execution,
     success: execution.status === 'completed',
     error: execution.error,
-    desire, // Return updated desire
+    desire: updatedDesire,
     summary, // Human-readable summary for inner dialogue and TTS
   };
 };

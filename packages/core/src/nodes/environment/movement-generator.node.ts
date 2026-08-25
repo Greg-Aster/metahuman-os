@@ -13,27 +13,25 @@ import {
 import { defineNode } from '../types.js';
 import type { EnvironmentMovementRequest } from './helpers.js';
 
-const ACTION_KEYS = ['type', 'frames', 'endPose'] as const;
-const RESULT_KEYS = ['action', 'summary'] as const;
 const COMPACT_RESULT_KEYS = ['summary', 'frames', 'endPose'] as const;
+const MOTION_FRAME_KEYS = ['durationMs', ...ENVIRONMENT_MOTION_PLAN_JOINTS] as const;
+const MOTION_DURATION_PATTERN = '^(?:[1-9][0-9]{2}|[1-4][0-9]{3}|5000)$';
+const MOTION_DEGREES_PATTERN = '^(?:(?:[0-9]|[1-9][0-9]|1[0-7][0-9])(?:\\.[0-9]{1,2})?|180(?:\\.0{1,2})?)$';
 
 const MOTION_FRAME_JSON_SCHEMA = {
-  type: 'array',
-  minItems: ENVIRONMENT_MOTION_PLAN_JOINTS.length + 1,
-  maxItems: ENVIRONMENT_MOTION_PLAN_JOINTS.length + 1,
-  prefixItems: [
-    {
-      type: 'integer',
-      minimum: ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs,
-      maximum: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs,
+  type: 'object',
+  additionalProperties: false,
+  required: [...MOTION_FRAME_KEYS],
+  properties: {
+    durationMs: {
+      type: 'string',
+      pattern: MOTION_DURATION_PATTERN,
     },
-    ...ENVIRONMENT_MOTION_PLAN_JOINTS.map(() => ({
-      type: 'number',
-      minimum: ENVIRONMENT_MOTION_PLAN_LIMITS.minDegrees,
-      maximum: ENVIRONMENT_MOTION_PLAN_LIMITS.maxDegrees,
-    })),
-  ],
-  items: false,
+    ...Object.fromEntries(ENVIRONMENT_MOTION_PLAN_JOINTS.map(joint => [joint, {
+      type: 'string',
+      pattern: MOTION_DEGREES_PATTERN,
+    }])),
+  },
 } as const;
 
 export const MOVEMENT_GENERATOR_JSON_SCHEMA = {
@@ -71,6 +69,17 @@ function strictJsonObject(value: unknown): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function generatedNumber(value: unknown, label: string): number {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} must be a bounded decimal string`);
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} must be a finite decimal string`);
+  }
+  return parsed;
+}
+
 export function normalizeGeneratedMotionPlan(
   value: unknown,
   sessionId: string,
@@ -80,42 +89,34 @@ export function normalizeGeneratedMotionPlan(
     throw new Error('Movement Generator output exceeds its size limit');
   }
   const result = strictJsonObject(value);
-  let action: Record<string, unknown>;
-  if (result.action !== undefined) {
-    exactKeys(result, RESULT_KEYS, 'Movement Generator result');
-    if (!result.action || typeof result.action !== 'object' || Array.isArray(result.action)) {
-      throw new Error('Movement Generator result requires an action object');
-    }
-    action = result.action as Record<string, unknown>;
-  } else {
-    exactKeys(result, COMPACT_RESULT_KEYS, 'Movement Generator result');
-    if (!Array.isArray(result.frames)) {
-      throw new Error('Movement Generator compact result requires frames');
-    }
-    action = {
-      type: 'robotMotionPlan',
-      endPose: result.endPose,
-      frames: result.frames.map((frame, frameIndex) => {
-        if (!Array.isArray(frame) || frame.length !== ENVIRONMENT_MOTION_PLAN_JOINTS.length + 1) {
-          throw new Error(`Compact frame ${frameIndex} must contain duration plus eight joint values`);
-        }
-        return {
-          durationMs: frame[0],
-          targets: ENVIRONMENT_MOTION_PLAN_JOINTS.map((joint, jointIndex) => ({
-            joint,
-            degrees: frame[jointIndex + 1],
-          })),
-        };
-      }),
-    };
+  exactKeys(result, COMPACT_RESULT_KEYS, 'Movement Generator result');
+  if (!Array.isArray(result.frames)) {
+    throw new Error('Movement Generator result requires frames');
   }
-  exactKeys(action, ACTION_KEYS, 'Generated motion action');
-  if (action.type !== 'robotMotionPlan') {
-    throw new Error('Movement Generator may only return robotMotionPlan');
-  }
-  if (!Object.prototype.hasOwnProperty.call(action, 'endPose')) {
-    throw new Error('Generated motion action requires endPose');
-  }
+  const action = {
+    type: 'robotMotionPlan',
+    endPose: result.endPose,
+    frames: result.frames.map((frame, frameIndex) => {
+      if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {
+        throw new Error(`Movement Generator frame ${frameIndex + 1} must be one object`);
+      }
+      const record = frame as Record<string, unknown>;
+      exactKeys(record, MOTION_FRAME_KEYS, `Movement Generator frame ${frameIndex + 1}`);
+      return {
+        durationMs: generatedNumber(
+          record.durationMs,
+          `Movement Generator frame ${frameIndex + 1} durationMs`,
+        ),
+        targets: ENVIRONMENT_MOTION_PLAN_JOINTS.map(joint => ({
+          joint,
+          degrees: generatedNumber(
+            record[joint],
+            `Movement Generator frame ${frameIndex + 1} joint ${joint}`,
+          ),
+        })),
+      };
+    }),
+  };
   const normalized = normalizeEnvironmentMotionPlanFields(action);
   const generatedAction: Partial<EnvironmentAction> = {
     type: 'robotMotionPlan',
@@ -218,18 +219,18 @@ export function movementGeneratorPrompt(
     'Generate one complete, expressive, time-indexed logical-joint trajectory for the admitted body-local movement. You propose pose and gesture motion; downstream safety validators decide whether it executes.',
     'Never interpret this request as open-loop displacement, target approach, navigation, path planning, target tracking, or arrival.',
     'Return exactly one JSON object and no markdown, prose, code fences, thinking tags, or extra fields.',
-    'Required compact result: {"summary":"1..160 characters","frames":[[300,135,45,45,135,0,180,0,180]],"endPose":"hold"}.',
-    `Each frame array is exactly [durationMs, ${ENVIRONMENT_MOTION_PLAN_JOINTS.join(', ')}] in that fixed order.`,
+    'Required result: {"summary":"1..160 characters","frames":[{"durationMs":"300","R1":"135","R2":"45","L1":"45","L2":"135","R4":"0","R3":"180","L3":"0","L4":"180"}],"endPose":"hold"}.',
+    `Each frame object contains exactly durationMs and ${ENVIRONMENT_MOTION_PLAN_JOINTS.join(', ')}.`,
     'Body layout: front-right limb uses R1/R3, front-left limb uses L1/L3, right-rear leg uses R2/R4, and left-rear leg uses L2/L4. On each front limb, the first joint is the shoulder and the second is the arm. On each rear leg, the first joint is the hip and the second is the lower leg.',
     'Interpret right or left arm/hand requests as the corresponding front limb unless the instruction explicitly identifies a rear leg.',
     'Reason about the paired joints of every limb involved. A visible lift, reach, or gesture usually needs coordinated changes across the limb rather than treating one joint as the entire limb. Choose all angles, timing, support-limb compensation, and movement phases yourself from the user request.',
     `Before returning the trajectory, check that the requested side and limb perform the visible action described by the user and that all frame durations sum to no more than ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
     'Logical standing pose: R1=135, R2=45, L1=45, L2=135, R4=0, R3=180, L3=0, L4=180.',
-    `Use ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames} frames with integer durations ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs} ms. The first number in each frame is that frame's individual duration, never an absolute or cumulative timestamp. Add every frame duration and keep the sum at or below ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
+    `Encode durationMs and every joint degree as decimal strings. Use ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames} frames with integer durations ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs} ms. Each duration is individual, never an absolute or cumulative timestamp. Add every frame duration and keep the sum at or below ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
     'Choose the number of distinct frames needed for the requested movement within the motion-plan contract. Do not repeat identical frames unless one repeated frame represents a deliberate pause.',
     'Degrees must be finite 0..180 with no more than two decimal places. endPose must be hold, stand, or neutral.',
     'Use clearly visible joint changes. This is an emulator: unstable movement or falling is acceptable when it better matches the request.',
-    'Do not emit an action wrapper, joint names, target objects, session IDs, action IDs, sequence numbers, repeat counts, servo/PWM/GPIO fields, calibration, simulator commands, persistence, named motions, metadata, or partial joint frames.',
+    'Do not emit an action wrapper, target objects, session IDs, action IDs, sequence numbers, repeat counts, servo/PWM/GPIO fields, calibration, simulator commands, persistence, named motions, metadata, or partial joint frames.',
   ].join('\n');
   const user = JSON.stringify({
     movementRequest: request.description,

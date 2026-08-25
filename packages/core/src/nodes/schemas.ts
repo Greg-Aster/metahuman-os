@@ -1787,6 +1787,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'count', type: 'number' },
       { name: 'avgAgeDays', type: 'number' },
       { name: 'oldestAgeDays', type: 'number' },
+      { name: 'invalidMemoryCount', type: 'number' },
       { name: 'username', type: 'string' },
     ],
     properties: { sampleSize: 15, decayDays: 227 },
@@ -1816,12 +1817,14 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'dreamData', type: 'object' },
       { name: 'memoriesData', type: 'object', optional: true },
+      { name: 'sourceIds', type: 'array', optional: true },
     ],
     outputs: [
       { name: 'saved', type: 'boolean' },
       { name: 'eventId', type: 'string' },
       { name: 'dream', type: 'string' },
       { name: 'sourceCount', type: 'number' },
+      { name: 'deduplicated', type: 'boolean' },
       { name: 'username', type: 'string' },
     ],
     properties: { type: 'dream' },

@@ -25,13 +25,6 @@
     "tool_suggestion": { "enabled": true, "weight": 0.25 }
   },
 
-  "scheduling": {
-    "generatorIntervalMinutes": 30,
-    "evaluatorIntervalMinutes": 15,
-    "decayIntervalMinutes": 60,
-    "idleOnly": true
-  },
-
   "limits": {
     "maxActiveDesires": 10,
     "maxPendingDesires": 50,
@@ -52,13 +45,8 @@
   "execution": {
     "preferredBackend": "claude-code",
     "fallbackBackend": "codex",
-    "availableBackends": ["claude-code", "codex", "open-interpreter", "aider"],
-    "delegateToToolExecutor": true,
-    "localExecutionEnabled": false,
-    "plannerIncludesToolCapabilities": true,
     "feasibilityCheckEnabled": true,
-    "maxPlanRetries": 3,
-    "taskGenerationEnabled": true
+    "maxPlanRetries": 3
   },
 
   "logging": {

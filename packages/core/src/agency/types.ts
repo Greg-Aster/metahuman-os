@@ -76,7 +76,7 @@ export type DesireStage =
   | 'questioning'       // Waiting for user to answer clarifying questions
   | 'plan_review'       // Plan being reviewed for safety/alignment
   | 'user_approval'     // Waiting for user approval (if required)
-  | 'executing'         // Big Brother is executing the plan
+  | 'executing'         // Canonical Agency executor is executing the plan
   | 'outcome_review'    // Reviewing execution outcomes
   | 'complete'          // Terminal state - done
   | 'failed'            // Terminal state - failed
@@ -442,7 +442,7 @@ export type OutcomeVerdict =
 export type FailureCategory =
   | 'none'           // No failure - success
   | 'plan_error'     // Wrong approach/strategy - need different plan
-  | 'system_error'   // Internal bug, code error - Big Brother can potentially fix
+  | 'system_error'   // Internal bug or code error requiring explicit user review
   | 'external_error' // API down, permissions, resources - user needs to help
   | 'timeout'        // Took too long - may need retry or simplification
   | 'partial';       // Some progress but incomplete - may continue or retry
@@ -841,20 +841,6 @@ export interface DesireThresholdsConfig {
 }
 
 /**
- * Scheduling configuration for agency agents.
- */
-export interface AgencySchedulingConfig {
-  /** How often to generate desires (minutes) */
-  generatorIntervalMinutes: number;
-  /** How often to evaluate queue (minutes) */
-  evaluatorIntervalMinutes: number;
-  /** How often to apply decay (minutes) */
-  decayIntervalMinutes: number;
-  /** Only run when system is idle */
-  idleOnly: boolean;
-}
-
-/**
  * Limits configuration for agency.
  */
 export interface AgencyLimitsConfig {
@@ -907,27 +893,18 @@ export interface AgencyLoggingConfig {
 
 /**
  * Execution configuration for desire execution.
- * Controls which tool executor backends are used and how.
+ * Controls canonical execution policy. Runtime capability inventory comes from
+ * the Tool Catalog rather than duplicated configuration.
  */
 export interface AgencyExecutionConfig {
   /** Preferred backend for desire execution (e.g., 'claude-code', 'codex', 'open-interpreter') */
   preferredBackend: string;
   /** Fallback backend if preferred is unavailable */
   fallbackBackend: string;
-  /** List of all available backends for UI selection */
-  availableBackends: string[];
-  /** Whether to delegate execution to external tool executor (vs local skills) */
-  delegateToToolExecutor: boolean;
-  /** Whether local execution is allowed as fallback */
-  localExecutionEnabled: boolean;
-  /** Whether planner prompt includes available tool capabilities */
-  plannerIncludesToolCapabilities: boolean;
   /** Whether to run feasibility check before planning */
   feasibilityCheckEnabled: boolean;
   /** Maximum number of plan retries before abandoning */
   maxPlanRetries: number;
-  /** Whether to generate tasks for recurring desires */
-  taskGenerationEnabled: boolean;
 }
 
 /**
@@ -942,14 +919,12 @@ export interface AgencyConfig {
   thresholds: DesireThresholdsConfig;
   /** Source configurations */
   sources: Record<DesireSource, DesireSourceConfig>;
-  /** Scheduling settings */
-  scheduling: AgencySchedulingConfig;
   /** Limits */
   limits: AgencyLimitsConfig;
   /** Risk policy */
   riskPolicy: AgencyRiskPolicyConfig;
   /** Execution settings - controls which tool executor backend to use */
-  execution?: AgencyExecutionConfig;
+  execution: AgencyExecutionConfig;
   /** Logging settings */
   logging: AgencyLoggingConfig;
 }

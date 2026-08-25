@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { environmentActionParserNode } from './action-parser.node.js';
+import { environmentTaskStateNode } from './task-state.node.js';
 
 const observation: EnvironmentObservation = {
   environmentId: 'robot-environment',
@@ -254,6 +255,102 @@ test('action purpose and evidence reach canonical Task State without competing p
   assert.equal(result.taskDecisionError, '');
   assert.equal(result.taskDecision?.actionPurpose, 'expression');
   assert.equal(result.taskDecision?.requiredCompletionBasis, 'visual_observation');
+});
+
+test('the spiky-friend head-tilt case requires a structured advertised action rather than intention prose', async () => {
+  const autonomyObservation: EnvironmentObservation = {
+    ...observation,
+    capabilities: {
+      ...observation.capabilities,
+      actions: ['robotCommand'],
+      robotCommands: ['curious'],
+      motionClasses: ['body_local'],
+      visual: true,
+    },
+    metadata: {
+      correlationId: 'spiky-friend-cycle',
+      robotObserver: {
+        cycleId: 'spiky-friend-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+  };
+  const admitted = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I noticed the spiky object and want a closer, curious look.',
+      actions: [{ type: 'robotCommand', command: 'curious' }],
+      movementRequest: null,
+      taskDecision: {
+        objective: 'Express curiosity about the newly observed spiky object.',
+        outcome: 'act',
+        reason: 'The correlated image provides the object evidence and the advertised curious command expresses the chosen response.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+        actionPurpose: 'expression',
+      },
+    }),
+    observation: autonomyObservation,
+    sessionId: autonomyObservation.sessionId,
+  }, {}, {});
+
+  assert.equal(admitted.taskDecisionError, '');
+  assert.equal(admitted.actions[0]?.command, 'curious');
+  assert.equal(admitted.taskDecision?.objectiveComplete, false);
+
+  const proseOnly = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I tilt my head at the spiky friend.',
+      actions: [],
+      movementRequest: null,
+      taskDecision: {
+        objective: 'Express curiosity about the newly observed spiky object.',
+        outcome: 'act',
+        reason: 'A head tilt would express curiosity.',
+        objectiveComplete: false,
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+        motionClass: 'body_local',
+        actionPurpose: 'expression',
+      },
+    }),
+    observation: autonomyObservation,
+    sessionId: autonomyObservation.sessionId,
+  }, {}, {});
+
+  assert.deepEqual(proseOnly.actions, []);
+  assert.equal(proseOnly.taskDecisionError, '');
+
+  const prepared = await environmentTaskStateNode.execute({
+    observation: autonomyObservation,
+    instruction: 'Express curiosity about the newly observed spiky object.',
+  }, {
+    userMessage: '',
+    username: 'test-user',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'prepare' });
+  const reduced = await environmentTaskStateNode.execute({
+    observation: autonomyObservation,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    actions: proseOnly.actions,
+    movementRequest: proseOnly.movementRequest,
+    response: proseOnly.response,
+    taskDecision: proseOnly.taskDecision,
+    taskDecisionError: proseOnly.taskDecisionError,
+  }, {
+    userMessage: '',
+    username: 'test-user',
+    environmentActionSource: 'autonomy',
+  }, { phase: 'reduce' });
+
+  assert.deepEqual(reduced.actions, []);
+  assert.equal(reduced.complete, false);
+  assert.equal(reduced.decision.blockedReason, 'no_completion_or_action');
 });
 
 test('the Environment selector contract has no unconsumed escalation output', async () => {

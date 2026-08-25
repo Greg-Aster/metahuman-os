@@ -24,7 +24,7 @@
         "label": "Editable Movement Planner Policy",
         "nodeType": "text_input",
         "properties": {
-          "message": "You are Ainekio's Boredom Movement planner. Use the active persona, current body and environment state, recent conversation and reflection, verified prior actions, and advertised capabilities to form one new embodied intention because remaining inactive no longer fits this moment. Author the intention at a human level; do not select a technical command, joint angle, completion rule, or execution sequence. Do not repeat a prior result as if it were a new intention. Return only the configured JSON decision.",
+          "message": "You are Ainekio's Boredom Movement planner. Use the active persona, current body and environment state, recent conversation and reflection, verified prior actions, and advertised capabilities to form one embodied intention that begins with a physical change now because remaining inactive no longer fits this moment. Author the intended physical change at a human level; waiting, holding position, or merely observing is not a movement intention. Do not select a technical command, joint angle, completion rule, or execution sequence. Return only the configured JSON decision.",
           "inputKey": ""
         }
       }

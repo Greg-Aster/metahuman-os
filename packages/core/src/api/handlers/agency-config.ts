@@ -83,13 +83,13 @@ export async function handleSetAgencyConfig(req: UnifiedRequest): Promise<Unifie
         ...currentConfig.sources,
         ...(updates.sources || {}),
       },
-      scheduling: {
-        ...currentConfig.scheduling,
-        ...(updates.scheduling || {}),
-      },
       riskPolicy: {
         ...currentConfig.riskPolicy,
         ...(updates.riskPolicy || {}),
+      },
+      execution: {
+        ...currentConfig.execution,
+        ...(updates.execution || {}),
       },
     };
 

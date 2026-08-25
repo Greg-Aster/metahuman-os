@@ -544,6 +544,7 @@ export {
   type QueueLifecycleState,
   type AutonomyMode,
   type TaskInput,
+  type QueuedTask,
   type LaneConfig,
   type ResourceLane,
   type RemoteTaskHandle,
@@ -559,6 +560,8 @@ export {
   DEFAULT_HANDLERS,
   DEFAULT_PRIORITIES,
   PRIORITY_VALUES,
+  submitDesireExecution,
+  submitDesireOutcomeReview,
   // Persistence
   loadQueueState,
   persistQueueState,

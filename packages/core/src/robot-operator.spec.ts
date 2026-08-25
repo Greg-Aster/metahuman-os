@@ -11,7 +11,6 @@ import {
   isBoredomReflectionEnabled,
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
-  isRobotObserverEnabled,
   isRobotAutonomyWorkItem,
   nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
@@ -167,8 +166,8 @@ test('robot observer correlation advances without owning the Task State action b
         cycleId: 'cycle-1',
         step: 1,
         triggerSource: 'autonomy',
-        graph: 'environment',
-        requestedBy: 'robot-observer',
+        graph: 'boredom-observer',
+        requestedBy: 'boredom-observer',
       },
     },
   })
@@ -205,7 +204,9 @@ test('each boredom child keeps its specialized policy in the editable workflow',
   )?.data?.properties?.message ?? ''
 
   const movement = message('boredom-movement', 'planner-policy')
-  assert.match(movement, /form one new embodied intention/i)
+  assert.match(movement, /form one embodied intention/i)
+  assert.match(movement, /begins with a physical change now/i)
+  assert.match(movement, /waiting.*not a movement intention/i)
   assert.match(movement, /advertised capabilities/i)
   assert.match(movement, /do not select a technical command/i)
   assert.doesNotMatch(movement, /exactly one safe robotCommand/i)
@@ -213,6 +214,8 @@ test('each boredom child keeps its specialized policy in the editable workflow',
   const executive = message('boredom-autonomy', 'executive-policy')
   assert.match(executive, /one exact advertised action/i)
   assert.match(executive, /one supported body-local movement request/i)
+  assert.match(executive, /physical or sensing intention.*structured action or movementRequest/i)
+  assert.match(executive, /movementRequest only when no advertised action/i)
 
   const observer = message('boredom-observer', 'planner-policy')
   assert.match(observer, /fresh correlated camera image as current evidence/i)
@@ -240,7 +243,6 @@ test('Robot Operator owns scheduling while three boredom children own finite pla
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'services.json'), 'utf8'))
   assert.equal(agents.agents['boredom-observer'].enabled, true)
   assert.equal(isBoredomObserverEnabled(), true)
-  assert.equal(isRobotObserverEnabled(), true)
   assert.equal(agents.agents['boredom-movement'].enabled, true)
   assert.equal(isBoredomMovementEnabled(), true)
   assert.equal(agents.agents['boredom-reflection'].enabled, true)

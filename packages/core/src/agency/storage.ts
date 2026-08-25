@@ -326,6 +326,10 @@ export async function loadAgencyConfig(username?: string): Promise<AgencyConfig 
     if (userResult.success && userResult.data) {
       return JSON.parse(userResult.data as string) as AgencyConfig;
     }
+
+    if (!userResult.success && !userResult.error?.startsWith('File not found:')) {
+      throw new Error(`Failed to load Agency configuration for ${username}: ${userResult.error || 'unknown storage error'}`);
+    }
   }
 
   // Fall back to system config (etc/agency.json)

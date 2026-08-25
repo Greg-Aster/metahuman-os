@@ -6,16 +6,11 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
-import { recordSystemActivity } from '../../system-activity.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 interface Memory {
   id: string;
   content: string;
-}
-
-function markBackgroundActivity() {
-  try { recordSystemActivity(); } catch {}
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are generating a brief daydream - a fleeting inner musing or reverie.
@@ -38,6 +33,21 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `Based on these memory fragments, generate 
 {{memoriesText}}
 
 Generate a short, whimsical daydream (2-4 sentences) that weaves these memories together in a creative, contemplative way.`;
+
+export function buildDaydreamerMessages(
+  systemPrompt: string,
+  userPrompt: string,
+  personaPrompt?: unknown,
+): RouterMessage[] {
+  const persona = typeof personaPrompt === 'string' ? personaPrompt.trim() : '';
+  return [
+    {
+      role: 'system',
+      content: persona ? `${persona}\n\n${systemPrompt}` : systemPrompt,
+    },
+    { role: 'user', content: userPrompt },
+  ];
+}
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const memoriesInput = inputs.memories?.memories || inputs.memories || [];
@@ -67,12 +77,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const userPrompt = renderPromptTemplate(userPromptTemplate, { memoriesText });
 
   try {
-    markBackgroundActivity();
-
-    const messages: RouterMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ];
+    const messages = buildDaydreamerMessages(systemPrompt, userPrompt, inputs.personaPrompt);
 
     const response = await callLLM({
       role,
@@ -87,14 +92,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const daydream = response.content.trim();
 
     if (!daydream || daydream.length < 20) {
-      return {
-        daydream: null,
-        error: 'LLM returned insufficient daydream content',
-        memoryCount: memories.length,
-      };
+      throw new Error('LLM returned insufficient daydream content');
     }
 
-    console.log(`[DaydreamerGenerator] Generated daydream: "${daydream.slice(0, 50)}..."`);
+    console.log(`[DaydreamerGenerator] Generated daydream (${daydream.length} characters)`);
 
     return {
       daydream,
@@ -104,11 +105,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   } catch (error) {
     console.error('[DaydreamerGenerator] Error:', error);
-    return {
-      daydream: null,
-      error: (error as Error).message,
-      memoryCount: memories.length,
-    };
+    throw error;
   }
 };
 

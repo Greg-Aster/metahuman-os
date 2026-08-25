@@ -7,7 +7,7 @@ import { environmentContextBuilderNode } from './context-builder.node.js';
 const TEST_JPEG = 'data:image/jpeg;base64,/9j/2gAA/9k=';
 
 function correlatedObservation(
-  requestedBy: 'environment-perception' | 'robot-observer' | 'boredom-movement',
+  requestedBy: 'environment-perception' | 'boredom-observer' | 'boredom-movement',
 ): EnvironmentObservation {
   return {
     environmentId: 'robot-environment',
@@ -54,7 +54,7 @@ const typedConversationRoute = {
 };
 
 async function buildContext(
-  requestedBy: 'environment-perception' | 'robot-observer',
+  requestedBy: 'environment-perception' | 'boredom-observer',
   routingAnalysis: Record<string, unknown> = typedConversationRoute,
 ) {
   return environmentContextBuilderNode.execute({
@@ -164,8 +164,8 @@ test('mixed action schema keeps robot command fields off captureImage actions', 
   assert.deepEqual(commandBranch.properties.command.enum, ['neutral', 'wave']);
 });
 
-test('explicit Robot Observer work retains its visual-evidence admission', async () => {
-  const result = await buildContext('robot-observer');
+test('explicit Boredom Observer work retains its visual-evidence admission', async () => {
+  const result = await buildContext('boredom-observer');
 
   assert.equal(result.images.length, 1);
   assert.equal(result.context.contextAdmission.vision, true);
@@ -300,7 +300,7 @@ test('a bounded feedback pass must return completion or one next action', async 
 });
 
 test('autonomous observations exclude conversation history by default', async () => {
-  const autonomous = correlatedObservation('robot-observer');
+  const autonomous = correlatedObservation('boredom-observer');
   (autonomous.metadata!.robotObserver as Record<string, unknown>).triggerSource = 'autonomy';
   const result = await environmentContextBuilderNode.execute({
     instruction: 'Review the current image.',

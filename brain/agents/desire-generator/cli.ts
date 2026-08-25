@@ -13,28 +13,13 @@
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type DesireGeneratorOptions } from './core.js';
+import { parseDesireGeneratorArgs, runCycle } from './core.js';
 
 async function main() {
   initGlobalLogger('desire-generator');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: DesireGeneratorOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
-      break;
-    }
-  }
-
-  console.log('[desire-generator] Starting with options:', options);
-
   try {
-    const result = await runCycle(options);
+    const result = await runCycle(parseDesireGeneratorArgs(process.argv.slice(2)));
 
     console.log(`[desire-generator] Completed: ${result.totalGenerated} desires generated for ${result.usersProcessed} users`);
 

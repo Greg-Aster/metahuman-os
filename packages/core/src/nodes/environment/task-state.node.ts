@@ -209,7 +209,7 @@ function isObserverInputAcquisition(
   const cycle = readRobotObserverCycle(observation ?? undefined);
   if (
     !cycle
-    || (cycle.requestedBy !== 'boredom-observer' && cycle.requestedBy !== 'robot-observer')
+    || cycle.requestedBy !== 'boredom-observer'
     || terminal?.type !== 'completed'
     || terminalCommand(terminal) !== 'captureImage'
     || environmentTaskStateFromObservation(observation)
@@ -426,7 +426,6 @@ export const environmentTaskStateNode = defineNode({
         : Boolean(current) && (
             operatorActionRequired === true
             || observerCycle?.requestedBy === 'boredom-observer'
-            || observerCycle?.requestedBy === 'robot-observer'
           );
       const preparedState: EnvironmentTaskState = feedbackPass
         ? {
@@ -573,10 +572,8 @@ export const environmentTaskStateNode = defineNode({
       && completionEvidence.includes(currentFrame.id)
     );
     const modelSelectedWorkExists = parsedActions.length > 0 || generatedActions.length > 0;
-    // Preserve compatibility for already-admitted user commands while making
-    // autonomous physical work fail closed until its semantic purpose is clear.
-    const purposeMissing = autonomous && modelSelectedWorkExists && !taskDecision?.actionPurpose;
-    const admissionBlocked = actionAdmission?.admitted === false || purposeMissing;
+    const availableActionPurpose = taskDecision?.actionPurpose ?? preparedState.actionPurpose;
+    const admissionBlocked = actionAdmission?.admitted === false;
     const modelCandidateActions = admissionBlocked
       ? []
       : (parsedActions.length > 0 ? parsedActions : generatedActions).slice(0, 1);
@@ -624,7 +621,7 @@ export const environmentTaskStateNode = defineNode({
     const actionPurpose = persistedPass && !revisingAction
       ? preparedState.actionPurpose
       : selectedWorkExists
-        ? taskDecision?.actionPurpose ?? preparedState.actionPurpose
+        ? availableActionPurpose
         : undefined;
     let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = contractLocked
       ? preparedState.requiredCompletionBasis
@@ -729,11 +726,11 @@ export const environmentTaskStateNode = defineNode({
       claimedComplete
       && completionEvidenceAvailable
     ) || Boolean(
-      !terminal
-      && !action
+      !action
       && !operatorActionRequired
       && modelResponse
       && completionEvidenceAvailable
+      && (!terminal || autonomous)
     );
     const finalState: EnvironmentTaskState = {
       ...nextState,
@@ -752,25 +749,19 @@ export const environmentTaskStateNode = defineNode({
                 ? cleanText(context.userMessage, 500)
                 : ''
       : '';
-    const fallbackResponse = atStepLimit
+    const fallbackResponse = modelResponse || (atStepLimit
       ? `I could not complete the objective within the ${preparedState.maxSteps}-action safety limit, so I stopped.`
       : admissionBlocked
-        ? purposeMissing
-          ? 'The Environment selector did not declare why the action was needed, so Task State stopped it before dispatch.'
-          : modelResponse || 'The selected robot action is not available on the connected robot.'
+        ? 'The selected robot action is not available on the connected robot.'
         : taskDecisionError
           ? `I received the request, but the Environment LLM returned an invalid task decision: ${taskDecisionError}`
           : movementGenerationFailed
             ? generatedResponse
             : operatorActionRequired
               ? 'I intended to act, but Environment Mode did not produce an executable supported action, so nothing was sent to the robot.'
-              : complete && modelResponse
-                ? modelResponse
-                : terminal
-                  ? 'The robot result arrived, but I could not determine a usable completion or next action.'
-                  : modelResponse
-                    ? 'Environment Mode did not produce an executable action or evidence-backed completion, so nothing was sent to the robot.'
-                    : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.';
+              : terminal
+                ? 'The robot result arrived, but I could not determine a usable completion or next action.'
+                : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.');
     return {
       taskState: finalState,
       instruction,
@@ -795,9 +786,7 @@ export const environmentTaskStateNode = defineNode({
           : atStepLimit
             ? 'step_limit'
             : admissionBlocked
-              ? purposeMissing
-                ? 'action_purpose_missing'
-                : cleanText(actionAdmission?.reason, 200) || 'action_not_admitted'
+              ? cleanText(actionAdmission?.reason, 200) || 'action_not_admitted'
               : movementGenerationFailed
                 ? 'movement_generation_failed'
                 : operatorActionRequired

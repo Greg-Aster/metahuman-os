@@ -7,23 +7,14 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { getCachedCatalog, getCatalogEntries } from '../../tool-catalog.js';
 
 const execute: NodeExecutor = async (_inputs, _context, _properties) => {
-  try {
-    const catalog = getCachedCatalog();
-    const entries = getCatalogEntries();
+  const catalog = getCachedCatalog();
+  const entries = getCatalogEntries();
 
-    return {
-      catalog,
-      toolCount: entries.length,
-      entries,
-    };
-  } catch (error) {
-    console.error('[ToolCatalogBuilder] Error:', error);
-    return {
-      catalog: 'No tools available.',
-      toolCount: 0,
-      error: (error as Error).message,
-    };
-  }
+  return {
+    catalog,
+    toolCount: entries.length,
+    entries,
+  };
 };
 
 export const ToolCatalogBuilderNode: NodeDefinition = defineNode({

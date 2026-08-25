@@ -46,7 +46,7 @@ Status values:
 | done | `active-operator/decision-engine.node.ts` | Active-operator decision prompt exposed as system/user templates; model/tuning editable. |
 | done | `active-operator/unified-decision-llm.node.ts` | Unified decision LLM prompt exposed as system/user templates; local/Big Brother token limits, role, thinking, and temperature editable. |
 | done | `agency/desire-alignment-reviewer.node.ts` | Alignment review prompt exposed as `systemPrompt` and `userPromptTemplate`; role/tuning editable. |
-| done | `agency/desire-detector.node.ts` | Desire detection prompt exposed as `systemPrompt` and `userPromptTemplate`; role/tuning editable. |
+| retired 2026-08-25 | `agency/desire-detector.node.ts` | Removed with the uncalled Generator graphs after the finite Brain Generator became the sole synthesis owner. |
 | done | `agency/desire-executor.node.ts` | Per-step operator task prompt exposed as `taskPromptTemplate`. |
 | done | `agency/desire-plan-generator.node.ts` | Plan generation prompt exposed as system/user templates plus revision, execution, and milestone context templates. |
 | done | `agency/desire-question-generator.node.ts` | Clarifying-question prompt exposed as `promptTemplate`; role/tuning editable; definition normalized to current node shape. |

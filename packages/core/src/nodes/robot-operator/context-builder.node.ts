@@ -320,9 +320,6 @@ export const robotOperatorContextBuilderNode = defineNode({
     const innerContextCount = recentContext.filter(entry => (
       isRecord(entry.context) && entry.context.isInnerDialogue === true
     )).length;
-    console.log(
-      `[RobotOperatorContext] Consolidated context entries: ${recentContext.length}; inner entries: ${innerContextCount}`,
-    );
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';

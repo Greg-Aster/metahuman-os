@@ -474,7 +474,7 @@ export interface EnvironmentTaskDecision {
   requiredCompletionBasis?: EnvironmentCompletionBasis;
   /** Environment LLM-owned semantic motion reference for the selected action. */
   motionClass?: EnvironmentMotionClass;
-  /** Why the selected action exists; Task State uses this to enforce evidence consistency. */
+  /** Optional semantic hint used to align the evidence contract when present. */
   actionPurpose?: EnvironmentActionPurpose;
   /** Short current-scene description used only for asynchronous familiarity search. */
   observationSummary?: string;
@@ -870,14 +870,14 @@ const SELECTOR_SCHEMA_STRING = { type: 'string' } as const;
 const SELECTOR_SCHEMA_COMPLETION_BASES = ENVIRONMENT_COMPLETION_BASES.filter(value => value !== 'none');
 const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
   outcome: { type: 'string', enum: [...ENVIRONMENT_TASK_OUTCOMES] },
-  reason: SELECTOR_SCHEMA_STRING,
-  objective: SELECTOR_SCHEMA_STRING,
+  reason: { type: 'string', minLength: 1 },
+  objective: { type: 'string', minLength: 1 },
   objectiveComplete: { type: 'boolean' },
   continuationPolicy: { type: 'string', enum: [...ENVIRONMENT_CONTINUATION_POLICIES] },
   requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
   motionClass: { type: 'string', enum: [...ENVIRONMENT_MOTION_CLASSES] },
   actionPurpose: { type: 'string', enum: [...ENVIRONMENT_ACTION_PURPOSES] },
-  observationSummary: SELECTOR_SCHEMA_STRING,
+  observationSummary: { type: 'string', maxLength: 300 },
   visualEvidenceMode: { type: 'string', enum: ['single', 'comparison'] },
   completionEvidence: { type: 'string', maxLength: 1_000 },
 } as const;
@@ -978,7 +978,7 @@ export function buildEnvironmentSelectorJsonSchema(
         actions: { minItems: 1 },
         movementRequest: { type: 'null' },
         taskDecision: {
-          required: ['outcome', 'objectiveComplete', 'actionPurpose'],
+          required: ['outcome', 'objectiveComplete'],
           properties: {
             outcome: { type: 'string', enum: ['act'] },
             objectiveComplete: { type: 'boolean', enum: [false] },
@@ -994,7 +994,7 @@ export function buildEnvironmentSelectorJsonSchema(
         actions: { maxItems: 0 },
         movementRequest: { type: 'object' },
         taskDecision: {
-          required: ['outcome', 'objectiveComplete', 'actionPurpose'],
+          required: ['outcome', 'objectiveComplete'],
           properties: {
             outcome: { type: 'string', enum: ['act'] },
             objectiveComplete: { type: 'boolean', enum: [false] },
@@ -1114,6 +1114,7 @@ const SELECTOR_TASK_DECISION_FIELDS = new Set([
   'actionPurpose',
   'observationSummary',
   'visualEvidenceMode',
+  'completionEvidence',
 ]);
 
 const SELECTOR_ACTION_FIELDS = new Set([

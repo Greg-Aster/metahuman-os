@@ -42,6 +42,8 @@ export interface EscalationOptions {
   onChunk?: (chunk: string) => void;
   /** Called when backend is waiting for user input (bidirectional communication) */
   onWaitingForInput?: (question: string) => void;
+  /** Cancellation signal. Backends should stop active external work when supported. */
+  signal?: AbortSignal;
 }
 
 export interface EscalationImageInput {
@@ -231,6 +233,11 @@ export async function escalate(
   prompt: string,
   options?: EscalationOptions & { username?: string; preferredBackend?: string }
 ): Promise<EscalationResult> {
+  if (options?.signal?.aborted) {
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException('Escalation cancelled', 'AbortError');
+  }
   // Ensure backends are initialized before proceeding
   await initializeBackends();
 
@@ -298,6 +305,11 @@ export async function escalate(
   });
 
   const result = await backend.execute(prompt, execOptions);
+  if (execOptions.signal?.aborted) {
+    throw execOptions.signal.reason instanceof Error
+      ? execOptions.signal.reason
+      : new DOMException('Escalation cancelled', 'AbortError');
+  }
 
   audit({
     level: result.success ? 'info' : 'warn',

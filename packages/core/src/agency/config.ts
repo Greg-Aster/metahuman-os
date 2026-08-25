@@ -82,13 +82,6 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
 
   sources: getDefaultSourceConfigs(),
 
-  scheduling: {
-    generatorIntervalMinutes: 30,
-    evaluatorIntervalMinutes: 15,
-    decayIntervalMinutes: 60,
-    idleOnly: true,
-  },
-
   limits: {
     maxActiveDesires: 10,
     maxPendingDesires: 50,
@@ -106,6 +99,13 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
     requireApprovalRisk: ['medium', 'high', 'critical'],
     blockRisk: ['critical'],
     autoApproveTrustLevel: 'bounded_auto',
+  },
+
+  execution: {
+    preferredBackend: 'claude-code',
+    fallbackBackend: 'codex',
+    feasibilityCheckEnabled: true,
+    maxPlanRetries: 3,
   },
 
   logging: {
@@ -139,12 +139,18 @@ export function loadSystemConfig(): AgencyConfig {
 
     // Merge with defaults
     systemConfigCache = mergeConfig(DEFAULT_AGENCY_CONFIG, parsed);
+    const validation = validateConfig(systemConfigCache);
+    if (!validation.valid) {
+      throw new Error(`Invalid Agency configuration: ${validation.errors.join('; ')}`);
+    }
     systemConfigMtime = stats.mtimeMs;
 
     return systemConfigCache;
   } catch (error) {
-    // File doesn't exist or is invalid - return defaults
-    return DEFAULT_AGENCY_CONFIG;
+    throw new Error(
+      `Failed to load agency configuration from ${SYSTEM_CONFIG_PATH}: ${(error as Error).message}`,
+      { cause: error },
+    );
   }
 }
 
@@ -165,7 +171,12 @@ export async function loadConfig(username?: string): Promise<AgencyConfig> {
   }
 
   // Merge user overrides with system config
-  return mergeConfig(systemConfig, userConfig);
+  const merged = mergeConfig(systemConfig, userConfig);
+  const validation = validateConfig(merged);
+  if (!validation.valid) {
+    throw new Error(`Invalid Agency profile configuration: ${validation.errors.join('; ')}`);
+  }
+  return merged;
 }
 
 /**
@@ -195,13 +206,6 @@ function mergeConfig(base: AgencyConfig, override: Partial<AgencyConfig>): Agenc
     };
   }
 
-  if (override.scheduling) {
-    result.scheduling = {
-      ...result.scheduling,
-      ...override.scheduling,
-    };
-  }
-
   if (override.limits) {
     result.limits = {
       ...result.limits,
@@ -217,6 +221,13 @@ function mergeConfig(base: AgencyConfig, override: Partial<AgencyConfig>): Agenc
     result.riskPolicy = {
       ...result.riskPolicy,
       ...override.riskPolicy,
+    };
+  }
+
+  if (override.execution) {
+    result.execution = {
+      ...result.execution,
+      ...override.execution,
     };
   }
 
@@ -266,14 +277,6 @@ export function validateConfig(config: AgencyConfig): { valid: boolean; errors: 
     }
   }
 
-  // Validate scheduling
-  if (config.scheduling.generatorIntervalMinutes < 1) {
-    errors.push('generator interval must be at least 1 minute');
-  }
-  if (config.scheduling.evaluatorIntervalMinutes < 1) {
-    errors.push('evaluator interval must be at least 1 minute');
-  }
-
   // Validate limits
   if (config.limits.maxActiveDesires < 1) {
     errors.push('maxActiveDesires must be at least 1');
@@ -283,6 +286,20 @@ export function validateConfig(config: AgencyConfig): { valid: boolean; errors: 
   }
   if (config.limits.maxDailyExecutions < 0) {
     errors.push('maxDailyExecutions must be non-negative');
+  }
+
+  if (!config.execution.preferredBackend.trim()) {
+    errors.push('preferred execution backend is required');
+  }
+  if (!config.execution.fallbackBackend.trim()) {
+    errors.push('fallback execution backend is required');
+  }
+  if (typeof config.execution.feasibilityCheckEnabled !== 'boolean') {
+    errors.push('feasibilityCheckEnabled must be boolean');
+  }
+  if (!Number.isInteger(config.execution.maxPlanRetries)
+    || config.execution.maxPlanRetries < 0) {
+    errors.push('maxPlanRetries must be a non-negative integer');
   }
 
   return {
@@ -580,27 +597,6 @@ export async function canAutoApprove(
 export async function isRiskBlocked(risk: string, username?: string): Promise<boolean> {
   const config = await loadConfig(username);
   return config.riskPolicy.blockRisk.includes(risk as typeof config.riskPolicy.blockRisk[number]);
-}
-
-/**
- * Get scheduling interval in milliseconds.
- */
-export async function getSchedulingInterval(
-  type: 'generator' | 'evaluator' | 'decay',
-  username?: string
-): Promise<number> {
-  const config = await loadConfig(username);
-
-  switch (type) {
-    case 'generator':
-      return config.scheduling.generatorIntervalMinutes * 60 * 1000;
-    case 'evaluator':
-      return config.scheduling.evaluatorIntervalMinutes * 60 * 1000;
-    case 'decay':
-      return config.scheduling.decayIntervalMinutes * 60 * 1000;
-    default:
-      return 30 * 60 * 1000; // 30 minutes default
-  }
 }
 
 /**

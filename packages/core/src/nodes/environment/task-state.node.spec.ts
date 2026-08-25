@@ -115,11 +115,44 @@ test('a fresh user task cannot inherit terminal feedback from unrelated work', a
   assert.equal(result.decision.terminalFeedback, null);
   assert.equal(result.decision.actionId, null);
   assert.equal(result.decision.blockedReason, 'visual_evidence_unavailable');
-  assert.equal(
-    result.response,
-    'Environment Mode did not produce an executable action or evidence-backed completion, so nothing was sent to the robot.',
-  );
-  assert.doesNotMatch(result.response, /room remains empty/i);
+  assert.equal(result.response, 'My sensors indicate the room remains empty.');
+});
+
+test('direct conversational input keeps the model response outside physical completion gating', async () => {
+  const current = observation();
+  const userMessage = 'That object is an ordinary household supply.';
+  const initial = await environmentTaskStateNode.execute({
+    observation: current,
+    instruction: userMessage,
+  }, {
+    userMessage,
+    username: 'greggles',
+  }, { phase: 'prepare' });
+
+  assert.equal(initial.taskState.continuationPolicy, 'none');
+  assert.equal(initial.taskState.requiredCompletionBasis, 'response');
+
+  const response = 'Understood. I will remember that identification.';
+  const reduced = await environmentTaskStateNode.execute({
+    observation: current,
+    instruction: initial.instruction,
+    taskState: initial.taskState,
+    actions: [],
+    response,
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The statement refers to something in the room.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+    },
+  }, {
+    userMessage,
+    username: 'greggles',
+  }, { phase: 'reduce' });
+
+  assert.deepEqual(reduced.actions, []);
+  assert.equal(reduced.response, response);
 });
 
 test('a visual stopping condition is normalized to bounded continuation', async () => {
@@ -231,7 +264,7 @@ test('autonomy revises its objective inside canonical Environment Task State', a
   assert.match(result.taskInstruction, /Understand the unfamiliar object beside the charging station/);
 });
 
-test('action-required autonomy does not present future-action prose as executed work', async () => {
+test('action-required autonomy records the missing action without suppressing the model response', async () => {
   clearEnvironmentTaskFrameCache();
   const instruction = 'Use one safe advertised movement, then react to the result.';
   const operatorObservation = observation({
@@ -284,8 +317,7 @@ test('action-required autonomy does not present future-action prose as executed 
   assert.deepEqual(reduced.actions, []);
   assert.equal(reduced.complete, false);
   assert.equal(reduced.decision.blockedReason, 'required_action_missing');
-  assert.match(reduced.response, /nothing was sent to the robot/i);
-  assert.doesNotMatch(reduced.response, /I will initiate/i);
+  assert.equal(reduced.response, 'I will initiate a slow, deliberate stretch.');
 });
 
 test('Task State exposes one rejected movement generation instead of hiding it as a missing action', async () => {
@@ -1008,6 +1040,63 @@ test('autonomous action results return to the selector for a meaningful review i
   assert.doesNotMatch(reviewed.response, /action is complete/i);
 });
 
+test('a substantive response with no next action closes autonomous action feedback', async () => {
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Change perspective and engage with the new view.',
+    phase: 'awaiting_action',
+    step: 2,
+    maxSteps: 8,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'action_result',
+    selectedAction: { type: 'robotCommand', command: 'curious' },
+  });
+  const terminal = observation({
+    metadata: {
+      actionId: 'response-consequence-action',
+      correlationId: 'response-consequence-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'response-consequence-cycle',
+        step: 3,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'response-consequence-feedback',
+      actionId: 'response-consequence-action',
+      timestamp: '2026-08-25T18:08:52.421Z',
+      type: 'completed',
+      message: 'curious gesture completed',
+      data: { command: 'emote' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  const response = 'The new perspective reveals the shadowed shelving beside the bright window.';
+  const reviewed = await reduce({
+    observation: terminal,
+    instruction: returned.instruction,
+    taskState: returned.taskState,
+    actions: [],
+    response,
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Change perspective and engage with the new view.',
+      objectiveComplete: false,
+      reason: 'The result supports a present outward observation rather than another action.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+    },
+  });
+
+  assert.equal(reviewed.complete, true);
+  assert.equal(reviewed.taskState.phase, 'complete');
+  assert.equal(reviewed.response, response);
+  assert.equal(reviewed.decision.blockedReason, '');
+});
+
 test('autonomy can revise the purpose and evidence contract when feedback motivates another action', async () => {
   const priorState = 'EnvironmentTaskState:' + JSON.stringify({
     version: 1,
@@ -1068,7 +1157,63 @@ test('autonomy can revise the purpose and evidence contract when feedback motiva
   assert.equal(revised.taskState.requiredCompletionBasis, 'visual_observation');
 });
 
-test('autonomous physical work without an action purpose fails closed', async () => {
+test('autonomous continuation preserves Task State purpose without requiring the selector to repeat it', async () => {
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Express curiosity about the current observation.',
+    phase: 'awaiting_action',
+    step: 1,
+    maxSteps: 8,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'action_result',
+    actionPurpose: 'expression',
+    selectedAction: { type: 'robotCommand', command: 'curious' },
+  });
+  const terminal = observation({
+    metadata: {
+      actionId: 'purpose-continuation-action',
+      correlationId: 'purpose-continuation-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'purpose-continuation-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'purpose-continuation-feedback',
+      actionId: 'purpose-continuation-action',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'curious gesture completed',
+      data: { command: 'emote' },
+    }],
+  });
+  const returned = await prepare(terminal);
+  const continued = await reduce({
+    observation: terminal,
+    instruction: returned.instruction,
+    taskState: returned.taskState,
+    actions: [{ type: 'robotCommand', command: 'curious', sessionId: 'robot-1' }],
+    response: 'The first gesture leaves me curious enough to continue the same expression once more.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Express curiosity about the current observation.',
+      objectiveComplete: false,
+      reason: 'Another supported gesture is the next consequence.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+    },
+  });
+
+  assert.equal(continued.actions[0]?.command, 'curious');
+  assert.equal(continued.taskState.actionPurpose, 'expression');
+  assert.equal(continued.decision.blockedReason, undefined);
+});
+
+test('autonomous physical work does not require explanatory action-purpose metadata', async () => {
   const autonomousObservation = observation({
     metadata: {
       robotObserver: {
@@ -1092,15 +1237,16 @@ test('autonomous physical work without an action purpose fails closed', async ()
     taskDecision: {
       outcome: 'act',
       objectiveComplete: false,
-      reason: 'No purpose was declared.',
+      reason: 'Wave is the selected supported consequence.',
       continuationPolicy: 'none',
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
     },
   }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
 
-  assert.deepEqual(result.actions, []);
-  assert.equal(result.decision.blockedReason, 'action_purpose_missing');
+  assert.equal(result.actions[0]?.command, 'wave');
+  assert.equal(result.taskState.actionPurpose, undefined);
+  assert.equal(result.decision.blockedReason, undefined);
 });
 
 test('an autonomous observation can remain physically still while producing a meaningful outward reflection', async () => {
@@ -1530,6 +1676,8 @@ test('Environment graph has one semantic LLM and no competing completion or refi
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_loader').length, 1);
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_formatter').length, 1);
   assert.match(selectorPrompt, /History and memories are background, never current results/);
+  assert.match(selectorPrompt, /direct user statement or answer is current user_input/i);
+  assert.ok(selectorPrompt.trim().split(/\s+/).length <= 250);
   assert.match(selectorPrompt, /conditional visual search or stopping condition/i);
   assert.match(selectorPrompt, /continuationPolicy to bounded/);
   assert.match(selectorPrompt, /requiredCompletionBasis to visual_observation/);

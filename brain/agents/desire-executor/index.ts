@@ -3,12 +3,12 @@ import { run } from './core.js';
 
 export const meta: AgentMeta = {
   id: 'desire-executor', name: 'Desire Executor',
-  description: 'Executes approved desires through the operator system',
-  usesLLM: true, priority: 'normal', defaultInterval: 300,
-  tags: ['agency', 'llm', 'background', 'desire', 'execution'],
+  description: 'Admits approved desire execution to the Work Coordinator',
+  usesLLM: true, priority: 'normal',
+  tags: ['agency', 'desire', 'execution', 'manual'],
 };
 
 const agent: AgentModule = { meta, run };
 export default agent;
 
-export { runCycle, processApprovedDesires, type DesireExecutorOptions, type DesireExecutorResult } from './core.js';
+export { runCycle, type DesireExecutorOptions, type DesireExecutorResult } from './core.js';

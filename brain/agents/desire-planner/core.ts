@@ -21,19 +21,19 @@ import {
   ROOT,
   audit,
   acquireLock,
-  isLocked,
-  initGlobalLogger,
   getTargetUser,
   withUserContext,
   captureEvent,
   runGraph,
-  validateSvelteFlowGraph,
+  cognitiveGraphPath,
+  getCachedCatalog,
+  loadGraphFile,
+  requireGraphNodeOutput,
   getActiveBackend,
   callLLMText,
-  loadUserConfig,
+  loadConfig as loadAgencyConfig,
   type SvelteFlowGraph,
   type Desire,
-  type AgencyExecutionConfig,
   listDesiresByStatus,
   listPendingDesires,
   moveDesire,
@@ -50,7 +50,6 @@ import {
 const LOCK_NAME = 'desire-planner';
 const LOG_PREFIX = '[AGENCY:planner]';
 const CONFIG_PATH = path.join(ROOT, 'etc', 'desire-planner.json');
-const GRAPHS_DIR = path.join(ROOT, 'etc', 'cognitive-graphs');
 
 // ============================================================================
 // Types
@@ -62,34 +61,17 @@ export interface PlannerConfig {
     planner: string;
     reviewer: string;
   };
-  planning: {
-    temperature: number;
-    maxSteps: number;
-    includeToolCatalog: boolean;
-    includeDecisionRules: boolean;
-    includeMemoryContext: boolean;
-    memorySearchLimit: number;
-  };
-  review: {
-    alignmentThreshold: number;
-    safetyThreshold: number;
-    autoApproveThreshold: number;
-    temperature: number;
-  };
   processing: {
     batchSize: number;
-    retryOnFailure: boolean;
-    maxRetries: number;
   };
   logging: {
-    verbose: boolean;
     logToInnerDialogue: boolean;
   };
 }
 
 export interface DesirePlannerOptions {
-  singleUser?: boolean;
   username?: string;
+  signal?: AbortSignal;
 }
 
 export interface DesirePlannerResult {
@@ -106,88 +88,110 @@ export interface DesirePlannerResult {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isGraphFilename(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.endsWith('.json')
+    && value.length > '.json'.length
+    && path.basename(value) === value;
+}
+
+export function parsePlannerConfig(value: unknown): PlannerConfig {
+  if (!isRecord(value)) {
+    throw new Error('Desire Planner configuration must be a JSON object');
+  }
+
+  const graph = value.graph;
+  const processing = value.processing;
+  const logging = value.logging;
+
+  if (typeof value.enabled !== 'boolean') {
+    throw new Error('Desire Planner configuration requires boolean enabled');
+  }
+  if (!isRecord(graph) || !isGraphFilename(graph.planner) || !isGraphFilename(graph.reviewer)) {
+    throw new Error('Desire Planner graph configuration requires local planner and reviewer JSON filenames');
+  }
+  if (!isRecord(processing)
+    || !Number.isInteger(processing.batchSize) || (processing.batchSize as number) < 1) {
+    throw new Error('Desire Planner processing configuration is invalid');
+  }
+  if (!isRecord(logging)
+    || typeof logging.logToInnerDialogue !== 'boolean') {
+    throw new Error('Desire Planner logging configuration is invalid');
+  }
+
+  return value as unknown as PlannerConfig;
+}
+
 // ============================================================================
 // Config Loading
 // ============================================================================
 
 export async function loadPlannerConfig(): Promise<PlannerConfig> {
+  const content = await fs.readFile(CONFIG_PATH, 'utf-8');
+  let parsed: unknown;
   try {
-    const content = await fs.readFile(CONFIG_PATH, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    console.warn(`${LOG_PREFIX} Config not found, using defaults`);
-    return {
-      enabled: true,
-      graph: {
-        planner: 'desire-planner.json',
-        reviewer: 'desire-reviewer.json',
-      },
-      planning: {
-        temperature: 0.3,
-        maxSteps: 10,
-        includeToolCatalog: true,
-        includeDecisionRules: true,
-        includeMemoryContext: true,
-        memorySearchLimit: 5,
-      },
-      review: {
-        alignmentThreshold: 0.7,
-        safetyThreshold: 0.8,
-        autoApproveThreshold: 0.9,
-        temperature: 0.2,
-      },
-      processing: {
-        batchSize: 5,
-        retryOnFailure: true,
-        maxRetries: 2,
-      },
-      logging: {
-        verbose: true,
-        logToInnerDialogue: true,
-      },
-    };
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Desire Planner configuration is not valid JSON: ${(error as Error).message}`);
   }
-}
-
-// ============================================================================
-// Agency Execution Config
-// ============================================================================
-
-function getAgencyExecutionConfig(username?: string): AgencyExecutionConfig {
-  const defaults: AgencyExecutionConfig = {
-    preferredBackend: 'claude-code',
-    fallbackBackend: 'codex',
-    availableBackends: ['claude-code', 'codex', 'open-interpreter', 'aider'],
-    delegateToToolExecutor: true,
-    localExecutionEnabled: false,
-    plannerIncludesToolCapabilities: true,
-    feasibilityCheckEnabled: true,
-    maxPlanRetries: 3,
-    taskGenerationEnabled: true,
-  };
-
-  try {
-    const agencyConfig = loadUserConfig<{ execution?: AgencyExecutionConfig }>(
-      'agency.json',
-      { execution: defaults },
-      username
-    );
-    return agencyConfig.execution || defaults;
-  } catch {
-    return defaults;
-  }
+  return parsePlannerConfig(parsed);
 }
 
 // ============================================================================
 // Feasibility Check
 // ============================================================================
 
-interface FeasibilityResult {
+export interface FeasibilityResult {
   feasible: boolean;
   confidence: number; // 0-1
   reasoning: string;
   suggestedApproach?: string;
   blockers?: string[];
+}
+
+export function parseFeasibilityResponse(response: string): FeasibilityResult {
+  const jsonMatch = response.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Feasibility response did not contain a JSON object');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    throw new Error(`Feasibility response was not valid JSON: ${(error as Error).message}`);
+  }
+
+  if (!isRecord(parsed)
+    || typeof parsed.feasible !== 'boolean'
+    || !isFiniteNumber(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1
+    || typeof parsed.reasoning !== 'string' || parsed.reasoning.trim().length === 0) {
+    throw new Error('Feasibility response is missing required typed fields');
+  }
+
+  if (parsed.suggestedApproach !== undefined && typeof parsed.suggestedApproach !== 'string') {
+    throw new Error('Feasibility response suggestedApproach must be a string');
+  }
+  if (parsed.blockers !== undefined
+    && (!Array.isArray(parsed.blockers) || parsed.blockers.some(blocker => typeof blocker !== 'string'))) {
+    throw new Error('Feasibility response blockers must be an array of strings');
+  }
+
+  return {
+    feasible: parsed.feasible,
+    confidence: parsed.confidence,
+    reasoning: parsed.reasoning.trim(),
+    suggestedApproach: parsed.suggestedApproach?.trim(),
+    blockers: parsed.blockers?.map(blocker => blocker.trim()),
+  };
 }
 
 /**
@@ -198,8 +202,10 @@ interface FeasibilityResult {
 async function checkFeasibility(
   desire: Desire,
   username: string,
-  toolCatalog?: string
+  signal?: AbortSignal,
 ): Promise<FeasibilityResult> {
+  if (signal?.aborted) throw signal.reason || new DOMException('Planning cancelled', 'AbortError');
+  const toolCatalog = getCachedCatalog();
   // Build goal type context
   const isLongRunning = desire.goalType === 'long_running';
   const goalTypeContext = isLongRunning
@@ -235,13 +241,10 @@ Do NOT reject because the goal requires physical action by the user. If the syst
 **Goal Type**: ${desire.goalType || 'one_time'}
 ${goalTypeContext}
 ## Available Capabilities
-The agent has access to:
-- Full computer access (read/write files, run commands)
-- Internet access (web browsing, API calls)
-- Communication tools (send messages, notifications)
-- Memory and task management
-- External tool executors (Claude Code, Codex CLI)
-${toolCatalog ? `\n## Tool Catalog\n${toolCatalog}` : ''}
+The following canonical tool catalog is the complete capability inventory for this assessment.
+Do not infer access, permissions, tools, or external effects that are not listed here.
+
+${toolCatalog}
 
 ## Assessment Criteria
 ${isLongRunning ? `For this LONG-RUNNING goal, assess if the system can meaningfully SUPPORT the user:
@@ -269,42 +272,13 @@ Respond in this JSON format:
   "blockers": ["list of specific blockers if not feasible"]
 }`;
 
-  try {
-    const response = await callLLMText({
-      role: 'orchestrator',
-      messages: [{ role: 'user', content: prompt }],
-      userId: username,
-    });
+  const response = await callLLMText({
+    role: 'orchestrator',
+    messages: [{ role: 'user', content: prompt }],
+    userId: username,
+  });
 
-    // Parse JSON from response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        feasible: parsed.feasible ?? true,
-        confidence: parsed.confidence ?? 0.5,
-        reasoning: parsed.reasoning ?? 'No reasoning provided',
-        suggestedApproach: parsed.suggestedApproach,
-        blockers: parsed.blockers,
-      };
-    }
-
-    // Default to feasible if parsing fails
-    console.warn(`${LOG_PREFIX} Could not parse feasibility response, defaulting to feasible`);
-    return {
-      feasible: true,
-      confidence: 0.5,
-      reasoning: 'Could not parse feasibility check response',
-    };
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Feasibility check failed:`, error);
-    // Default to feasible on error to avoid blocking valid desires
-    return {
-      feasible: true,
-      confidence: 0.3,
-      reasoning: `Feasibility check failed: ${(error as Error).message}`,
-    };
-  }
+  return parseFeasibilityResponse(response);
 }
 
 // ============================================================================
@@ -312,10 +286,12 @@ Respond in this JSON format:
 // ============================================================================
 
 export async function loadGraph(filename: string): Promise<SvelteFlowGraph> {
-  const graphPath = path.join(GRAPHS_DIR, filename);
-  const raw = await fs.readFile(graphPath, 'utf-8');
-  const parsed = JSON.parse(raw);
-  return validateSvelteFlowGraph(parsed);
+  const loaded = await loadGraphFile(cognitiveGraphPath(filename), {
+    cacheKey: `desire-planner:${filename}`,
+    logPrefix: LOG_PREFIX,
+  });
+  if (!loaded) throw new Error(`Desire Planner graph not found: ${filename}`);
+  return loaded.graph;
 }
 
 // ============================================================================
@@ -329,8 +305,8 @@ async function processDesire(
   desire: Desire,
   plannerGraph: SvelteFlowGraph,
   reviewerGraph: SvelteFlowGraph,
-  plannerConfig: PlannerConfig,
-  username: string
+  username: string,
+  signal?: AbortSignal,
 ): Promise<{
   success: boolean;
   outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
@@ -343,12 +319,15 @@ async function processDesire(
     // =========================================================================
     // PHASE 0: Feasibility Check (if enabled)
     // =========================================================================
-    const execConfig = getAgencyExecutionConfig(username);
+    const agencyConfig = await loadAgencyConfig(username);
+    if (!agencyConfig.execution) {
+      throw new Error('Agency configuration is missing the execution section');
+    }
 
-    if (execConfig.feasibilityCheckEnabled) {
+    if (agencyConfig.execution.feasibilityCheckEnabled) {
       console.log(`${LOG_PREFIX}     Running feasibility check...`);
 
-      const feasibility = await checkFeasibility(desire, username);
+      const feasibility = await checkFeasibility(desire, username, signal);
 
       audit({
         category: 'agent',
@@ -371,6 +350,24 @@ async function processDesire(
         if (feasibility.blockers?.length) {
           console.log(`${LOG_PREFIX}        Blockers: ${feasibility.blockers.join(', ')}`);
         }
+
+        const rejectedAt = new Date().toISOString();
+        const rejectedDesire: Desire = {
+          ...desire,
+          status: 'rejected',
+          completedAt: rejectedAt,
+          updatedAt: rejectedAt,
+          rejectionHistory: [
+            ...(desire.rejectionHistory || []),
+            {
+              rejectedAt,
+              rejectedBy: 'system',
+              reason: feasibility.reasoning,
+              canRetry: true,
+            },
+          ],
+        };
+        await moveDesire(rejectedDesire, desire.status, 'rejected', username);
 
         // Log to inner dialogue so user can see why it was rejected
         await captureEvent(
@@ -512,13 +509,12 @@ async function processDesire(
       desireId: desire.id,
       allowMemoryWrites: true,
       cognitiveMode: 'agent' as const,
-      config: plannerConfig.planning,
       // Include user's answers to clarifying questions for better plan generation
       clarifyingQuestionsContext: answeredContext,
     };
 
     console.log(`${LOG_PREFIX}     Executing planner graph...`);
-    const planResult = await runGraph({ graph: plannerGraph, context: planContext });
+    const planResult = await runGraph({ graph: plannerGraph, context: planContext, signal });
 
     if (planResult.status !== 'completed') {
       console.error(`${LOG_PREFIX}     Planner graph failed: ${planResult.status}`);
@@ -530,8 +526,8 @@ async function processDesire(
     }
 
     // Extract plan from graph output (node IDs are strings in Svelte Flow format)
-    const planGeneratorNode = planResult.nodes.get('5'); // Node 5 is plan generator
-    const plan = planGeneratorNode?.outputs?.plan;
+    const planGeneratorOutput = requireGraphNodeOutput(planResult, 'desire_plan_generator');
+    const plan = planGeneratorOutput.plan;
 
     if (!plan) {
       console.error(`${LOG_PREFIX}     No plan generated`);
@@ -554,28 +550,27 @@ async function processDesire(
       desireId: desire.id,
       allowMemoryWrites: true,
       cognitiveMode: 'agent' as const,
-      config: plannerConfig.review,
     };
 
     console.log(`${LOG_PREFIX}     Executing reviewer graph...`);
-    const reviewResult = await runGraph({ graph: reviewerGraph, context: reviewContext });
+    const reviewResult = await runGraph({ graph: reviewerGraph, context: reviewContext, signal });
 
     if (reviewResult.status !== 'completed') {
-      console.warn(`${LOG_PREFIX}     Reviewer graph ended with status: ${reviewResult.status}`);
-      // Still consider the plan valid, just move to reviewing for manual check
-      return { success: true, outcome: 'planned' };
+      const error = `Reviewer graph ended with status: ${reviewResult.status}`;
+      console.error(`${LOG_PREFIX}     ${error}`);
+      return { success: false, outcome: 'failed', error };
     }
 
     // Extract verdict from graph output (node IDs are strings in Svelte Flow format)
-    const verdictNode = reviewResult.nodes.get('7'); // Node 7 is verdict synthesizer
-    const verdict = verdictNode?.outputs?.verdict;
-    const autoApprove = verdictNode?.outputs?.autoApprove;
+    const verdictOutput = requireGraphNodeOutput(reviewResult, 'desire_verdict');
+    const verdict = verdictOutput.verdict;
+    const autoApprove = verdictOutput.autoApprove;
 
     if (verdict === 'reject') {
       console.log(`${LOG_PREFIX}     Plan rejected by review`);
 
       // Extract rejection reason if available
-      const reviewReason = verdictNode?.outputs?.reasoning || verdictNode?.outputs?.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
+      const reviewReason = verdictOutput.reasoning || verdictOutput.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
 
       // Notify user in main chat
       await submitAgencyConversationEntry(
@@ -640,6 +635,7 @@ export async function promotePendingDesires(
   // Promote up to maxToPromote desires
   const toPromote = pendingDesires.slice(0, maxToPromote);
   let promoted = 0;
+  const errors: Error[] = [];
 
   for (const desire of toPromote) {
     const now = new Date().toISOString();
@@ -669,8 +665,21 @@ export async function promotePendingDesires(
 
       console.log(`${LOG_PREFIX} ⬆ Promoted "${desire.title}" to planning (strength: ${(desire.strength || 0).toFixed(2)})`);
     } catch (error) {
-      console.error(`${LOG_PREFIX} Failed to promote desire ${desire.id}:`, error);
+      const message = `${desire.id}: failed to promote to planning: ${(error as Error).message}`;
+      errors.push(new Error(message, { cause: error }));
+      console.error(`${LOG_PREFIX} ${message}`);
+      audit({
+        category: 'agent',
+        level: 'error',
+        event: 'desire_promotion_failed',
+        actor: 'desire-planner',
+        details: { desireId: desire.id, title: desire.title, error: message, username },
+      });
     }
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, `Failed to promote ${errors.length} desire(s) to planning`);
   }
 
   return promoted;
@@ -681,7 +690,8 @@ export async function promotePendingDesires(
  */
 export async function processPlanningDesires(
   username: string,
-  plannerConfig: PlannerConfig
+  plannerConfig: PlannerConfig,
+  signal?: AbortSignal,
 ): Promise<{
   planned: number;
   approved: number;
@@ -689,17 +699,18 @@ export async function processPlanningDesires(
   needsQuestions: number;
   rejected: number;
   failed: number;
+  errors: string[];
 }> {
   if (!await isAgencyEnabled(username)) {
     console.log(`${LOG_PREFIX} Agency disabled for user ${username}`);
-    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0 };
+    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0, errors: [] };
   }
 
   const planningDesires = await listDesiresByStatus('planning', username);
   console.log(`${LOG_PREFIX} Found ${planningDesires.length} desires in planning status`);
 
   if (planningDesires.length === 0) {
-    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0 };
+    return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0, errors: [] };
   }
 
   // Load graphs
@@ -712,17 +723,19 @@ export async function processPlanningDesires(
   let needsQuestions = 0;
   let rejected = 0;
   let failed = 0;
+  const errors: string[] = [];
 
   // Process up to batchSize desires
   const batch = planningDesires.slice(0, plannerConfig.processing.batchSize);
 
   for (const desire of batch) {
+    if (signal?.aborted) throw signal.reason || new DOMException('Planning cancelled', 'AbortError');
     const result = await processDesire(
       desire,
       plannerGraph,
       reviewerGraph,
-      plannerConfig,
-      username
+      username,
+      signal,
     );
 
     switch (result.outcome) {
@@ -744,6 +757,7 @@ export async function processPlanningDesires(
       case 'failed':
         failed++;
         if (result.error) {
+          errors.push(`${desire.id}: ${result.error}`);
           audit({
             category: 'agent',
             level: 'error',
@@ -762,7 +776,7 @@ export async function processPlanningDesires(
   }
 
   // Log summary to inner dialogue if enabled
-  if (plannerConfig.logging.logToInnerDialogue && (planned + approved + needsApproval + needsQuestions + rejected > 0)) {
+  if (plannerConfig.logging.logToInnerDialogue && (planned + approved + needsApproval + needsQuestions + rejected + failed > 0)) {
     const parts: string[] = [];
 
     if (approved > 0) parts.push(`${approved} auto-approved`);
@@ -788,7 +802,7 @@ export async function processPlanningDesires(
     );
   }
 
-  return { planned, approved, needsApproval, needsQuestions, rejected, failed };
+  return { planned, approved, needsApproval, needsQuestions, rejected, failed, errors };
 }
 
 // ============================================================================
@@ -819,40 +833,46 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
       console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
 
-    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-    let user = getTargetUser(options);
-    if (!user && options.singleUser) {
-      user = { userId: 'default', username: 'default', role: 'owner' };
-    }
+    // Resolve only a real active or explicitly selected profile.
+    const user = getTargetUser({ username: options.username });
 
     if (!user) {
-      console.log(`${LOG_PREFIX} No active user found`);
+      result.success = false;
+      result.errors.push('Desire planning requires an active or explicit profile');
       return result;
     }
 
     console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
+    const lock = acquireLock(`${LOCK_NAME}:${user.username}`, { exitOnSignal: false });
     try {
       console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
       await withUserContext(user, async () => {
         // Step 1: Promote pending desires to planning
-        const promoted = await promotePendingDesires(user!.username, config.processing?.batchSize || 3);
+        const promoted = await promotePendingDesires(user!.username, config.processing.batchSize);
         if (promoted > 0) {
           console.log(`${LOG_PREFIX} Promoted ${promoted} pending desire(s) to planning`);
         }
 
         // Step 2: Process desires in planning status
-        const r = await processPlanningDesires(user!.username, config);
+        const r = await processPlanningDesires(user!.username, config, options.signal);
         result.stats.planned += r.planned;
         result.stats.approved += r.approved;
         result.stats.needsApproval += r.needsApproval;
         result.stats.needsQuestions += r.needsQuestions;
         result.stats.rejected += r.rejected;
         result.stats.failed += r.failed;
+        if (r.errors.length > 0) {
+          result.success = false;
+          result.errors.push(...r.errors);
+        }
       });
       result.usersProcessed++;
     } catch (error) {
+      result.success = false;
       result.errors.push(`Error processing ${user.username}: ${(error as Error).message}`);
+    } finally {
+      lock.release();
     }
 
     console.log(`${LOG_PREFIX} Planning complete:`);
@@ -887,17 +907,10 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   const args = input.args || [];
   const opts = input.options || {};
 
-  let username = opts.username as string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      username = args[i + 1];
-      break;
-    }
-  }
-
+  const parsed = parseDesirePlannerArgs(args);
   const options: DesirePlannerOptions = {
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-    username: username || ctx.userId,
+    username: typeof opts.username === 'string' ? opts.username : parsed.username || ctx.username,
+    signal: ctx.signal,
   };
 
   const result = await runCycle(options);
@@ -910,56 +923,10 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   };
 }
 
-// ============================================================================
-// CLI Entry Point (for direct execution)
-// ============================================================================
-
-async function main(): Promise<void> {
-  initGlobalLogger('desire-planner');
-  console.log(`${LOG_PREFIX} Starting desire planner agent...`);
-
-  // Load config
-  const config = await loadPlannerConfig();
-
-  if (!config.enabled) {
-    console.log(`${LOG_PREFIX} Planner disabled in config. Exiting.`);
-    return;
+export function parseDesirePlannerArgs(args: string[]): DesirePlannerOptions {
+  if (args.length === 0) return {};
+  if (args.length !== 2 || args[0] !== '--username' || !args[1]?.trim()) {
+    throw new Error('Desire Planner accepts only --username <profile>');
   }
-
-  // Check for existing lock
-  if (isLocked(LOCK_NAME)) {
-    console.log(`${LOG_PREFIX} Another instance is already running. Exiting.`);
-    process.exit(0);
-  }
-
-  // Acquire lock
-  let lock: { release: () => void } | null = null;
-  try {
-    lock = acquireLock(LOCK_NAME);
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to acquire lock:`, error);
-    process.exit(1);
-  }
-
-  try {
-    const result = await runCycle();
-
-    if (!result.success) {
-      console.error(`${LOG_PREFIX} Errors:`, result.errors);
-      process.exit(1);
-    }
-  } finally {
-    if (lock) {
-      lock.release();
-    }
-  }
-}
-
-// Only run if executed directly (not imported)
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
-if (isMainModule) {
-  main().catch((error) => {
-    console.error(`${LOG_PREFIX} Fatal error:`, error);
-    process.exit(1);
-  });
+  return { username: args[1].trim() };
 }

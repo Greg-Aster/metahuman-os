@@ -17,8 +17,7 @@
  * - digest: Activity summaries
  * - desire-generator: Synthesize desires from system inputs
  * - desire-planner: Generate execution plans for desires
- * - desire-executor: Execute approved desire plans
- * - desire-outcome-reviewer: Review completed/failed desires
+ * Core Work Coordinator handlers own desire execution and outcome review on all platforms.
  *
  * Server-Only Agents (cannot run on mobile):
  * - transcriber: Requires Whisper/GPU
@@ -45,10 +44,8 @@ import { generateInnerQuestion } from './agents/inner-curiosity/core.js';
 import { generateUserDigest } from './agents/digest/core.js';
 
 // Agency system agents (new modular structure)
-import { generateDesiresForUser } from './agents/desire-generator/core.js';
+import { runCycle as runDesireGeneratorCycle } from './agents/desire-generator/core.js';
 import { runCycle as runDesirePlannerCycle } from './agents/desire-planner/core.js';
-import { processApprovedDesires } from './agents/desire-executor/core.js';
-import { processDesires as processDesireOutcomes } from './agents/desire-outcome-reviewer/core.js';
 
 // ============================================================================
 // Organizer Agent (uses new modular structure)
@@ -233,12 +230,9 @@ async function runDesireGeneratorWrapper(context: MobileAgentContext): Promise<v
   await withUserContext(
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
-      try {
-        const count = await generateDesiresForUser(context.username!);
-        console.log(`[mobile-desire-generator] Complete: ${count} desires generated`);
-      } catch (error) {
-        console.error('[mobile-desire-generator] Error:', (error as Error).message);
-      }
+      const result = await runDesireGeneratorCycle({ username: context.username! });
+      if (!result.success) throw new Error(result.errors.join('; '));
+      console.log(`[mobile-desire-generator] Complete: ${result.totalGenerated} desires generated`);
     }
   );
 }
@@ -255,59 +249,9 @@ async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<voi
   await withUserContext(
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
-      try {
-        const result = await runDesirePlannerCycle({
-          singleUser: true,
-          username: context.username!,
-        });
-        console.log(`[mobile-desire-planner] Complete: ${result.stats.planned} planned, ${result.stats.approved} approved`);
-      } catch (error) {
-        console.error('[mobile-desire-planner] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-/**
- * Desire Executor wrapper - uses brain/agents/desire-executor.ts
- */
-async function runDesireExecutorWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-desire-executor] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const result = await processApprovedDesires(context.username!);
-        console.log(`[mobile-desire-executor] Complete: ${result.executed} executed, ${result.succeeded} succeeded`);
-      } catch (error) {
-        console.error('[mobile-desire-executor] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-/**
- * Desire Outcome Reviewer wrapper - uses brain/agents/desire-outcome-reviewer.ts
- */
-async function runDesireReviewerWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-desire-reviewer] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const result = await processDesireOutcomes(context.username!);
-        console.log(`[mobile-desire-reviewer] Complete: ${result.reviewed} reviewed`);
-      } catch (error) {
-        console.error('[mobile-desire-reviewer] Error:', (error as Error).message);
-      }
+      const result = await runDesirePlannerCycle({ username: context.username! });
+      if (!result.success) throw new Error(result.errors.join('; '));
+      console.log(`[mobile-desire-planner] Complete: ${result.stats.planned} planned, ${result.stats.approved} approved`);
     }
   );
 }
@@ -409,16 +353,6 @@ export function registerMobileAgents(): MobileAgentRegistration[] {
       name: 'Desire Planner',
       run: runDesirePlannerWrapper,
     },
-    {
-      id: 'desire-executor',
-      name: 'Desire Executor',
-      run: runDesireExecutorWrapper,
-    },
-    {
-      id: 'desire-outcome-reviewer',
-      name: 'Desire Outcome Reviewer',
-      run: runDesireReviewerWrapper,
-    },
   ];
 
   return agents;
@@ -455,6 +389,4 @@ export {
   // Agency system
   runDesireGeneratorWrapper as runDesireGenerator,
   runDesirePlannerWrapper as runDesirePlanner,
-  runDesireExecutorWrapper as runDesireExecutor,
-  runDesireReviewerWrapper as runDesireReviewer,
 };

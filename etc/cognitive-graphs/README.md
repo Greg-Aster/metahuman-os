@@ -7,6 +7,8 @@ executor and the web editor.
   `environment-mode.json` own the four conversation modes.
 - Agent and workflow graphs own bounded background work such as curation,
   reflection, dreaming, agency, and Robot Operator behavior.
+- Boredom Observer, Movement, and Reflection are contextual planner graphs;
+  `boredom-autonomy-mode.json` is their shared iterative executor.
 - Admission graphs own buffer and system-event filtering.
 
 Built-in graphs are maintained source. Update their public site/mobile copies

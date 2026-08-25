@@ -244,17 +244,20 @@ POST /api/agency/proposed-goals/{id}/reject
 # Run the desire generator manually
 ./bin/mh agent run desire-generator
 
-# Run the desire executor
+# Plan activated desires for the selected profile
+./bin/mh agent run desire-planner
+
+# Queue approved desires through the Work Coordinator
 ./bin/mh agent run desire-executor
 
-# View agency status
-./bin/mh agency status
+# Queue one approved desire for execution
+./bin/mh agent run desire-executor --desire-id <desire-id>
 
-# List active desires
-./bin/mh agency desires
+# Queue pending outcome reviews through the same coordinator
+./bin/mh agent run desire-outcome-reviewer
 
-# Execute a specific desire
-./bin/mh agency execute <desire-id>
+# Queue one outcome review
+./bin/mh agent run desire-outcome-reviewer --desire-id <desire-id>
 ```
 
 ---
@@ -265,13 +268,13 @@ Desires are stored in the user's profile:
 
 ```
 profiles/<username>/persona/desires/
-├── nascent/           # New desires building strength
-│   └── desire-xxx.json
-├── pending/           # Waiting for activation threshold
-├── active/            # In planning/review/execution
-├── completed/         # Successfully executed
-├── rejected/          # User or system rejected
-└── abandoned/         # Decayed below threshold
+└── folders/
+    └── desire-xxx/
+        ├── manifest.json       # Canonical current desire and status
+        ├── scratchpad/         # Append-only lifecycle evidence
+        ├── plans/              # Versioned plans
+        ├── executions/         # Execution attempts
+        └── outcome-reviews/    # Validated outcome reviews
 ```
 
 **Desire File Structure** (`desire-xxx.json`):
@@ -301,7 +304,9 @@ profiles/<username>/persona/desires/
 
 ### Desire Generation Cycle
 
-The desire generator runs periodically (configurable in `etc/agents.json`):
+The desire generator runs only when admitted manually or as a Sleep Workflow
+stage. Trigger Manager and Sleep Workflow own timing; Agency configuration does
+not contain a competing scheduler:
 
 1. **Gather Inputs**: Load goals, tasks, memories, reflections, dreams
 2. **Detect Patterns**: Find recurring themes in memories
@@ -386,54 +391,19 @@ The system uses your trust level to determine automation:
 
 ---
 
-## Execution Methods
+## Execution and Outcome Review
 
-**CRITICAL**: Plans are executed via external tool executors only.
+Approved plans enter the single Work Coordinator lane. Core Agency claims the
+desire, executes the editable `desire-executor.json` graph through the configured
+backend owner, records the attempt, and moves it to `awaiting_review`. External
+effects use one coordinator attempt and are not replayed automatically.
 
-### Deprecated: local-skills Executor
-
-The `local-skills` executor is **DEPRECATED and non-functional**. Do not use it for desire execution.
-
-### Recommended: Big Brother Claude CLI Integration
-
-The recommended execution method uses Big Brother to provide:
-- Real-time terminal visibility (WebSocket streaming on port 3099)
-- Full tool execution capabilities (file search, commands, system queries)
-- Multi-backend support (Claude Code, Open Interpreter, Aider, Gemini CLI)
-- Proper error handling and audit logging
-
-**Enable Big Brother mode:**
-
-Edit `etc/operator.json`:
-```json
-{
-  "bigBrotherMode": {
-    "enabled": true,
-    "delegateAll": true
-  }
-}
-```
-
-When enabled, all desire executions route through Big Brother with full terminal visibility.
-
-### Alternative: Open Interpreter
-
-Requires server setup at `external/open-interpreter/`:
-
-1. Install Open Interpreter in the external directory
-2. Configure server endpoint in operator config
-3. Desire plans execute via Open Interpreter API
-
-**Note**: This requires manual setup and server management.
-
-### Terminal Visibility Requirement
-
-**Any desire execution MUST show activity in the terminal.** Silent operations are bugs, not features:
-- Users must see what the system is doing
-- Real-time progress updates required
-- No "black box" executions allowed
-
-If execution isn't visible in Big Brother terminal, the integration is incorrect.
+Outcome review also enters the Work Coordinator. The editable
+`outcome-reviewer.json` graph validates one model decision and calls the single
+Core Agency transition owner. Possible system defects and other escalations
+pause in `awaiting_approval`; the reviewer never creates repair tasks or grants
+itself code-change authority. Generator, Planner, Executor, and Outcome Reviewer
+all require an active or explicitly selected real profile.
 
 ---
 

@@ -408,8 +408,8 @@ try {
         cycleId: 'observer-capture-cycle',
         step: 1,
         triggerSource: 'user',
-        graph: 'robot-operator',
-        requestedBy: 'robot-observer',
+        graph: 'boredom-observer',
+        requestedBy: 'boredom-observer',
       },
     },
   }, {
@@ -434,7 +434,7 @@ try {
   assert.equal(contextualExpiry.metadata?.correlationId, 'observer-capture-cycle');
   assert.equal(
     (contextualExpiry.metadata?.robotObserver as { requestedBy?: string })?.requestedBy,
-    'robot-observer',
+    'boredom-observer',
   );
   assert.equal(environmentObservationNeedsCognition(contextualExpiry), true);
   const expiredCaptureResponse = await handleEnvironmentBridgeObservation(bridgeRequest({
@@ -575,6 +575,24 @@ try {
   assert.equal(structured.value?.actions[0]?.command, 'walk');
   assert.equal(structured.value?.actions[0]?.units, 3);
   assert.equal(structured.value?.taskDecision?.motionClass, 'open_loop_displacement');
+  const completed = validateEnvironmentSelectorOutput(JSON.stringify({
+    response: 'The current frame confirms the requested view.',
+    actions: [],
+    movementRequest: null,
+    taskDecision: {
+      outcome: 'complete',
+      reason: 'The correlated frame visibly satisfies the objective.',
+      objectiveComplete: true,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'visual_observation',
+      completionEvidence: 'Frame ainekio-camera-28 shows the requested view.',
+    },
+  }), 'robot-1');
+  assert.equal(completed.valid, true);
+  assert.equal(
+    completed.value?.taskDecision?.completionEvidence,
+    'Frame ainekio-camera-28 shows the requested view.',
+  );
   assert.equal(validateEnvironmentSelectorOutput('walk forward', 'robot-1').valid, false);
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({
     response: 'Turning curiously.',

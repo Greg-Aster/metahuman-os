@@ -221,10 +221,8 @@ export const environmentContextBuilderNode = defineNode({
     // so later work can retain lifecycle identity. It is not, by itself, a request
     // to inspect the camera. Only an explicit boredom observation run bypasses typed
     // vision admission; ordinary audio remains owned by needsVision.
-    const observerVisualEvidence = !directUserTurn && (
-      robotObserver?.requestedBy === 'robot-observer'
-      || robotObserver?.requestedBy === 'boredom-observer'
-    );
+    const observerVisualEvidence = !directUserTurn
+      && robotObserver?.requestedBy === 'boredom-observer';
     const visualRequiredByTask = taskState?.requiredCompletionBasis === 'visual_observation'
       || taskContract?.requiredCompletionBasis === 'visual_observation';
     const visualContinuation = queuedContinuation && visualRequiredByTask;

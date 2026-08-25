@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-25T16:30:22.169Z",
-  "total": 1587,
+  "generatedAt": "2026-08-25T20:38:25.596Z",
+  "total": 1577,
   "byArea": {
     "agent-runtime": 10,
     "agents": 86,
@@ -9,9 +9,9 @@
     "brain-scripts": 3,
     "brain-services": 4,
     "cli": 12,
-    "config": 72,
-    "core-engine": 691,
-    "docs": 86,
+    "config": 69,
+    "core-engine": 685,
+    "docs": 85,
     "external-integration": 7,
     "local-model-service": 6,
     "mobile-interface": 47,
@@ -23,9 +23,9 @@
     "web-interface": 466
   },
   "byKind": {
-    "code": 1315,
-    "docs": 96,
-    "json": 90,
+    "code": 1309,
+    "docs": 95,
+    "json": 87,
     "other": 55,
     "shell": 29,
     "yaml": 2
@@ -50,7 +50,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 161
+      "lineCount": 159
     },
     {
       "path": "packages/core/src/active-operator/operator-policy-service.ts",
@@ -113,7 +113,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 611
+      "lineCount": 607
     },
     {
       "path": "packages/core/src/agency/desire-checkin.spec.ts",
@@ -134,35 +134,35 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 4
+      "lineCount": 175
     },
     {
       "path": "packages/core/src/agency/executor.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 263
+      "lineCount": 319
     },
     {
       "path": "packages/core/src/agency/index.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 122
+      "lineCount": 120
     },
     {
       "path": "packages/core/src/agency/storage.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1618
+      "lineCount": 1622
     },
     {
       "path": "packages/core/src/agency/types.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1300
+      "lineCount": 1275
     },
     {
       "path": "packages/core/src/agent-catalog-api.spec.ts",
@@ -176,7 +176,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 435
+      "lineCount": 438
     },
     {
       "path": "packages/core/src/agent-catalog.spec.ts",
@@ -267,7 +267,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 521
+      "lineCount": 520
     },
     {
       "path": "packages/core/src/api/handlers/activity-ping.ts",
@@ -316,14 +316,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1649
+      "lineCount": 1075
     },
     {
       "path": "packages/core/src/api/handlers/agency.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1998
+      "lineCount": 1970
     },
     {
       "path": "packages/core/src/api/handlers/agent-catalog.ts",
@@ -1898,7 +1898,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1138
+      "lineCount": 1156
     },
     {
       "path": "packages/core/src/environment-interface/diagnostics-api.spec.ts",
@@ -1933,7 +1933,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 853
+      "lineCount": 851
     },
     {
       "path": "packages/core/src/environment-interface/motion-plan.ts",
@@ -1996,7 +1996,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 372
+      "lineCount": 384
     },
     {
       "path": "packages/core/src/escalation-constants.ts",
@@ -2059,7 +2059,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 220
+      "lineCount": 252
     },
     {
       "path": "packages/core/src/graph-streaming.ts",
@@ -2094,7 +2094,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 679
+      "lineCount": 682
     },
     {
       "path": "packages/core/src/infrastructure/event-bus/client.ts",
@@ -2384,32 +2384,11 @@
       "lineCount": 160
     },
     {
-      "path": "packages/core/src/nodes/agency/desire-detector.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 392
-    },
-    {
-      "path": "packages/core/src/nodes/agency/desire-enricher.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 164
-    },
-    {
       "path": "packages/core/src/nodes/agency/desire-executor.node.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 585
-    },
-    {
-      "path": "packages/core/src/nodes/agency/desire-folder-creator.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 161
+      "lineCount": 545
     },
     {
       "path": "packages/core/src/nodes/agency/desire-loader.node.ts",
@@ -2417,13 +2396,6 @@
       "kind": "code",
       "priority": 1,
       "lineCount": 128
-    },
-    {
-      "path": "packages/core/src/nodes/agency/desire-memory-analyzer.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 171
     },
     {
       "path": "packages/core/src/nodes/agency/desire-plan-generator.node.ts",
@@ -2437,7 +2409,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 305
+      "lineCount": 160
     },
     {
       "path": "packages/core/src/nodes/agency/desire-safety-reviewer.node.ts",
@@ -2451,7 +2423,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 292
+      "lineCount": 329
     },
     {
       "path": "packages/core/src/nodes/agency/desire-verdict.node.ts",
@@ -2465,28 +2437,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 57
+      "lineCount": 42
     },
     {
       "path": "packages/core/src/nodes/agency/outcome-reviewer.node.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 482
-    },
-    {
-      "path": "packages/core/src/nodes/agency/verdict-router.node.spec.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 73
-    },
-    {
-      "path": "packages/core/src/nodes/agency/verdict-router.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 164
+      "lineCount": 492
     },
     {
       "path": "packages/core/src/nodes/agent/agent-timer.node.ts",
@@ -2598,7 +2556,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 43
+      "lineCount": 34
     },
     {
       "path": "packages/core/src/nodes/context/context-builder.node.ts",
@@ -2801,7 +2759,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 170
+      "lineCount": 167
     },
     {
       "path": "packages/core/src/nodes/dreamer/dreamer-continuation-generator.node.ts",
@@ -2822,7 +2780,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 102
+      "lineCount": 116
     },
     {
       "path": "packages/core/src/nodes/dreamer/dreamer-learnings-extractor.node.ts",
@@ -2843,7 +2801,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 173
+      "lineCount": 188
     },
     {
       "path": "packages/core/src/nodes/dreamer/index.ts",
@@ -2885,7 +2843,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 323
+      "lineCount": 420
     },
     {
       "path": "packages/core/src/nodes/environment/action-parser.node.ts",
@@ -2906,7 +2864,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 347
+      "lineCount": 345
     },
     {
       "path": "packages/core/src/nodes/environment/feedback.node.ts",
@@ -2920,7 +2878,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1267
+      "lineCount": 1268
     },
     {
       "path": "packages/core/src/nodes/environment/image-input.node.ts",
@@ -2962,7 +2920,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 432
+      "lineCount": 433
     },
     {
       "path": "packages/core/src/nodes/environment/observation.node.ts",
@@ -3004,14 +2962,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1558
+      "lineCount": 1706
     },
     {
       "path": "packages/core/src/nodes/environment/task-state.node.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 815
+      "lineCount": 804
     },
     {
       "path": "packages/core/src/nodes/environment/user-turn-provenance.spec.ts",
@@ -3333,7 +3291,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 319
+      "lineCount": 316
     },
     {
       "path": "packages/core/src/nodes/persona/decision-rules-loader.node.ts",
@@ -3487,14 +3445,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 830
+      "lineCount": 831
     },
     {
       "path": "packages/core/src/nodes/robot-operator/context-builder.node.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 494
+      "lineCount": 491
     },
     {
       "path": "packages/core/src/nodes/robot-operator/decision-parser.node.ts",
@@ -3606,7 +3564,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 2200
+      "lineCount": 2203
     },
     {
       "path": "packages/core/src/nodes/skill/conversational-response.node.ts",
@@ -4082,14 +4040,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 563
+      "lineCount": 568
     },
     {
       "path": "packages/core/src/queue/index.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 80
+      "lineCount": 86
     },
     {
       "path": "packages/core/src/queue/operator-policy-handler.ts",
@@ -4145,7 +4103,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 162
+      "lineCount": 165
     },
     {
       "path": "packages/core/src/queue/trigger-config-service.ts",
@@ -4194,14 +4152,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 286
+      "lineCount": 290
     },
     {
       "path": "packages/core/src/queue/unified-queue-manager.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 649
+      "lineCount": 655
     },
     {
       "path": "packages/core/src/queue/work-coordinator-ownership.ts",
@@ -4229,7 +4187,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 67
+      "lineCount": 130
     },
     {
       "path": "packages/core/src/reasoning/config.ts",
@@ -4341,14 +4299,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 428
+      "lineCount": 430
     },
     {
       "path": "packages/core/src/robot-operator.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 389
+      "lineCount": 381
     },
     {
       "path": "packages/core/src/runpod-config.ts",
@@ -4964,35 +4922,35 @@
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 36
+      "lineCount": 38
     },
     {
       "path": "brain/agents/daydreamer/core.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 370
+      "lineCount": 334
     },
     {
       "path": "brain/agents/daydreamer/index.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 15
+      "lineCount": 80
     },
     {
       "path": "brain/agents/desire-executor/cli.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 43
+      "lineCount": 37
     },
     {
       "path": "brain/agents/desire-executor/core.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 739
+      "lineCount": 114
     },
     {
       "path": "brain/agents/desire-executor/index.ts",
@@ -5006,63 +4964,63 @@
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 61
+      "lineCount": 46
     },
     {
       "path": "brain/agents/desire-generator/core.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 1506
+      "lineCount": 1432
     },
     {
       "path": "brain/agents/desire-generator/index.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 30
+      "lineCount": 33
     },
     {
       "path": "brain/agents/desire-outcome-reviewer/cli.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 43
+      "lineCount": 22
     },
     {
       "path": "brain/agents/desire-outcome-reviewer/core.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 942
+      "lineCount": 97
     },
     {
       "path": "brain/agents/desire-outcome-reviewer/index.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 14
+      "lineCount": 19
     },
     {
       "path": "brain/agents/desire-planner/cli.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 43
+      "lineCount": 31
     },
     {
       "path": "brain/agents/desire-planner/core.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 965
+      "lineCount": 932
     },
     {
       "path": "brain/agents/desire-planner/index.ts",
       "area": "agents",
       "kind": "code",
       "priority": 2,
-      "lineCount": 14
+      "lineCount": 20
     },
     {
       "path": "brain/agents/digest/cli.ts",
@@ -8786,7 +8744,7 @@
       "area": "cli",
       "kind": "code",
       "priority": 3,
-      "lineCount": 1762
+      "lineCount": 1788
     },
     {
       "path": "brain/scripts/_bootstrap.ts",
@@ -8947,14 +8905,14 @@
       "area": "mobile-runtime",
       "kind": "code",
       "priority": 4,
-      "lineCount": 460
+      "lineCount": 392
     },
     {
       "path": "brain/mobile-handlers.ts",
       "area": "mobile-runtime",
       "kind": "code",
       "priority": 4,
-      "lineCount": 41
+      "lineCount": 39
     },
     {
       "path": "docker/runpod-trainer/train_full_finetune.py",
@@ -9255,7 +9213,7 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 69
+      "lineCount": 57
     },
     {
       "path": "etc/agents.json",
@@ -9357,28 +9315,14 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 276
+      "lineCount": 248
     },
     {
       "path": "etc/cognitive-graphs/desire-executor.json",
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 217
-    },
-    {
-      "path": "etc/cognitive-graphs/desire-generator-proactive.json",
-      "area": "config",
-      "kind": "json",
-      "priority": 5,
-      "lineCount": 211
-    },
-    {
-      "path": "etc/cognitive-graphs/desire-generator.json",
-      "area": "config",
-      "kind": "json",
-      "priority": 5,
-      "lineCount": 184
+      "lineCount": 110
     },
     {
       "path": "etc/cognitive-graphs/desire-planner.json",
@@ -9386,13 +9330,6 @@
       "kind": "json",
       "priority": 5,
       "lineCount": 286
-    },
-    {
-      "path": "etc/cognitive-graphs/desire-retry.json",
-      "area": "config",
-      "kind": "json",
-      "priority": 5,
-      "lineCount": 297
     },
     {
       "path": "etc/cognitive-graphs/desire-reviewer.json",
@@ -9462,14 +9399,14 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 335
+      "lineCount": 148
     },
     {
       "path": "etc/cognitive-graphs/README.md",
       "area": "config",
       "kind": "docs",
       "priority": 5,
-      "lineCount": 23
+      "lineCount": 25
     },
     {
       "path": "etc/cognitive-graphs/reflector-mode.json",
@@ -9525,7 +9462,7 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 36
+      "lineCount": 17
     },
     {
       "path": "etc/embeddings.json",
@@ -9765,7 +9702,7 @@
       "area": "docs",
       "kind": "docs",
       "priority": 5,
-      "lineCount": 1596
+      "lineCount": 1816
     },
     {
       "path": "docs/audits/conversation-graph-flow-refactor.md",
@@ -9856,7 +9793,7 @@
       "area": "docs",
       "kind": "docs",
       "priority": 5,
-      "lineCount": 202
+      "lineCount": 162
     },
     {
       "path": "docs/audits/robot-operator-motion-control-progress.md",
@@ -9913,13 +9850,6 @@
       "kind": "docs",
       "priority": 5,
       "lineCount": 29
-    },
-    {
-      "path": "docs/dev-notes/agency-implementation-plan.md",
-      "area": "docs",
-      "kind": "docs",
-      "priority": 5,
-      "lineCount": 1251
     },
     {
       "path": "docs/dev-notes/hardware-button-debugging.md",
@@ -10008,7 +9938,7 @@
       "area": "docs",
       "kind": "docs",
       "priority": 5,
-      "lineCount": 364
+      "lineCount": 390
     },
     {
       "path": "docs/plans/encrypt-decrypt-ui-progress.md",
@@ -10120,7 +10050,7 @@
       "area": "docs",
       "kind": "docs",
       "priority": 5,
-      "lineCount": 482
+      "lineCount": 452
     },
     {
       "path": "docs/user-guide/advanced-features/architecture.md",

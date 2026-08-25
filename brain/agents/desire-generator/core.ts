@@ -21,20 +21,18 @@
  */
 
 import fs from 'node:fs/promises';
-import path from 'node:path';
 
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
-  ROOT,
   audit,
+  acquireLock,
   getTargetUser,
   withUserContext,
   captureEvent,
   submitInnerReflection,
   loadPersonaCore,
   listActiveTasks,
-  searchMemory,
-  storageClient,
+  listEpisodicFiles,
   getActiveBackend,
   callLLM,
   proposeGoalFromDesire,
@@ -90,8 +88,92 @@ import {
 const LOG_PREFIX = '[desire-generator]';
 
 export interface DesireGeneratorOptions {
-  singleUser?: boolean;
   username?: string;
+  signal?: AbortSignal;
+}
+
+const DESIRE_SOURCES = new Set<DesireSource>([
+  'persona_goal', 'urgent_task', 'task', 'help_ticket', 'memory_pattern',
+  'curiosity', 'reflection', 'dream', 'tool_suggestion',
+]);
+const DESIRE_RISKS = new Set(['none', 'low', 'medium', 'high', 'critical']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function parseDesireCandidates(content: string): DesireCandidate[] {
+  const jsonMatch = content.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error('Desire generation response did not contain a JSON array');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    throw new Error(`Desire generation response was not valid JSON: ${(error as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error('Desire generation response must be an array');
+  return parsed.map((candidate, index) => {
+    if (!isRecord(candidate)
+      || typeof candidate.title !== 'string' || !candidate.title.trim()
+      || typeof candidate.description !== 'string' || !candidate.description.trim()
+      || typeof candidate.reason !== 'string' || !candidate.reason.trim()
+      || typeof candidate.source !== 'string' || !DESIRE_SOURCES.has(candidate.source as DesireSource)
+      || typeof candidate.initialStrength !== 'number' || !Number.isFinite(candidate.initialStrength)
+      || candidate.initialStrength < 0 || candidate.initialStrength > 1
+      || typeof candidate.risk !== 'string' || !DESIRE_RISKS.has(candidate.risk)
+      || typeof candidate.suggestedAction !== 'string' || !candidate.suggestedAction.trim()
+      || (candidate.sourceId !== undefined && typeof candidate.sourceId !== 'string')) {
+      throw new Error(`Desire candidate ${index} is missing required typed fields`);
+    }
+    return candidate as unknown as DesireCandidate;
+  });
+}
+
+export function parseReinforcementResponse(
+  content: string,
+  validDesireIds: Set<string>,
+): Map<string, string> {
+  const jsonMatch = content.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error('Desire reinforcement response did not contain a JSON array');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    throw new Error(`Desire reinforcement response was not valid JSON: ${(error as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error('Desire reinforcement response must be an array');
+  const result = new Map<string, string>();
+  parsed.forEach((item, index) => {
+    if (!isRecord(item) || typeof item.id !== 'string' || !validDesireIds.has(item.id)
+      || typeof item.reason !== 'string' || !item.reason.trim()) {
+      throw new Error(`Desire reinforcement ${index} is invalid`);
+    }
+    if (result.has(item.id)) throw new Error(`Duplicate reinforcement for desire ${item.id}`);
+    result.set(item.id, item.reason.trim());
+  });
+  return result;
+}
+
+export function validateCandidateSources(
+  candidates: DesireCandidate[],
+  inputs: DesireGeneratorInputs,
+): DesireCandidate[] {
+  const available = new Set<DesireSource>();
+  if (inputs.personaGoals.length > 0) available.add('persona_goal');
+  if (inputs.urgentTasks.length > 0) available.add('urgent_task');
+  if (inputs.activeTasks.length > 0) available.add('task');
+  if (inputs.memoryPatterns.length > 0) available.add('memory_pattern');
+  if (inputs.pendingCuriosityQuestions.length > 0) available.add('curiosity');
+  if (inputs.recentReflections.length > 0) available.add('reflection');
+  if (inputs.recentDreams.length > 0) available.add('dream');
+  for (const candidate of candidates) {
+    if (!available.has(candidate.source)) {
+      throw new Error(
+        `Desire candidate source '${candidate.source}' has no corresponding input`,
+      );
+    }
+  }
+  return candidates;
 }
 
 export interface DesireGeneratorResult {
@@ -110,7 +192,6 @@ export interface DesireGeneratorResult {
  * Load persona goals from core.json
  */
 export async function loadPersonaGoals(): Promise<PersonaGoal[]> {
-  try {
     const persona = await loadPersonaCore();
     if (!persona?.goals) return [];
 
@@ -140,17 +221,12 @@ export async function loadPersonaGoals(): Promise<PersonaGoal[]> {
     }
 
     return goals;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading persona goals:`, error);
-    return [];
-  }
 }
 
 /**
  * Load active tasks, separating urgent from regular
  */
 export async function loadTasks(): Promise<{ urgent: TaskSummary[]; regular: TaskSummary[] }> {
-  try {
     const tasks = await listActiveTasks();
 
     const urgent: TaskSummary[] = [];
@@ -174,81 +250,43 @@ export async function loadTasks(): Promise<{ urgent: TaskSummary[]; regular: Tas
     }
 
     return { urgent, regular };
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading tasks:`, error);
-    return { urgent: [], regular: [] };
-  }
 }
 
 /**
  * Load recent memories (last 7 days)
  */
-export async function loadRecentMemories(days: number = 7): Promise<MemorySummary[]> {
-  try {
-    const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
-    if (!result.success || !result.path) return [];
+interface EpisodicDocument extends Record<string, unknown> {
+  __file: string;
+}
 
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-
-    const memories: MemorySummary[] = [];
-
-    // Walk the episodic directory
-    async function walk(dir: string) {
-      let entries: string[];
-      try {
-        entries = await fs.readdir(dir);
-      } catch {
-        return;
-      }
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry);
-        let stats;
-        try {
-          stats = await fs.stat(fullPath);
-        } catch {
-          continue;
-        }
-
-        if (stats.isDirectory()) {
-          await walk(fullPath);
-        } else if (stats.isFile() && entry.endsWith('.json')) {
-          try {
-            const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-
-            // Skip inner dialogues and reflections
-            if (content.type === 'inner_dialogue' || content.type === 'reflection' || content.type === 'dream') {
-              continue;
-            }
-
-            const timestamp = new Date(content.timestamp);
-            if (timestamp >= cutoffDate) {
-              memories.push({
-                id: content.id || entry,
-                content: content.content?.substring(0, 500) || '',
-                type: content.type,
-                timestamp: content.timestamp,
-                tags: content.tags,
-              });
-            }
-          } catch {
-            // Skip malformed files
-          }
-        }
-      }
+async function loadEpisodicDocuments(): Promise<EpisodicDocument[]> {
+  return Promise.all(listEpisodicFiles().map(async file => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await fs.readFile(file, 'utf-8'));
+    } catch (error) {
+      throw new Error(`Invalid episodic memory JSON at ${file}: ${(error as Error).message}`);
     }
+    if (!isRecord(parsed)) throw new Error(`Episodic memory must be an object: ${file}`);
+    return { ...parsed, __file: file };
+  }));
+}
 
-    await walk(result.path);
-
-    // Sort by recency and limit
-    return memories
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 50);
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading memories:`, error);
-    return [];
-  }
+export async function loadRecentMemories(days: number = 7): Promise<MemorySummary[]> {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const documents = await loadEpisodicDocuments();
+  return documents.flatMap(document => {
+    if (['inner_dialogue', 'reflection', 'dream'].includes(String(document.type))) return [];
+    const timestamp = typeof document.timestamp === 'string' ? Date.parse(document.timestamp) : NaN;
+    if (!Number.isFinite(timestamp) || timestamp < cutoff) return [];
+    return [{
+      id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
+      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      type: typeof document.type === 'string' ? document.type : 'unknown',
+      timestamp: document.timestamp as string,
+      tags: Array.isArray(document.tags) ? document.tags.filter(tag => typeof tag === 'string') : [],
+    }];
+  }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, 50);
 }
 
 /**
@@ -437,123 +475,44 @@ export async function loadCuriosityQuestions(): Promise<CuriosityQuestion[]> {
  * Load recent reflections
  */
 export async function loadReflections(count: number = 5): Promise<ReflectionSummary[]> {
-  try {
-    const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
-    if (!result.success || !result.path) return [];
-
-    const reflections: ReflectionSummary[] = [];
-
-    async function walk(dir: string) {
-      let entries: string[];
-      try {
-        entries = await fs.readdir(dir);
-      } catch {
-        return;
-      }
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry);
-        let stats;
-        try {
-          stats = await fs.stat(fullPath);
-        } catch {
-          continue;
-        }
-
-        if (stats.isDirectory()) {
-          await walk(fullPath);
-        } else if (stats.isFile() && entry.endsWith('.json')) {
-          try {
-            const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-
-            if (content.type === 'inner_dialogue' && content.tags?.includes('idle-thought')) {
-              reflections.push({
-                id: content.id || entry,
-                content: content.content?.substring(0, 500) || '',
-                timestamp: content.timestamp,
-                tags: content.tags,
-              });
-            }
-          } catch {
-            // Skip malformed files
-          }
-        }
-      }
+  const documents = await loadEpisodicDocuments();
+  return documents.flatMap(document => {
+    const tags = Array.isArray(document.tags)
+      ? document.tags.filter(tag => typeof tag === 'string') as string[]
+      : [];
+    if (document.type !== 'inner_dialogue' || !tags.includes('idle-thought')) return [];
+    if (typeof document.timestamp !== 'string' || !Number.isFinite(Date.parse(document.timestamp))) {
+      throw new Error(`Reflection has no valid timestamp: ${document.__file}`);
     }
-
-    await walk(result.path);
-
-    return reflections
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, count);
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading reflections:`, error);
-    return [];
-  }
+    return [{
+      id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
+      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      timestamp: document.timestamp,
+      tags,
+    }];
+  }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, count);
 }
 
 /**
  * Load recent dreams
  */
 export async function loadDreams(count: number = 3): Promise<DreamSummary[]> {
-  try {
-    const result = storageClient.resolvePath({
-      category: 'memory',
-      subcategory: 'episodic',
-      relativePath: 'dreams',
-    });
-
-    if (!result.success || !result.path) return [];
-
-    const dreams: DreamSummary[] = [];
-
-    async function walk(dir: string) {
-      let entries: string[];
-      try {
-        entries = await fs.readdir(dir);
-      } catch {
-        return;
-      }
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry);
-        let stats;
-        try {
-          stats = await fs.stat(fullPath);
-        } catch {
-          continue;
-        }
-
-        if (stats.isDirectory()) {
-          await walk(fullPath);
-        } else if (stats.isFile() && entry.endsWith('.json')) {
-          try {
-            const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-
-            if (content.type === 'dream') {
-              dreams.push({
-                id: content.id || entry,
-                content: content.content?.substring(0, 500) || '',
-                timestamp: content.timestamp,
-                themes: content.tags?.filter((t: string) => !['dream', 'sleep'].includes(t)),
-              });
-            }
-          } catch {
-            // Skip malformed files
-          }
-        }
-      }
+  const documents = await loadEpisodicDocuments();
+  return documents.flatMap(document => {
+    if (document.type !== 'dream') return [];
+    if (typeof document.timestamp !== 'string' || !Number.isFinite(Date.parse(document.timestamp))) {
+      throw new Error(`Dream has no valid timestamp: ${document.__file}`);
     }
-
-    await walk(result.path);
-
-    return dreams
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, count);
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading dreams:`, error);
-    return [];
-  }
+    const tags = Array.isArray(document.tags)
+      ? document.tags.filter(tag => typeof tag === 'string') as string[]
+      : [];
+    return [{
+      id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
+      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      timestamp: document.timestamp,
+      themes: tags.filter(tag => !['dream', 'sleep'].includes(tag)),
+    }];
+  }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, count);
 }
 
 /**
@@ -563,7 +522,6 @@ async function loadExistingDesires(): Promise<{
   active: DesireSummary[];
   rejected: DesireSummary[];
 }> {
-  try {
     const active = await listActiveDesires();
     const pending = await listPendingDesires();
     const nascent = await listNascentDesires();
@@ -586,10 +544,6 @@ async function loadExistingDesires(): Promise<{
     }));
 
     return { active: activeSummaries, rejected: rejectedSummaries };
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading existing desires:`, error);
-    return { active: [], rejected: [] };
-  }
 }
 
 /**
@@ -771,8 +725,7 @@ Example response:
     { role: 'user', content: userPrompt },
   ];
 
-  try {
-    const response = await callLLM({
+  const response = await callLLM({
       role: 'persona',  // Use persona model - desires come from identity
       messages,
       options: {
@@ -781,27 +734,13 @@ Example response:
       },
     });
 
-    if (!response.content) {
-      console.error(`${LOG_PREFIX} Empty LLM response`);
-      return [];
-    }
-
-    // Parse JSON response
-    const content = response.content.trim();
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      console.error(`${LOG_PREFIX} No JSON array in response:`, content.substring(0, 200));
-      return [];
-    }
-
-    const candidates = JSON.parse(jsonMatch[0]) as DesireCandidate[];
-    console.log(`${LOG_PREFIX} LLM identified ${candidates.length} desire candidates`);
-
-    return candidates;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error calling LLM:`, error);
-    return [];
-  }
+  if (!response.content) throw new Error('Desire generation model returned no content');
+  const candidates = validateCandidateSources(
+    parseDesireCandidates(response.content),
+    inputs,
+  );
+  console.log(`${LOG_PREFIX} LLM identified ${candidates.length} desire candidates`);
+  return candidates;
 }
 
 // ============================================================================
@@ -814,9 +753,11 @@ Example response:
  */
 function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typeof loadConfig>>): Desire {
   const now = new Date().toISOString();
-  // Use config-based weight or fall back to default weights
   const sourceConfig = config.sources[candidate.source];
-  const sourceWeight = sourceConfig?.enabled ? sourceConfig.weight : (DESIRE_SOURCE_WEIGHTS[candidate.source] ?? 0.5);
+  if (!sourceConfig?.enabled) {
+    throw new Error(`Desire source '${candidate.source}' is not enabled in Agency configuration`);
+  }
+  const sourceWeight = sourceConfig.weight;
 
   // Calculate initial strength based on source weight:
   // - Base strength from config (0.15 default)
@@ -948,31 +889,20 @@ Return empty array [] if no desires are reinforced. Be selective - only reinforc
     { role: 'user', content: userPrompt },
   ];
 
-  try {
-    const response = await callLLM({
+  const response = await callLLM({
       role: 'persona',
       messages,
       options: { temperature: 0.3, responseFormat: 'json' },
     });
 
-    if (!response.content) return new Map();
-
-    const jsonMatch = response.content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return new Map();
-
-    const reinforcements = JSON.parse(jsonMatch[0]) as Array<{ id: string; reason: string }>;
-    const result = new Map<string, string>();
-
-    for (const r of reinforcements) {
-      result.set(r.id, r.reason);
-    }
+  if (!response.content) throw new Error('Desire reinforcement model returned no content');
+  const result = parseReinforcementResponse(
+    response.content,
+    new Set(existingDesires.map(desire => desire.id)),
+  );
 
     console.log(`${LOG_PREFIX} LLM identified ${result.size} reinforced desires`);
-    return result;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error identifying reinforcements:`, error);
-    return new Map();
-  }
+  return result;
 }
 
 /**
@@ -1296,9 +1226,8 @@ export async function generateDesiresForUser(username: string): Promise<number> 
   for (const candidate of uniqueCandidates) {
     const desire = createDesire(candidate, config);
 
-    try {
-      await saveDesire(desire, username);
-      created++;
+    await saveDesire(desire, username);
+    created++;
 
       console.log(`${LOG_PREFIX} Created desire: ${desire.title} (strength: ${desire.strength.toFixed(2)})`);
 
@@ -1317,9 +1246,6 @@ export async function generateDesiresForUser(username: string): Promise<number> 
           username,
         },
       });
-    } catch (error) {
-      console.error(`${LOG_PREFIX} Error saving desire:`, error);
-    }
   }
 
   // Update metrics
@@ -1415,32 +1341,36 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
       console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
 
-    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-    let user = getTargetUser(options);
-    if (!user && options.singleUser) {
-      user = { userId: 'default', username: 'default', role: 'owner' };
-    }
+    const user = getTargetUser({ username: options.username });
 
     if (!user) {
-      console.log(`${LOG_PREFIX} No active user found`);
+      result.success = false;
+      result.errors.push('Desire generation requires an active or explicit profile');
       return result;
     }
 
     console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
+    const lock = acquireLock(`desire-generator:${user.username}`, { exitOnSignal: false });
     try {
       const created = await withUserContext(
         { userId: user.userId, username: user.username, role: user.role },
-        async () => generateDesiresForUser(user!.username)
+        async () => {
+          if (options.signal?.aborted) throw options.signal.reason || new DOMException('Desire generation cancelled', 'AbortError');
+          return generateDesiresForUser(user!.username);
+        }
       );
 
       result.stats[user.username] = created;
       result.totalGenerated += created;
       result.usersProcessed++;
     } catch (error) {
+      result.success = false;
       const errorMsg = `Error processing ${user.username}: ${(error as Error).message}`;
       result.errors.push(errorMsg);
       console.error(`${LOG_PREFIX} ${errorMsg}`);
+    } finally {
+      lock.release();
     }
 
     audit({
@@ -1473,23 +1403,11 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   const args = input.args || [];
   const opts = input.options || {};
 
-  let username = opts.username as string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      username = args[i + 1];
-      break;
-    }
-  }
-
+  const parsed = parseDesireGeneratorArgs(args);
   const options: DesireGeneratorOptions = {
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-    username: username || ctx.userId,
+    username: typeof opts.username === 'string' ? opts.username : parsed.username || ctx.username,
+    signal: ctx.signal,
   };
-
-  // If context has a specific user, process only that user
-  if (ctx.userId && !options.username) {
-    options.username = ctx.userId;
-  }
 
   const result = await runCycle(options);
 
@@ -1503,4 +1421,12 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     errors: result.errors.length > 0 ? result.errors : undefined,
     durationMs: Date.now() - startTime,
   };
+}
+
+export function parseDesireGeneratorArgs(args: string[]): DesireGeneratorOptions {
+  if (args.length === 0) return {};
+  if (args.length !== 2 || args[0] !== '--username' || !args[1]?.trim()) {
+    throw new Error('Desire Generator accepts only --username <profile>');
+  }
+  return { username: args[1].trim() };
 }

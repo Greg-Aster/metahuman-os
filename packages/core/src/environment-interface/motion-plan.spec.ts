@@ -21,18 +21,19 @@ function targets(degrees = 90): Array<{ joint: string; degrees: number }> {
   return joints.map(joint => ({ joint, degrees }));
 }
 
+function generatedFrame(durationMs: number, degrees = 90): Record<string, string> {
+  return Object.fromEntries([
+    ['durationMs', String(durationMs)],
+    ...joints.map(joint => [joint, String(degrees)]),
+  ]);
+}
+
 function generatedResult(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     summary: 'Crouching and lifting one front leg, then returning to stand.',
-    action: {
-      type: 'robotMotionPlan',
-      frames: [
-        { durationMs: 400, targets: targets(90) },
-        { durationMs: 600, targets: targets(100) },
-      ],
-      endPose: 'stand',
-      ...overrides,
-    },
+    frames: [generatedFrame(400, 90), generatedFrame(600, 100)],
+    endPose: 'stand',
+    ...overrides,
   };
 }
 
@@ -83,8 +84,8 @@ test('normalizes one bounded generated plan and assigns the coordinator session'
 
   const compact = normalizeGeneratedMotionPlan({
     frames: [
-      [400, 135, 45, 45, 135, 0, 180, 0, 180],
-      [600, 130, 55, 50, 130, 10, 170, 5, 175],
+      { durationMs: '400', R1: '135', R2: '45', L1: '45', L2: '135', R4: '0', R3: '180', L3: '0', L4: '180' },
+      { durationMs: '600', R1: '130', R2: '55', L1: '50', L2: '130', R4: '10', R3: '170', L3: '5', L4: '175' },
     ],
     endPose: 'stand',
   }, 'ainekio-sim-1', 'Raise both front legs, pause, then stand.');
@@ -97,13 +98,14 @@ test('normalizes one bounded generated plan and assigns the coordinator session'
 test('Movement Generator structured output constrains every joint before runtime validation', () => {
   const schema = MOVEMENT_GENERATOR_JSON_SCHEMA as any;
   const frame = schema.properties.frames.items;
-  assert.equal(frame.minItems, 9);
-  assert.equal(frame.maxItems, 9);
-  assert.equal(frame.prefixItems[0].minimum, 100);
-  assert.equal(frame.prefixItems[0].maximum, 5_000);
-  for (const joint of frame.prefixItems.slice(1)) {
-    assert.equal(joint.minimum, 0);
-    assert.equal(joint.maximum, 180);
+  assert.equal(frame.type, 'object');
+  assert.equal(frame.additionalProperties, false);
+  assert.deepEqual(frame.required, ['durationMs', ...joints]);
+  assert.equal(frame.properties.durationMs.type, 'string');
+  assert.match(frame.properties.durationMs.pattern, /5000/);
+  for (const joint of joints) {
+    assert.equal(frame.properties[joint].type, 'string');
+    assert.match(frame.properties[joint].pattern, /180/);
   }
 });
 
@@ -113,29 +115,27 @@ test('rejects prose, raw control fields, incomplete joints, precision, and durat
     /JSON/,
   );
   assert.throws(
-    () => normalizeGeneratedMotionPlan(generatedResult({ pwm: [1000] }), 'sim'),
+    () => normalizeGeneratedMotionPlan({ ...generatedResult(), pwm: [1000] }, 'sim'),
     /unsupported field.*pwm/i,
   );
   assert.throws(
     () => normalizeGeneratedMotionPlan(generatedResult({
-      frames: [{ durationMs: 400, targets: targets().slice(0, 7) }],
+      frames: [{ ...generatedFrame(400), L4: undefined }],
     }), 'sim'),
-    /exactly eight targets/i,
+    /joint L4/i,
   );
   assert.throws(
     () => normalizeGeneratedMotionPlan(generatedResult({
-      frames: [{ durationMs: 400, targets: targets().map((target, index) => (
-        index === 0 ? { ...target, degrees: 90.001 } : target
-      )) }],
+      frames: [{ ...generatedFrame(400), R1: '90.001' }],
     }), 'sim'),
     /two decimal places/i,
   );
   assert.throws(
     () => normalizeGeneratedMotionPlan(generatedResult({
       frames: [
-        { durationMs: 5000, targets: targets() },
-        { durationMs: 5000, targets: targets() },
-        { durationMs: 100, targets: targets() },
+        generatedFrame(5000),
+        generatedFrame(5000),
+        generatedFrame(100),
       ],
     }), 'sim'),
     /total duration/i,
@@ -499,7 +499,6 @@ test('target-relative work executes the LLM-selected advertised command without 
       robotOperatorDecision: {
         observed: 'A scene target is visible.',
         instruction: 'Move closer to the current scene target for a better view.',
-        requiresAction: true,
         reason: 'A closer view would provide more evidence.',
       },
     },
@@ -593,7 +592,6 @@ test('Robot Operator may execute an LLM-selected advertised open-loop command', 
       robotOperatorDecision: {
         observed: 'The current scene is static.',
         instruction: 'walk forward',
-        requiresAction: true,
         reason: 'Change the viewpoint.',
       },
     },
@@ -697,7 +695,7 @@ test('Movement Generator makes one inference attempt and surfaces an invalid pla
     generateEnvironmentMotionPlan: async () => {
       calls += 1;
       return generatedResult({
-        frames: [{ durationMs: 400, targets: targets(-10) }],
+        frames: [{ ...generatedFrame(400), R1: '-10' }],
       });
     },
   });

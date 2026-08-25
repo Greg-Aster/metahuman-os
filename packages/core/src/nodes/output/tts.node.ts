@@ -185,9 +185,6 @@ export const TTSNode: NodeDefinition = defineNode({
       hasConversation: !!inputs?.conversation,
       hasText: !!inputs?.text,
       innerDialogueType: typeof inputs?.innerDialogue,
-      innerDialoguePreview: typeof inputs?.innerDialogue === 'string'
-        ? inputs.innerDialogue.substring(0, 50)
-        : JSON.stringify(inputs?.innerDialogue)?.substring(0, 100),
     });
 
     if (!username || username === 'anonymous') {
@@ -223,9 +220,9 @@ export const TTSNode: NodeDefinition = defineNode({
     let spokenText = '';
 
     console.log('[TTS Node] Parsed inputs:', {
-      conversationStr: conversationStr?.substring(0, 50) || '(empty)',
-      innerStr: innerStr?.substring(0, 50) || '(empty)',
-      genericStr: genericStr?.substring(0, 50) || '(empty)',
+      conversationLength: conversationStr?.length || 0,
+      innerLength: innerStr?.length || 0,
+      genericLength: genericStr?.length || 0,
       source,
       defaultMode,
     });

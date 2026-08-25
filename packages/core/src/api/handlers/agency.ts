@@ -33,12 +33,11 @@ import {
   type DesireStage,
   type ClarifyingAnswer,
 } from '../../agency/index.js';
-import { executeDesireViaGraph } from '../../agency/executor.js';
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import { submitAgencyConversationEntry } from '../../buffer-admission.js';
-import { submitCoordinatorWork } from '../../queue/index.js';
+import { submitCoordinatorWork, submitDesireExecution } from '../../queue/index.js';
 
 // Valid DesireStatus values from types.ts
 const ALL_STATUSES: DesireStatus[] = [
@@ -571,47 +570,36 @@ export async function handleApproveDesire(req: UnifiedRequest): Promise<UnifiedR
       taskType: 'desire_execute',
     });
 
-    let autoExecuted = false;
+    let executionTaskId: string | undefined;
     if (desire.plan?.steps?.length) {
-      const executingDesire: Desire = {
-        ...updatedDesire,
-        status: 'executing',
-        updatedAt: new Date().toISOString(),
-      };
-
-      await moveDesire(executingDesire, 'approved', 'executing', user.username);
-
-      executeDesireViaGraph(executingDesire, user.username)
-        .then((result) => {
-          console.log(`[agency-handler] Auto-execution complete for "${desire.title}": success=${result.success}`);
-          if (result.error) {
-            console.error(`[agency-handler] Auto-execution error for "${desire.title}": ${result.error}`);
-          }
-        })
-        .catch((err) => {
-          console.error(`[agency-handler] Auto-execution failed for "${desire.title}":`, err);
-        });
-
-      autoExecuted = true;
+      const task = await submitDesireExecution({
+        username: user.username,
+        desireId: id,
+        source: 'user',
+        metadata: { producer: 'agency-approval' },
+      });
+      executionTaskId = task.id;
       audit({
         category: 'agent',
         level: 'info',
-        event: 'desire_auto_executed',
+        event: 'desire_execution_queued',
         actor: user.username,
         details: {
           desireId: id,
           title: desire.title,
           planSteps: desire.plan.steps.length,
+          taskId: task.id,
         },
       });
     }
 
     return successResponse({
-      desire: autoExecuted ? { ...updatedDesire, status: 'executing' } : updatedDesire,
+      desire: updatedDesire,
       success: true,
-      autoExecuted,
-      message: autoExecuted
-        ? `Approved and executing "${desire.title}" (${desire.plan?.steps?.length || 0} steps). Check inner dialogue for progress.`
+      executionQueued: Boolean(executionTaskId),
+      taskId: executionTaskId,
+      message: executionTaskId
+        ? `Approved and queued "${desire.title}" for execution (${desire.plan?.steps?.length || 0} steps).`
         : `Approved "${desire.title}". Click Execute to run when ready.`,
     });
   } catch (error) {
@@ -1456,50 +1444,34 @@ export async function handleExecuteDesire(req: UnifiedRequest): Promise<UnifiedR
       };
     }
 
-    const now = new Date().toISOString();
-    const updatedDesire: Desire = {
-      ...desire,
-      status: 'executing',
-      updatedAt: now,
-      execution: {
-        startedAt: now,
-        status: 'running',
-        stepsCompleted: 0,
-        stepsTotal: desire.plan?.steps?.length || 1,
-      },
-    };
-
-    await moveDesire(updatedDesire, 'approved', 'executing', user.username);
+    const task = await submitDesireExecution({
+      username: user.username,
+      desireId: id,
+      source: 'user',
+      metadata: { producer: 'agency-execute-api' },
+    });
 
     audit({
       category: 'agent',
       level: 'info',
-      event: 'desire_execution_started',
+      event: 'desire_execution_queued',
       actor: user.username,
       details: {
         desireId: id,
         title: desire.title,
         manual: true,
         planSteps: desire.plan?.steps?.length || 0,
+        taskId: task.id,
       },
     });
 
-    executeDesireViaGraph(updatedDesire, user.username)
-      .then((result) => {
-        console.log(`[agency-handler] Execution complete for "${desire.title}": success=${result.success}`);
-        if (result.error) {
-          console.error(`[agency-handler] Execution error for "${desire.title}": ${result.error}`);
-        }
-      })
-      .catch((err) => {
-        console.error(`[agency-handler] Execution failed for "${desire.title}":`, err);
-      });
-
     return successResponse({
-      desire: updatedDesire,
+      desire,
       success: true,
-      message: `Execution started for "${desire.title}" (${desire.plan?.steps?.length || 0} steps). Check inner dialogue for progress.`,
-    });
+      executionQueued: true,
+      taskId: task.id,
+      message: `Execution queued for "${desire.title}" (${desire.plan?.steps?.length || 0} steps).`,
+    }, 202);
   } catch (error) {
     return { status: 500, error: (error as Error).message };
   }

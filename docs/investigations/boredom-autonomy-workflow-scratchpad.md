@@ -1,65 +1,71 @@
 # Boredom Autonomy Workflow Scratchpad
 
-Status: active design and implementation scratchpad, 2026-08-24
+Status: active design and implementation scratchpad, updated 2026-08-25
 
 ## Implementation status
 
-Implemented at source level on 2026-08-24:
+Implemented at source level through 2026-08-25:
 
-- added the editable `boredom-autonomy-mode.json` executive graph;
-- routed Observer image feedback and Movement/Reflection delegation into it;
-- supplied separate bounded Conversation and Inner Buffer context, active
-  persona, delegated reflection memory, current correlated images, action
-  feedback, and the complete advertised capability schema;
-- reused the existing Environment action parser, optional Movement Generator,
-  Environment Task State, Bridge Out, Robot Buffer, Conversation Buffer, and
-  TTS nodes while retaining Inner Buffer only as historical context input;
-- made Environment Task State the sole lifecycle and consequence-admission owner
-  for both reactive Environment Mode and Boredom Autonomy;
-- removed model-selected response visibility and routed every Environment result
-  through the one Conversation Buffer and TTS path;
-- routed physical results back to Boredom Autonomy through the existing bounded
-  robot-observer cycle;
-- made the same executive model call author or revise an evolving episode
-  objective in the existing Environment Task State before selecting the next
-  consequence;
-- persisted Task State's serialized lifecycle contract as execution authority
-  while reloading persona, recent conversation and reflection, sampled memory,
-  verified action history, current state, capabilities, and correlated evidence
-  on every pass;
-- removed the competing Robot Autonomy Episode State node, nested output
-  contract, self-instruction feedback authority, and episode response
-  metadata;
-- made the Environment Action Parser enforce structural selector JSON while
-  leaving lifecycle and evidence judgment to Environment Task State;
-- removed the movement trigger's stationary/posture preference and made
-  Environment Task State enforce the one configured action ceiling for every
-  boredom child;
-- removed the Movement Generator's duplicate-plan rejection and its plan-list
-  and repetition-counter state; identical valid plans are not policy-blocked;
-- kept the three trigger graphs free of LLM, persona, history, speech, and
-  semantic action-selection nodes;
-- authorized the new graph to reuse the one canonical server-owned robot speech
-  route without opening robot TTS to arbitrary workflows.
-- classified the latest action result by cycle correlation: matching results are
-  current evidence, while older results remain available as history rather than
-  leaking into the new episode as its completed action;
-- returned failed or expired autonomous captures to the same Boredom Autonomy
-  graph so the executive can revise its objective instead of silently ending;
-- removed model-authored `completionBasis` and `completionEvidence` restatement;
-  Environment Task State now checks its own canonical evidence directly and
-  records the verified completion provenance itself.
+- Robot Operator remains the only timer, cooldown, mutual-exclusion, and
+  admission owner for the three boredom children;
+- Boredom Observer, Movement, and Reflection are separate editable planner
+  graphs. Each loads active persona, recent conversation and reflection,
+  verified robot history, current state, and the material specific to its
+  trigger, then uses one LLM call to author a high-level intention;
+- Observer uses a visible two-pass acquisition flow: it requests one correlated
+  image first, then plans from the returned image. Its closed planning gate does
+  not invoke the model before evidence arrives;
+- Reflection samples historical memory once inside its own graph and labels it
+  as inspiration rather than current-world evidence;
+- a strict three-field planner contract (`observed`, `instruction`, `reason`)
+  is the only input the planner graphs may delegate to Boredom Autonomy. The
+  planners do not select commands, joint values, completion rules, or execution
+  sequences;
+- `boredom-autonomy-mode.json` is the one editable executor. It combines the
+  planner-authored intention with persona, bounded conversation and reflection,
+  verified action history, current state, advertised capabilities, sampled
+  memory, current Task State, and correlated evidence exactly once;
+- the executor selects at most one supported consequence per pass, then yields.
+  Correlated action or image results return to the same graph so it can preserve
+  or revise the objective and select the next consequence;
+- Environment Task State remains the sole objective, evidence, action-budget,
+  and completion owner. Environment Action Parser remains the strict shape and
+  capability-admission boundary, Bridge Out remains transport, and the existing
+  buffers and TTS remain the only output paths;
+- generated body movement uses the existing Movement Generator and strict
+  motion-plan validation. Its single model-facing frame object uses bounded
+  decimal strings because the active structured decoder did not enforce JSON
+  Schema numeric ranges; Movement Generator converts them once into the
+  unchanged 0..180 physical contract;
+- removed the legacy `robot-operator-mode.json` graph and configuration route,
+  direct instruction dispatch, trigger-owned lifecycle contract, hidden
+  minute-based execution limiter, static observer prompt injection, redundant
+  thinking-strip step, and all duplicate-plan/repetition policy;
+- the graph editor's registered node schemas now expose the planner context,
+  strict decision parser, dispatch, and model-router properties instead of
+  showing empty node details.
 
 Still unproven: live model quality, physical movement, fresh-frame correlation,
 TTS completion ordering, and Semi/Full interruption behavior on the actual
 robot. Those require a restarted runtime and hardware tests.
 
+Runtime diagnosis on 2026-08-25 found two distinct owner defects. The Movement
+planner had authored a stationary waiting intention even though its trigger
+requires embodied change, and the shared executor could reduce an explicitly
+physical or sensing intention to response-only completion. Their editable
+policies now preserve those semantic contracts without selecting a command for
+the planner. A no-dispatch provider probe also reproduced out-of-range joints
+despite numeric schema bounds; the bounded-string frame schema produced a valid
+plan through the same Movement Generator on the next probe. No bridge action
+was sent, so physical behavior remains unverified.
+
 ## Product intent
 
 MetaHuman OS should let Ainekio behave like an interactive familiar or pet, not
 only a voice-command appliance. When the robot has been idle, Robot Operator
-may trigger observation, movement, or reflection. Those triggers supply an
-autonomous stimulus; they do not decide or execute the consequence.
+may trigger observation, movement, or reflection. Each specialized planner
+turns its current material into a self-authored high-level intention. It does
+not execute the consequence or choose a technical robot command.
 
 The consequence can be broad and persona-dependent: a reflection, speech, an
 advertised movement, a fresh observation, or a short sequence that changes as
@@ -76,7 +82,7 @@ the result, and reconsider. It is not trying to satisfy a user's one-shot task.
 ## Ownership boundaries
 
 - Robot Operator is the only boredom scheduler and admission owner.
-- Boredom Observer, Movement, and Reflection are finite trigger workflows owned
+- Boredom Observer, Movement, and Reflection are finite planner workflows owned
   by Robot Operator.
 - Boredom Autonomy is the editable semantic executive for those triggers.
 - The Work Coordinator remains the only queue and interruption surface.
@@ -243,31 +249,34 @@ physical safety checks remain deterministic.
 
 ## Efficiency rules
 
-- one executive LLM call per graph pass;
-- zero trigger-owned LLM calls;
+- one planner LLM call per admitted trigger; Observer calls it only after its
+  correlated image returns;
+- one executor LLM call per Boredom Autonomy pass;
 - at most one physical action per pass;
 - a second Movement Generator call only for a deliberately selected novel
   body-local motion;
-- small bounded context: recent conversation and inner reflection, up to three
-  sampled memories, one persona representation, and current correlated evidence;
+- small bounded context: recent conversation and inner reflection, sampled
+  memory, one persona representation, verified action history, current state,
+  current Task State, and correlated evidence, each represented once;
 - a roughly 150-250 word executive prompt;
 - a roughly 384-token executive output budget;
 - queue-level re-entry after results, never an unbounded graph back-edge;
-- no conversation-history replay growth and no new persistence owner;
+- no empty Observer inference, redundant prompt-cleanup inference,
+  conversation-history replay growth, or new persistence owner;
 - no second scheduler, action validator, behavior-tree runtime, or planning
   service.
 
-## Implementation order
+## Implemented order
 
-1. Add the visible `boredom-autonomy-mode.json` workflow using existing generic
-   nodes.
-2. Route Observer camera feedback and Movement/Reflection delegation into it.
-3. Reuse the Environment structured action schema, parser, Movement Generator,
-   Bridge Out, Robot Buffer, Conversation Buffer, and TTS nodes.
-4. Use Environment Task State for objective persistence, evidence consistency,
-   generated-movement admission, and serialized feedback continuation.
-5. Keep the existing cycle correlation and let Environment Task State enforce
-   the configured bounded action limit.
+1. Repair the three visible boredom graphs as contextual planners.
+2. Route their validated high-level intentions into the one visible
+   `boredom-autonomy-mode.json` executor.
+3. Reuse Environment Task State, the Environment parser, Movement Generator,
+   Bridge Out, Robot Buffer, Conversation Buffer, and TTS without cloning them.
+4. Return correlated execution results to that executor through the existing
+   coordinator and robot-observer path.
+5. Delete the legacy graph, bypasses, competing lifecycle inputs, hidden limit,
+   and redundant processing step.
 6. Validate source contracts, all cognitive graphs, architecture boundaries,
    and focused autonomous cases.
 7. Physically test Semi and Full separately. Source validation cannot prove a
@@ -297,15 +306,15 @@ Live Agent Monitor runs exposed selector output that omitted `motionClass`,
 returned an empty non-action response, or paired `actionPurpose=expression` with
 the Movement trigger's preselected `visual_observation` contract. The repair
 removed that trigger-owned lifecycle choice: Movement still requires one
-physical consequence, while Boredom Autonomy and Environment Task State select
-its purpose and matching evidence contract. The autonomy context now uses the
-existing selector schema's required `motionClass`, and the compact executive
-prompt states the valid generic action and response shapes. No retry, output
+physical consequence, while Boredom Autonomy selects the consequence and
+Environment Task State owns its evidence contract. The autonomy context now
+uses the existing selector schema's required `motionClass`, and the compact
+executive prompt states the valid generic action and response shapes. No retry, output
 repair, permissive parser, or repetition policy was
 added. A subsequent live run exposed duplicate purpose/evidence enforcement in
 the selector parser. That competing check was deleted: the parser still owns
 strict shape and capability admission, while Environment Task State remains the
-single owner that resolves lifecycle evidence from the selected action purpose.
+single owner that resolves lifecycle evidence from the selected completion basis.
 The next live Reflection run exposed an orphan `escalation` output that had no
 runtime consumer and could only fail validation. Its schema, parser, prompt,
 training cases, and evaluation metrics were deleted; historical context is now
@@ -317,8 +326,8 @@ bounded action results could not satisfy an objective, biasing the next output
 toward an unnecessary image. Task State now reserves deterministic closure for
 reactive one-step user commands. Boredom Autonomy keeps physical consequences
 bounded, reviews their correlated results in the same selector, and can either
-complete with a persona-grounded response or revise the objective, action
-purpose, and evidence contract for the next consequence. No reviewer, retry,
+complete with a persona-grounded response or revise the objective and evidence
+contract for the next consequence. No reviewer, retry,
 queue, or alternate execution path was added.
 
 The next failure was continuity, not missing context: a previous cycle's
@@ -333,6 +342,23 @@ executive prompt now states the receding-horizon contract directly: one
 consequence per graph pass, the verified result re-enters the graph, context
 materially shapes the revised objective, and a successful movement does not end
 the episode by itself. No second episode store, retry path, or repetition policy
+was added.
+
+A later live run exposed one remaining duplicate admission rule: Task State
+blocked an executable autonomous action when optional `actionPurpose` metadata
+was absent. That gate, its error branch, and the matching Boredom Autonomy
+schema and prompt requirement were removed. Capability admission, physical
+motion validation, bounded steps, and evidence-based completion remain owned by
+their existing nodes.
+
+The next live Observer episode completed `turn_right_45`, reviewed the fresh
+view, completed `curious`, and then returned substantive observation text while
+claiming the episode was unfinished without selecting another action. Task
+State discarded that response and emitted its generic no-completion message.
+Autonomous action feedback now treats a substantive response with no next
+action as the response consequence that closes the episode. The existing
+executive prompt states the complementary rule: an unfinished episode must
+include its next structured action now. No retry or alternate execution pass
 was added.
 
 ## Deferred questions

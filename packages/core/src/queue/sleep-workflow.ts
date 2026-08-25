@@ -31,8 +31,8 @@ export const SLEEP_WORKFLOW_STAGES: readonly SleepWorkflowStage[] = [
   { id: 'curate-memory', displayName: 'Curate training memories', type: 'training_curate', handler: 'agent.curator', agentId: 'curator', maxAttempts: 2 },
   { id: 'generate-desires', displayName: 'Generate desires', type: 'desire_generate', handler: 'agent.desire-generator', agentId: 'desire-generator', maxAttempts: 2 },
   { id: 'plan-desires', displayName: 'Plan desires', type: 'generic', handler: 'agent.desire-planner', agentId: 'desire-planner', maxAttempts: 2 },
-  { id: 'execute-desires', displayName: 'Execute approved desires', type: 'desire_execute', handler: 'agent.desire-executor', agentId: 'desire-executor', maxAttempts: 2 },
-  { id: 'review-outcomes', displayName: 'Review desire outcomes', type: 'generic', handler: 'agent.desire-outcome-reviewer', agentId: 'desire-outcome-reviewer', maxAttempts: 2 },
+  { id: 'execute-desires', displayName: 'Execute approved desires', type: 'desire_execute', handler: 'agency.desire-execute', agentId: 'desire-executor', maxAttempts: 1 },
+  { id: 'review-outcomes', displayName: 'Review desire outcomes', type: 'desire_review', handler: 'agency.desire-outcome-review', agentId: 'desire-outcome-reviewer', maxAttempts: 1 },
   { id: 'dream', displayName: 'Dream from memories', type: 'dream', handler: 'agent.dreamer', agentId: 'dreamer', maxAttempts: 2 },
   { id: 'review-persona', displayName: 'Review persona learnings', type: 'psychoanalyze', handler: 'agent.psychoanalyzer', agentId: 'psychoanalyzer', maxAttempts: 2 },
   { id: 'rebuild-index', displayName: 'Refresh memory index', type: 'index_build', handler: 'vector.index-build', maxAttempts: 2 },
@@ -57,7 +57,10 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     stageIndex,
     totalStages: SLEEP_WORKFLOW_STAGES.length,
   }
-  const usernameArgs = stage.agentId && ['desire-generator', 'desire-planner', 'desire-executor', 'desire-outcome-reviewer'].includes(stage.agentId)
+  const usesAgentProcess = stage.handler.startsWith('agent.')
+  const usernameArgs = usesAgentProcess
+    && stage.agentId
+    && ['desire-generator', 'desire-planner'].includes(stage.agentId)
     ? ['--username', session.username]
     : []
   const args = [...(stage.args ?? []), ...usernameArgs]
@@ -68,7 +71,7 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     username: session.username,
     priority: 'background',
     input: {
-      ...(stage.agentId ? { agentId: stage.agentId } : {}),
+      ...(usesAgentProcess && stage.agentId ? { agentId: stage.agentId } : {}),
       ...(args.length > 0 ? { args } : {}),
       triggeredBy: 'sleep-workflow',
       sleepWorkflow: marker,

@@ -1,43 +1,22 @@
 #!/usr/bin/env npx tsx
-/**
- * Desire Outcome Reviewer Agent — CLI Entry Point
- *
- * Reviews completed/failed desires to determine next action.
- *
- * Usage:
- *   npx tsx brain/agents/desire-outcome-reviewer/cli.ts [options]
- *
- * Options:
- *   --username <name>  Process specific user
- *   --single-user      Process only the default user
- */
 
-import { initGlobalLogger } from '@metahuman/core';
-import { runCycle, type DesireOutcomeReviewerOptions } from './core.js';
+import { initGlobalLogger } from '@metahuman/core'
+import { parseDesireOutcomeReviewerArgs, runCycle } from './core.js'
 
 async function main() {
-  initGlobalLogger('desire-outcome-reviewer');
-
-  const args = process.argv.slice(2);
-  const options: DesireOutcomeReviewerOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
-      break;
-    }
-  }
-
+  initGlobalLogger('desire-outcome-reviewer')
   try {
-    const result = await runCycle(options);
-    console.log(`[desire-outcome-reviewer] Completed:`, result.stats);
-    process.exit(result.success ? 0 : 1);
+    const result = await runCycle(parseDesireOutcomeReviewerArgs(process.argv.slice(2)))
+    if (result.success) {
+      console.log(`[desire-outcome-reviewer] Queued work item ${result.taskId} (${result.state})`)
+    } else {
+      console.error(`[desire-outcome-reviewer] ${result.errors.join('; ')}`)
+    }
+    process.exit(result.success ? 0 : 1)
   } catch (error) {
-    console.error('[desire-outcome-reviewer] Fatal error:', error);
-    process.exit(1);
+    console.error('[desire-outcome-reviewer] Fatal error:', error)
+    process.exit(1)
   }
 }
 
-main();
+main()

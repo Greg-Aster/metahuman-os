@@ -339,7 +339,7 @@ Status: implemented, regression-tested, graph-validated, and production bundle r
 Architecture repair:
 
 - Keep Robot Observer cycle metadata as lifecycle identity only. An `environment-perception` cycle attached to ordinary correlated audio no longer grants camera access.
-- Permit the Robot Observer bypass only for work explicitly marked `requestedBy: robot-observer`. All ordinary audio remains governed by typed `needsVision`; a validator-persisted visual objective remains governed by its task contract.
+- Permit the Robot Observer bypass only for canonical Boredom Observer work explicitly marked `requestedBy: boredom-observer`. All ordinary audio remains governed by typed `needsVision`; a validator-persisted visual objective remains governed by its task contract.
 - Add the current observation as an explicit input to Environment Task Contract so validator-persisted whole-objective contracts remain authoritative on later feedback and observation passes.
 - Reconcile task contracts in this order: validator-persisted contract, valid Environment task decision, then newly action-authorizing router fallback. A no-action read-only route can no longer overwrite Persona's direct-response contract with advisory `actionParams`.
 - Centralize observation-to-task-contract decoding in one Environment helper consumed by Context Builder, Instruction Interpreter, Task Contract, Task Validator, and Visual Evidence Assessor. This removes five slightly different interpretations of the same metadata.

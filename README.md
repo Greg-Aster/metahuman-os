@@ -73,7 +73,7 @@ Examples include:
 
 - memory organizer, ingestor, pruner, sync, and summarizer;
 - reflector, dreamer, daydreamer, train-of-thought, curiosity service, and inner curiosity;
-- desire generator, desire explorer, desire planner, desire executor, and outcome reviewer;
+- desire generator, desire planner, desire executor, and outcome reviewer;
 - curator, night pipeline, training orchestrators, adapter builders, and model utilities;
 - transcriber, audio organizer, voice-training helpers, and maintenance services.
 

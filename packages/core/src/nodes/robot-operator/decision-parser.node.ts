@@ -42,7 +42,7 @@ export const robotOperatorDecisionParserNode = defineNode({
   name: 'Robot Operator Decision Parser',
   category: 'operator',
   inputs: [
-    { name: 'response', type: 'any', description: 'Thinking-stripped Robot Operator LLM response' },
+    { name: 'response', type: 'any', description: 'Strict JSON response from a boredom planner LLM' },
   ],
   outputs: [
     { name: 'decision', type: 'object', description: 'Validated grounded observation and free-form high-level intention' },

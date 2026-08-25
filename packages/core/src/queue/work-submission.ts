@@ -46,6 +46,69 @@ export interface MemoryIndexRefreshSubmission {
   metadata?: Record<string, any>;
 }
 
+export interface DesireExecutionSubmission {
+  username: string;
+  source: WorkSource;
+  desireId?: string;
+  priority?: Priority;
+  parentTaskId?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DesireOutcomeReviewSubmission {
+  username: string;
+  source: WorkSource;
+  desireId?: string;
+  priority?: Priority;
+  parentTaskId?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, any>;
+}
+
+/** Admit outcome review to the coordinator; the Core Agency graph owns all transitions. */
+export function submitDesireOutcomeReview(input: DesireOutcomeReviewSubmission): Promise<QueuedTask> {
+  const desireId = input.desireId?.trim();
+  return submitCoordinatorWork({
+    type: 'desire_review',
+    handler: 'agency.desire-outcome-review',
+    resource: 'remote-llm',
+    source: input.source,
+    username: input.username,
+    priority: input.priority ?? 'normal',
+    input: { desireId, triggeredBy: input.metadata?.producer || input.source },
+    parentTaskId: input.parentTaskId,
+    correlationId: input.correlationId,
+    idempotencyKey: input.idempotencyKey || `desire-outcome-review:${desireId || 'pending-batch'}`,
+    maxAttempts: 1,
+    metadata: { producer: 'desire-outcome-reviewer', ...input.metadata },
+  });
+}
+
+/** Admit desire execution to its one remote-effect lane without executing it in the caller. */
+export function submitDesireExecution(input: DesireExecutionSubmission): Promise<QueuedTask> {
+  const desireId = input.desireId?.trim();
+  return submitCoordinatorWork({
+    type: 'desire_execute',
+    handler: 'agency.desire-execute',
+    resource: 'remote-llm',
+    source: input.source,
+    username: input.username,
+    priority: input.priority ?? 'high',
+    input: {
+      desireId,
+      triggeredBy: input.metadata?.producer || input.source,
+    },
+    parentTaskId: input.parentTaskId,
+    correlationId: input.correlationId,
+    idempotencyKey: input.idempotencyKey || `desire-execute:${desireId || 'approved-batch'}`,
+    maxAttempts: 1,
+    metadata: { producer: 'desire-executor', ...input.metadata },
+  });
+}
+
 /** Admit a full index reconciliation to its one durable execution lane. */
 export function submitMemoryIndexRefresh(input: MemoryIndexRefreshSubmission): Promise<QueuedTask> {
   const force = input.force === true;

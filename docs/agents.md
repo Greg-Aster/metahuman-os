@@ -15,10 +15,10 @@ services configured in `etc/services.json`.
 | `dreamer` | Creates surreal dreams from memory fragments |
 | `sleep-workflow` | Coordinator workflow that admits bounded dream and persona-review children |
 | `ingestor` | Converts inbox files into episodic memories |
-| `desire-generator` | Generates desires from system inputs (agency system) |
-| `desire-planner` | Plans execution steps for approved desires |
-| `desire-executor` | Executes desire plans via external tools |
-| `desire-outcome-reviewer` | Reviews desire execution outcomes |
+| `desire-generator` | Finite Sleep/manual work that synthesizes and nurtures desires from canonical profile inputs |
+| `desire-planner` | Finite Sleep/manual work that checks real registered capabilities and runs the planning/review graphs |
+| `desire-executor` | Admits approved plans to the Work Coordinator; Core Agency executes and durably records them via the editable graph |
+| `desire-outcome-reviewer` | Admits review to the Work Coordinator; Core Agency owns the review graph and durable state transition |
 | `curator` | Curates memories for training dataset preparation |
 | `psychoanalyzer` | Analyzes behavioral patterns and psychological trends |
 | `audio-organizer` | Processes audio files into structured memories |

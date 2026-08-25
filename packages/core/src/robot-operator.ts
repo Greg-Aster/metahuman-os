@@ -15,11 +15,9 @@ export type RobotOperatorStimulusAgent =
   | 'boredom-reflection'
 export type RobotOperatorCycleRequester =
   | RobotOperatorStimulusAgent
-  | 'robot-observer'
   | 'environment-perception'
 
 const ROBOT_AUTONOMY_HANDLERS = new Set([
-  'workflow.robot-observer',
   'workflow.boredom-observer',
   'workflow.boredom-movement',
   'workflow.boredom-reflection',
@@ -188,11 +186,6 @@ export function isBoredomReflectionEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-reflection')
 }
 
-/** Compatibility for callers that still use the former child name. */
-export function isRobotObserverEnabled(): boolean {
-  return isBoredomObserverEnabled() || isConfiguredAgentEnabled('robot-observer')
-}
-
 export function isRobotOperatorChildEnabled(agent: RobotOperatorStimulusAgent): boolean {
   if (agent === 'boredom-observer') return isBoredomObserverEnabled()
   if (agent === 'boredom-movement') return isBoredomMovementEnabled()
@@ -350,8 +343,7 @@ export function readRobotObserverCycle(
     || step < 1
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
-      requestedBy !== 'robot-observer'
-      && requestedBy !== 'boredom-observer'
+      requestedBy !== 'boredom-observer'
       && requestedBy !== 'boredom-movement'
       && requestedBy !== 'boredom-reflection'
       && requestedBy !== 'environment-perception'

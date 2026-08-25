@@ -36,6 +36,4 @@ export {
   runProfileSync,
   runDesireGenerator,
   runDesirePlanner,
-  runDesireExecutor,
-  runDesireReviewer,
 } from './mobile-agents.js';

@@ -1,5 +1,5 @@
 {
-  "autonomyMode": "semi",
+  "autonomyMode": "full",
   "cooldownMs": 30000,
   "maxConsecutiveTasks": 5,
   "maxEvaluationsPerHour": 12,

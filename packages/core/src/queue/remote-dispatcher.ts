@@ -195,7 +195,7 @@ export class RemoteDispatcher {
       case 'runpod_inference':
         return 'runpod';
       case 'desire_execute':
-        return 'big-brother'; // Desires use Big Brother for complex execution
+        throw new Error('Desire execution must use the agency.desire-execute coordinator handler');
       default:
         return 'runpod'; // Default to RunPod for generic remote inference
     }

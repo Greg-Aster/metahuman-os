@@ -38,7 +38,8 @@ const DEFERRED = Symbol('deferred-work-completion');
 
 const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
   Object.values(AGENT_CATALOG_DEFINITIONS)
-    .filter(definition => definition.lifecycle === 'scheduled-work')
+    .filter(definition => definition.lifecycle === 'scheduled-work'
+      && (!definition.handler || definition.handler.startsWith('agent.')))
     .map(definition => [definition.handler ?? `agent.${definition.id}`, definition.id]),
 );
 
@@ -187,6 +188,14 @@ export class ExecutionEngine {
       const { executeDesireCheckinWork } = await import('./desire-checkin-handler.js');
       return executeDesireCheckinWork(task, context);
     });
+    this.registerHandler('agency.desire-execute', async (task, context) => {
+      const { executeDesireExecutionWork } = await import('./desire-execution-handler.js');
+      return executeDesireExecutionWork(task, context);
+    });
+    this.registerHandler('agency.desire-outcome-review', async (task, context) => {
+      const { executeDesireOutcomeReviewWork } = await import('./desire-outcome-handler.js');
+      return executeDesireOutcomeReviewWork(task, context);
+    });
     this.registerHandler('environment.observation', async (task, context) => {
       let observation = task.input.observation ?? task.input;
       let robotObserver = readRobotObserverCycle(observation);
@@ -282,10 +291,6 @@ export class ExecutionEngine {
         graph: graphName,
         robotObserver,
       };
-    });
-    this.registerHandler('workflow.robot-observer', async (task, context) => {
-      const { executeRobotAutonomyTriggerWork } = await import('./robot-autonomy-trigger-handler.js');
-      return executeRobotAutonomyTriggerWork(task, context);
     });
     for (const handler of [
       'workflow.boredom-observer',

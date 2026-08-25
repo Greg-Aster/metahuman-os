@@ -5,23 +5,33 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { audit } from '../../audit.js';
-import { captureEvent } from '../../memory.js';
-import { recordSystemActivity } from '../../system-activity.js';
+import { captureEventWithDetails } from '../../memory.js';
 // Inner Dialogue Buffer admission is handled by the designated downstream node.
 
 interface Memory {
   id: string;
 }
 
-function markBackgroundActivity() {
-  try { recordSystemActivity(); } catch {}
+export function resolveDreamSourceIds(inputs: Record<string, any>): string[] {
+  const explicitIds = Array.isArray(inputs.sourceIds) ? inputs.sourceIds : [];
+  const memoriesInput = inputs.memoriesData?.memories ?? inputs.memoriesData;
+  const memoryIds = Array.isArray(memoriesInput)
+    ? memoriesInput.map((memory: Memory) => memory?.id)
+    : [];
+  return Array.from(new Set([...explicitIds, ...memoryIds]
+    .filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
+    .map(id => id.trim())));
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // inputs is an object keyed by handle name, not an array
   const dreamInput = inputs.dreamData;
   const dream = dreamInput?.dream || dreamInput;
-  const sourceIds = dreamInput?.sourceIds || inputs.memoriesData?.memories?.map((m: Memory) => m.id) || [];
+  const sourceIds = resolveDreamSourceIds({
+    ...inputs,
+    sourceIds: [...(Array.isArray(dreamInput?.sourceIds) ? dreamInput.sourceIds : []),
+      ...(Array.isArray(inputs.sourceIds) ? inputs.sourceIds : [])],
+  });
   const username = context.userId || context.username;
   const type = properties?.type || 'dream';
 
@@ -33,9 +43,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   try {
-    markBackgroundActivity();
-
-    const eventId = await captureEvent(dream, {
+    const captureResult = captureEventWithDetails(dream, {
       type,
       metadata: {
         sources: sourceIds,
@@ -43,35 +51,37 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       },
     });
 
+    const deduplicated = captureResult.deduplicated === true;
     audit({
       level: 'info',
       category: 'decision',
-      event: 'dream_generated',
-      message: 'Dreamer generated new dream',
+      event: deduplicated ? `${type}_deduplicated` : `${type}_generated`,
+      message: deduplicated
+        ? `${type === 'daydream' ? 'Daydreamer' : 'Dreamer'} reused a recent matching ${type}`
+        : `${type === 'daydream' ? 'Daydreamer' : 'Dreamer'} persisted new ${type}`,
       details: {
-        dream,
         sourceCount: sourceIds.length,
+        contentLength: dream.length,
+        eventId: captureResult.eventId,
+        deduplicated,
         username,
       },
-      metadata: { dream },
-      actor: 'dreamer',
+      actor: type === 'daydream' ? 'daydreamer' : 'dreamer',
     });
 
     // The downstream Inner Dialogue Buffer node persists the dream once.
 
     return {
       saved: true,
-      eventId,
+      eventId: captureResult.eventId,
       dream,
       sourceCount: sourceIds.length,
+      deduplicated,
       username,
     };
   } catch (error) {
     console.error('[DreamerDreamSaver] Error:', error);
-    return {
-      saved: false,
-      error: (error as Error).message,
-    };
+    throw error;
   }
 };
 
@@ -82,10 +92,14 @@ export const DreamerDreamSaverNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'dreamData', type: 'object', description: 'Dream text from generator' },
     { name: 'memoriesData', type: 'object', optional: true, description: 'Source memories' },
+    { name: 'sourceIds', type: 'array', optional: true, description: 'Source memory event IDs' },
   ],
   outputs: [
     { name: 'saved', type: 'boolean' },
     { name: 'eventId', type: 'string' },
+    { name: 'dream', type: 'string' },
+    { name: 'sourceCount', type: 'number' },
+    { name: 'deduplicated', type: 'boolean' },
   ],
   properties: {
     type: 'dream',

@@ -34,15 +34,13 @@ export * from './desire-questions.js';
 
 // Long-running goal check-in service
 export * from './desire-checkin.js';
+export * from './desire-outcome-service.js';
+export * from './desire-outcome-transition.js';
 
-// Executor (graph-based execution) - exclude clearGraphCache (conflicts with graph-streaming)
+// Outcome review remains a public Agency operation. Desire execution itself is
+// internal to the coordinator-owned desire-execution service.
 export {
-  type DesireExecutionProgress,
-  type DesireProgressCallback,
-  loadDesireExecutorGraph,
   loadOutcomeReviewerGraph,
-  type ExecuteDesireResult,
-  executeDesireViaGraph,
   type ReviewOutcomeResult,
   reviewOutcomeViaGraph,
 } from './executor.js';

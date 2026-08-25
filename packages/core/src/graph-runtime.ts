@@ -111,6 +111,38 @@ export function collectNodeOutputs(graphState: GraphExecutionState): Record<stri
   return nodeOutputs
 }
 
+/**
+ * Return the completed output for exactly one graph node type.
+ *
+ * Graph files are editable, so callers must not couple behavior to visual node
+ * ids. The node type is the executable contract shared by the graph and its
+ * owner. Ambiguous, missing, failed, or output-less matches are contract
+ * failures rather than empty-output fallbacks.
+ */
+export function requireGraphNodeOutput(
+  graphState: GraphExecutionState,
+  nodeType: string,
+): Record<string, any> {
+  const matches = [...graphState.nodes.values()]
+    .filter(node => node.definition?.type === nodeType)
+
+  if (matches.length !== 1) {
+    throw new Error(
+      `Graph contract requires exactly one ${nodeType} node; found ${matches.length}`,
+    )
+  }
+
+  const [match] = matches
+  if (match.status !== 'completed') {
+    throw new Error(`Graph node ${nodeType} ended with status ${match.status}`)
+  }
+  if (!match.outputs) {
+    throw new Error(`Graph node ${nodeType} produced no outputs`)
+  }
+
+  return match.outputs
+}
+
 export function listExecutedNodes(graphState: GraphExecutionState): string[] {
   return Array.from(graphState.nodes.keys())
 }

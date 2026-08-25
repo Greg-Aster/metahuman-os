@@ -3,22 +3,24 @@
  * Daydreamer Agent — CLI Wrapper
  *
  * Usage:
- *   npx tsx brain/agents/daydreamer/cli.ts [--force]
+ *   npx tsx brain/agents/daydreamer/cli.ts
  *
  * Environment:
- *   MH_TRIGGER_USERNAME - Target user for manual triggers
+ *   MH_TRIGGER_USERNAME - Target profile supplied by the Work Coordinator
  */
 
 import { runCycle } from './core.js';
 
 async function main() {
-  const args = process.argv.slice(2);
-  const forceRun = args.includes('--force');
-
   console.log('[daydreamer] CLI starting...');
 
   try {
-    const result = await runCycle({ forceRun });
+    const args = process.argv.slice(2);
+    if (args.length > 0) {
+      throw new Error(`Unknown daydreamer option: ${args[0]}`);
+    }
+
+    const result = await runCycle();
 
     if (result.success) {
       console.log(`[daydreamer] Complete. Generated ${result.daydreamsGenerated} daydreams.`);

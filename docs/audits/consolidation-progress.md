@@ -317,6 +317,64 @@ Validation:
   remain unverified until the runtime is rebuilt/restarted and hardware is
   exercised.
 
+## Robot Boredom Planner and Executor Repair - 2026-08-25
+
+Canonical owners retained:
+
+- Robot Operator is the only boredom scheduler and admission owner.
+- The three boredom cognitive graphs own trigger-specific contextual planning.
+- Boredom Autonomy is the only shared boredom consequence executor.
+- Work Coordinator, Environment Task State, Environment Action Parser,
+  Movement Generator, Environment Bridge Out, canonical buffers, and TTS retain
+  their existing queue, lifecycle, validation, transport, and output roles.
+
+Repair and consolidation:
+
+- Rebuilt Observer, Movement, and Reflection as visible planner graphs. Each
+  loads persona, bounded current context, verified robot history, and its
+  trigger-specific evidence before one strict JSON LLM decision.
+- Made Observer's image acquisition a visible re-entrant graph phase and skip
+  its planner inference until correlated evidence returns.
+- Restricted planner delegation to `observed`, `instruction`, and `reason`;
+  technical commands, movement plans, evidence contracts, and execution
+  sequences remain Boredom Autonomy responsibilities.
+- Rebuilt Boredom Autonomy as the one receding-horizon executor. One admitted
+  consequence yields to the coordinator, and its correlated result returns to
+  the same Task State objective for revision or completion.
+- Preserved the entire live advertised capability schema, current state,
+  persona, bounded conversation and reflection, sampled memory, verified action
+  history, Task State, and current correlated evidence without adding a context
+  store or replay transcript.
+- Deleted the legacy `robot-operator-mode.json` graph, service/editor/template
+  routing, direct dispatch and trigger lifecycle inputs, hidden minute-based
+  limiter, static observer instruction, redundant thinking-strip node, stale
+  action-context carryover, duplicate-plan policy, and the undocumented
+  `workflow.robot-observer` admission alias.
+- Added registered editor schemas for the repaired planner nodes and a strict
+  model-facing motion schema matching the existing 0..180 joint validator.
+  Invalid plans remain visible failures; no clamp, retry, or fallback was added.
+- Added the spiky-friend/head-tilt evaluation as test data only. It proves that
+  intention prose cannot dispatch a physical action and that an exact advertised
+  structured command can; no scene or activity rule entered production policy.
+
+Validation:
+
+- Nine focused Robot Operator, boredom graph, Environment parser/Task State,
+  motion, bridge-correlation, and TTS test files: pass.
+- Cognitive graphs: 29/29 valid; graph executor coverage: 280 nodes with zero
+  missing executors.
+- Core, Brain, and Site type checks plus the production Site build: pass; Site
+  type checking reports zero errors, warnings, or hints.
+- Node defaults: pass. Agent Monitor: 69/69 checks pass.
+- Architecture guard: zero current violations.
+- Maintained-source inventory refreshed: 1,587 maintained files and 1,315 code
+  files. The generator required an unsandboxed rerun because its sandboxed
+  internal `git` subprocess returned `EPERM`.
+- `./bin/audit check`: pass. It reports the existing tracked large-file warning
+  for the Environment selector development corpus and no architecture failure.
+- Live model behavior, bridge re-entry, TTS ordering, and physical robot motion
+  remain unverified; no robot action was dispatched during source validation.
+
 ## System-Wide Refactor Slice 1 - Site Validation and Client Cleanup
 
 Scope and owner:
@@ -1524,6 +1582,168 @@ This kickoff does not require fixing all technical debt. It establishes the blue
 - Integrated helper findings into this progress document.
 - Marked `docs/AUDIT-QUICKSTART.md`, `docs/AGENT-PROMPT.txt`, and the old `scripts/audit-*` workflow as deprecated historical materials.
 - Updated local-only `AGENTS.md` to point future agents at the tracked blueprint while keeping it out of the remote source tree.
+
+## Desire Executor Ownership Repair - 2026-08-25
+
+Scope and surviving owners:
+
+- Work Coordinator is the sole admission and lifecycle owner for desire
+  execution work. Core Agency owns status claims, the editable execution graph,
+  durable attempt recording, and the handoff to Outcome Reviewer.
+- The brain Desire Executor remains only as a removable manual/mobile admission
+  interface. It owns no review, scheduler, lock, task store, execution backend,
+  persistence, or fallback path.
+
+Findings and repair:
+
+- Replaced direct fire-and-forget graph calls from approval, execute, and
+  streaming handlers with one `agency.desire-execute` coordinator handler.
+  Sleep, Agent Catalog, defaults, CLI, and mobile admission now resolve to the
+  same handler. External effects use one attempt and are never automatically
+  replayed.
+- Removed the 739-line legacy brain implementation, including its competing
+  step executor, duplicate trust/review transition, orphan task-linking path,
+  dormant process lock, fabricated default-user behavior, and interval metadata.
+- Added a profile-and-desire execution claim guard in the coordinator owner.
+  Graph infrastructure failures are durably recorded as failed attempts in
+  `awaiting_review`; they fail the work item instead of reporting success or
+  leaving a desire stranded in `executing`.
+- Repaired the graph so the executor node is the only desire finalizer. Removed
+  the invalid `executed` updater and duplicate scratchpad writer, corrected the
+  audit contract, and made TTS consume only text admitted by Inner Dialogue.
+- The executor now discovers its graph node by type, checks graph and required
+  persistence outputs, propagates cancellation between steps, uses canonical
+  Agency execution configuration, rejects missing configured backends, and no
+  longer logs external-provider response content or swallows save errors.
+- Removed the superseded Agency implementation plan and updated current agent
+  and user documentation to describe queued execution.
+
+Validation:
+
+- Focused Desire Executor, Work Coordinator, Agent Catalog, and Sleep Workflow tests: pass, eleven
+  tests including concurrency exclusion, durable infrastructure-failure handoff,
+  graph ownership, single-attempt wiring, and strict CLI selectors.
+- Core, Brain, CLI, and Site typechecks: pass. Site reported 353 files with zero
+  diagnostics.
+- Cognitive graph validation, strict node-default validation, graph-executor
+  coverage, Agent Monitor validation (69/69), architecture guardrail, and
+  `./bin/audit check`: pass. The audit retains only the existing large tracked
+  environment-action-selector training-file warning.
+- No live desire was executed because that would invoke external tools and create
+  real effects. Mid-provider cancellation remains dependent on the selected
+  escalation backend; cancellation before and between plan steps is source-validated.
+
+## Desire Explorer Retirement Follow-Up - 2026-08-25
+
+Scope and surviving owner:
+
+- Desire Planner remains the sole feasibility and clarification owner. Core
+  Agency owns question policy, model-response validation, and generation; the
+  graph node is only an adapter to that public contract.
+
+Findings and repair:
+
+- Removed the empty local `brain/agents/desire-explorer` directory and the stale
+  root README entry left after the executable agent, registrations, and Sleep
+  Workflow stage were retired.
+- Moved clarification policy and generation out of the graph-node module into
+  `packages/core/src/agency/desire-questions.ts`. Invalid model output now fails
+  the planning attempt instead of creating a generic fabricated question.
+- Made Desire Planner configuration and feasibility output strict typed
+  contracts. Missing, malformed, or out-of-contract data fails visibly instead
+  of enabling default configuration or treating an unassessed desire as
+  feasible.
+- Persisted infeasible desires as rejected so later cycles do not repeat the
+  same assessment and chat notification. Failed review graphs, promotion
+  writes, and individual planning attempts now make the agent result fail and
+  remain visible to Work Coordinator retry/audit handling.
+- Removed unused planner-local retry, planning, review, and verbose settings.
+  Editable graphs own node behavior; Trigger Manager and Work Coordinator own
+  retries. Planner feasibility now consumes the canonical Core Agency config
+  loader, whose optional profile override fails on storage errors and falls back
+  to system configuration only when the override file is genuinely absent.
+
+Validation:
+
+- Desire Planner and Core Agency question contract tests: pass (2 files).
+- Agent Catalog and Sleep Workflow specifications: pass (2 files).
+- Core and Brain typechecks: pass.
+- Cognitive graph validation: 29/29 pass; node-default validation: pass.
+- Maintained-source policy dry run, architecture guardrail, `./bin/audit check`,
+  final stale-reference search, and `git diff --check`: pass. The audit retains
+  only the existing tracked training-data size warning.
+- No live model-backed desire was processed because that would write profile
+  Agency state and could progress toward external execution.
+
+## Agency Generator, Planner, and Outcome Ownership Repair - 2026-08-25
+
+Scope and surviving owners:
+
+- Desire Generator remains a distinct finite Brain worker that synthesizes and
+  nurtures desires from canonical profile inputs.
+- Desire Planner remains a distinct finite Brain worker whose feasibility input
+  is the registered Core Tool Catalog and whose editable planning and review
+  graphs own plan generation and review.
+- Core Agency is the sole Outcome Review and durable outcome-transition owner.
+  The Brain agent, manual API, Sleep Workflow, and platform integrations only
+  admit work through Work Coordinator.
+- Trigger Manager and Sleep Workflow retain all scheduling ownership.
+
+Repair and consolidation:
+
+- Made Generator model output and reinforcement decisions strict typed
+  contracts. Empty arrays remain valid no-op decisions; missing, malformed,
+  duplicate, unknown-source, or unsupported-source output fails the work item
+  before it can be interpreted as absence and decay existing desires.
+- Replaced three Generator filesystem walkers with the canonical episodic file
+  inventory, removed swallowed profile/task/memory/persistence failures, added a
+  per-profile atomic process lock, and removed the fabricated default profile
+  and interval metadata.
+- Replaced Planner's invented full-computer, internet, communication, and CLI
+  capability claims with the live registered Tool Catalog. Planner now loads
+  graphs through the shared graph runtime, resolves result owners by stable node
+  type, propagates cancellation, uses one effective per-profile lock, and fails
+  when no real profile is selected.
+- Replaced the 979-line competing Brain Outcome Reviewer with a thin admission
+  interface. Removed its recurring-task creation, duplicate state machine,
+  duplicated metrics/scratchpad persistence, hidden config defaults, repair-task
+  path, and fabricated profile behavior.
+- Rebuilt `outcome-reviewer.json` around one strict reviewer and one canonical
+  `desire_updater` transition. Possible system defects pause for user approval;
+  no repair task or second execution path is created.
+- Removed the manual API's independent verification/prompt/mutation outcome
+  owner and the duplicate in-process mobile Executor/Outcome registrations.
+  Browser outcome-review SSE retains its existing unnamed event contract while
+  the work itself is admitted to Core.
+- Removed Agency's competing scheduling configuration and unused capability and
+  execution flags. Removed the uncalled `desire-generator.json`,
+  `desire-generator-proactive.json`, and `desire-retry.json` graph artifacts.
+  Removed their now-unreachable Detector, Folder Creator, Memory Analyzer, and
+  Enricher node implementations, plus the superseded Outcome Verdict Router.
+  Current docs now describe folder-based desire storage and the canonical queue
+  and graph boundaries.
+
+Validation:
+
+- Ten focused Generator, Planner, Executor, Outcome, Agency configuration,
+  transition, graph-runtime, and model-contract suites: pass. Agent Catalog and
+  Sleep Workflow suites: pass.
+- Core, Brain, CLI, and Site typechecks: pass; Site reports 353 files with zero
+  errors, warnings, or hints. The Site production build passes.
+- Cognitive graphs: 26/26 valid; graph executor coverage: 250 nodes with zero
+  missing executors. Node defaults and user-agnostic guard: pass.
+- Architecture guardrail: zero current violations. `./bin/audit check`: pass
+  with only the existing tracked large environment-action-selector corpus
+  warning.
+- Maintained-source inventory refreshed: 1,577 maintained files and 1,309 code
+  files.
+- No live profile desire was generated, planned, executed, or reviewed because
+  those checks would call configured models and mutate user Agency state.
+- The root build passed all package typechecks and architecture, then stopped in
+  an unrelated Environment Mode contract test whose expected prompt says
+  `inspect only fresh correlated evidence` while the existing dirty graph says
+  `inspect fresh correlated evidence`. That Robot Operator change was not
+  altered as part of this Agency repair.
 
 ## Current Known Baseline Debt
 

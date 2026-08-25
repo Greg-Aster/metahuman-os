@@ -22,18 +22,20 @@ interface Memory {
   };
 }
 
+export function isGeneratedInnerMemory(type: string | undefined): boolean {
+  return type === 'dream'
+    || type === 'daydream'
+    || type === 'reflection'
+    || type === 'inner_dialogue';
+}
+
 const execute: NodeExecutor = async (_inputs, context, properties) => {
   const username = context.userId || context.username;
   const sampleSize = properties?.sampleSize || 15;
   const decayDays = properties?.decayDays || 227;
 
   if (!username) {
-    console.error('[DreamerMemoryCurator] No username in context');
-    return {
-      memories: [],
-      count: 0,
-      error: 'No username in context',
-    };
+    throw new Error('Dreamer memory curator requires an authenticated username');
   }
 
   const now = new Date();
@@ -68,6 +70,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     }
 
     const episodicFiles = walkDir(episodicDir);
+    let invalidMemoryCount = 0;
 
     if (episodicFiles.length === 0) {
       return { memories: [], count: 0, username };
@@ -79,20 +82,35 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
         const memory = JSON.parse(content) as Memory;
 
         const type = memory.type || memory.metadata?.type;
-        if (type === 'dream' || type === 'reflection' || type === 'inner_dialogue') continue;
+        if (isGeneratedInnerMemory(type)) continue;
 
         const memoryDate = new Date(memory.timestamp);
-        if (Number.isNaN(memoryDate.getTime())) continue;
+        if (Number.isNaN(memoryDate.getTime())) {
+          invalidMemoryCount++;
+          continue;
+        }
         const ageInMs = now.getTime() - memoryDate.getTime();
         const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
 
         const weight = Math.exp(-ageInDays / decayDays);
         memories.push({ ...memory, weight, age: ageInDays });
-      } catch {}
+      } catch {
+        invalidMemoryCount++;
+      }
+    }
+
+    if (invalidMemoryCount > 0) {
+      audit({
+        level: 'warn',
+        category: 'data',
+        event: 'dream_curation_invalid_memories',
+        details: { invalidMemoryCount, username },
+        actor: 'dreamer',
+      });
     }
 
     if (memories.length === 0) {
-      return { memories: [], count: 0, username };
+      return { memories: [], count: 0, invalidMemoryCount, username };
     }
 
     // Weighted random sampling
@@ -127,16 +145,12 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
       count: curated.length,
       avgAgeDays,
       oldestAgeDays,
+      invalidMemoryCount,
       username,
     };
   } catch (error) {
     console.error('[DreamerMemoryCurator] Error:', error);
-    return {
-      memories: [],
-      count: 0,
-      error: (error as Error).message,
-      username,
-    };
+    throw error;
   }
 };
 
@@ -150,6 +164,7 @@ export const DreamerMemoryCuratorNode: NodeDefinition = defineNode({
     { name: 'count', type: 'number' },
     { name: 'avgAgeDays', type: 'number' },
     { name: 'oldestAgeDays', type: 'number' },
+    { name: 'invalidMemoryCount', type: 'number' },
   ],
   properties: {
     sampleSize: 15,

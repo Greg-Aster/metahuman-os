@@ -45,8 +45,8 @@ function robotObservation() {
         cycleId: 'cycle-1',
         step: 1,
         triggerSource: 'autonomy' as const,
-        graph: 'robot-operator',
-        requestedBy: 'robot-observer' as const,
+        graph: 'boredom-observer',
+        requestedBy: 'boredom-observer' as const,
       },
     },
   };
@@ -404,6 +404,7 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
   assert.ok('motionClass' in taskDecision.properties);
   assert.equal('escalation' in taskDecision.properties, false);
   assert.equal(taskDecision.properties.outcome.enum.includes('escalate'), false);
+  assert.equal(taskDecision.properties.objective.minLength, 1);
   const actionBranches = (result.jsonSchema as any).properties.actions.items.anyOf;
   const commandBranch = actionBranches.find((branch: any) => (
     branch.properties.type.enum.includes('robotCommand')
@@ -416,7 +417,7 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
   const responseBranch = consequenceBranches.find((branch: any) => (
     branch.properties?.taskDecision?.properties?.requiredCompletionBasis?.enum?.[0] === 'response'
   ));
-  assert.ok(physicalBranch.properties.taskDecision.required.includes('actionPurpose'));
+  assert.equal(physicalBranch.properties.taskDecision.required.includes('actionPurpose'), false);
   assert.equal(responseBranch.properties.response.minLength, 1);
 });
 
@@ -723,7 +724,7 @@ test('three boredom planners feed one editable iterative executor', () => {
   const movement = graphs['boredom-movement'];
   assert.equal(movement.nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'), false);
   const movementPrompt = movement.nodes.find((node: any) => node.id === 'planner-policy')?.data?.properties?.message ?? '';
-  assert.match(movementPrompt, /form one new embodied intention/i);
+  assert.match(movementPrompt, /form one embodied intention/i);
   assert.match(movementPrompt, /do not select a technical command/i);
   assert.doesNotMatch(movementPrompt, /stretch|dance|turn_left|turn_right|remain still/i);
 
@@ -789,8 +790,8 @@ test('three boredom planners feed one editable iterative executor', () => {
   const executivePrompt = autonomy.nodes.find((node: any) => node.id === 'executive-policy')?.data?.properties?.message ?? '';
   const promptWords = executivePrompt.trim().split(/\s+/).length;
   assert.ok(promptWords >= 150 && promptWords <= 250, `executive prompt must stay compact; got ${promptWords} words`);
-  assert.match(executivePrompt, /incoming intention was authored/i);
-  assert.match(executivePrompt, /correlated result returns to this workflow/i);
+  assert.match(executivePrompt, /planner-authored intention/i);
+  assert.match(executivePrompt, /interpret its correlated result/i);
   assert.match(executivePrompt, /Action completion is evidence, not automatic episode completion/i);
   assert.match(executivePrompt, /Do not replace the intention with a generic idle task/i);
   assert.ok(autonomy.edges.some((edge: any) => (

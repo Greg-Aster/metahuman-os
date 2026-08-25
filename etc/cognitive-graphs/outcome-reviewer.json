@@ -2,38 +2,28 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Outcome Reviewer",
-  "description": "Reviews execution outcomes and routes to appropriate next action based on verdict",
+  "description": "Reviews one desire execution, applies the canonical Agency transition, then publishes the durable result",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-08-25",
   "nodes": [
     {
-      "id": "1",
+      "id": "load-desire",
       "type": "genericNode",
-      "position": {
-        "x": 100,
-        "y": 180
-      },
+      "position": { "x": 100, "y": 180 },
       "data": {
         "label": "Load Executed Desire",
         "nodeType": "desire_loader",
         "properties": {
-          "statusFilter": [
-            "executing",
-            "completed",
-            "failed"
-          ]
+          "statusFilter": ["awaiting_review", "completed", "failed"]
         }
       },
       "width": 200,
       "height": 80
     },
     {
-      "id": "2",
+      "id": "review-outcome",
       "type": "genericNode",
-      "position": {
-        "x": 380,
-        "y": 180
-      },
+      "position": { "x": 380, "y": 180 },
       "data": {
         "label": "Review Outcome",
         "nodeType": "outcome_reviewer",
@@ -46,110 +36,23 @@
       "height": 100
     },
     {
-      "id": "3",
-      "type": "genericNode",
-      "position": {
-        "x": 680,
-        "y": 180
-      },
-      "data": {
-        "label": "Route by Verdict",
-        "nodeType": "verdict_router",
-        "properties": {
-          "routes": {
-            "completed": 0,
-            "continue": 0,
-            "retry": 1,
-            "escalate": 2,
-            "abandon": 0
-          }
-        }
-      },
-      "width": 180,
-      "height": 120
-    },
-    {
-      "id": "4",
+      "id": "apply-outcome",
       "type": "agencyNode",
-      "position": {
-        "x": 950,
-        "y": 80
-      },
+      "position": { "x": 680, "y": 180 },
       "data": {
-        "label": "Update Final Status",
+        "label": "Apply Agency Transition",
         "nodeType": "desire_updater",
         "properties": {
-          "statusFromVerdict": true,
-          "updateOutcomeReview": true,
-          "updateMetrics": true
+          "applyOutcomePolicy": true
         }
       },
-      "width": 200,
-      "height": 80
+      "width": 220,
+      "height": 100
     },
     {
-      "id": "5",
-      "type": "agencyNode",
-      "position": {
-        "x": 950,
-        "y": 200
-      },
-      "data": {
-        "label": "Loop Back to Planner",
-        "nodeType": "desire_updater",
-        "properties": {
-          "newStatus": "planning",
-          "incrementPlanIteration": true,
-          "preserveExecutionHistory": true
-        }
-      },
-      "width": 200,
-      "height": 80
-    },
-    {
-      "id": "6",
-      "type": "genericNode",
-      "position": {
-        "x": 950,
-        "y": 320
-      },
-      "data": {
-        "label": "Escalate to User",
-        "nodeType": "approval_queue",
-        "properties": {
-          "reason": "escalation",
-          "notifyUser": true
-        }
-      },
-      "width": 200,
-      "height": 80
-    },
-    {
-      "id": "7",
-      "type": "genericNode",
-      "position": {
-        "x": 380,
-        "y": 330
-      },
-      "data": {
-        "label": "Record Outcome to Scratchpad",
-        "nodeType": "scratchpad_writer",
-        "properties": {
-          "eventType": "outcome_verdict",
-          "includeVerdict": true,
-          "includeLessonsLearned": true
-        }
-      },
-      "width": 200,
-      "height": 80
-    },
-    {
-      "id": "8",
+      "id": "inner-dialogue",
       "type": "outputNode",
-      "position": {
-        "x": 1200,
-        "y": 200
-      },
+      "position": { "x": 980, "y": 100 },
       "data": {
         "label": "Save to Inner Dialogue",
         "nodeType": "inner_dialogue_buffer",
@@ -162,12 +65,9 @@
       "height": 80
     },
     {
-      "id": "10",
+      "id": "tts-output",
       "type": "outputNode",
-      "position": {
-        "x": 1200,
-        "y": 320
-      },
+      "position": { "x": 980, "y": 220 },
       "data": {
         "label": "TTS Output",
         "nodeType": "tts",
@@ -180,14 +80,11 @@
       "height": 60
     },
     {
-      "id": "9",
+      "id": "audit-result",
       "type": "outputNode",
-      "position": {
-        "x": 1200,
-        "y": 80
-      },
+      "position": { "x": 980, "y": 340 },
       "data": {
-        "label": "Audit Log",
+        "label": "Audit Durable Result",
         "nodeType": "audit_logger",
         "properties": {
           "category": "agency",
@@ -200,136 +97,52 @@
   ],
   "edges": [
     {
-      "id": "e-1-slot_0-2-slot_0",
-      "source": "1",
-      "target": "2",
+      "id": "load-to-review",
+      "source": "load-desire",
+      "target": "review-outcome",
       "sourceHandle": "slot_0",
       "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Outcome Reviewer"
-      }
+      "data": { "type": "object", "comment": "Desire to reviewer" }
     },
     {
-      "id": "e-2-slot_0-3-slot_0",
-      "source": "2",
-      "target": "3",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Outcome Review → Verdict Router"
-      }
-    },
-    {
-      "id": "e-3-slot_0-4-desire",
-      "source": "3",
-      "target": "4",
+      "id": "load-to-apply",
+      "source": "load-desire",
+      "target": "apply-outcome",
       "sourceHandle": "slot_0",
       "targetHandle": "desire",
-      "data": {
-        "type": "object",
-        "comment": "Route 0 (completed/continue/abandon) → Final Status Updater"
-      }
+      "data": { "type": "object", "comment": "Original desire to canonical transition" }
     },
     {
-      "id": "e-3-slot_1-5-desire",
-      "source": "3",
-      "target": "5",
-      "sourceHandle": "slot_1",
-      "targetHandle": "desire",
-      "data": {
-        "type": "object",
-        "comment": "Route 1 (retry) → Loop Back to Planner"
-      }
+      "id": "review-to-apply",
+      "source": "review-outcome",
+      "target": "apply-outcome",
+      "sourceHandle": "outcomeReview",
+      "targetHandle": "outcomeReview",
+      "data": { "type": "object", "comment": "Validated review to canonical transition" }
     },
     {
-      "id": "e-3-slot_2-6-slot_0",
-      "source": "3",
-      "target": "6",
-      "sourceHandle": "slot_2",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Route 2 (escalate) → Approval Queue"
-      }
-    },
-    {
-      "id": "e-1-slot_0-4-newStatus",
-      "source": "1",
-      "target": "4",
-      "sourceHandle": "slot_0",
-      "targetHandle": "newStatus",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Final Updater (for object)"
-      }
-    },
-    {
-      "id": "e-1-slot_0-5-newStatus",
-      "source": "1",
-      "target": "5",
-      "sourceHandle": "slot_0",
-      "targetHandle": "newStatus",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Loop Back Updater (for object)"
-      }
-    },
-    {
-      "id": "e-1-slot_0-6-slot_1",
-      "source": "1",
-      "target": "6",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_1",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Escalate Queue (for object)"
-      }
-    },
-    {
-      "id": "e-2-slot_0-7-slot_0",
-      "source": "2",
-      "target": "7",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Outcome Review → Scratchpad"
-      }
-    },
-    {
-      "id": "e-2-summary-8-text",
-      "source": "2",
-      "target": "8",
+      "id": "apply-to-inner",
+      "source": "apply-outcome",
+      "target": "inner-dialogue",
       "sourceHandle": "summary",
       "targetHandle": "text",
-      "data": {
-        "type": "string",
-        "comment": "Outcome Review Summary → Inner Dialogue Capture"
-      }
+      "data": { "type": "string", "comment": "Durable transition summary" }
     },
     {
-      "id": "e-2-summary-10-innerDialogue",
-      "source": "2",
-      "target": "10",
+      "id": "apply-to-tts",
+      "source": "apply-outcome",
+      "target": "tts-output",
       "sourceHandle": "summary",
       "targetHandle": "innerDialogue",
-      "data": {
-        "type": "string",
-        "comment": "Outcome Review Summary → TTS Output"
-      }
+      "data": { "type": "string", "comment": "Durable transition summary" }
     },
     {
-      "id": "e-4-desire-9-eventType",
-      "source": "4",
-      "target": "9",
+      "id": "apply-to-audit",
+      "source": "apply-outcome",
+      "target": "audit-result",
       "sourceHandle": "desire",
       "targetHandle": "eventType",
-      "data": {
-        "type": "object",
-        "comment": "Updated Desire → Audit"
-      }
+      "data": { "type": "object", "comment": "Durably updated desire" }
     }
   ]
 }

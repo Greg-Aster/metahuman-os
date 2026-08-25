@@ -11,30 +11,24 @@
  * Triggered probabilistically during idle periods (see trigger-manager.ts).
  */
 
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   ROOT,
   audit,
-  recordSystemActivity,
   getTargetUser,
   withUserContext,
   runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
+  getFirstFailedNode,
+  type GraphExecutionState,
   type SvelteFlowGraph,
 } from '@metahuman/core';
-import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface DaydreamerOptions {
-  forceRun?: boolean;
-  singleUser?: boolean;
-}
 
 export interface DaydreamerResult {
   success: boolean;
@@ -49,6 +43,11 @@ export interface UserDaydreamerStats {
   memoriesCurated: number;
 }
 
+export interface DaydreamerGraphEvaluation extends UserDaydreamerStats {
+  avgAgeDays: number;
+  skippedReason?: 'insufficient_memories';
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -59,10 +58,70 @@ const LOG_PREFIX = '[daydreamer]';
 // Helper Functions
 // ============================================================================
 
-function markBackgroundActivity() {
-  try {
-    recordSystemActivity();
-  } catch {}
+function getNodeOutputs(
+  graph: SvelteFlowGraph,
+  graphResult: GraphExecutionState,
+  nodeType: string,
+): Record<string, any> {
+  const matches = graph.nodes.filter(node => node.data.nodeType === nodeType);
+  if (matches.length !== 1) {
+    throw new Error(`Daydreamer graph requires exactly one ${nodeType} node (found ${matches.length})`);
+  }
+  return graphResult.nodes.get(matches[0].id)?.outputs || {};
+}
+
+export function normalizeTriggerProfile(value: string | undefined): string | null {
+  const profile = value?.trim();
+  return profile && profile.toLowerCase() !== 'system' ? profile : null;
+}
+
+export function evaluateDaydreamerGraph(
+  graph: SvelteFlowGraph,
+  graphResult: GraphExecutionState,
+): DaydreamerGraphEvaluation {
+  if (graphResult.status !== 'completed') {
+    const failure = getFirstFailedNode(graphResult);
+    throw new Error(
+      failure
+        ? `Daydreamer graph failed at node ${failure.nodeId}: ${failure.error}`
+        : 'Daydreamer graph did not complete',
+    );
+  }
+
+  const curator = getNodeOutputs(graph, graphResult, 'dreamer_memory_curator');
+  if (curator.error) throw new Error(`Memory curation failed: ${curator.error}`);
+  const memoriesCurated = Number(curator.count) || 0;
+  const avgAgeDays = Number(curator.avgAgeDays) || 0;
+  if (memoriesCurated < 3) {
+    return {
+      daydreamsGenerated: 0,
+      memoriesCurated,
+      avgAgeDays,
+      skippedReason: 'insufficient_memories',
+    };
+  }
+
+  const generator = getNodeOutputs(graph, graphResult, 'daydreamer_generator');
+  if (generator.error) throw new Error(`Daydream generation failed: ${generator.error}`);
+  if (typeof generator.daydream !== 'string' || !generator.daydream.trim()) {
+    throw new Error('Daydream generator completed without daydream content');
+  }
+
+  const saver = getNodeOutputs(graph, graphResult, 'dreamer_dream_saver');
+  if (!saver.saved) {
+    throw new Error(`Episodic daydream persistence failed: ${saver.error || 'unknown error'}`);
+  }
+
+  const innerDialogue = getNodeOutputs(graph, graphResult, 'inner_dialogue_buffer');
+  if (!innerDialogue.saved) {
+    throw new Error(`Inner-dialogue persistence failed: ${innerDialogue.error || innerDialogue.reason || 'unknown error'}`);
+  }
+
+  return {
+    daydreamsGenerated: 1,
+    memoriesCurated,
+    avgAgeDays,
+  };
 }
 
 /**
@@ -87,20 +146,16 @@ export async function loadDaydreamerGraph(): Promise<SvelteFlowGraph> {
  */
 export async function generateUserDaydream(
   username: string,
-  options: DaydreamerOptions = {}
+  signal?: AbortSignal,
 ): Promise<UserDaydreamerStats> {
   console.log(`${LOG_PREFIX} Processing user: ${username}`);
-
-  const heartbeat = setInterval(() => {
-    markBackgroundActivity();
-  }, 15000);
 
   try {
     // Log which backend is active (model router handles actual availability)
     try {
       const backend = getActiveBackend();
       console.log(`${LOG_PREFIX} Using LLM backend: ${backend}`);
-    } catch (e) {
+    } catch {
       console.log(`${LOG_PREFIX} Using model router (backend auto-selected)`);
     }
 
@@ -117,73 +172,34 @@ export async function generateUserDaydream(
     };
 
     console.log(`${LOG_PREFIX} Executing daydreamer workflow for user: ${username}`);
-    const graphResult = await runGraph({ graph, context: graphContext });
+    const graphResult = await runGraph({ graph, context: graphContext, signal });
+    const evaluation = evaluateDaydreamerGraph(graph, graphResult);
 
-    // Extract results from graph execution (node IDs are strings in Svelte Flow format)
-    // Node 1: Memory Curator
-    const memoryCuratorNode = graphResult.nodes.get('1');
-    const memoriesCurated = memoryCuratorNode?.outputs?.count || 0;
-    const avgAgeDays = memoryCuratorNode?.outputs?.avgAgeDays || 0;
-
-    if (memoriesCurated < 3) {
-      console.log(`${LOG_PREFIX}   Not enough memories for ${username} (found ${memoriesCurated})`);
+    if (evaluation.skippedReason === 'insufficient_memories') {
+      console.log(`${LOG_PREFIX}   Not enough memories for ${username} (found ${evaluation.memoriesCurated})`);
       audit({
         level: 'info',
         category: 'action',
         event: 'daydream_skipped',
-        details: { reason: 'insufficient_memories', memoriesFound: memoriesCurated, username },
+        details: {
+          reason: evaluation.skippedReason,
+          memoriesFound: evaluation.memoriesCurated,
+          username,
+        },
         actor: 'daydreamer',
       });
-      return { daydreamsGenerated: 0, memoriesCurated };
+      return evaluation;
     }
 
-    console.log(`${LOG_PREFIX}   Curated ${memoriesCurated} memories (avg age: ${avgAgeDays} days)`);
-
-    // Node 2: Daydream Generator
-    const daydreamGeneratorNode = graphResult.nodes.get('2');
-    const daydream = daydreamGeneratorNode?.outputs?.daydream;
-    const daydreamsGenerated = daydream ? 1 : 0;
-
-    if (daydream) {
-      console.log(`${LOG_PREFIX}   Daydream generated: "${daydream.slice(0, 50)}..."`);
-    } else {
-      console.log(`${LOG_PREFIX}   Failed to generate daydream`);
-      return { daydreamsGenerated: 0, memoriesCurated };
-    }
-
-    // Node 4: Dream Saver (handled by graph)
-    const dreamSaverNode = graphResult.nodes.get('4');
-    const daydreamSaved = dreamSaverNode?.outputs?.saved || false;
-    if (daydreamSaved) {
-      console.log(`${LOG_PREFIX}   Daydream saved to episodic memory`);
-    }
-
-    // Node 5: Inner Dialogue Capture (handled by graph - this is KEY for UI display)
-    const innerDialogueNode = graphResult.nodes.get('5');
-    const innerDialogueSaved = innerDialogueNode?.outputs?.saved || false;
-    if (innerDialogueSaved) {
-      console.log(`${LOG_PREFIX}   Daydream saved to inner dialogue buffer`);
-    }
-
-    markBackgroundActivity();
-
-    // Audit handled by node 6 in graph, but we also log here for debugging
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'daydream_generated',
-      details: {
-        username,
-        memoriesUsed: memoriesCurated,
-        contentLength: daydream?.length || 0,
-        avgMemoryAgeDays: avgAgeDays,
-      },
-      actor: 'daydreamer',
-    });
+    console.log(
+      `${LOG_PREFIX}   Curated ${evaluation.memoriesCurated} memories `
+      + `(avg age: ${evaluation.avgAgeDays} days)`,
+    );
+    console.log(`${LOG_PREFIX}   Daydream persisted to episodic memory and inner dialogue`);
 
     return {
-      daydreamsGenerated,
-      memoriesCurated,
+      daydreamsGenerated: evaluation.daydreamsGenerated,
+      memoriesCurated: evaluation.memoriesCurated,
     };
   } catch (error) {
     console.error(`${LOG_PREFIX} Error generating daydream for ${username}:`, error);
@@ -194,10 +210,7 @@ export async function generateUserDaydream(
       details: { error: (error as Error).message, username },
       actor: 'daydreamer',
     });
-    return { daydreamsGenerated: 0, memoriesCurated: 0 };
-  } finally {
-    clearInterval(heartbeat);
-    markBackgroundActivity();
+    throw error;
   }
 }
 
@@ -208,7 +221,7 @@ export async function generateUserDaydream(
 /**
  * Run a daydreamer cycle (single active user)
  */
-export async function runCycle(options: DaydreamerOptions = {}): Promise<DaydreamerResult> {
+export async function runCycle(): Promise<DaydreamerResult> {
   console.log(`${LOG_PREFIX} Starting cycle...`);
 
   const result: DaydreamerResult = {
@@ -220,8 +233,9 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
   };
 
   try {
-    const manualTriggerProfile =
-      process.env.MH_TRIGGER_PROFILE || process.env.MH_TRIGGER_USERNAME || null;
+    const triggerProfile = normalizeTriggerProfile(
+      process.env.MH_TRIGGER_PROFILE || process.env.MH_TRIGGER_USERNAME,
+    );
 
     console.log(`${LOG_PREFIX} Mind wandering...`);
 
@@ -232,7 +246,7 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
       event: 'daydream_started',
       details: {
         agent: 'daydreamer',
-        mode: manualTriggerProfile ? 'manual-single' : 'single-active-user',
+        mode: triggerProfile ? 'targeted-single-user' : 'single-active-user',
       },
       actor: 'daydreamer',
     });
@@ -241,16 +255,16 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
     const activeUser = getTargetUser();
 
     // Handle manual trigger override
-    if (manualTriggerProfile) {
+    if (triggerProfile) {
       if (
         !activeUser ||
-        (activeUser.username !== manualTriggerProfile &&
-          activeUser.userId !== manualTriggerProfile)
+        (activeUser.username !== triggerProfile &&
+          activeUser.userId !== triggerProfile)
       ) {
         console.warn(
-          `${LOG_PREFIX} Manual trigger requested for ${manualTriggerProfile} but user is not the active user.`
+          `${LOG_PREFIX} Trigger requested for ${triggerProfile} but user is not the active user.`
         );
-        result.errors.push(`User ${manualTriggerProfile} is not the currently active user`);
+        result.errors.push(`User ${triggerProfile} is not the currently active user`);
         return result;
       }
     }
@@ -269,7 +283,7 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
     try {
       const stats = await withUserContext(
         { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
-        async () => generateUserDaydream(activeUser.username, options)
+        async () => generateUserDaydream(activeUser.username)
       );
 
       result.daydreamsGenerated += stats.daydreamsGenerated;
@@ -284,21 +298,23 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
       `${LOG_PREFIX} Cycle finished. Generated ${result.daydreamsGenerated} daydreams for user ${activeUser.username}.`
     );
 
-    // Audit completion
+    result.success = result.errors.length === 0;
+
+    // Audit the actual coordinator outcome without duplicating private content.
     audit({
-      level: 'info',
+      level: result.success ? 'info' : 'error',
       category: 'action',
-      event: 'daydream_cycle_completed',
+      event: result.success ? 'daydream_cycle_completed' : 'daydream_cycle_failed',
       details: {
         agent: 'daydreamer',
         totalDaydreams: result.daydreamsGenerated,
         totalMemories: result.memoriesCurated,
+        errorCount: result.errors.length,
         username: activeUser.username,
       },
       actor: 'daydreamer',
     });
 
-    result.success = result.errors.length === 0;
     return result;
   } catch (error) {
     const errorMsg = (error as Error).message;
@@ -314,57 +330,5 @@ export async function runCycle(options: DaydreamerOptions = {}): Promise<Daydrea
 
     result.errors.push(errorMsg);
     return result;
-  }
-}
-
-// ============================================================================
-// Agent Runtime Interface
-// ============================================================================
-
-/**
- * Run function for agent-runtime
- */
-export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
-  const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
-
-  const options: DaydreamerOptions = {
-    forceRun: args.includes('--force') || opts.forceRun === true,
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-  };
-
-  try {
-    // If running for a specific user context, process just that user
-    if (ctx.username && options.singleUser) {
-      const stats = await withUserContext(
-        { userId: ctx.username, username: ctx.username, role: 'owner' },
-        async () => generateUserDaydream(ctx.username, options)
-      );
-
-      return {
-        success: stats.daydreamsGenerated > 0,
-        data: { ...stats, userCount: 1, errors: [] },
-        duration: Date.now() - startTime,
-        itemsProcessed: stats.daydreamsGenerated,
-      };
-    }
-
-    // Otherwise run full cycle
-    const result = await runCycle(options);
-
-    return {
-      success: result.success,
-      data: result,
-      error: result.errors.length > 0 ? result.errors.join('; ') : undefined,
-      duration: Date.now() - startTime,
-      itemsProcessed: result.daydreamsGenerated,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: (error as Error).message,
-      duration: Date.now() - startTime,
-    };
   }
 }

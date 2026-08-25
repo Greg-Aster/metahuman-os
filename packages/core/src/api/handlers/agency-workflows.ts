@@ -16,23 +16,18 @@ import {
   saveDesireManifest,
   savePlanToFolder,
   type Desire,
-  type DesireExecutionProgress,
-  type DesireOutcomeReview,
   type DesirePlan,
   type DesireRisk,
-  type OutcomeVerdict,
 } from '../../agency/index.js';
-import { executeDesireViaGraph } from '../../agency/executor.js';
 import { audit } from '../../audit.js';
-import { captureEvent } from '../../memory.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import type { TrustLevel } from '../../skills.js';
 import {
-  ensureBackendsInitialized,
-  escalate,
-  getActiveBackend,
-  isEscalationReady,
-} from '../../escalation-backend.js';
+  getQueueManager,
+  submitDesireExecution,
+  submitDesireOutcomeReview,
+  type QueueEvent,
+} from '../../queue/index.js';
 
 const PLAN_LOG_PREFIX = '[API:agency/generate-plan]';
 const PLAN_STREAM_LOG_PREFIX = '[API:agency/generate-plan-stream]';
@@ -72,24 +67,6 @@ interface SafetyReviewOutput {
   reasoning: string;
 }
 
-interface OutcomeReviewOutput {
-  verdict: OutcomeVerdict;
-  reasoning: string;
-  successScore: number;
-  lessonsLearned: string[];
-  nextAttemptSuggestions?: string[];
-  adjustedStrength?: number;
-  notifyUser: boolean;
-  userMessage?: string;
-}
-
-interface VerificationResult {
-  verified: boolean;
-  evidence: string[];
-  errors: string[];
-  operatorResponse?: unknown;
-}
-
 class WorkflowError extends Error {
   constructor(message: string, readonly status = 500) {
     super(message);
@@ -118,38 +95,12 @@ function namedSse(event: string, data: unknown): string {
 }
 
 function dataSse(event: {
-  type: 'phase' | 'progress' | 'log' | 'result' | 'error' | 'done';
+  type: 'phase' | 'log' | 'result' | 'error' | 'done';
   phase?: string;
   message?: string;
   data?: unknown;
 }): string {
   return `data: ${JSON.stringify(event)}\n\n`;
-}
-
-function createStringQueue() {
-  const values: string[] = [];
-  let resolver: (() => void) | undefined;
-
-  return {
-    push(value: string) {
-      values.push(value);
-      resolver?.();
-      resolver = undefined;
-    },
-    shift() {
-      return values.shift();
-    },
-    async wait() {
-      if (values.length > 0) return;
-      await new Promise<void>((resolve) => {
-        resolver = resolve;
-      });
-    },
-    wake() {
-      resolver?.();
-      resolver = undefined;
-    },
-  };
 }
 
 function determineRequiredTrust(risk: string): TrustLevel {
@@ -842,96 +793,16 @@ export async function handleReviewDesirePlan(req: UnifiedRequest): Promise<Unifi
   }
 }
 
-async function runDesire(username: string, id: string, onProgress?: (progress: DesireExecutionProgress) => void, streamed = false) {
+async function loadExecutableDesire(username: string, id: string): Promise<Desire> {
   const desire = await loadDesire(id, username);
   if (!desire) throw new WorkflowError('Desire not found', 404);
-  if (!['approved', 'executing'].includes(desire.status)) {
-    throw new WorkflowError(`Cannot run desire in '${desire.status}' status. Must be 'approved' or 'executing'.`, 400);
+  if (desire.status !== 'approved') {
+    throw new WorkflowError(`Cannot run desire in '${desire.status}' status. Must be 'approved'.`, 400);
   }
   if (!desire.plan || !desire.plan.steps || desire.plan.steps.length === 0) {
     throw new WorkflowError('Cannot run desire without a plan. Generate a plan first.', 400);
   }
-
-  const startTime = Date.now();
-  const now = new Date().toISOString();
-  let executingDesire: Desire = desire;
-  if (desire.status === 'approved') {
-    executingDesire = {
-      ...desire,
-      status: 'executing',
-      updatedAt: now,
-      execution: {
-        startedAt: now,
-        status: 'in_progress',
-        stepsCompleted: 0,
-        stepsTotal: desire.plan?.steps?.length || 1,
-      },
-    };
-    await moveDesire(executingDesire, 'approved', 'executing', username);
-  }
-
-  const graphResult = await executeDesireViaGraph(executingDesire, username, onProgress);
-  const execution = graphResult.execution;
-
-  audit({
-    category: 'agent',
-    level: graphResult.success ? 'info' : 'warn',
-    event: 'desire_executed',
-    actor: username,
-    details: {
-      desireId: id,
-      title: desire.title,
-      executionStatus: execution?.status || 'failed',
-      stepsCompleted: execution?.stepsCompleted || 0,
-      totalSteps: desire.plan?.steps.length || 0,
-      error: graphResult.error,
-      triggeredBy: streamed ? 'api-stream' : 'api',
-      ...(streamed ? { durationMs: Date.now() - startTime } : {}),
-    },
-  });
-
-  const nowFinal = new Date().toISOString();
-  const newStatus: Desire['status'] = 'awaiting_review';
-  const finalDesire: Desire = {
-    ...executingDesire,
-    status: newStatus,
-    currentStage: 'outcome_review',
-    execution: execution || {
-      startedAt: now,
-      status: 'failed',
-      error: graphResult.error || 'Execution failed',
-    },
-    updatedAt: nowFinal,
-    ...(desire.metrics && {
-      metrics: {
-        ...desire.metrics,
-        executionAttemptCount: desire.metrics.executionAttemptCount + 1,
-        lastActivityAt: nowFinal,
-      },
-    }),
-  };
-
-  await moveDesire(finalDesire, 'executing', newStatus, username);
-  await addScratchpadEntryToFolder(id, {
-    timestamp: nowFinal,
-    type: 'execution_completed',
-    description: `Execution ${execution?.status || 'failed'}: ${execution?.stepsCompleted || 0}/${desire.plan?.steps.length || 0} steps completed`,
-    actor: 'user',
-    data: {
-      executionStatus: execution?.status,
-      stepsCompleted: execution?.stepsCompleted,
-      totalSteps: desire.plan?.steps.length || 0,
-      error: graphResult.error,
-      newStatus,
-      ...(streamed ? { durationMs: Date.now() - startTime } : {}),
-    },
-  }, username);
-
-  const message = graphResult.success
-    ? `✅ Execution complete! "${desire.title}" - ${execution?.stepsCompleted}/${desire.plan?.steps.length || 0} steps completed.${streamed ? '' : ' Status: awaiting_review'}`
-    : `⚠️ Execution had issues: "${desire.title}" - ${graphResult.error || 'Unknown error'}.${streamed ? '' : ' Status: awaiting_review'}`;
-
-  return { graphResult, desire, finalDesire, execution, message, durationMs: Date.now() - startTime };
+  return desire;
 }
 
 export async function handleRunDesire(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -942,14 +813,20 @@ export async function handleRunDesire(req: UnifiedRequest): Promise<UnifiedRespo
 
   try {
     console.log(`${RUN_LOG_PREFIX} 🚀 Run requested for: ${id}`);
-    const result = await runDesire(req.user.username, id);
-    return successResponse({
-      success: result.graphResult.success,
-      desire: result.finalDesire,
-      execution: result.execution,
-      message: result.message,
-      awaitingReview: true,
+    const desire = await loadExecutableDesire(req.user.username, id);
+    const task = await submitDesireExecution({
+      username: req.user.username,
+      desireId: id,
+      source: 'user',
+      metadata: { producer: 'agency-run-api' },
     });
+    return successResponse({
+      success: true,
+      executionQueued: true,
+      taskId: task.id,
+      desire,
+      message: `Execution queued for "${desire.title}".`,
+    }, 202);
   } catch (error) {
     console.error(`${RUN_LOG_PREFIX} ❌ Error:`, error);
     const response = workflowErrorResponse(error);
@@ -987,8 +864,8 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
       yield namedSse('error', { error: 'Desire not found' });
       return;
     }
-    if (!['approved', 'executing'].includes(desire.status)) {
-      yield namedSse('error', { error: `Cannot run desire in '${desire.status}' status. Must be 'approved' or 'executing'.` });
+    if (desire.status !== 'approved') {
+      yield namedSse('error', { error: `Cannot run desire in '${desire.status}' status. Must be 'approved'.` });
       return;
     }
     if (!desire.plan || !desire.plan.steps || desire.plan.steps.length === 0) {
@@ -1003,62 +880,71 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
       goal: desire.plan.operatorGoal,
     });
 
-    const progressEvents = createStringQueue();
-    const onProgress = (progress: DesireExecutionProgress) => {
-      progressEvents.push(namedSse('progress', {
-        type: progress.type,
-        stepNumber: progress.stepNumber,
-        totalSteps: progress.totalSteps,
-        action: progress.action,
-        message: progress.message,
-        timestamp: progress.timestamp,
-        data: progress.data,
-      }));
+    const task = await submitDesireExecution({
+      username: req.user.username,
+      desireId: id,
+      source: 'user',
+      metadata: { producer: 'agency-run-stream' },
+    });
+    yield namedSse('queued', { taskId: task.id, state: task.state, message: 'Execution admitted to the Work Coordinator.' });
+
+    const manager = getQueueManager();
+    let outputIndex = 0;
+    let wake: (() => void) | undefined;
+    const listener = (event: QueueEvent) => {
+      if (event.taskId !== task.id) return;
+      wake?.();
+      wake = undefined;
     };
 
-    if (desire.status === 'approved') {
-      yield namedSse('phase', { phase: 'preparing', message: 'Moving to executing status...' });
-    }
-    yield namedSse('phase', { phase: 'executing', message: 'Starting execution...' });
-    let executionDone = false;
-    let executionError: unknown;
-    let result: Awaited<ReturnType<typeof runDesire>> | undefined;
-    const executionPromise = runDesire(req.user.username, id, onProgress, true)
-      .then((value) => {
-        result = value;
-      })
-      .catch((error) => {
-        executionError = error;
-      })
-      .finally(() => {
-        executionDone = true;
-        progressEvents.wake();
-      });
+    manager.addEventListener(listener);
+    try {
+      let current = manager.getTask(task.id);
+      if (!current) throw new Error('Queued desire execution is not visible to the coordinator owner');
 
-    while (!executionDone) {
-      const event = progressEvents.shift();
-      if (event) {
-        yield event;
-      } else {
-        await progressEvents.wait();
+      while (!['completed', 'failed', 'cancelled', 'expired'].includes(current.state)) {
+        const output = manager.getOutput(task.id);
+        for (const chunk of output.slice(outputIndex)) yield chunk;
+        outputIndex = output.length;
+        if (req.signal?.aborted) {
+          manager.cancel(task.id, 'Desire execution stream closed by requester');
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 1_000);
+          wake = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        current = manager.getTask(task.id);
+        if (!current) throw new Error('Queued desire execution disappeared before completion');
       }
-    }
-    await executionPromise;
-    for (;;) {
-      const event = progressEvents.shift();
-      if (!event) break;
-      yield event;
-    }
-    if (executionError) throw executionError;
-    if (!result) throw new Error('Execution did not return a result');
+      const finalOutput = manager.getOutput(task.id);
+      for (const chunk of finalOutput.slice(outputIndex)) yield chunk;
 
-    yield namedSse('phase', { phase: 'finalizing', message: 'Updating desire status...' });
+      if (current.state !== 'completed') {
+        throw new Error(current.error?.message || `Desire execution ${current.state}`);
+      }
+    } finally {
+      wake?.();
+      manager.removeEventListener(listener);
+    }
+
+    const finalDesire = await loadDesire(id, req.user.username);
+    if (!finalDesire) throw new Error('Executed desire could not be reloaded');
+    const execution = finalDesire.execution;
+    const executionSucceeded = execution?.status === 'completed';
+    yield namedSse('phase', { phase: 'finalizing', message: 'Execution attempt durably recorded.' });
     yield namedSse('complete', {
-      success: result.graphResult.success,
-      desire: result.finalDesire,
-      execution: result.execution,
-      message: result.message,
-      awaitingReview: true,
+      success: executionSucceeded,
+      taskId: task.id,
+      desire: finalDesire,
+      execution,
+      message: executionSucceeded
+        ? `Execution completed for "${finalDesire.title}".`
+        : `Execution failed for "${finalDesire.title}": ${execution?.error || 'unknown error'}.`,
+      awaitingReview: finalDesire.status === 'awaiting_review',
       durationMs: Date.now() - startTime,
     });
   } catch (error) {
@@ -1067,491 +953,17 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
   }
 }
 
-function buildVerificationPrompt(desire: Desire): string {
-  const plan = desire.plan;
-  const operatorGoal = plan?.operatorGoal || desire.description;
-  const goalLower = operatorGoal.toLowerCase();
-
-  if (goalLower.includes('file') || goalLower.includes('write') || goalLower.includes('create')) {
-    const filePaths: string[] = [];
-    plan?.steps?.forEach(step => {
-      if (step.inputs?.path) filePaths.push(step.inputs.path as string);
-      if (step.inputs?.file_path) filePaths.push(step.inputs.file_path as string);
-      const pathMatch = step.action.match(/["']([^"']+\.[a-z]+)["']/i);
-      if (pathMatch) filePaths.push(pathMatch[1]);
-    });
-
-    return filePaths.length > 0
-      ? `VERIFICATION TASK: Check if these files exist and have content: ${filePaths.join(', ')}. Read each file to verify it exists and has appropriate content.`
-      : `VERIFICATION TASK: The goal was "${operatorGoal}". Check the filesystem to see if any relevant files were created. List the directory contents and read any new files.`;
-  }
-
-  if (goalLower.includes('task')) {
-    return `VERIFICATION TASK: Check if any tasks were created or updated related to "${operatorGoal}". List current tasks and check for relevant entries.`;
-  }
-
-  return `VERIFICATION TASK: The desire "${desire.title}" claims to be completed. The goal was: "${operatorGoal}". Investigate whether the outcome actually occurred. Check files, tasks, or other artifacts that should exist. Report your findings.`;
-}
-
-async function verifyOutcomeWithOperator(desire: Desire, username: string): Promise<VerificationResult> {
-  const plan = desire.plan;
-  const evidence: string[] = [];
-  const errors: string[] = [];
-  const operatorGoal = plan?.operatorGoal || desire.description;
-
-  await ensureBackendsInitialized();
-  const backend = getActiveBackend(username);
-  if (!backend) {
-    errors.push('No escalation backend configured. Enable one in Settings.');
-    return { verified: false, evidence, errors };
-  }
-
-  if (!isEscalationReady(username)) {
-    errors.push(`Backend ${backend.name} is not ready. Start it first.`);
-    return { verified: false, evidence, errors };
-  }
-
-  try {
-    const prompt = `You are verifying whether a task was actually completed for MetaHuman OS.
-
-## Desire Being Verified
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Original Goal**: ${operatorGoal}
-**Execution Status**: ${desire.execution?.status || 'unknown'}
-**Steps Claimed Completed**: ${desire.execution?.stepsCompleted || 0} / ${plan?.steps?.length || 0}
-
-## Verification Task
-${buildVerificationPrompt(desire)}
-
-## Instructions
-1. Use your tools (Read, Bash, Glob, etc.) to check if the outcome actually occurred
-2. Look for concrete evidence (files exist, content is correct, tasks were created)
-3. Be thorough - don't trust self-reported success
-4. Report EXACTLY what you found - exists/doesn't exist, content summary
-
-Please verify now and report your findings.`;
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_verification_started',
-      actor: 'outcome-review',
-      details: { desireId: desire.id, title: desire.title, backend: backend.id },
-    });
-
-    const result = await escalate(prompt, { timeout: 90000, username });
-    if (!result.success) {
-      errors.push(`Verification failed: ${result.error}`);
-      return { verified: false, evidence, errors };
-    }
-
-    const response = result.output;
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'big_brother_verification_completed',
-      actor: 'outcome-review',
-      details: { desireId: desire.id, responseLength: response.length, backend: backend.id },
-    });
-
-    const responseLower = response.toLowerCase();
-    const hasPositiveIndicators = responseLower.includes('exists') ||
-      responseLower.includes('found') ||
-      responseLower.includes('confirmed') ||
-      responseLower.includes('successfully') ||
-      responseLower.includes('content:') ||
-      responseLower.includes('verified');
-    const hasNegativeIndicators = responseLower.includes('not found') ||
-      responseLower.includes('does not exist') ||
-      responseLower.includes('no such file') ||
-      responseLower.includes('failed') ||
-      responseLower.includes('error:') ||
-      responseLower.includes('could not');
-
-    evidence.push(`${backend.name} verification: ${response.substring(0, 500)}${response.length > 500 ? '...' : ''}`);
-    return {
-      verified: hasPositiveIndicators && !hasNegativeIndicators,
-      evidence,
-      errors,
-      operatorResponse: { response, executedVia: backend.id },
-    };
-  } catch (error) {
-    errors.push(`${backend.name} verification failed: ${(error as Error).message}`);
-    return { verified: false, evidence, errors };
-  }
-}
-
-const OUTCOME_SYSTEM_PROMPT = `You are the Outcome Review module of MetaHuman OS. Your job is to evaluate whether an executed desire actually achieved its goal.
-
-CRITICAL: You will be given VERIFICATION RESULTS from an independent check. Do NOT trust self-reported success - use the verification evidence to make your verdict.
-
-## Your Task
-Analyze the execution results and determine:
-1. Did the execution actually satisfy the desire?
-2. What was learned from this attempt?
-3. What should happen next?
-
-## Verdict Options
-- **completed**: The desire is fully satisfied. The goal was achieved. Archive it.
-- **continue**: Keep pursuing this (for recurring desires like "stay healthy", "learn new things"). Reset for next cycle.
-- **retry**: The execution failed or was incomplete. Try again with a new approach.
-- **escalate**: Something unexpected happened that needs human attention. Alert the user.
-- **abandon**: This desire cannot be achieved or is no longer relevant. Give up gracefully.
-
-## Success Score (0.0 - 1.0)
-- 1.0: Perfect execution, goal fully achieved
-- 0.7-0.9: Good execution, goal mostly achieved
-- 0.4-0.6: Partial success, some progress made
-- 0.1-0.3: Poor execution, minimal progress
-- 0.0: Complete failure
-
-## Guidelines
-- Be honest about whether the goal was actually achieved
-- For recurring desires, "continue" is often appropriate even after success
-- "escalate" should be used sparingly, only for genuine concerns
-- Always provide actionable lessons learned
-- If retry is recommended, give specific suggestions
-
-Respond with valid JSON matching the schema.`;
-
-async function runOutcomeReviewLlm(desire: Desire, verification: VerificationResult): Promise<OutcomeReviewOutput> {
-  const plan = desire.plan;
-  const execution = desire.execution;
-  const userPrompt = `## Desire to Review
-
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason}
-**Original Goal**: ${plan?.operatorGoal || 'Not specified'}
-
-## Execution Results (Self-Reported)
-
-**Status**: ${execution?.status || 'unknown'}
-**Steps Completed**: ${execution?.stepsCompleted || 0} / ${plan?.steps?.length || 0}
-**Started**: ${execution?.startedAt || 'unknown'}
-**Completed**: ${execution?.completedAt || 'in progress'}
-${execution?.error ? `**Error**: ${execution.error}` : ''}
-
-### Step Results (Self-Reported)
-${execution?.stepResults?.map((r, i) =>
-  `${i + 1}. ${r.success ? '✅' : '❌'} ${plan?.steps?.[i]?.action || 'Unknown step'}${r.error ? ` (Error: ${r.error})` : ''}`
-).join('\n') || 'No step results available'}
-
-## 🔍 INDEPENDENT VERIFICATION (TRUST THIS)
-
-**Verification Status**: ${verification.verified ? '✅ VERIFIED' : '❌ NOT VERIFIED'}
-
-### Evidence Gathered:
-${verification.evidence.length > 0 ? verification.evidence.map(e => `- ${e}`).join('\n') : '- No evidence gathered'}
-
-### Verification Errors:
-${verification.errors.length > 0 ? verification.errors.map(e => `- ${e}`).join('\n') : '- None'}
-
-## CRITICAL INSTRUCTIONS
-
-1. If verification FAILED or found NO evidence of the outcome, verdict should be "retry" or "abandon"
-2. If the executor claimed success but verification found no files/tasks/results, this is a FALSE POSITIVE - do NOT mark as completed
-3. Only mark "completed" if verification evidence CONFIRMS the goal was achieved
-4. Consider "escalate" if there's a mismatch between claimed success and verification
-
-## Output
-
-Respond with JSON:
-{
-  "verdict": "completed" | "continue" | "retry" | "escalate" | "abandon",
-  "reasoning": "Detailed explanation of your verdict, referencing the verification evidence",
-  "successScore": 0.0-1.0,
-  "lessonsLearned": ["lesson 1", "lesson 2"],
-  "nextAttemptSuggestions": ["suggestion 1", "suggestion 2"],
-  "adjustedStrength": 0.0-1.0 (optional, for continue/retry),
-  "notifyUser": true/false,
-  "userMessage": "Message for user if notifyUser is true"
-}`;
-
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('LLM call timed out after 60 seconds')), 60000)
-    );
-    const response = await Promise.race([
-      callLLM({
-        role: 'persona',
-        messages: [
-          { role: 'system', content: OUTCOME_SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        options: { temperature: 0.3, responseFormat: 'json' },
-      }),
-      timeoutPromise,
-    ]);
-
-    if (!response.content) {
-      return {
-        verdict: 'escalate',
-        reasoning: 'Failed to get outcome review response',
-        successScore: 0,
-        lessonsLearned: ['Outcome review failed - manual review needed'],
-        notifyUser: true,
-        userMessage: 'Outcome review could not be completed automatically.',
-      };
-    }
-
-    const parsed = JSON.parse(extractJsonObject(response.content)) as OutcomeReviewOutput;
-    return {
-      verdict: parsed.verdict,
-      reasoning: parsed.reasoning,
-      successScore: Math.max(0, Math.min(1, parsed.successScore)),
-      lessonsLearned: parsed.lessonsLearned || [],
-      nextAttemptSuggestions: parsed.nextAttemptSuggestions,
-      adjustedStrength: parsed.adjustedStrength,
-      notifyUser: parsed.notifyUser ?? false,
-      userMessage: parsed.userMessage,
-    };
-  } catch (error) {
-    return {
-      verdict: 'escalate',
-      reasoning: `Outcome review error: ${(error as Error).message}`,
-      successScore: 0,
-      lessonsLearned: ['Outcome review threw an error'],
-      notifyUser: true,
-      userMessage: `Outcome review failed: ${(error as Error).message}`,
-    };
-  }
-}
-
-function buildExecutionSummary(desire: Desire): string {
-  const execution = desire.execution;
-  const plan = desire.plan;
-  if (!execution?.stepResults || !Array.isArray(execution.stepResults)) return '';
-
-  const summaryParts: string[] = [];
-  for (const stepResult of execution.stepResults) {
-    const stepIndex = (stepResult as { stepOrder?: number }).stepOrder || 0;
-    const stepAction = plan?.steps?.[stepIndex - 1]?.action || `Step ${stepIndex}`;
-    const result = stepResult as { success?: boolean; result?: { claudeResponse?: string; interpreterResponse?: string }; error?: string };
-
-    if (result.success && result.result) {
-      const response = result.result.claudeResponse || result.result.interpreterResponse || '';
-      const firstLine = response.split('\n').find(line =>
-        line.trim() && !line.startsWith('#') && !line.startsWith('*')
-      ) || response.substring(0, 150);
-      summaryParts.push(`✅ ${stepAction}: ${firstLine.substring(0, 100)}${firstLine.length > 100 ? '...' : ''}`);
-    } else {
-      const error = result.error || 'Failed';
-      summaryParts.push(`❌ ${stepAction}: ${error.substring(0, 80)}`);
-    }
-  }
-
-  return summaryParts.join('\n');
-}
-
-async function applyOutcomeReview(
-  username: string,
-  desire: Desire,
-  reviewResult: OutcomeReviewOutput,
-  verification: VerificationResult,
-  includeDialogue = true,
-  includeMetrics = true,
-) {
-  const executionSummary = includeMetrics ? buildExecutionSummary(desire) : '';
-  const now = new Date().toISOString();
-  const oldStatus = desire.status;
-  let newStatus: Desire['status'] = desire.status;
-
-  switch (reviewResult.verdict) {
-    case 'completed':
-      newStatus = 'completed';
-      break;
-    case 'continue':
-    case 'retry':
-      newStatus = 'planning';
-      break;
-    case 'escalate':
-      newStatus = 'awaiting_approval';
-      break;
-    case 'abandon':
-      newStatus = 'abandoned';
-      break;
-  }
-
-  const outcomeReview: DesireOutcomeReview = {
-    id: `outcome-${desire.id}-${Date.now()}`,
-    verdict: reviewResult.verdict,
-    reasoning: reviewResult.reasoning,
-    successScore: reviewResult.successScore,
-    lessonsLearned: reviewResult.lessonsLearned,
-    nextAttemptSuggestions: reviewResult.nextAttemptSuggestions,
-    adjustedStrength: reviewResult.adjustedStrength,
-    reviewedAt: now,
-    notifyUser: reviewResult.notifyUser,
-    userMessage: reviewResult.userMessage,
-    ...(executionSummary ? { executionSummary } : {}),
-  };
-
-  const updatedDesire: Desire = {
-    ...desire,
-    outcomeReview,
-    status: newStatus,
-    updatedAt: now,
-    strength: reviewResult.adjustedStrength ?? desire.strength,
-    ...(includeMetrics && desire.metrics ? {
-      metrics: {
-        ...desire.metrics,
-        executionSuccessCount: reviewResult.verdict === 'completed'
-          ? desire.metrics.executionSuccessCount + 1
-          : desire.metrics.executionSuccessCount,
-        executionFailCount: ['retry', 'abandon'].includes(reviewResult.verdict)
-          ? desire.metrics.executionFailCount + 1
-          : desire.metrics.executionFailCount,
-        completionCount: reviewResult.verdict === 'completed'
-          ? desire.metrics.completionCount + 1
-          : desire.metrics.completionCount,
-        cycleCount: ['continue', 'retry'].includes(reviewResult.verdict)
-          ? desire.metrics.cycleCount + 1
-          : desire.metrics.cycleCount,
-        avgSuccessScore: (desire.metrics.avgSuccessScore * desire.metrics.executionAttemptCount + reviewResult.successScore)
-          / (desire.metrics.executionAttemptCount + 1),
-      },
-    } : {}),
-  };
-
-  if (oldStatus !== newStatus) {
-    await moveDesire(updatedDesire, oldStatus, newStatus, username);
-  } else {
-    await saveDesire(updatedDesire, username);
-  }
-
-  await addScratchpadEntryToFolder(desire.id, {
-    timestamp: now,
-    type: 'outcome_review',
-    description: includeMetrics
-      ? `Outcome review: ${reviewResult.verdict} (score: ${(reviewResult.successScore * 100).toFixed(0)}%) - Verification: ${verification.verified ? 'VERIFIED' : 'NOT VERIFIED'}`
-      : `Outcome review: ${reviewResult.verdict} (score: ${(reviewResult.successScore * 100).toFixed(0)}%)`,
-    actor: 'llm',
-    data: includeMetrics ? {
-      verdict: reviewResult.verdict,
-      reasoning: reviewResult.reasoning,
-      successScore: reviewResult.successScore,
-      lessonsLearned: reviewResult.lessonsLearned,
-      nextAttemptSuggestions: reviewResult.nextAttemptSuggestions,
-      notifyUser: reviewResult.notifyUser,
-      userMessage: reviewResult.userMessage,
-      newStatus,
-      verification: {
-        verified: verification.verified,
-        evidence: verification.evidence,
-        errors: verification.errors,
-      },
-    } : {
-      verdict: reviewResult.verdict,
-      verification: { verified: verification.verified },
-    },
-  }, username);
-
-  audit({
-    category: 'agent',
-    level: reviewResult.verdict === 'escalate' ? 'warn' : 'info',
-    event: 'desire_outcome_reviewed',
-    actor: username,
-    details: includeMetrics ? {
-      desireId: desire.id,
-      title: desire.title,
-      verdict: reviewResult.verdict,
-      successScore: reviewResult.successScore,
-      oldStatus,
-      newStatus,
-      notifyUser: reviewResult.notifyUser,
-      verificationPassed: verification.verified,
-      verificationEvidenceCount: verification.evidence.length,
-      verificationErrorCount: verification.errors.length,
-    } : {
-      desireId: desire.id,
-      verdict: reviewResult.verdict,
-      newStatus,
-    },
-  });
-
-  if (includeDialogue) {
-    const summarySection = executionSummary ? `\n\n**What I did:**\n${executionSummary}` : '';
-    let dialogueText: string;
-    switch (reviewResult.verdict) {
-      case 'completed':
-        dialogueText = `I've completed my desire "${desire.title}"! ${reviewResult.reasoning}${summarySection}`;
-        break;
-      case 'continue':
-        dialogueText = `My desire "${desire.title}" is ongoing. ${reviewResult.reasoning} I'll continue pursuing it.${summarySection}`;
-        break;
-      case 'retry':
-        dialogueText = `I need to retry "${desire.title}". ${reviewResult.reasoning}${summarySection}`;
-        break;
-      case 'escalate':
-        dialogueText = `I need help with "${desire.title}". ${reviewResult.userMessage || reviewResult.reasoning}${summarySection}`;
-        break;
-      case 'abandon':
-        dialogueText = `I'm letting go of "${desire.title}". ${reviewResult.reasoning}${summarySection}`;
-        break;
-    }
-
-    captureEvent(dialogueText, {
-      type: 'inner_dialogue',
-      tags: ['agency', 'outcome', 'review', 'inner'],
-      metadata: {
-        source: 'outcome-reviewer',
-        desireId: desire.id,
-        verdict: reviewResult.verdict,
-        successScore: reviewResult.successScore,
-        executionSummary,
-      },
-    });
-
-  } else {
-    captureEvent(`Reviewed "${desire.title}": ${reviewResult.verdict}`, {
-      type: 'inner_dialogue',
-      metadata: { source: 'outcome-reviewer', desireId: desire.id, verdict: reviewResult.verdict },
-    });
-  }
-
-  const verificationStatus = verification.verified ? '✅ Verified' : '⚠️ Not Verified';
-  let message: string;
-  switch (reviewResult.verdict) {
-    case 'completed':
-      message = includeMetrics
-        ? `🎉 Success! "${desire.title}" has been completed. Score: ${(reviewResult.successScore * 100).toFixed(0)}% [${verificationStatus}]`
-        : `🎉 "${desire.title}" completed! Score: ${(reviewResult.successScore * 100).toFixed(0)}% [${verificationStatus}]`;
-      break;
-    case 'continue':
-      message = includeMetrics
-        ? `🔄 "${desire.title}" will continue. Moving back to planning for next cycle. [${verificationStatus}]`
-        : `🔄 "${desire.title}" will continue. [${verificationStatus}]`;
-      break;
-    case 'retry':
-      message = includeMetrics
-        ? `🔁 "${desire.title}" needs another attempt. Moving back to planning. [${verificationStatus}]`
-        : `🔁 "${desire.title}" needs retry. [${verificationStatus}]`;
-      break;
-    case 'escalate':
-      message = includeMetrics
-        ? `⚠️ "${desire.title}" needs your attention: ${reviewResult.userMessage || reviewResult.reasoning} [${verificationStatus}]`
-        : `⚠️ "${desire.title}" needs attention. [${verificationStatus}]`;
-      break;
-    case 'abandon':
-      message = includeMetrics
-        ? `🚫 "${desire.title}" has been abandoned. ${reviewResult.reasoning} [${verificationStatus}]`
-        : `🚫 "${desire.title}" abandoned. [${verificationStatus}]`;
-      break;
-  }
-
-  return { updatedDesire, outcomeReview, message, verification, reviewResult };
-}
-
 async function loadReviewableDesire(username: string, id: string): Promise<Desire> {
   const desire = await loadDesire(id, username);
   if (!desire) throw new WorkflowError('Desire not found', 404);
-  if (!['executing', 'awaiting_review', 'completed', 'failed'].includes(desire.status)) {
-    throw new WorkflowError(`Cannot review outcome for desire in '${desire.status}' status. Must be 'executing', 'awaiting_review', 'completed', or 'failed'.`, 400);
+  if (!['awaiting_review', 'completed', 'failed'].includes(desire.status)) {
+    throw new WorkflowError(`Cannot review outcome for desire in '${desire.status}' status. Must be 'awaiting_review', 'completed', or 'failed'.`, 400);
   }
   if (!desire.execution) {
     throw new WorkflowError('Cannot review outcome without execution data.', 400);
+  }
+  if (desire.outcomeReview) {
+    throw new WorkflowError('This desire already has a durable outcome review.', 409);
   }
   return desire;
 }
@@ -1563,24 +975,22 @@ export async function handleOutcomeReview(req: UnifiedRequest): Promise<UnifiedR
   if (!id) return { status: 400, error: 'Desire ID is required' };
 
   try {
-    console.log(`${OUTCOME_LOG_PREFIX} 🔍 Outcome review requested for: ${id}`);
     const desire = await loadReviewableDesire(req.user.username, id);
-    const verification = await verifyOutcomeWithOperator(desire, req.user.username);
-    const reviewResult = await runOutcomeReviewLlm(desire, verification);
-    const result = await applyOutcomeReview(req.user.username, desire, reviewResult, verification, true, true);
+    const task = await submitDesireOutcomeReview({
+      username: req.user.username,
+      desireId: id,
+      source: 'user',
+      metadata: { producer: 'agency-outcome-review-api' },
+    });
     return successResponse({
       success: true,
-      desire: result.updatedDesire,
-      outcomeReview: result.outcomeReview,
-      message: result.message,
-      verification: {
-        verified: result.verification.verified,
-        evidence: result.verification.evidence,
-        errors: result.verification.errors,
-      },
-    });
+      reviewQueued: true,
+      taskId: task.id,
+      desire,
+      message: `Outcome review queued for "${desire.title}".`,
+    }, 202);
   } catch (error) {
-    console.error(`${OUTCOME_LOG_PREFIX} ❌ Error:`, error);
+    console.error(`${OUTCOME_LOG_PREFIX} Error:`, error);
     return workflowErrorResponse(error);
   }
 }
@@ -1603,44 +1013,60 @@ async function* outcomeReviewStream(req: UnifiedRequest): AsyncIterable<string> 
     }
 
     yield dataSse({ type: 'phase', phase: 'Loading desire...' });
-    yield dataSse({ type: 'log', message: `Loading desire: ${id}` });
     const desire = await loadReviewableDesire(req.user.username, id);
     yield dataSse({ type: 'log', message: `Found: "${desire.title}" (status: ${desire.status})` });
-    yield dataSse({ type: 'phase', phase: '🔍 Running verification...' });
-    yield dataSse({ type: 'log', message: 'Checking escalation backend...' });
-
-    const verification = await verifyOutcomeWithOperator(desire, req.user.username);
-    if (verification.errors.length > 0) {
-      for (const error of verification.errors) yield dataSse({ type: 'log', message: `❌ ${error}` });
-    }
-    if (verification.evidence.length > 0) {
-      yield dataSse({ type: 'log', message: verification.verified ? '✅ Verification passed' : '❌ Verification failed' });
-    }
-
-    yield dataSse({ type: 'phase', phase: '🤖 Analyzing results...' });
-    yield dataSse({ type: 'log', message: 'Preparing LLM prompt for verdict assessment...' });
-    yield dataSse({ type: 'log', message: 'Calling LLM for verdict...' });
-    const reviewResult = await runOutcomeReviewLlm(desire, verification);
-    yield dataSse({ type: 'log', message: `Verdict: ${reviewResult.verdict} (score: ${(reviewResult.successScore * 100).toFixed(0)}%)` });
-
-    yield dataSse({ type: 'phase', phase: '📝 Updating desire...' });
-    const result = await applyOutcomeReview(req.user.username, desire, reviewResult, verification, false, false);
-    yield dataSse({ type: 'log', message: `Status: ${desire.status} → ${result.updatedDesire.status}` });
-    yield dataSse({ type: 'log', message: '✅ Review complete!' });
-    yield dataSse({
-      type: 'result',
-      data: {
-        success: true,
-        desire: result.updatedDesire,
-        outcomeReview: result.outcomeReview,
-        message: result.message,
-        verification: {
-          verified: result.verification.verified,
-          evidence: result.verification.evidence,
-          errors: result.verification.errors,
-        },
-      },
+    const task = await submitDesireOutcomeReview({
+      username: req.user.username,
+      desireId: id,
+      source: 'user',
+      metadata: { producer: 'agency-outcome-review-stream' },
     });
+    yield dataSse({ type: 'phase', phase: 'Review admitted to Work Coordinator...' });
+    yield dataSse({ type: 'log', message: `Queued work item ${task.id} (${task.state})` });
+
+    const manager = getQueueManager();
+    let wake: (() => void) | undefined;
+    const listener = (event: QueueEvent) => {
+      if (event.taskId !== task.id) return;
+      wake?.();
+      wake = undefined;
+    };
+    manager.addEventListener(listener);
+    try {
+      let current = manager.getTask(task.id);
+      if (!current) throw new Error('Queued outcome review is not visible to the coordinator owner');
+      while (!['completed', 'failed', 'cancelled', 'expired'].includes(current.state)) {
+        if (req.signal?.aborted) {
+          manager.cancel(task.id, 'Outcome review stream closed by requester');
+          return;
+        }
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, 1_000);
+          wake = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        current = manager.getTask(task.id);
+        if (!current) throw new Error('Queued outcome review disappeared before completion');
+      }
+      if (current.state !== 'completed') {
+        throw new Error(current.error?.message || `Outcome review ${current.state}`);
+      }
+    } finally {
+      wake?.();
+      manager.removeEventListener(listener);
+    }
+
+    const reviewed = await loadDesire(id, req.user.username);
+    if (!reviewed?.outcomeReview) throw new Error('Outcome review completed without a durable review');
+    yield dataSse({ type: 'result', data: {
+      success: true,
+      taskId: task.id,
+      desire: reviewed,
+      outcomeReview: reviewed.outcomeReview,
+      message: `Outcome review completed for "${reviewed.title}".`,
+    } });
     yield dataSse({ type: 'done' });
   } catch (error) {
     console.error(`${OUTCOME_STREAM_LOG_PREFIX} Stream error:`, error);

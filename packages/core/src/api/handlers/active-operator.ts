@@ -51,7 +51,6 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
       'workflow.boredom-observer',
       'workflow.boredom-movement',
       'workflow.boredom-reflection',
-      'workflow.robot-observer',
     ]);
     const allWork = [...activeWork, ...manager.getHistory()];
     const boredomEpisodes = allWork
