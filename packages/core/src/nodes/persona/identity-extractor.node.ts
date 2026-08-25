@@ -4,6 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { loadPersonaCore } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
   const field = properties?.field || 'all';
@@ -14,7 +15,6 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 
     // If no input, load persona
     if (!persona) {
-      const { loadPersonaCore } = await import('../../identity.js');
       source = loadPersonaCore();
     }
 

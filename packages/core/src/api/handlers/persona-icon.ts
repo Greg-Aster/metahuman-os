@@ -9,23 +9,8 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-
-// Dynamic imports for optional modules
-let loadPersonaCore: (() => any) | null = null;
-let storageClient: any = null;
-
-async function ensureModules(): Promise<boolean> {
-  if (loadPersonaCore) return true;
-  try {
-    const identity = await import('../../identity.js');
-    loadPersonaCore = identity.loadPersonaCore;
-    const core = await import('../../index.js');
-    storageClient = core.storageClient;
-    return !!loadPersonaCore && !!storageClient;
-  } catch {
-    return false;
-  }
-}
+import { loadPersonaCore } from '../../identity.js';
+import { storageClient } from '../../storage-client.js';
 
 /**
  * GET /api/persona-icon - Get persona avatar icon image
@@ -33,14 +18,6 @@ async function ensureModules(): Promise<boolean> {
 export async function handleGetPersonaIcon(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     // All users are authenticated (no anonymous access - handled by HTTP adapter)
-    const available = await ensureModules();
-    if (!available || !loadPersonaCore || !storageClient) {
-      return {
-        status: 501,
-        error: 'Persona module not available',
-      };
-    }
-
     const persona = loadPersonaCore();
     const iconConfig = persona.identity?.icon;
 

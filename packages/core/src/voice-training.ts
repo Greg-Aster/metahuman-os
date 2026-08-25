@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, systemPaths } from './paths.js';
-import { spawn, spawnSync, execSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { audit } from './audit.js';
 import { clearCache } from './tts/cache.js';
 import { createLogger } from './logger.js';
@@ -34,35 +34,6 @@ export interface RVCTrainingStatus {
   endTime?: number;
   pid?: number;
   modelPath?: string;
-}
-
-export interface KokoroTrainingStatus {
-  status: 'idle' | 'running' | 'completed' | 'failed';
-  speakerId: string;
-  progress: number;
-  currentEpoch?: number;
-  totalEpochs?: number;
-  message?: string;
-  error?: string;
-  startTime?: number;
-  endTime?: number;
-  pid?: number;
-  voicepackPath?: string;
-  datasetSamples?: number;
-  datasetMinutes?: number;
-}
-
-export interface KokoroTrainingOptions {
-  langCode?: string;
-  baseVoice?: string;
-  epochs?: number;
-  learningRate?: number;
-  regularization?: number;
-  device?: 'auto' | 'cpu' | 'cuda';
-  maxSamples?: number;
-  outputPath?: string;
-  continueFromCheckpoint?: boolean;
-  pureTraining?: boolean;
 }
 
 export interface VoiceSample {
@@ -197,39 +168,6 @@ function getRvcModelsDir(speakerId: string): string | null {
   });
   if (!result.success || !result.path) {
     log.warn('Cannot access RVC models directory:', result.error);
-    return null;
-  }
-  return result.path;
-}
-
-/**
- * Get Kokoro datasets directory for a speaker
- * Uses storage router to resolve to correct profile location
- */
-function getKokoroDatasetDir(speakerId: string): string | null {
-  const result = storageClient.resolvePath({
-    category: 'output',
-    subcategory: 'voices/kokoro-datasets',
-    relativePath: speakerId,
-  });
-  if (!result.success || !result.path) {
-    log.warn('Cannot access Kokoro datasets directory:', result.error);
-    return null;
-  }
-  return result.path;
-}
-
-/**
- * Get Kokoro voicepacks directory
- * Uses storage router to resolve to correct profile location
- */
-function getKokoroVoicepacksDir(): string | null {
-  const result = storageClient.resolvePath({
-    category: 'output',
-    subcategory: 'voices/kokoro-voicepacks',
-  });
-  if (!result.success || !result.path) {
-    log.warn('Cannot access Kokoro voicepacks directory:', result.error);
     return null;
   }
   return result.path;
@@ -1410,167 +1348,6 @@ export function deleteRVCSample(speakerId: string, sampleId: string): void {
   });
 }
 
-export function listKokoroSamples(speakerId: string = 'default'): VoiceSample[] {
-  const dir = getKokoroDatasetDir(speakerId);
-  if (!dir) return [];
-
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const files = fs.readdirSync(dir);
-  const wavs = files.filter(f => f.endsWith('.wav'));
-  const samples: VoiceSample[] = [];
-
-  for (const wav of wavs) {
-    const id = wav.replace('.wav', '');
-    const wavPath = path.join(dir, wav);
-    const txtPath = path.join(dir, `${id}.txt`);
-    const metaPath = path.join(dir, `${id}.meta.json`);
-    let duration = 0;
-    let quality = 1;
-    let timestamp = '';
-
-    if (fs.existsSync(metaPath)) {
-      try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-        duration = meta.duration || 0;
-        quality = meta.quality || 1;
-        timestamp = meta.timestamp || '';
-      } catch {}
-    }
-
-    samples.push({
-      id,
-      audioPath: wavPath,
-      transcriptPath: txtPath,
-      duration,
-      timestamp,
-      quality,
-    });
-  }
-
-  return samples;
-}
-
-function clearKokoroDataset(speakerId: string = 'default'): number {
-  const dir = getKokoroDatasetDir(speakerId);
-  if (!dir) return 0;
-
-  if (!fs.existsSync(dir)) return 0;
-
-  let deleted = 0;
-  for (const file of fs.readdirSync(dir)) {
-    try {
-      fs.unlinkSync(path.join(dir, file));
-      deleted++;
-    } catch (error) {
-      console.error(`[clearKokoroDataset] Failed to delete ${file}:`, error);
-    }
-  }
-
-  return deleted;
-}
-
-export function copyToKokoroDataset(sampleIds: string[], speakerId: string = 'default'): number {
-  const srcDir = getTrainingDir();
-  if (!srcDir) {
-    throw new Error('Cannot copy to Kokoro dataset: user not authenticated');
-  }
-  const destDir = getKokoroDatasetDir(speakerId);
-  if (!destDir) {
-    throw new Error('Cannot copy to Kokoro dataset: user not authenticated');
-  }
-
-  if (!fs.existsSync(destDir)) {
-    fs.mkdirSync(destDir, { recursive: true });
-  }
-
-  clearKokoroDataset(speakerId);
-
-  let copied = 0;
-  let duration = 0;
-
-  for (const id of sampleIds) {
-    const wavSrc = path.join(srcDir, `${id}.wav`);
-    const txtSrc = path.join(srcDir, `${id}.txt`);
-    const metaSrc = path.join(srcDir, `${id}.meta.json`);
-    const wavDest = path.join(destDir, `${id}.wav`);
-    const txtDest = path.join(destDir, `${id}.txt`);
-    const metaDest = path.join(destDir, `${id}.meta.json`);
-
-    if (!fs.existsSync(wavSrc)) continue;
-
-    // Copy and normalize WAV file using ffmpeg loudnorm filter
-    // Target: -16 LUFS (broadcast standard) for optimal training quality
-    const normalizeResult = spawnSync('ffmpeg', [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-i', wavSrc,
-      '-ar', '22050',  // Kokoro training uses 22.05kHz
-      '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
-      wavDest
-    ], {
-      cwd: ROOT,
-    });
-
-    if (normalizeResult.status !== 0) {
-      // Fallback to direct copy if normalization fails
-      fs.copyFileSync(wavSrc, wavDest);
-    }
-
-    if (fs.existsSync(txtSrc)) {
-      fs.copyFileSync(txtSrc, txtDest);
-    }
-    if (fs.existsSync(metaSrc)) {
-      fs.copyFileSync(metaSrc, metaDest);
-      try {
-        const meta = JSON.parse(fs.readFileSync(metaSrc, 'utf-8'));
-        duration += meta.duration || 0;
-      } catch {}
-    }
-    copied++;
-  }
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'kokoro_samples_copy',
-    details: {
-      speakerId,
-      sampleCount: copied,
-      totalDuration: duration,
-      sampleIds,
-      normalized: true,
-      targetLoudness: '-16 LUFS',
-    },
-    actor: 'system',
-  });
-
-  return copied;
-}
-
-export function deleteKokoroSample(speakerId: string, sampleId: string): void {
-  const dir = getKokoroDatasetDir(speakerId);
-  if (!dir) {
-    console.warn('[voice-training] Cannot delete sample - Kokoro dataset directory not available');
-    return;
-  }
-  const wav = path.join(dir, `${sampleId}.wav`);
-  const txt = path.join(dir, `${sampleId}.txt`);
-  const meta = path.join(dir, `${sampleId}.meta.json`);
-
-  if (fs.existsSync(wav)) fs.unlinkSync(wav);
-  if (fs.existsSync(txt)) fs.unlinkSync(txt);
-  if (fs.existsSync(meta)) fs.unlinkSync(meta);
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'kokoro_sample_delete',
-    details: { speakerId, sampleId },
-    actor: 'system',
-  });
-}
-
 /**
  * Get RVC training readiness status
  * RVC typically needs 10-15 minutes of audio (600-900 seconds)
@@ -1624,64 +1401,6 @@ export function getRVCTrainingReadiness(speakerId: string = 'default'): {
       minSamples,
       minDuration,
       minQuality,
-    },
-  };
-}
-
-export function getKokoroTrainingReadiness(speakerId: string = 'default'): {
-  ready: boolean;
-  reason?: string;
-  samples: { total: number; duration: number; quality: number };
-  requirements: { minSamples: number; minDuration: number; minQuality: number };
-  copied?: { count: number; duration: number };
-} {
-  const samples = listVoiceSamples(1000);
-  const minSamples = 30;
-  const minDuration = 300; // 5 minutes
-  const minQuality = 0.75;
-
-  let totalDuration = 0;
-  let totalQuality = 0;
-
-  for (const sample of samples) {
-    totalDuration += sample.duration;
-    totalQuality += sample.quality;
-  }
-
-  const avgQuality = samples.length > 0 ? totalQuality / samples.length : 0;
-  const ready = samples.length >= minSamples && totalDuration >= minDuration && avgQuality >= minQuality;
-
-  let reason: string | undefined;
-  if (!ready) {
-    if (samples.length < minSamples) {
-      reason = `Need at least ${minSamples} samples (currently ${samples.length})`;
-    } else if (totalDuration < minDuration) {
-      reason = `Need at least ${Math.floor(minDuration / 60)} minutes of audio (currently ${Math.floor(totalDuration / 60)} minutes)`;
-    } else if (avgQuality < minQuality) {
-      reason = `Average quality too low (need ${(minQuality * 100).toFixed(0)}%, currently ${(avgQuality * 100).toFixed(0)}%)`;
-    }
-  }
-
-  const copiedSamples = listKokoroSamples(speakerId);
-  const copiedCount = copiedSamples.length;
-  const copiedDuration = copiedSamples.reduce((sum, s) => sum + s.duration, 0);
-
-  return {
-    ready,
-    reason,
-    samples: {
-      total: samples.length,
-      duration: totalDuration,
-      quality: avgQuality,
-    },
-    requirements: {
-      minSamples,
-      minDuration,
-      minQuality,
-    },
-    copied: {
-      count: copiedCount,
-      duration: copiedDuration,
     },
   };
 }
@@ -1817,26 +1536,6 @@ function handleRVCTrainingCompletionRecovery(speakerId: string): RVCTrainingStat
   status.endTime = Date.now();
   writeRVCTrainingStatus(status);
 
-  // Always restart Ollama after training ends (success or failure)
-  console.log('[RVC Training Recovery] Restarting Ollama...');
-  try {
-    const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
-    if (startResult.status === 0) {
-      console.log('[RVC Training Recovery] Ollama service restarted via systemctl');
-    } else {
-      // Try alternative method - use spawn for detached process
-      try {
-        const ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
-        ollamaProcess.unref();
-        console.log('[RVC Training Recovery] Ollama started via ollama serve');
-      } catch {
-        console.warn('[RVC Training Recovery] Warning: Failed to restart Ollama. You may need to start it manually.');
-      }
-    }
-  } catch (error) {
-    console.error('[RVC Training Recovery] Failed to restart Ollama:', error);
-  }
-
   // Log audit event
   audit({
     level: status.status === 'completed' ? 'info' : 'error',
@@ -1876,47 +1575,6 @@ function getRVCTrainingStatusRaw(speakerId: string): RVCTrainingStatus {
       progress: 0,
     };
   }
-}
-
-function getKokoroTrainingStatusPath(speakerId: string): string {
-  return path.join(systemPaths.logs, 'run', `kokoro-training-${speakerId}.json`);
-}
-
-export function getKokoroTrainingStatus(speakerId: string = 'default'): KokoroTrainingStatus {
-  const statusPath = getKokoroTrainingStatusPath(speakerId);
-  if (!fs.existsSync(statusPath)) {
-    return {
-      status: 'idle',
-      speakerId,
-      progress: 0,
-    };
-  }
-
-  try {
-    const raw = fs.readFileSync(statusPath, 'utf-8');
-    return JSON.parse(raw) as KokoroTrainingStatus;
-  } catch (error) {
-    console.error('[getKokoroTrainingStatus] Failed to read status file:', error);
-    return {
-      status: 'idle',
-      speakerId,
-      progress: 0,
-      error: 'Status file unreadable',
-    };
-  }
-}
-
-function writeKokoroTrainingStatus(status: KokoroTrainingStatus): void {
-  const statusPath = getKokoroTrainingStatusPath(status.speakerId);
-  const dir = path.dirname(statusPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // Atomic write: write to temp file, then rename (prevents race conditions)
-  const tempPath = `${statusPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
-  fs.renameSync(tempPath, statusPath);
 }
 
 /**
@@ -2394,75 +2052,13 @@ export function startRVCTraining(
   // RVC uses 40kHz sample rate
   const rvcSampleRate = 40000;
 
-  // Determine device preference early so we know whether to stop Ollama
   const devicePrefEarly = options?.device ?? 'auto';
   const useGpuEarly = devicePrefEarly === 'cuda' || (devicePrefEarly === 'auto' && process.env.CUDA_VISIBLE_DEVICES !== '-1');
-
-  // Only stop Ollama if we're using GPU (to free VRAM)
-  if (useGpuEarly) {
-    // Stop Ollama to free up GPU VRAM for training (RVC needs ~10GB, Ollama uses ~9.5GB)
-    console.log('[RVC Training] Stopping Ollama to free GPU VRAM...');
-    try {
-      // Try systemctl first (if Ollama is a service)
-      const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
-
-      if (systemctlResult.status === 0) {
-        console.log('[RVC Training] Stopped Ollama service via systemctl');
-      } else {
-        // Fallback to pkill if systemctl fails
-        spawnSync('pkill', ['-f', 'ollama'], { stdio: 'ignore' });
-        console.log('[RVC Training] Stopped Ollama via pkill');
-      }
-
-      // Wait for GPU VRAM to be fully released
-      console.log('[RVC Training] Waiting for GPU VRAM to be released...');
-      let vramFreed = false;
-      for (let i = 0; i < 15; i++) {
-        spawnSync('sleep', ['1']);
-
-        // Check if Ollama process is gone
-        const psResult = spawnSync('pgrep', ['-f', 'ollama'], { stdio: 'pipe' });
-        if (psResult.status !== 0) {
-          vramFreed = true;
-          console.log('[RVC Training] Ollama stopped, VRAM freed');
-          break;
-        }
-
-        // If still running after 5 seconds, try force kill
-        if (i === 4) {
-          console.log('[RVC Training] Ollama still running, attempting force kill...');
-          spawnSync('pkill', ['-9', '-f', 'ollama'], { stdio: 'ignore' });
-        }
-      }
-
-      if (!vramFreed) {
-        console.warn('[RVC Training] Warning: Ollama may still be using GPU memory');
-        console.warn('[RVC Training] Training may fail due to insufficient GPU VRAM');
-      }
-    } catch (error) {
-      console.log('[RVC Training] Ollama may not be running (this is OK)');
-    }
-  } else {
-    console.log('[RVC Training] Using CPU mode - Ollama will remain running');
-  }
 
   // Step 1: Run preprocessing (slice, normalize, resample)
   console.log('[RVC Training] Step 1/3: Preprocessing audio samples...');
   const preprocessSuccess = runRVCPreprocessing(speakerId, trainingDataDir, rvcExperimentDir, rvcSampleRate);
   if (!preprocessSuccess) {
-    // Restart Ollama before returning error
-    console.log('[RVC Training] Restarting Ollama after preprocessing failure...');
-    try {
-      const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
-      if (startResult.status === 0) {
-        console.log('[RVC Training] Ollama service restarted via systemctl');
-      } else {
-        console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
-      }
-    } catch (e) {
-      console.error('[RVC Training] Failed to restart Ollama:', e);
-    }
-
     return {
       success: false,
       error: 'Preprocessing failed. Check console logs for details.',
@@ -2473,19 +2069,6 @@ export function startRVCTraining(
   console.log('[RVC Training] Step 2/3: Extracting features (pitch and embeddings)...');
   const extractionSuccess = runRVCFeatureExtraction(speakerId, rvcExperimentDir, rvcSampleRate, 'rmvpe', useGpuEarly);
   if (!extractionSuccess) {
-    // Restart Ollama before returning error
-    console.log('[RVC Training] Restarting Ollama after feature extraction failure...');
-    try {
-      const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
-      if (startResult.status === 0) {
-        console.log('[RVC Training] Ollama service restarted via systemctl');
-      } else {
-        console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
-      }
-    } catch (e) {
-      console.error('[RVC Training] Failed to restart Ollama:', e);
-    }
-
     return {
       success: false,
       error: 'Feature extraction failed. Check console logs for details.',
@@ -2694,19 +2277,6 @@ export function startRVCTraining(
 
       clearInterval(monitorInterval);
 
-      // Restart Ollama after training completes (success or failure)
-      console.log('[RVC Training] Restarting Ollama...');
-      try {
-        const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
-        if (startResult.status === 0) {
-          console.log('[RVC Training] Ollama service restarted via systemctl');
-        } else {
-          console.warn('[RVC Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
-        }
-      } catch (error) {
-        console.error('[RVC Training] Failed to restart Ollama:', error);
-      }
-
       audit({
         level: code === 0 ? 'info' : 'error',
         category: 'action',
@@ -2739,271 +2309,4 @@ export function startRVCTraining(
   });
 
   return { success: true };
-}
-
-export async function startKokoroVoicepackTraining(
-  speakerId: string = 'default',
-  options?: KokoroTrainingOptions
-): Promise<{ success: boolean; error?: string; message?: string }> {
-  const existingStatus = getKokoroTrainingStatus(speakerId);
-  if (existingStatus.status === 'running') {
-    return {
-      success: false,
-      error: 'Kokoro training is already running for this speaker.',
-    };
-  }
-
-  const datasetSamples = listKokoroSamples(speakerId);
-  if (datasetSamples.length < 10) {
-    return {
-      success: false,
-      error: 'Not enough samples copied to the Kokoro dataset. Need at least 10 clips. Use "Auto-Export Best Samples" or "Copy Selected Samples" first.',
-    };
-  }
-
-  const totalDuration = datasetSamples.reduce((sum, s) => sum + (s.duration || 0), 0);
-  if (totalDuration < 120) {
-    return {
-      success: false,
-      error: 'Not enough recorded audio in Kokoro dataset. Need at least 2 minutes of curated samples.',
-    };
-  }
-
-  const kokoroDir = path.join(systemPaths.root, 'external', 'kokoro');
-  const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
-  const trainerScript = path.join(kokoroDir, 'build_voicepack.py');
-
-  if (!fs.existsSync(pythonBin)) {
-    return { success: false, error: 'Kokoro virtual environment not found. Run ./bin/install-kokoro.sh first.' };
-  }
-  if (!fs.existsSync(trainerScript)) {
-    return { success: false, error: 'Voicepack trainer script not found. Reinstall the Kokoro addon.' };
-  }
-
-  const datasetDir = getKokoroDatasetDir(speakerId);
-  if (!datasetDir) {
-    return { success: false, error: 'Cannot access Kokoro dataset directory: user not authenticated' };
-  }
-  const voicepackDir = getKokoroVoicepacksDir();
-  if (!voicepackDir) {
-    return { success: false, error: 'Cannot access Kokoro voicepacks directory: user not authenticated' };
-  }
-  fs.mkdirSync(voicepackDir, { recursive: true });
-
-  // Determine output path: pure training saves to {speakerId}-pure.pt for A/B comparison
-  let outputPath: string;
-  if (options?.outputPath) {
-    outputPath = path.resolve(options.outputPath);
-  } else if (options?.pureTraining) {
-    outputPath = path.join(voicepackDir, `${speakerId}-pure.pt`);
-  } else {
-    outputPath = path.join(voicepackDir, `${speakerId}.pt`);
-  }
-
-  const logDir = path.join(systemPaths.logs, 'run');
-  fs.mkdirSync(logDir, { recursive: true });
-  const logPath = path.join(logDir, `kokoro-training-${speakerId}.log`);
-  const statusPath = getKokoroTrainingStatusPath(speakerId);
-
-  const preferredDevice = options?.device ?? 'auto';
-  const shouldPauseOllama = preferredDevice !== 'cpu';
-
-  // Stop Ollama to free VRAM for training (if using GPU)
-  const ollamaPaused = shouldPauseOllama ? pauseOllamaForKokoroTraining() : false;
-  if (ollamaPaused && shouldPauseOllama) {
-    // Wait for VRAM to be fully freed
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-
-  const args: string[] = [
-    trainerScript,
-    '--speaker',
-    speakerId,
-    '--dataset',
-    datasetDir,
-    '--output',
-    outputPath,
-    '--lang',
-    options?.langCode ?? 'a',
-    '--base-voice',
-    options?.baseVoice ?? 'af_heart',
-    '--epochs',
-    String(options?.epochs ?? 120),
-    '--learning-rate',
-    String(options?.learningRate ?? 5e-4),
-    '--max-samples',
-    String(options?.maxSamples ?? 200),
-    '--device',
-    options?.device ?? 'auto',
-    '--status-file',
-    statusPath,
-    '--log-file',
-    logPath,
-  ];
-
-  if (options?.regularization !== undefined) {
-    args.push('--regularization', String(options.regularization));
-  }
-
-  if (options?.continueFromCheckpoint) {
-    args.push('--continue-from-checkpoint');
-  }
-
-  if (options?.pureTraining) {
-    args.push('--pure-training');
-  }
-
-  const logFd = fs.openSync(logPath, 'w');
-
-  // Set PyTorch memory optimization environment variable to reduce fragmentation
-  const trainingEnv = {
-    ...process.env,
-    PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True',
-  };
-
-  const trainingProcess = spawn(
-    pythonBin,
-    args,
-    {
-      cwd: kokoroDir,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: trainingEnv,
-    }
-  );
-
-  const initialStatus: KokoroTrainingStatus = {
-    status: 'running',
-    speakerId,
-    progress: 0,
-    startTime: Date.now(),
-    message: 'Training Kokoro voicepack...',
-    pid: trainingProcess.pid ?? 0,
-    datasetSamples: datasetSamples.length,
-    datasetMinutes: totalDuration / 60,
-  };
-  writeKokoroTrainingStatus(initialStatus);
-
-  trainingProcess.on('exit', (code) => {
-    if (ollamaPaused) {
-      resumeOllamaAfterKokoroTraining();
-    }
-    const finalStatus = getKokoroTrainingStatus(speakerId);
-    if (code === 0) {
-      if (finalStatus.status === 'running') {
-        writeKokoroTrainingStatus({
-          ...finalStatus,
-          status: 'completed',
-          progress: 100,
-          message: 'Voicepack training completed',
-          endTime: Date.now(),
-        });
-      }
-    } else {
-      writeKokoroTrainingStatus({
-        speakerId,
-        status: 'failed',
-        progress: finalStatus.progress ?? 0,
-        error: `Trainer exited with code ${code}`,
-        endTime: Date.now(),
-      });
-    }
-  });
-
-  trainingProcess.on('error', (error) => {
-    if (ollamaPaused) {
-      resumeOllamaAfterKokoroTraining();
-    }
-    writeKokoroTrainingStatus({
-      speakerId,
-      status: 'failed',
-      progress: 0,
-      error: (error as Error).message,
-      endTime: Date.now(),
-    });
-  });
-
-  if (trainingProcess.unref) {
-    trainingProcess.unref();
-  }
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'kokoro_training_started',
-    details: {
-      speakerId,
-      pid: trainingProcess.pid ?? 0,
-      outputPath,
-    },
-    actor: 'system',
-  });
-
-  return {
-    success: true,
-    message: 'Kokoro voicepack training started. Monitor progress in the Voice Training tab.',
-  };
-}
-
-function pauseOllamaForKokoroTraining(): boolean {
-  console.log('[Kokoro Training] Stopping Ollama to free GPU VRAM...');
-  try {
-    // Try systemctl first (if Ollama is a service)
-    const systemctlResult = spawnSync('systemctl', ['stop', 'ollama'], { stdio: 'pipe' });
-
-    if (systemctlResult.status === 0) {
-      console.log('[Kokoro Training] Stopped Ollama service via systemctl');
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'ollama_stopped_for_kokoro',
-        details: { reason: 'Free GPU VRAM for Kokoro training', method: 'systemctl' },
-        actor: 'system',
-      });
-      return true;
-    } else {
-      // Fallback to pkill if systemctl fails
-      console.warn('[Kokoro Training] systemctl failed, trying pkill...');
-      execSync('pkill -9 ollama', { stdio: 'ignore' });
-      waitSync(1000); // Wait for process to fully terminate and VRAM to be freed
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'ollama_killed_for_kokoro',
-        details: { reason: 'Free GPU VRAM for Kokoro training', method: 'pkill' },
-        actor: 'system',
-      });
-      return true;
-    }
-  } catch (error) {
-    console.error('[Kokoro Training] Failed to stop Ollama:', error);
-    return false;
-  }
-}
-
-function resumeOllamaAfterKokoroTraining(): void {
-  console.log('[Kokoro Training] Restarting Ollama...');
-  try {
-    const startResult = spawnSync('systemctl', ['start', 'ollama'], { stdio: 'pipe' });
-    if (startResult.status === 0) {
-      console.log('[Kokoro Training] Ollama service restarted via systemctl');
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'ollama_restarted_after_kokoro',
-        details: { message: 'Ollama restarted after Kokoro training' },
-        actor: 'system',
-      });
-    } else {
-      console.warn('[Kokoro Training] Warning: Failed to restart Ollama service. You may need to start it manually: systemctl start ollama');
-    }
-  } catch (error) {
-    console.error('[Kokoro Training] Failed to restart Ollama:', error);
-  }
-}
-
-function waitSync(ms: number) {
-  const sab = new SharedArrayBuffer(4);
-  const ia = new Int32Array(sab);
-  Atomics.wait(ia, 0, 0, ms);
 }

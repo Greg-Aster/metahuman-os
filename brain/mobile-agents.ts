@@ -24,7 +24,6 @@
  * - transcriber: Requires Whisper/GPU
  * - fine-tune-trainer: Requires GPU training
  * - lora-trainer: Requires GPU training
- * - gguf-converter: Requires Python/ML tools
  */
 
 import { withUserContext } from '@metahuman/core/context';
@@ -158,19 +157,14 @@ async function runDreamerWrapper(context: MobileAgentContext): Promise<void> {
  */
 async function runCuriosityWrapper(context: MobileAgentContext): Promise<void> {
   if (!context.username) {
-    console.log('[mobile-curiosity] No username, skipping');
-    return;
+    throw new Error('Curiosity handler requires an authenticated username');
   }
 
   await withUserContext(
     { userId: context.username, username: context.username, role: 'owner' },
     async () => {
-      try {
-        const success = await generateUserQuestion(context.username!);
-        console.log(`[mobile-curiosity] ${success ? 'Question generated' : 'Skipped'}`);
-      } catch (error) {
-        console.error('[mobile-curiosity] Error:', (error as Error).message);
-      }
+      const outcome = await generateUserQuestion(context.username!);
+      console.log(`[mobile-curiosity] ${outcome.status === 'generated' ? 'Question generated' : `Skipped: ${outcome.reason}`}`);
     }
   );
 }
@@ -355,109 +349,75 @@ async function runProfileSyncWrapper(context: MobileAgentContext): Promise<void>
 // ============================================================================
 
 /**
- * Register all mobile-compatible agents with the scheduler
+ * Register mobile-compatible in-process executors with the canonical coordinator.
+ * Trigger Manager remains the sole owner of admission policy and timing.
  */
 export function registerMobileAgents(): MobileAgentRegistration[] {
   const agents: MobileAgentRegistration[] = [
-    // Sync agents (high priority, run on login)
+    // Sync agents
     {
       id: 'profile-sync',
       name: 'Profile Sync',
       run: runProfileSyncWrapper,
-      usesLLM: false,
-      priority: 'high',
-      intervalSeconds: 1800, // Every 30 minutes
     },
     // Original agents
     {
       id: 'organizer',
       name: 'Memory Organizer',
       run: runOrganizer,
-      usesLLM: true,
-      priority: 'normal',
-      intervalSeconds: 300, // Every 5 minutes
     },
     {
       id: 'ingestor',
       name: 'Inbox Ingestor',
       run: runIngestor,
-      usesLLM: false,
-      priority: 'low',
-      intervalSeconds: 60, // Every minute
     },
     // Unified agents
     {
       id: 'reflector',
       name: 'Reflector',
       run: runReflectorWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 600, // Every 10 minutes
     },
     {
       id: 'dreamer',
       name: 'Dreamer',
       run: runDreamerWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 3600, // Every hour (dreams are rare)
     },
     {
       id: 'curiosity',
       name: 'Curiosity',
+      handler: 'agent.curiosity-service',
       run: runCuriosityWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 900, // Every 15 minutes
     },
     {
       id: 'inner-curiosity',
       name: 'Inner Curiosity',
       run: runInnerCuriosityWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 1200, // Every 20 minutes
     },
     {
       id: 'digest',
       name: 'Daily Digest',
       run: runDigestWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 86400, // Once per day
     },
     // Agency system agents
     {
       id: 'desire-generator',
       name: 'Desire Generator',
       run: runDesireGeneratorWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 1800, // Every 30 minutes
     },
     {
       id: 'desire-planner',
       name: 'Desire Planner',
       run: runDesirePlannerWrapper,
-      usesLLM: true,
-      priority: 'normal',
-      intervalSeconds: 300, // Every 5 minutes
     },
     {
       id: 'desire-executor',
       name: 'Desire Executor',
       run: runDesireExecutorWrapper,
-      usesLLM: true,
-      priority: 'normal',
-      intervalSeconds: 300, // Every 5 minutes
     },
     {
       id: 'desire-outcome-reviewer',
       name: 'Desire Outcome Reviewer',
       run: runDesireReviewerWrapper,
-      usesLLM: true,
-      priority: 'low',
-      intervalSeconds: 600, // Every 10 minutes
     },
   ];
 

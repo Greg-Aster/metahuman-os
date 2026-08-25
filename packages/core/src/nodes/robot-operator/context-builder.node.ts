@@ -7,6 +7,7 @@ import {
   buildEnvironmentSelectorJsonSchema,
   robotOperatorActionRequirement,
 } from '../environment/helpers.js';
+import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -184,12 +185,18 @@ function compactAction(value: unknown): Record<string, unknown> | null {
 
 function autonomySelectorSchema(
   observation: EnvironmentObservation,
+  taskState: unknown,
 ): Record<string, unknown> {
+  const step = isRecord(taskState) && typeof taskState.step === 'number'
+    ? taskState.step
+    : 0;
   return buildEnvironmentSelectorJsonSchema({
     actions: observation.capabilities.actions,
     robotCommands: observation.capabilities.robotCommands,
-    requireAction: robotOperatorActionRequirement(observation) === true,
+    requireAction: step === 0 && robotOperatorActionRequirement(observation) === true,
     requireObjective: true,
+    requireProgress: true,
+    requireAutonomousConsequence: true,
   });
 }
 
@@ -270,13 +277,22 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
     { name: 'jsonSchema', type: 'object', description: 'Capability-bounded Environment action output schema' },
     { name: 'context', type: 'object', description: 'Structured high-level deliberation context' },
+    { name: 'stimulusReady', type: 'boolean', description: 'Whether a correlated image or action result is available for an evidence-first planner' },
     { name: 'valid', type: 'boolean', description: 'Whether the configured context is ready for deliberation' },
     { name: 'error', type: 'string', description: 'Visible configuration or input error' },
   ],
-  properties: {},
-  propertySchemas: {},
+  properties: { outputContract: 'environment' },
+  propertySchemas: {
+    outputContract: {
+      type: 'select',
+      default: 'environment',
+      label: 'Output Contract',
+      options: ['environment', 'delegation'],
+      description: 'Choose an executable Environment decision or a high-level planner instruction.',
+    },
+  },
   description: 'Consolidates separately supplied instructions, conversation, inner context, persona, trigger metadata, and current robot perception for the Robot Operator LLM.',
-  async execute(inputs) {
+  async execute(inputs, _context, properties) {
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
@@ -286,14 +302,19 @@ export const robotOperatorContextBuilderNode = defineNode({
       messages: [],
       jsonSchema: null,
       context: null,
+      stimulusReady: false,
       valid: false,
       error,
     });
     if (!observation?.sessionId) return invalid('Robot Operator context requires a robot observation with a session ID.');
     if (!instruction) return invalid('Robot Operator context requires instructions from a connected text input node.');
 
-    const conversationContext = consolidatedHistory(inputs.conversationHistory).slice(-4);
     const innerContext = consolidatedInnerHistory(inputs.innerHistory).slice(-2);
+    const conversationContext = consolidatedHistory(inputs.conversationHistory)
+      .filter(entry => innerContext.length === 0 || !(
+        isRecord(entry.context) && entry.context.isInnerDialogue === true
+      ))
+      .slice(-4);
     const recentContext = [...conversationContext, ...innerContext];
     const allActionHistory = verifiedActionHistory(inputs.actionHistory);
     const innerContextCount = recentContext.filter(entry => (
@@ -359,6 +380,8 @@ export const robotOperatorContextBuilderNode = defineNode({
     const backgroundNarrative = recentContext.filter(entry => !taskNarrative.includes(entry));
     const reflectionTrigger = trigger.requestedBy === 'boredom-reflection'
       || cleanText(observation.metadata?.autonomousStimulus, 100) === 'boredom-reflection';
+    const feedback = compactFeedback(observation);
+    const stimulusReady = images.length > 0 || feedback.length > 0;
     const stimulus = {
       observedAt: observation.timestamp,
       stateObservedAt: cleanText(observation.metadata?.sourceObservationAt, 100)
@@ -368,7 +391,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       location: boundedObject(observation.location, 4_000),
       map: boundedObject(observation.map, 4_000),
       capabilities: boundedObject(observation.capabilities, 4_000),
-      feedback: compactFeedback(observation),
+      feedback,
       verifiedCurrentAction: boundedObject(currentActionContext, 2_000),
       text: (observation.text ?? []).slice(-8).map(event => ({
         source: event.source,
@@ -445,7 +468,9 @@ export const robotOperatorContextBuilderNode = defineNode({
         supportingContext,
         { role: 'user', content: userContent },
       ],
-      jsonSchema: autonomySelectorSchema(observation),
+      jsonSchema: properties?.outputContract === 'delegation'
+        ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
+        : autonomySelectorSchema(observation, inputs.taskState),
       context: {
         instruction,
         stimulusInstruction,
@@ -461,6 +486,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,
       },
+      stimulusReady,
       valid: true,
       error: '',
     };

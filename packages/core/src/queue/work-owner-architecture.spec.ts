@@ -30,6 +30,9 @@ for (const removedPath of [
   'packages/core/src/vector-index-queue.ts',
   'packages/server/src/queue/index.ts',
   'etc/cognitive-graphs/lizard-brain.json',
+  'packages/core/src/api/handlers/adapters.ts',
+  'apps/site/src/components/SystemControls.svelte',
+  'apps/site/src/components/AdapterDashboard.svelte',
 ]) {
   assert.ok(!fs.existsSync(path.join(ROOT, removedPath)), `superseded owner must be deleted: ${removedPath}`);
 }
@@ -37,6 +40,12 @@ for (const removedPath of [
 assert.ok(
   !source('packages/core/src/queue/trigger-manager.ts').includes('this.queueManager.pause()'),
   'timer admission must not pause the global coordinator',
+);
+
+assert.ok(
+  !source('packages/core/src/mobile-handlers/mobile-agents.ts').includes('registerTrigger')
+    && !source('brain/mobile-agents.ts').includes('intervalSeconds'),
+  'mobile executors must not create a second trigger schedule',
 );
 
 assert.ok(
@@ -114,20 +123,6 @@ assert.ok(
   !source('packages/core/src/api/handlers/active-operator.ts').includes("case 'toggle'"),
   'Active Operator control must use explicit three-state mode changes',
 );
-
-for (const scriptPath of [
-  'scripts/start-active-operator.ts',
-  'scripts/stop-active-operator.ts',
-  'scripts/active-operator-status.ts',
-]) {
-  const script = source(scriptPath);
-  assert.ok(
-    script.includes('requestActiveOperator')
-      && !script.includes('ActiveOperatorServiceStatus')
-      && !script.includes('ActiveOperatorService('),
-    `Active Operator CLI must control the server-owned runtime: ${scriptPath}`,
-  );
-}
 
 const agencyHandler = source('packages/core/src/api/handlers/agency.ts');
 assert.ok(
@@ -230,11 +225,6 @@ assert.ok(
   'the server-owned coordinator handoff must have a thin site transport route',
 );
 
-assert.ok(
-  !source('scripts/process-desire-review.ts').includes('active-operator/task-executor'),
-  'maintenance scripts must not import the deleted direct executor',
-);
-
 const managerSource = source('packages/core/src/queue/unified-queue-manager.ts');
 for (const legacyImportPath of [
   'normalizeImportedTask',
@@ -260,17 +250,6 @@ for (const staleCompatibilityToken of [
   assert.ok(
     !source('packages/core/src/index.ts').includes(staleCompatibilityToken),
     `unused root compatibility export must be removed: ${staleCompatibilityToken}`,
-  );
-}
-
-for (const staleControlPath of [
-  'packages/core/src/api/handlers/adapters.ts',
-  'apps/site/src/components/SystemControls.svelte',
-  'apps/site/src/components/AdapterDashboard.svelte',
-]) {
-  assert.ok(
-    !source(staleControlPath).includes('runNightProcessor'),
-    `removed night processor must not retain a compatibility control: ${staleControlPath}`,
   );
 }
 

@@ -1,8 +1,7 @@
-import { exec, spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 import { audit } from '../../audit.js';
 import {
   BIG_BROTHER_SESSION_PORT,
@@ -12,8 +11,6 @@ import {
 import { ROOT as REPO_ROOT } from '../../path-builder.js';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-
-const execAsync = promisify(exec);
 
 const LOG_DIR = path.join(REPO_ROOT, 'logs/run');
 const TTYD_BIN = path.join(REPO_ROOT, 'bin/ttyd');
@@ -50,38 +47,64 @@ async function withTerminalSpawnLock<T>(operation: () => Promise<T>): Promise<T>
   }
 }
 
-export function parseTtydProcesses(stdout: string): RunningTerminal[] {
-  const terminals: RunningTerminal[] = [];
+export function parseTtydCommand(pid: number, argv: string[]): RunningTerminal | null {
+  if (!Number.isInteger(pid) || pid <= 1 || path.basename(argv[0] || '') !== 'ttyd') return null;
+  const portIndex = argv.indexOf('--port');
+  if (portIndex < 0) return null;
+  const port = Number.parseInt(argv[portIndex + 1] || '', 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
 
-  for (const line of stdout.trim().split('\n').filter(Boolean)) {
-    const pidMatch = line.match(/^(\d+)\s+/);
-    const portMatch = line.match(/--port\s+(\d+)/);
-    const cwdMatch = line.match(/--cwd\s+(\S+)/);
-    if (!pidMatch || !portMatch) continue;
+  const cwdIndex = argv.indexOf('--cwd');
+  const bashIndex = argv.findIndex(value => path.basename(value) === 'bash');
+  const command = bashIndex >= 0 && argv[bashIndex + 1] === '-c'
+    ? argv[bashIndex + 2]
+    : undefined;
 
-    let command: string | undefined;
-    const bashIndex = line.indexOf(' bash');
-    if (bashIndex > -1) {
-      const afterBash = line.substring(bashIndex + 5).trim();
-      if (afterBash.startsWith('-c ')) {
-        command = afterBash.substring(3).trim();
-      }
-    }
-
-    terminals.push({
-      pid: Number.parseInt(pidMatch[1], 10),
-      port: Number.parseInt(portMatch[1], 10),
-      command,
-      cwd: cwdMatch?.[1],
-    });
-  }
-
-  return terminals;
+  return {
+    pid,
+    port,
+    command,
+    cwd: cwdIndex >= 0 ? argv[cwdIndex + 1] : undefined,
+  };
 }
 
 async function listTtydProcesses(): Promise<RunningTerminal[]> {
-  const { stdout } = await execAsync("pgrep -fa '[t]tyd .*--port' || true");
-  return parseTtydProcesses(stdout);
+  const terminals: RunningTerminal[] = [];
+
+  for (let port = BASE_PORT; port < BASE_PORT + MAX_TERMINALS; port++) {
+    const pidFile = terminalPidPath(port);
+    const activePid = activeTerminals.get(port)?.pid;
+    const storedPid = fs.existsSync(pidFile)
+      ? Number.parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
+      : undefined;
+    const pid = activePid ?? storedPid;
+    if (!pid || !Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
+      removeOwnedPidFile(port);
+      activeTerminals.delete(port);
+      continue;
+    }
+
+    try {
+      process.kill(pid, 0);
+      if (process.platform === 'linux') {
+        const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+        const terminal = parseTtydCommand(pid, argv);
+        if (!terminal || argv[0] !== TTYD_BIN || terminal.port !== port) {
+          removeOwnedPidFile(port, storedPid);
+          activeTerminals.delete(port);
+          continue;
+        }
+        terminals.push(terminal);
+      } else {
+        terminals.push({ pid, port });
+      }
+    } catch {
+      removeOwnedPidFile(port, storedPid);
+      activeTerminals.delete(port);
+    }
+  }
+
+  return terminals;
 }
 
 export async function isTerminalPortInUse(
@@ -336,7 +359,15 @@ export async function handleSpawnTerminal(req: UnifiedRequest): Promise<UnifiedR
 
 export async function handleCleanupTerminals(): Promise<UnifiedResponse> {
   try {
-    const { stdout } = await execAsync('pkill -f ttyd || true');
+    const terminals = await listTtydProcesses();
+    for (const terminal of terminals) {
+      if (!terminal.pid) continue;
+      try {
+        process.kill(-terminal.pid, 'SIGTERM');
+      } catch {
+        try { process.kill(terminal.pid, 'SIGTERM'); } catch { /* already exited */ }
+      }
+    }
     await stopBigBrotherSession('All terminals cleaned up by user');
     activeTerminals.clear();
     for (let port = BASE_PORT; port < BASE_PORT + MAX_TERMINALS; port++) {
@@ -346,7 +377,7 @@ export async function handleCleanupTerminals(): Promise<UnifiedResponse> {
     return successResponse({
       success: true,
       message: 'All terminal processes cleaned up',
-      output: stdout,
+      stopped: terminals.length,
     });
   } catch (error) {
     console.error('[Terminal Cleanup] Error:', error);
@@ -440,7 +471,11 @@ export async function handleKillTerminal(req: UnifiedRequest): Promise<UnifiedRe
 
     for (const pid of pids) {
       try {
-        process.kill(pid, 'SIGTERM');
+        try {
+          process.kill(-pid, 'SIGTERM');
+        } catch {
+          process.kill(pid, 'SIGTERM');
+        }
         console.log(`[terminal/kill] Killed ttyd process ${pid} on port ${port}`);
       } catch (killError) {
         console.warn(`[terminal/kill] Failed to kill PID ${pid}:`, killError);

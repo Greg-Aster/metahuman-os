@@ -1,257 +1,91 @@
-# MetaHuman OS — Technical Architecture
+# MetaHuman OS Architecture
 
-## System Overview
-MetaHuman OS is a local-first digital companion that mirrors a person's identity, memory, and workflows. The system is built around TypeScript packages that run entirely on the user's machine, persist data as human-readable JSON, and orchestrate background agents, a command-line interface, and a web dashboard. Local LLMs (via Ollama) and optional audio tooling (Whisper, Piper) provide intelligence while keeping private data on disk. Core principles:
+MetaHuman OS is a local-first TypeScript monorepo. Interfaces are thin; Core
+owns application behavior; Brain owns asynchronous cognitive work.
 
-- **Local and inspectable** — All state lives under the repository root (`persona/`, `memory/`, `logs/`, `out/`) as JSON/Markdown that the user owns.
-- **Composable runtime surfaces** — A CLI, long-running agents, and an Astro/Svelte UI share the same core library.
-- **Auditability and safety** — Every meaningful action is logged, policy-checked, and tied to an explicit trust level.
+## Repository Owners
 
-## Monorepo Boundary Contract
+| Surface | Owner |
+| --- | --- |
+| Web interface and Astro transport | `apps/site` |
+| React Native interface and bundled HTTP host | `apps/react-native` |
+| Domain services, API contracts, graphs, queues, storage, and providers | `packages/core` |
+| Command-line interface | `packages/cli` |
+| Managed agent process runtime | `packages/agent-runtime` |
+| Lightweight local model process | `packages/local-model-service` |
+| Agents, workflows, and model training | `brain` |
+| Operator defaults and deployment configuration | `etc` |
+| Policy checks and maintained automation | `scripts`, `bin` |
 
-This repository is a pnpm workspace monorepo. The intended architecture is layered:
-
-- `apps/*` are interface and platform shells. They render UI, expose transport routes, and call public engine/agent interfaces.
-- `packages/core` is the behind-the-scenes engine. It owns domain behavior, profile and memory access, auth, policy, model routing, graph execution, and shared API handlers.
-- `brain/*` contains autonomous workers, services, and training pipelines that sit above the engine and call public core exports.
-- `packages/agent-runtime` owns agent execution abstractions for web, mobile, and process execution.
-- `packages/cli` is a command surface. It parses arguments and delegates to core or agent APIs.
-
-Dependency direction matters. Core must not import apps, UI framework code, or brain workers. Interface packages and agents may depend on public core exports, but should not deep-import `packages/core/src/...`. Runtime data, personal profiles, logs, model files, generated output, local agent instructions, and third-party bulk are not maintained source.
-
-See `docs/technical/REFACTOR_BLUEPRINT.md` for the active cleanup contract, and `docs/technical/MAINTAINED_SURFACE.md` for source/include rules.
-
-## High-Level Runtime
-```
-┌────────────────────────────┐
-│        User Surfaces       │
-│  • bin/mh CLI              │
-│  • apps/site web UI        │
-└─────────────┬──────────────┘
-              │ imports @metahuman/core
-┌─────────────▼──────────────┐
-│     @metahuman/core        │
-│  Paths • Identity • Memory │
-│  LLM • Skills • Policies   │
-│  Vector Index • Logging    │
-└─────────────┬──────────────┘
-              │ file APIs + child processes
-┌─────────────▼──────────────┐
-│      Runtime Data          │
-│ persona/ • memory/ • logs/ │
-│ etc/ • vendor/             │
-└────────────────────────────┘
-              │ spawns
-┌─────────────▼──────────────┐
-│      brain/agents          │
-│  Background automation     │
-└────────────────────────────┘
-```
-
-## Work Coordination, Triggering, and Services
-
-`AgentCatalogService` owns the complete agent runtime inventory. It merges canonical
-built-in metadata from `agent-catalog-definitions.ts`, maintained executables in
-`brain/agents`, finite registration in `etc/agents.json`, and persistent service
-registration in `etc/services.json`. Agent Monitor, API authorization, Dashboard,
-and System Settings consume that inventory instead of maintaining independent
-allowlists. Source aliases such as `curiosity` to `curiosity-service` and parent
-relationships such as `sleep-workflow` to `dreamer` are represented explicitly.
-
-Registering an installed finite agent adds a validated Trigger Manager entry.
-Unregistering removes future trigger membership but preserves executable source,
-logs, history, and work already accepted by the coordinator. Persistent services
-cannot be registered or removed through finite-agent controls.
-
-MetaHuman OS then has one finite-work path:
+## Request Flow
 
 ```text
-Active Operator mode + etc/agents.json
-                  -> TriggerManager
-                  -> Work Coordinator
-                  -> registered finite handler
+Web or mobile client
+  -> transport adapter
+  -> Core API router and handler
+  -> Core domain owner
+  -> response
 ```
 
-`QueueSystem` owns the running TriggerManager. `TriggerConfigService` is the
-only scheduling-config writer and applies validated, revisioned changes live.
-TriggerManager remains visible in reactive, semi, and full modes; it records an
-explicit suppression reason when mode or admission policy blocks work. Every
-admitted trigger receives one durable coordinator id. TriggerManager does not
-spawn finite agents or execute handlers itself.
+Astro route files forward requests through
+`@metahuman/core/api/adapters/astro`. They do not own business logic. Mobile
+uses the same Core router through its HTTP adapter.
 
-Persistent processes follow a separate lifecycle. Agent Monitor and the shared
-agent process runner start, stop, restart, lock, and report the services defined
-in `etc/services.json`. `startOnSystemBoot` and `autoRestart` are service fields;
-finite triggers use `startupPolicy` in `etc/agents.json`. Maintenance Service
-performs bounded lock/log cleanup and does not own clocks, schedules, or agent
-admission. Audio Organizer is finite work and has no implicit boot behavior.
+Long-running work follows a different path:
 
-Whisper and Kokoro are inference servers, not agents or Agent Monitor services.
-Their configuration lives in `etc/voice-servers.json`; the standalone voice
-server manager owns their process lifecycle and the Server surface owns their
-status and controls. Neither side may import, register, expose, or control the
-other.
-
-The web UI consumes one Agent Catalog inventory plus one TriggerManager snapshot
-and shared SSE store across Dashboard, Queue, Settings, and conversation mode
-controls. Astro catalog and trigger routes are transports only; inventory,
-configuration, and control behavior live in `packages/core/src/api/handlers`.
-
-Mood is a finite event-triggered agent, not a persistent service. After a user
-conversation message is durably appended, `conversation-buffer.ts` publishes
-`conversation.user-message.appended` with that user's monotonic message count.
-Mood is registered but disabled by default. Once an owner enables it,
-TriggerManager admits `agent.mood` on the configured count boundary (ten by
-default) and the Work Coordinator runs `brain/agents/mood/cli.ts`. The agent
-executes the editable `etc/cognitive-graphs/mood-review.json` graph, which loads
-the configured conversation and/or inner-dialogue buffers, presents only that
-user's enabled persona facets to its psychoanalyzer classifier (using the
-established `psychotherapist` model role), validates its selection, and
-delegates any change to the profile-aware persona-facet owner.
-
-Mood respects both the active `inactive` facet and the global persona-summary
-switch unless the user's explicit Mood override is enabled. Its idle baseline
-reset is evaluated by the existing TriggerManager activity loop and admitted
-through the same coordinator path; it does not add another timer, daemon, or
-queue. Per-user Mood settings live under the resolved profile root, while count
-and cooldown configuration remain system TriggerManager fields in
-`etc/agents.json`.
-
-## Core Packages and Entry Points
-### `@metahuman/core` (`packages/core/src`)
-The core ESM library supplies shared capabilities:
-- **Path discovery** (`paths.ts`) — Finds the repository root and centralizes folders for persona, memory, logs, skills, etc., so every surface reads/writes the same data layout.【F:packages/core/src/paths.ts†L1-L63】
-- **Identity management** (`identity.ts`) — Loads and saves persona profiles and decision rules, exposes `getIdentitySummary()` for CLI/UI status panes, and supports adjusting trust levels safely.【F:packages/core/src/identity.ts†L1-L82】【F:packages/core/src/identity.ts†L100-L124】
-- **Memory operations** (`memory.ts`) — Captures episodic events, CRUDs task files, and hydrates search helpers using JSON storage under `memory/` while updating sync logs and the optional embedding index.【F:packages/core/src/memory.ts†L1-L104】【F:packages/core/src/memory.ts†L126-L206】
-- **LLM + embeddings** (`ollama.ts`, `llm.ts`, `embeddings.ts`) — Wraps the Ollama HTTP API for chat/generation/model management and exposes embedding helpers with a mock fallback when Ollama is offline.【F:packages/core/src/ollama.ts†L1-L110】【F:packages/core/src/embeddings.ts†L1-L24】
-- **Vector index** (`vector-index.ts`) — Reconciles and queries semantic indexes over episodic memories, tasks, and curated notes stored under `memory/index/`. Full reconciliation is admitted through the Work Coordinator's exclusive `vector.index-build` lane; incremental appends use the same lane.【F:packages/core/src/vector-index.ts†L1-L104】
-- **Skills & policy enforcement** (`skills.ts`, `policy.ts`) — Registers executable skills, queues approvals, and evaluates whether an action is allowed at the current trust level, auditing every registration and execution.【F:packages/core/src/skills.ts†L1-L86】【F:packages/core/src/policy.ts†L1-L83】
-- **Audit & logging** (`audit.ts`, `logging.ts`, `agent-monitor.ts`) — Writes append-only NDJSON audit trails, streams agent logs, and surfaces run metrics for the UI and CLI dashboards.【F:packages/core/src/audit.ts†L1-L48】【F:packages/core/src/agent-monitor.ts†L1-L61】
-- **Autonomy & configuration** (`autonomy.ts`, `locks.ts`, `adapters.ts`, etc.) — Reads runtime guardrails, coordinates file locks for agents, and adapts third-party integrations.
-- **Audio pipeline** (`transcription.ts`, `tts.ts`, `voice-training.ts`, `stt.ts`) — Provides transcription, text-to-speech, and dataset tooling that wrap local binaries (whisper.cpp, piper) with mock fallbacks for development.【F:packages/core/src/transcription.ts†L1-L64】
-
-Every runtime surface imports from this package (published locally via `pnpm link` during dev) so logic lives in one place.
-
-### CLI (`packages/cli` + `bin/mh`)
-The CLI launcher (`packages/cli/src/entry.ts`) handles lightweight help output and loads `packages/cli/src/main.ts` for executable commands. The command modules bootstrap directory structures during `mh init`, surface persona/memory status, manage tasks and events, drive local model interactions, monitor agents, and expose focused subcommands under `commands/`. All operations go through `@metahuman/core`, so CLI actions reuse the same audit, policy, and storage layers.
-
-### Background Agents (`brain/agents`)
-Agents are Node scripts (ESM) that import `@metahuman/core` to perform autonomous routines such as enriching episodic memories, processing inbox files, or running nightly reflections. For example, `organizer.ts` scans the episodic store, calls local LLMs for metadata, and logs outcomes through the audit helpers.【F:brain/agents/organizer.ts†L18-L78】 Agent lifecycle (registration, status, logs) is surfaced via the CLI and UI using the agent monitor utilities.
-
-### Web Interface (`apps/site`)
-The Astro + Svelte dashboard consumes `@metahuman/core` directly inside API routes and server components. API endpoints (e.g., `pages/api/tasks.ts`) delegate to memory helpers to list/create/update tasks while auditing mutations, and UI components pull persona summaries, logs, and embedding status for real-time monitoring.【F:apps/site/src/pages/api/tasks.ts†L1-L65】 Voice input/output routes also reuse the shared audio modules.
-
-### Startup Scripts & Tooling
-The Linux-first `start.sh` is the production startup owner: it validates the Node runtime, starts configured services, and launches the prebuilt Site. `stop.sh` is the repository-scoped shutdown owner. PM2 may supervise `start.sh` as one forked instance; development commands run the Site without implicitly owning background services. Helper binaries under `bin/` wrap these canonical paths, while `scripts/` contains focused maintenance and validation utilities.
-
-## Data & Storage Layout
-
-**⚠️ IMPORTANT**: User profile locations vary significantly. The paths shown below are examples only. Always use `getProfilePaths(username)` from `@metahuman/core/paths` to get actual locations, as many users have custom profile storage (encrypted drives, external storage, etc.).
-
-`@metahuman/core/paths` defines the logical structure, but **actual locations depend on user configuration**:
-
-### System-Wide (Fixed Locations)
-- **Brain** (`brain/agents/`, `brain/skills/`, `brain/policies/`) — Source-controlled automation and capabilities invoked by agents or the operator.【F:packages/core/src/paths.ts†L44-L55】
-- **Logs** (`logs/audit/*.ndjson`, `logs/run/agents/`) — Append-only audit trail, agent run histories, and sync logs consumed by monitors.【F:packages/core/src/paths.ts†L56-L63】
-
-### User-Specific (Variable Locations) 
-**Note**: These paths are resolved via `getProfilePaths(username)` and may be on encrypted drives, external storage, or custom locations.
-
-- **Persona** (`{profileRoot}/persona/core.json`, etc.) — Identity, values, routines, and trust configuration that drive autonomy decisions.【F:packages/core/src/paths.ts†L23-L41】
-  - Example locations: `/media/user/drive/profiles/username/persona/` (encrypted), `profiles/username/persona/` (default)
-- **Memory** (`{profileRoot}/memory/episodic/`, `{profileRoot}/memory/tasks/`, etc.) — Time-stamped events, task JSON, curated knowledge, and embedding artifacts.【F:packages/core/src/memory.ts†L1-L74】
-  - Example locations: `/media/user/drive/profiles/username/memory/` (encrypted), `profiles/username/memory/` (default)
-- **Etc / Out** (`{profileRoot}/etc/*.json`, `{profileRoot}/out/`) — User-specific configs (autonomy, audio, ingestion) and generated artifacts (briefs, plans, exports).
-
-### Profile Location Resolution
-Users configure custom profile storage via `persona/users.json`:
-```json
-{
-  "metadata": {
-    "profileStorage": {
-      "path": "/media/user/DRIVE/metahuman-profiles/username",
-      "type": "encrypted"
-    }
-  }
-}
+```text
+Core service or API handler
+  -> Work Coordinator queue
+  -> registered Brain agent or workflow
+  -> durable result and audit event
 ```
 
-**Critical for developers**: Never use hardcoded paths like `profiles/username/` or `persona/core.json`. Always use:
-```typescript
-import { getProfilePaths } from '@metahuman/core/paths';
-const paths = getProfilePaths(username);
-// paths.persona, paths.memory, paths.etc contain actual locations
-```
+The queue is the admission owner. Features must not add private schedulers,
+parallel queues, or direct background execution paths.
 
-All state is plain text so users can inspect, version, or sync selectively.
+## Cognitive Runtime
 
-## Intelligence Stack
-### Language + Reasoning
-LLM access flows through the Ollama client. Agents and UI components request completions or JSON outputs with local models; the client handles health checks, streaming pulls, and fallbacks when models are missing. Embedding support uses the same endpoint to produce dense vectors for retrieval, with a deterministic mock for environments without Ollama.【F:packages/core/src/ollama.ts†L1-L92】【F:packages/core/src/embeddings.ts†L1-L24】
+Cognitive graphs are the conversation and environment execution model. Graph
+JSON defines composition; registered Core nodes own behavior; the graph
+executor owns execution and traces. There is no second imperative cognitive
+pipeline or configurable cognitive-layer stack.
 
-### Persona Generation System
-The persona generation system uses an LLM-powered interview process to build and refine user personality profiles through structured conversations. It introduces a dedicated **psychotherapist role** that uses motivational interviewing techniques to extract authentic personality traits, values, goals, and communication styles.
+The maintained conversation path builds authenticated user context, executes
+the selected graph, records durable memory through its canonical owner, and
+streams typed events to clients.
 
-**Core Modules** (`packages/core/src/persona/`):
-- **session-manager.ts** — Creates, loads, updates, and finalizes interview sessions with multi-user isolation and ownership validation.【F:packages/core/src/persona/session-manager.ts†L1-L400】
-- **question-generator.ts** — Generates adaptive follow-up questions using the psychotherapist role, tracks category coverage (values, goals, style, biography, current_focus), and determines interview completion.【F:packages/core/src/persona/question-generator.ts†L1-L300】
-- **extractor.ts** — Converts conversational interview transcripts into structured persona data using LLM-powered extraction with confidence scoring.【F:packages/core/src/persona/extractor.ts†L1-L200】
-- **merger.ts** — Intelligently merges new persona data with existing profiles using three strategies: replace (full override), merge (deduplicated combination), or append (additive accumulation). Creates backups before applying changes.【F:packages/core/src/persona/merger.ts†L1-L250】
-- **cleanup.ts** — Archives old interview sessions based on age and status, with dry-run support and configurable retention policies.【F:packages/core/src/persona/cleanup.ts†L1-L150】
+## Models and Training
 
-**Psychotherapist Role**:
-The psychotherapist is a specialized LLM role configured in `etc/models.json` and `persona/profiles/psychotherapist.json` that:
-- Uses motivational interviewing methodology (open-ended questions, reflective listening, empathic exploration)
-- Generates adaptive follow-up questions based on previous answers and category coverage gaps
-- Maintains professional boundaries and avoids requesting sensitive personal identifiers
-- Routes through the model registry for cognitive-mode-aware model selection
+The model registry assigns model roles. Core provider and backend services own
+Ollama, vLLM, remote-server, RunPod, and Hugging Face integration.
 
-**Interview Flow**:
-1. User starts session via web UI (`PersonaGenerator.svelte`) or CLI (`mh persona generate`)
-2. System presents baseline question from `etc/persona-generator.json`
-3. User provides answer, triggering LLM-generated follow-up based on response content and category gaps
-4. Category coverage tracked across 5 dimensions; interview completes when all reach 80% or max questions reached
-5. Finalization extracts structured persona data from full transcript with confidence scoring
-6. User reviews diff preview showing additions/updates/removals
-7. Changes applied using selected merge strategy, with automatic backup creation
-8. Optional: Training data exported to `memory/training/persona-interviews/` for LoRA fine-tuning
+Training has one curation path and one artifact per requested target:
 
-**Security & Isolation**:
-All session operations verify user authentication and ownership. Anonymous users receive 401 errors. Sessions are stored per-user in `profiles/<username>/persona/interviews/` with audit logging for all actions (start, answer, finalize, apply, discard). See [docs/PERSONA-GENERATOR-AUDIT-EVENTS.md](PERSONA-GENERATOR-AUDIT-EVENTS.md) for complete event specifications.
+- Ollama training produces a merged GGUF model.
+- vLLM training produces a safetensors LoRA adapter.
+- Backend Settings owns runtime loading and unloading.
 
-**Configuration**:
-- `etc/persona-generator.json` — Baseline questions and category definitions
-- `etc/models.json` — Psychotherapist role model mappings for each cognitive mode
-- `persona/profiles/psychotherapist.json` — Role profile with methodology and guidelines
+Training lifecycle state is tracked by exact PID records in
+`packages/core/src/training-process.ts`; training scripts do not scan or kill
+unrelated processes.
 
-All persona generation modules are exported from `@metahuman/core` for use across CLI, web UI, and future automation.【F:packages/core/src/index.ts†L50-L54】
+## Data Boundary
 
-### Memory Retrieval & RAG
-`vector-index.ts` walks episodic and task stores, embeds their content, and persists an index file. Queries compute cosine similarity locally to retrieve relevant context for prompts or dashboards, enabling RAG workflows without external services.【F:packages/core/src/vector-index.ts†L1-L97】
+`persona`, `profiles`, `memory`, `logs`, `out`, and local runtime directories
+are user-owned data. Maintained source resolves them through Core path and
+storage services. Source code must not embed a developer username, assume the
+owner profile, or commit generated runtime content.
 
-### Skills, Policies, and Trust
-Skills declare risk, required trust, and allowed resources. When an action is attempted, the policy engine checks trust hierarchy, risk level, and category-specific rules (e.g., file writes, shell commands) to decide whether to allow, require approval, or block. Every evaluation and registration feeds the audit trail, enabling review from the UI or CLI.【F:packages/core/src/skills.ts†L25-L86】【F:packages/core/src/policy.ts†L24-L83】
+## Dependency Rules
 
-## Audio & Voice Pipeline
-The audio subsystem can ingest voice notes and synthesize speech. `transcription.ts` orchestrates whisper.cpp (with ffmpeg conversion) or OpenAI for speech-to-text, falling back to mock output during setup; complementary modules handle text-to-speech (Piper) and manage voice training datasets. All paths and binaries resolve relative to the repo so users can drop in local builds under `vendor/`.【F:packages/core/src/transcription.ts†L1-L79】
+- `packages/core` does not import from `apps`, `brain`, framework UI code, or
+  runtime data.
+- `brain` consumes public `@metahuman/core` exports.
+- Interface packages do not duplicate Core domain behavior.
+- Cross-cutting work has one named owner and typed contracts at boundaries.
+- Retired owners, feature flags, compatibility routes, and obsolete docs are
+  deleted when their replacement is established.
 
-## Observability & Logging
-The audit module appends structured events (system, decision, action, security) to daily NDJSON files, and helper utilities summarize issues or stream logs for dashboards. The agent monitor surfaces available agent scripts, recent activity, and run statistics by reading these logs, empowering the UI to display status without a separate service.【F:packages/core/src/audit.ts†L1-L48】【F:packages/core/src/agent-monitor.ts†L1-L78】
-
-## Autonomy & Persona Controls
-Persona files capture identity, values, routines, and decision heuristics. CLI commands expose summaries, while helpers adjust trust levels with validation against the available modes in `decision-rules.json`. Additional configs in `etc/autonomy.json` tune reflection cadence, maintenance windows, and risk guards, allowing users to ratchet autonomy gradually.【F:packages/core/src/identity.ts†L1-L43】【F:packages/core/src/autonomy.ts†L1-L24】
-
-## Extensibility
-- **Add a skill** — Create a manifest under `brain/skills`, register it via `registerSkill`, and implement logic that consumes `@metahuman/core` helpers. Policies enforce trust and audit automatically.
-- **Add an agent** — Place an ESM script in `brain/agents`, import the necessary modules (memory, llm, audit, locks), and register it so the CLI/UI can manage lifecycle and logs.【F:brain/agents/organizer.ts†L18-L78】
-- **Extend the UI** — Astro routes can import any core helper to expose new data or controls, ensuring feature parity across surfaces.【F:apps/site/src/pages/api/tasks.ts†L1-L65】
-
-## Technology Stack (Current)
-- **Runtime** — Node.js 22.3+ (22.x), TypeScript 5+, ESM modules, pnpm workspace linking packages together.
-- **Data** — JSON/Markdown files on disk plus optional embedding index JSON; no database server required.
-- **Web UI** — Astro + Svelte with Tailwind CSS, leveraging Astro API routes for server-side operations.
-- **LLM & Embeddings** — Ollama models (`phi3`, `dolphin-mistral`, `nomic-embed-text`) with HTTP streaming; deterministic mock fallback for dev/offline.
-- **Audio** — whisper.cpp, Piper, and ffmpeg invoked via child processes with graceful degradation to mock output.
-- **Automation** — Node-based agents executed via CLI or process managers; logs captured under `logs/` for inspection.
-
-This document reflects the current repository structure and code paths so contributors can navigate the system without relying on outdated diagrams.
+See [MAINTAINED_SURFACE.md](MAINTAINED_SURFACE.md) for scope,
+[AUDIT_PROTOCOL.md](AUDIT_PROTOCOL.md) for review procedure, and
+[REFACTOR_BLUEPRINT.md](REFACTOR_BLUEPRINT.md) for the active refactor.

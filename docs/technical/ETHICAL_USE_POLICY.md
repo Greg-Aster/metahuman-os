@@ -126,7 +126,7 @@ Use it wisely. Use it ethically. Use it to **enhance human flourishing**, not to
 
 To report violations or discuss ethical concerns:
 - GitHub Issues: https://github.com/Greg-Aster/metahuman-os/issues
-- Documentation: See [User Guide](/user-guide)
+- Documentation: See the [User Guide](../user-guide/index.md)
 
 ---
 

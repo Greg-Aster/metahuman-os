@@ -2254,9 +2254,11 @@
                               <div
                                 class="flex items-start gap-2 p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded transition-colors {entry.data ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800' : ''} {expandedEntryIndex === idx ? 'bg-green-50 dark:bg-green-900/20 border-green-500' : ''}"
                                 on:click={() => entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
-                                on:keydown={(e) => e.key === 'Enter' && entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
+                                on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && entry.data && (expandedEntryIndex = expandedEntryIndex === idx ? null : idx)}
                                 tabindex={entry.data ? 0 : -1}
-                                role={entry.data ? 'button' : undefined}
+                                role="button"
+                                aria-disabled={!entry.data}
+                                aria-expanded={entry.data ? expandedEntryIndex === idx : undefined}
                               >
                                 <span class="text-base flex-shrink-0">{getScratchpadEntryIcon(entry.type)}</span>
                                 <div class="flex-1 flex flex-col gap-0.5">

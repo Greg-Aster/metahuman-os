@@ -5,16 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE="$ROOT/logs/audit/baseline.txt"
 
 tracked_files() {
-  git -C "$ROOT" ls-files \
-    ':!:apps/code-oss/**' \
-    ':!:vendor/**' \
-    ':!:external/**' \
-    ':!:node_modules/**' \
-    ':!:logs/**' \
-    ':!:out/**' \
-    ':!:memory/**' \
-    ':!:data/user-data/**' \
-    ':!:metahuman-runs/**'
+  (
+    cd "$ROOT"
+    node --import tsx scripts/create-audit-inventory.ts --list
+  )
 }
 
 hash_cmd() {
@@ -80,7 +74,7 @@ check_policy() {
   echo "## Architecture Guardrail"
   (
     cd "$ROOT"
-    pnpm -s exec tsx scripts/check-architecture.ts \
+    node --import tsx scripts/check-architecture.ts \
       --baseline "${ARCHITECTURE_BASELINE:-docs/technical/architecture-guardrail-baseline.json}"
   )
 

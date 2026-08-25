@@ -5,29 +5,22 @@ import { fileURLToPath } from 'node:url'
 import {
   findAvailableTerminalPort,
   isTerminalPortInUse,
-  parseTtydProcesses,
+  parseTtydCommand,
 } from './terminal.js'
 
-const parsed = parseTtydProcesses([
-  '35057 /repo/bin/ttyd --port 3001 --writable --cwd /repo bash -c ./bin/start-services',
-  '35112 /repo/bin/ttyd --interface 127.0.0.1 --port 3002 --writable --cwd /repo bash',
-  '99999 unrelated process',
-].join('\n'))
-
-assert.deepEqual(parsed, [
+assert.deepEqual(
+  parseTtydCommand(35057, [
+    '/repo/bin/ttyd', '--port', '3001', '--writable', '--cwd', '/repo',
+    'bash', '-c', './bin/start-services',
+  ]),
   {
     pid: 35057,
     port: 3001,
     command: './bin/start-services',
     cwd: '/repo',
   },
-  {
-    pid: 35112,
-    port: 3002,
-    command: undefined,
-    cwd: '/repo',
-  },
-])
+)
+assert.equal(parseTtydCommand(99999, ['unrelated', '--port', '3001']), null)
 
 const checkedPorts: number[] = []
 const nextPort = await findAvailableTerminalPort(

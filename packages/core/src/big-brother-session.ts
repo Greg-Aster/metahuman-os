@@ -4,7 +4,7 @@
  * the same live transcript in the in-app terminal.
  */
 
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
@@ -37,6 +37,8 @@ const TTYD_BIN = path.join(ROOT, 'bin/ttyd')
 const WORKER_PATH = path.join(ROOT, 'packages/core/src/big-brother-session-worker.ts')
 const TAIL_BIN = '/usr/bin/tail'
 const LOG_DIR = path.join(ROOT, 'logs/run')
+const TERMINAL_PID_FILE = path.join(LOG_DIR, 'big-brother-terminal.pid')
+const WORKER_PID_FILE = path.join(LOG_DIR, 'big-brother-worker.pid')
 const TERMINAL_START_TIMEOUT_MS = 5000
 
 export type BigBrotherSessionPhase = 'idle' | 'starting' | 'running' | 'completed' | 'failed' | 'stopped'
@@ -92,33 +94,55 @@ async function waitForTerminalPort(child: ChildProcess): Promise<void> {
   throw new Error(`ttyd did not open port ${BIG_BROTHER_SESSION_PORT} within ${TERMINAL_START_TIMEOUT_MS}ms`)
 }
 
-function findBigBrotherTtydPids(): number[] {
+function readOwnedPid(pidFile: string, ownsArgv: (argv: string[]) => boolean): number | null {
+  if (!fs.existsSync(pidFile)) return null
+  const pid = Number.parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
+  if (!Number.isInteger(pid) || pid <= 1) {
+    fs.rmSync(pidFile, { force: true })
+    return null
+  }
+
   try {
-    const output = execFileSync(
-      'pgrep',
-      ['-f', `[t]tyd.*--port[ =]${BIG_BROTHER_SESSION_PORT}`],
-      { encoding: 'utf8', timeout: 2000 },
-    )
-    return output
-      .trim()
-      .split(/\s+/)
-      .map(value => Number.parseInt(value, 10))
-      .filter(pid => Number.isInteger(pid) && pid > 1 && pid !== process.pid)
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)
+    if (!ownsArgv(argv)) {
+      fs.rmSync(pidFile, { force: true })
+      return null
+    }
+    process.kill(pid, 0)
+    return pid
   } catch {
-    return []
+    fs.rmSync(pidFile, { force: true })
+    return null
   }
 }
 
-async function stopStaleBigBrotherTerminals(): Promise<void> {
-  const pids = findBigBrotherTtydPids()
-  for (const pid of pids) {
+function removeMatchingPidFile(pidFile: string, pid: number): void {
+  try {
+    if (Number.parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10) === pid) {
+      fs.unlinkSync(pidFile)
+    }
+  } catch {}
+}
+
+async function stopPersistedBigBrotherProcesses(): Promise<void> {
+  const terminalPid = readOwnedPid(TERMINAL_PID_FILE, argv =>
+    path.resolve(argv[0] || '') === TTYD_BIN
+    && argv.includes('--port')
+    && argv.includes(String(BIG_BROTHER_SESSION_PORT)),
+  )
+  const workerPid = readOwnedPid(WORKER_PID_FILE, argv => argv.includes(WORKER_PATH))
+  const owned = [workerPid, terminalPid].filter((pid): pid is number => pid !== null)
+
+  for (const pid of owned) {
     try {
       process.kill(-pid, 'SIGTERM')
     } catch {
       try { process.kill(pid, 'SIGTERM') } catch { /* already exited */ }
     }
   }
-  if (pids.length > 0) await new Promise(resolve => setTimeout(resolve, 200))
+  if (owned.length > 0) await new Promise(resolve => setTimeout(resolve, 200))
+  fs.rmSync(TERMINAL_PID_FILE, { force: true })
+  fs.rmSync(WORKER_PID_FILE, { force: true })
 }
 
 class BigBrotherSessionManager extends EventEmitter {
@@ -172,7 +196,7 @@ class BigBrotherSessionManager extends EventEmitter {
     }
 
     if (this.terminalProcess) await this.closeTerminalProcess()
-    else await stopStaleBigBrotherTerminals()
+    else await stopPersistedBigBrotherProcesses()
     await this.closeWorkerProcess()
     this.cleanupJobDirectory()
 
@@ -226,7 +250,12 @@ class BigBrotherSessionManager extends EventEmitter {
     fs.closeSync(logFd)
 
     this.terminalProcess = terminal
+    if (!terminal.pid) {
+      return this.failedResult(provider, startedAt, new Error('Big Brother terminal did not return a process ID'))
+    }
+    fs.writeFileSync(TERMINAL_PID_FILE, String(terminal.pid), 'utf8')
     terminal.once('close', () => {
+      if (terminal.pid) removeMatchingPidFile(TERMINAL_PID_FILE, terminal.pid)
       if (this.terminalProcess === terminal) this.terminalProcess = null
     })
 
@@ -262,7 +291,9 @@ class BigBrotherSessionManager extends EventEmitter {
     }
 
     this.workerProcess = worker
+    fs.writeFileSync(WORKER_PID_FILE, String(worker.pid), 'utf8')
     worker.once('close', () => {
+      if (worker.pid) removeMatchingPidFile(WORKER_PID_FILE, worker.pid)
       if (this.workerProcess === worker) this.workerProcess = null
     })
 
@@ -325,7 +356,7 @@ class BigBrotherSessionManager extends EventEmitter {
     this.cancellationReason = reason
     await this.closeWorkerProcess()
     await this.closeTerminalProcess()
-    await stopStaleBigBrotherTerminals()
+    await stopPersistedBigBrotherProcesses()
     this.executionActive = false
     this.phase = 'stopped'
     this.lastActivity = new Date()
@@ -462,6 +493,7 @@ class BigBrotherSessionManager extends EventEmitter {
     if (terminal.exitCode === null && terminal.signalCode === null) {
       try { process.kill(-terminal.pid, 'SIGKILL') } catch { /* already exited */ }
     }
+    removeMatchingPidFile(TERMINAL_PID_FILE, terminal.pid)
     if (this.terminalProcess === terminal) this.terminalProcess = null
   }
 
@@ -486,6 +518,7 @@ class BigBrotherSessionManager extends EventEmitter {
     if (worker.exitCode === null && worker.signalCode === null) {
       try { process.kill(-worker.pid, 'SIGKILL') } catch { /* already exited */ }
     }
+    removeMatchingPidFile(WORKER_PID_FILE, worker.pid)
     if (this.workerProcess === worker) this.workerProcess = null
   }
 

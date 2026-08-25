@@ -31,7 +31,7 @@ import {
   persistQueueState,
   shouldRestoreState,
 } from './queue-persister.js';
-import { isWorkCoordinatorOwner } from './work-submission.js';
+import { isWorkCoordinatorOwner } from './work-coordinator-ownership.js';
 import { agentHandlerId, agentTaskType } from './agent-work-catalog.js';
 import { SLEEP_WORKFLOW_HANDLERS } from './sleep-workflow.js';
 import {

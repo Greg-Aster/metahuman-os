@@ -25,35 +25,11 @@ else
   echo -e "  ${YELLOW}⚠ One or more shared voice servers could not be stopped cleanly${NC}"
 fi
 
-# Stop RVC server
-RVC_PID_FILE="$REPO_ROOT/logs/run/rvc.pid"
-if [ -f "$RVC_PID_FILE" ]; then
-  PID=$(cat "$RVC_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    echo "  Stopping RVC server (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true
-    rm -f "$RVC_PID_FILE"
-    STOPPED=true
-  fi
-fi
-
-# Check for RVC process by port
-if lsof -ti:9881 > /dev/null 2>&1; then
-  echo "  Stopping RVC server on port 9881..."
-  pkill -f "server.py" 2>/dev/null || true
+# GPT-SoVITS has a separate profile-coupled lifecycle owner.
+if "$REPO_ROOT/bin/mh" sovits stop; then
   STOPPED=true
-fi
-
-# Stop GPT-SoVITS server
-SOVITS_PID_FILE="$REPO_ROOT/logs/run/sovits.pid"
-if [ -f "$SOVITS_PID_FILE" ]; then
-  PID=$(jq -r '.pid' "$SOVITS_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    echo "  Stopping GPT-SoVITS server (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true
-    rm -f "$SOVITS_PID_FILE"
-    STOPPED=true
-  fi
+else
+  echo -e "  ${YELLOW}⚠ GPT-SoVITS could not be stopped cleanly${NC}"
 fi
 
 if [ "$STOPPED" = true ]; then

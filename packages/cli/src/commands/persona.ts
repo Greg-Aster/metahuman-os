@@ -53,7 +53,6 @@ export function personaStatus() {
     console.log('Active Adapter: ✓');
     console.log(`  Model: ${activeAdapter.modelName}`);
     console.log(`  Activated: ${activeAdapter.activatedAt}`);
-    console.log(`  Eval Score: ${typeof activeAdapter.evalScore === 'number' ? activeAdapter.evalScore.toFixed(3) : 'N/A'}`);
     if (activeAdapter.adapterPath) {
       console.log(`  Path: ${activeAdapter.adapterPath}`);
     }

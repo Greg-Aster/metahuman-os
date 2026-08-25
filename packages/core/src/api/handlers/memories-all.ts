@@ -11,6 +11,7 @@ import path from 'node:path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { errorResponse, forbiddenResponse, successResponse, unauthorizedResponse } from '../types.js';
 import { getProfilePaths } from '../../index.js';
+import { CuriosityQuestionStore } from '../../curiosity-questions.js';
 import { getSecurityPolicy } from '../../security-policy.js';
 
 export interface EpisodicItem {
@@ -45,10 +46,12 @@ export interface CuriosityQuestion {
   id: string;
   question: string;
   askedAt: string;
-  status: 'pending' | 'answered' | 'recorded';
+  status: 'pending' | 'answered' | 'skipped' | 'recorded';
   relPath: string;
   seedMemories?: string[];
+  resolvedAt?: string;
   answeredAt?: string;
+  skippedAt?: string;
 }
 
 export interface EpisodicInventory {
@@ -264,35 +267,28 @@ export function listCuratedConversations(profileRoot: string, memoryRoot: string
   return sortNewestFirst(items);
 }
 
-export function listCuriosityQuestions(profileRoot: string, stateRoot: string): CuriosityQuestion[] {
-  const questionsRoot = path.join(stateRoot, 'curiosity', 'questions');
-  const questions: CuriosityQuestion[] = [];
-  const directories = [
-    { directory: path.join(questionsRoot, 'pending'), status: 'pending' as const },
-    { directory: path.join(questionsRoot, 'answered'), status: 'answered' as const },
-  ];
-
-  for (const { directory, status } of directories) {
-    if (!fs.existsSync(directory)) continue;
-    for (const filename of fs.readdirSync(directory)) {
-      if (!filename.endsWith('.json')) continue;
-      try {
-        const fullPath = path.join(directory, filename);
-        const obj = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        questions.push({
-          id: obj.id,
-          question: obj.question,
-          askedAt: obj.askedAt,
-          status,
-          relPath: 'profile:' + path.relative(profileRoot, fullPath),
-          seedMemories: obj.seedMemories,
-          answeredAt: obj.answeredAt,
-        });
-      } catch {}
-    }
-  }
-
-  return questions.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime());
+export async function listCuriosityQuestions(
+  profileRoot: string,
+  stateRoot: string,
+  username: string,
+): Promise<CuriosityQuestion[]> {
+  const store = new CuriosityQuestionStore(() => stateRoot);
+  const records = await store.listAll(username);
+  return records.map(record => {
+    const directory = record.status === 'pending' ? 'pending' : 'answered';
+    const fullPath = path.join(stateRoot, 'curiosity', 'questions', directory, `${record.id}.json`);
+    return {
+      id: record.id,
+      question: record.question,
+      askedAt: record.askedAt,
+      status: record.status,
+      relPath: 'profile:' + path.relative(profileRoot, fullPath),
+      seedMemories: record.seedMemories,
+      ...(record.resolvedAt ? { resolvedAt: record.resolvedAt } : {}),
+      ...(record.answeredAt ? { answeredAt: record.answeredAt } : {}),
+      ...(record.skippedAt ? { skippedAt: record.skippedAt } : {}),
+    };
+  });
 }
 
 export function mergeCuriosityQuestions(
@@ -351,7 +347,7 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
       tasks: listActiveTasks(profilePaths.root, profilePaths.tasks),
       curated: listCuratedConversations(profilePaths.root, profilePaths.memory),
       curiosityQuestions: mergeCuriosityQuestions(
-        listCuriosityQuestions(profilePaths.root, profilePaths.state),
+        await listCuriosityQuestions(profilePaths.root, profilePaths.state, req.user.username),
         inventory.curiosity,
       ),
       pagination: {

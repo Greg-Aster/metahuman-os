@@ -94,7 +94,6 @@ export function readAgentMonitorConfig(): AgentMonitorConfig {
 
 export function writeServiceConfig(config: AgentMonitorConfig): void {
   const serviceConfig = {
-    $schema: 'https://metahuman.dev/schemas/services.json',
     version: '1.0.0',
     description: 'Persistent service lifecycle configuration',
     services: config.services ?? {},
@@ -367,15 +366,6 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         description: 'Random variation around the reflection idle threshold.',
       },
       {
-        key: 'graph',
-        label: 'Legacy Perception Graph',
-        type: 'text',
-        value: typeof effective.graph === 'string' ? effective.graph : 'robot-operator',
-        applyMode: 'restart',
-        writable: true,
-        description: 'Compatibility graph name retained for older perception cycles.',
-      },
-      {
         key: 'boredomObserverGraph',
         label: 'Boredom Observer Graph',
         type: 'text',
@@ -406,7 +396,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         value: typeof effective.autonomyGraph === 'string' ? effective.autonomyGraph : 'boredom-autonomy',
         applyMode: 'restart',
         writable: true,
-        description: 'Shared semantic executive graph used by all three boredom triggers.',
+        description: 'Shared action-selection and feedback graph used by all three boredom planners.',
       },
       {
         key: 'environmentGraph',
@@ -415,7 +405,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         value: typeof effective.environmentGraph === 'string' ? effective.environmentGraph : 'environment',
         applyMode: 'restart',
         writable: true,
-        description: 'Graph that decides how to execute a Robot Operator intention.',
+        description: 'General Environment graph used for user-originated perception and commands.',
       },
       {
         key: 'sessionId',

@@ -88,17 +88,6 @@ export interface RouterResponse {
   thinking?: string | null;
 }
 
-export interface RouterStreamChunk {
-  content: string;
-  done: boolean;
-  model?: string;
-  tokens?: {
-    prompt: number;
-    completion: number;
-    total: number;
-  };
-}
-
 export function normalizeProviderReasoningResponse(
   providerResponse: Pick<ProviderResponse, 'content' | 'thinking'>
 ): { thinking: string | null; stripped: string } {
@@ -303,21 +292,6 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
 
     throw error;
   }
-}
-
-/**
- * Call an LLM with streaming response
- * Note: Streaming support available via SSE in operator pipeline
- */
-export async function* callLLMStream(callOptions: RouterCallOptions): AsyncGenerator<RouterStreamChunk> {
-  // Streaming not yet implemented - for now, just call regular LLM and yield the result
-  const response = await callLLM(callOptions);
-  yield {
-    content: response.content,
-    done: true,
-    model: response.model,
-    tokens: response.tokens,
-  };
 }
 
 /**

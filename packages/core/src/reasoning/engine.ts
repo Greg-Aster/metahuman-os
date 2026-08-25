@@ -5,7 +5,7 @@
  * Extracted and generalized from Operator V2.
  */
 
-import { getCachedCatalog } from '../tool-catalog';
+import { getCachedCatalog, invalidateCatalog } from '../tool-catalog';
 import { executeSkill } from '../skills';
 import { audit } from '../audit';
 import { getDefaultConfig, validateConfig } from './config';
@@ -429,8 +429,6 @@ export class ReasoningEngine {
    */
   invalidate(): void {
     this.scratchpad = [];
-    // Invalidate tool catalog
-    const { invalidateCatalog } = require('../tool-catalog');
     invalidateCatalog();
   }
 

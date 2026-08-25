@@ -84,7 +84,6 @@ export interface AuditEntry {
   details?: any;
   actor?: string; // 'human' | 'system' | 'agent' or specific agent/service name or username
   userId?: string; // Track which user performed the action
-  // Extended properties for cognitive-layers and other subsystems
   action?: string; // Action being performed (for detailed audit trails)
   message?: string; // Human-readable message
   metadata?: Record<string, any>; // Additional metadata

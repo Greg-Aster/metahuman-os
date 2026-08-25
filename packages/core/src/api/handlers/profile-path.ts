@@ -5,105 +5,13 @@
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { getProfilePaths } from '../../index.js';
-import { getProfileStorageConfig } from '../../users.js';
+import { getDefaultProfilePath, getProfilePathsWithStatus } from '../../path-builder.js';
+import { getProfileStorageConfig, updateProfileStorage } from '../../users.js';
 import { audit } from '../../audit.js';
-
-// Lazy-load desktop-only modules to avoid build errors on mobile
-function getPathSecurity() {
-  try {
-    return require('../../path-security.js');
-  } catch {
-    return null;
-  }
-}
-
-function getExternalStorage() {
-  try {
-    return require('../../external-storage.js');
-  } catch {
-    return null;
-  }
-}
-
-function getProfileMigration() {
-  try {
-    return require('../../profile-migration.js');
-  } catch {
-    return null;
-  }
-}
-
-// Stub functions using lazy loading
-function getProfilePathsWithStatus(username: string) {
-  const pathSecurity = getPathSecurity();
-  if (pathSecurity?.getProfilePathsWithStatus) {
-    return pathSecurity.getProfilePathsWithStatus(username);
-  }
-  // Fallback for mobile
-  const paths = getProfilePaths(username);
-  return {
-    paths,
-    resolution: { root: paths.root, usingFallback: false, storageType: 'internal' },
-  };
-}
-
-function getDefaultProfilePath(username: string) {
-  const pathSecurity = getPathSecurity();
-  if (pathSecurity?.getDefaultProfilePath) {
-    return pathSecurity.getDefaultProfilePath(username);
-  }
-  return getProfilePaths(username).root;
-}
-
-function validateProfilePath(path: string, options?: any) {
-  const pathSecurity = getPathSecurity();
-  if (pathSecurity?.validateProfilePath) {
-    return pathSecurity.validateProfilePath(path, options);
-  }
-  return { valid: true, errors: [], warnings: [] };
-}
-
-function getStorageInfo(path: string) {
-  const externalStorage = getExternalStorage();
-  if (externalStorage?.getStorageInfo) {
-    return externalStorage.getStorageInfo(path);
-  }
-  return null;
-}
-
-async function estimateMigrationDuration(path: string) {
-  const profileMigration = getProfileMigration();
-  if (profileMigration?.estimateMigrationDuration) {
-    return profileMigration.estimateMigrationDuration(path);
-  }
-  return null;
-}
-
-// Stub functions for mobile compatibility
-function isProfileEncrypted(_path: string): boolean {
-  if (process.env.METAHUMAN_MOBILE) {
-    return false; // Encryption not supported on mobile
-  }
-  try {
-    const enc = require('../../encryption.js');
-    return enc.isProfileEncrypted?.(_path) || false;
-  } catch {
-    return false;
-  }
-}
-
-function getEncryptionMeta(_path: string): any {
-  if (process.env.METAHUMAN_MOBILE) {
-    return null; // Encryption not supported on mobile
-  }
-  try {
-    const enc = require('../../encryption.js');
-    return enc.getEncryptionMeta?.(_path) || null;
-  } catch {
-    return null;
-  }
-}
+import { validateProfilePath } from '../../path-security.js';
+import { getStorageInfo } from '../../external-storage.js';
+import { estimateMigrationDuration } from '../../profile-migration.js';
+import { getEncryptionMeta, isProfileEncrypted } from '../../encryption.js';
 
 /**
  * GET /api/profile-path
@@ -267,8 +175,6 @@ export async function handleSwitchProfilePath(req: UnifiedRequest): Promise<Unif
     const storageInfo = getStorageInfo(newPath);
 
     // Update user's profile storage configuration
-    const { updateProfileStorage } = await import('../../users.js');
-
     // Check if profile is encrypted at new location
     const profileEncrypted = isProfileEncrypted(newPath);
     const encryptionMeta = profileEncrypted ? getEncryptionMeta(newPath) : null;

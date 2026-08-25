@@ -6,6 +6,7 @@
 import type { CognitiveGraph } from './cognitive-graph-schema.js';
 import type { NodeExecutionContext } from './nodes/index.js';
 import { audit } from './audit.js';
+import { loadPersonaCore } from './identity.js';
 
 export interface ErrorBoundaryOptions {
   maxRetries?: number;
@@ -140,8 +141,6 @@ export async function simpleChatFallback(
     console.log('[Fallback] Using simple chat fallback');
 
     const { callLLM } = await import('./model-router.js');
-    const { loadPersonaCore } = await import('./identity.js');
-
     const persona = loadPersonaCore();
 
     const response = await callLLM({

@@ -51,6 +51,7 @@
     "./mobile-handlers": "./src/mobile-handlers/index.ts",
     "./reasoning": "./src/reasoning/index.ts",
     "./config": "./src/config.ts",
+    "./runpod-config": "./src/runpod-config.ts",
     "./recovery-codes": "./src/recovery-codes.ts",
     "./function-memory": "./src/function-memory.ts",
     "./context-builder": "./src/context-builder.ts",
@@ -59,8 +60,6 @@
     "./persona/extractor": "./src/persona/extractor.ts",
     "./persona/merger": "./src/persona/merger.ts",
     "./persona/cleanup": "./src/persona/cleanup.ts",
-    "./curator-prompts": "./src/curator-prompts.ts",
-    "./user-data-collector": "./src/user-data-collector.ts",
     "./user-resolver": "./src/user-resolver.ts",
     "./chat-settings": "./src/chat-settings.ts",
     "./tts/server-manager": "./src/tts/server-manager.ts",
@@ -88,7 +87,6 @@
     "./providers/types": "./src/providers/types.ts",
     "./local-model-service": "./src/local-model-service-manager.ts",
     "./voice-service-manager": "./src/voice-service-manager.ts",
-    "./cognitive-layers": "./src/cognitive-layers/index.ts",
     "./api": "./src/api/index.ts",
     "./api/handlers/profile-sync": "./src/api/handlers/profile-sync.ts",
     "./api/adapters/http": "./src/api/adapters/http.ts",
@@ -113,9 +111,7 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
     "@types/fs-extra": "^11.0.4",
-    "@types/uuid": "^11.0.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.5.0"
   },

@@ -13,9 +13,9 @@ import path from 'node:path';
 import { withUserContext, getUserContext } from '@metahuman/core/context';
 import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { audit } from '@metahuman/core/audit';
-import { systemPaths } from '@metahuman/core/paths';
 import {
   isTrainingCuratedMemory,
+  loadUserConfig,
   parseStoredCuratedMemory,
   type TrainingCuratedMemory,
 } from '@metahuman/core';
@@ -31,12 +31,10 @@ interface TrainingDataConfig {
 }
 
 /**
- * Load training data configuration from etc/training.json (unified config)
+ * Load training data configuration from the authenticated profile.
  * This controls which memory types are included and their sampling weights
  */
-function loadTrainingDataConfig(): TrainingDataConfig {
-  const configPath = path.join(systemPaths.etc, 'training.json');
-
+function loadTrainingDataConfig(username: string): TrainingDataConfig {
   const defaults: TrainingDataConfig = {
     memoryTypes: {
       percentages: {
@@ -56,29 +54,25 @@ function loadTrainingDataConfig(): TrainingDataConfig {
   };
 
   try {
-    if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
-      const config = JSON.parse(content);
-      console.log('[curated-aggregator] Loaded training config from etc/training.json');
+    const config = loadUserConfig<Record<string, any>>('training.json', {}, username);
+    console.log(`[curated-aggregator] Loaded training config for ${username}`);
 
-      // Support both old flat structure and new nested structure
-      const percentages = config.data?.memoryTypes?.percentages || config.memoryTypes?.percentages;
+    const percentages = config.data?.memoryTypes?.percentages || config.memoryTypes?.percentages;
 
-      if (percentages) {
-        console.log('[curated-aggregator] Memory type percentages:');
-        for (const [type, pct] of Object.entries(percentages)) {
-          if (typeof pct === 'number' && pct > 0) {
-            console.log(`  - ${type}: ${pct}%`);
-          }
+    if (percentages) {
+      console.log('[curated-aggregator] Memory type percentages:');
+      for (const [type, pct] of Object.entries(percentages)) {
+        if (typeof pct === 'number' && pct > 0) {
+          console.log(`  - ${type}: ${pct}%`);
         }
       }
-
-      return {
-        memoryTypes: {
-          percentages: percentages || defaults.memoryTypes.percentages,
-        },
-      };
     }
+
+    return {
+      memoryTypes: {
+        percentages: percentages || defaults.memoryTypes.percentages,
+      },
+    };
   } catch (error) {
     console.warn('[curated-aggregator] Failed to load training config, using defaults:', error);
   }
@@ -342,7 +336,7 @@ async function mainWithContext() {
   }
 
   // Load training data config for memory type filtering
-  const trainingDataConfig = loadTrainingDataConfig();
+  const trainingDataConfig = loadTrainingDataConfig(ctx.username);
 
   // Load curated conversations
   const curatedDir = path.join(ctx.profilePaths.memory, 'curated', 'conversations');
@@ -369,7 +363,7 @@ async function mainWithContext() {
 
   if (samples.length === 0) {
     console.error('[curated-aggregator] ERROR: No samples remaining after type filtering!');
-    console.error('Check your memory type percentages in etc/training.json → data.memoryTypes.percentages');
+    console.error('Check data.memoryTypes.percentages in your profile training configuration');
     process.exit(1);
   }
 

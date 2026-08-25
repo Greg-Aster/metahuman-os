@@ -49,14 +49,14 @@ const sourceRoot = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(sourceRoot, '../../..')
 const read = (relativePath: string) => fs.readFile(path.join(repoRoot, relativePath), 'utf8')
 
-const [claudeBackend, codexBackend, sessionOwner, worker, responseNode, providerBridge, legacyAdapters, router, terminalManager] = await Promise.all([
+const [claudeBackend, codexBackend, sessionOwner, worker, responseNode, providerBridge, cliToolAdapters, router, terminalManager] = await Promise.all([
   read('packages/core/src/backends/claude-code-backend.ts'),
   read('packages/core/src/backends/codex-backend.ts'),
   read('packages/core/src/big-brother-session.ts'),
   read('packages/core/src/big-brother-session-worker.ts'),
   read('packages/core/src/nodes/response/response-llm.node.ts'),
   read('packages/core/src/providers/bridge.ts'),
-  read('packages/core/src/legacy-cli-adapters.ts'),
+  read('packages/core/src/cli-tool-adapters.ts'),
   read('packages/core/src/api/router.ts'),
   read('apps/site/src/components/TerminalManager.svelte'),
 ])
@@ -74,7 +74,7 @@ assert.doesNotMatch(responseNode, /big-brother-terminal\.js/)
 assert.match(providerBridge, /await ensureBackendsInitialized\(\)/)
 assert.match(providerBridge, /resolvedBackendId === 'codex'/)
 assert.match(providerBridge, /images: preservesImages \? escalationImages/)
-assert.doesNotMatch(legacyAdapters, /executeWith(?:ClaudeCode|CodexCLI)/)
+assert.doesNotMatch(cliToolAdapters, /executeWith(?:ClaudeCode|CodexCLI)/)
 assert.doesNotMatch(router, /claude-session|spawn-claude|big-brother-input/)
 assert.match(terminalManager, /body: JSON\.stringify\(\{ action: 'stop' \}\)/)
 

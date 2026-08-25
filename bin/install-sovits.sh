@@ -51,7 +51,6 @@ fi
 echo ""
 echo "[3/7] Setting up directories..."
 mkdir -p "$METAHUMAN_ROOT/external"
-mkdir -p "$METAHUMAN_ROOT/out/voices/sovits"
 
 # Clone GPT-SoVITS repository
 echo ""
@@ -87,7 +86,7 @@ echo ""
 echo "[7/7] Downloading pretrained models..."
 echo "  This may take several minutes (~2GB of data)"
 cd "$METAHUMAN_ROOT"
-pnpm --filter metahuman-cli mh sovits download-models
+"$METAHUMAN_ROOT/bin/mh" sovits download-models
 echo "✓ Models downloaded"
 
 echo ""
@@ -97,8 +96,7 @@ echo "========================================="
 echo ""
 echo "GPT-SoVITS is fully installed and ready to use."
 echo ""
-echo "The server will auto-start when you run 'pnpm dev'."
-echo "Or manually start it with: pnpm --filter metahuman-cli mh sovits start"
+echo "Start the server with: mh sovits start"
 echo ""
 echo "Installation directory: $SOVITS_DIR"
 echo ""

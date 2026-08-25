@@ -56,9 +56,8 @@ function resolveMemoryPaths(username?: string) {
 /**
  * Vector Index Module - Semantic Search
  *
- * All index files automatically use context-aware paths.
- * When user context is set, indexes go to profiles/{username}/memory/index/
- * When no context is set, indexes go to root-level memory/index/ (backward compatible)
+ * All index files resolve through the profile-aware storage owner. Callers must
+ * provide a username or establish user context before reading or writing memory.
  */
 
 export interface VectorIndexItem {

@@ -45,31 +45,22 @@ export function buildRobotAutonomyStimulus(
   cycle: RobotObserverCycleMetadata,
   agentId: RobotOperatorStimulusAgent,
 ): EnvironmentObservation {
-  const capabilities = agentId === 'boredom-movement'
-    ? {
-        ...latest.capabilities,
-        actions: latest.capabilities.actions.filter(action => action === 'robotCommand'),
-      }
-    : latest.capabilities
   return {
     environmentId: latest.environmentId,
     adapter: latest.adapter,
     sessionId: latest.sessionId,
     timestamp: new Date().toISOString(),
-    capabilities,
+    capabilities: latest.capabilities,
     state: latest.state,
     location: latest.location,
     map: latest.map,
-    feedback: latest.feedback?.slice(-8),
+    feedback: [],
     metadata: {
       robotObserver: cycle,
       correlationId: cycle.cycleId,
       autonomousStimulus: agentId,
       currentVisualEvidence: false,
       sourceObservationAt: latest.timestamp,
-      ...(latest.metadata?.actionContext
-        ? { actionContext: latest.metadata.actionContext }
-        : {}),
     },
   }
 }
@@ -108,8 +99,11 @@ export async function executeRobotAutonomyTriggerWork(
   if (
     agentId === 'boredom-movement'
     && (
-      !session.latestObservation.capabilities.actions.includes('robotCommand')
-      || !session.latestObservation.capabilities.robotCommands?.length
+      !session.latestObservation.capabilities.actions.includes('robotMotionPlan')
+      && (
+        !session.latestObservation.capabilities.actions.includes('robotCommand')
+        || !session.latestObservation.capabilities.robotCommands?.length
+      )
     )
   ) {
     return { skipped: true, reason: 'robot_movement_unavailable', sessionId: session.sessionId, agentId }

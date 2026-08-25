@@ -1,219 +1,338 @@
 /**
- * TTS Server Manager
- * Lifecycle compatibility for the remaining profile-coupled RVC and SoVITS
- * servers. Kokoro is a shared system service owned by voice-service-manager.
+ * Lifecycle owner for the profile-coupled GPT-SoVITS server.
+ * Kokoro and Whisper are shared services owned by voice-service-manager.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { systemPaths } from '../path-builder.js';
-import { audit } from '../audit.js';
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { audit } from '../audit.js'
+import { systemPaths } from '../path-builder.js'
 
-export type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc';
+export type TTSProvider = 'piper' | 'gpt-sovits'
 
-interface ServerInfo {
-  provider: TTSProvider;
-  pidFile: string;
-  logFile: string;
+export interface SovitsStatus {
+  running: boolean
+  installed: boolean
+  healthy?: boolean
+  pid?: number
+  port?: number
+  serverUrl?: string
 }
 
-/**
- * Get server info for a TTS provider
- */
-function getServerInfo(provider: TTSProvider): ServerInfo | null {
-  const runDir = path.join(systemPaths.logs, 'run');
-
-  switch (provider) {
-    case 'rvc':
-      return {
-        provider: 'rvc',
-        pidFile: path.join(runDir, 'rvc-server.pid'),
-        logFile: path.join(runDir, 'rvc-server.log'),
-      };
-    case 'gpt-sovits':
-      return {
-        provider: 'gpt-sovits',
-        pidFile: path.join(runDir, 'sovits-server.pid'),
-        logFile: path.join(runDir, 'sovits-server.log'),
-      };
-    case 'piper':
-      // Piper doesn't use a server
-      return null;
-    default:
-      return null;
-  }
+export interface SovitsActionResult {
+  success: boolean
+  message?: string
+  error?: string
+  pid?: number
+  port?: number
 }
 
-/**
- * Check if a process is running
- */
+interface SovitsPidRecord {
+  pid: number
+  port: number
+  startedAt: string
+}
+
+const SOVITS_DIR = path.join(systemPaths.root, 'external', 'gpt-sovits')
+const SOVITS_SCRIPT = path.join(SOVITS_DIR, 'api.py')
+const RUN_DIR = path.join(systemPaths.logs, 'run')
+const SOVITS_PID_FILE = path.join(RUN_DIR, 'sovits.pid')
+const SOVITS_LOG_FILE = path.join(RUN_DIR, 'sovits.log')
+const SOVITS_START_LOCK = path.join(RUN_DIR, 'sovits.start.lock')
+
 function isProcessRunning(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false
+
   try {
-    // Sending signal 0 checks if process exists without killing it
-    process.kill(pid, 0);
-    return true;
+    process.kill(pid, 0)
+    return true
   } catch {
-    return false;
+    return false
   }
 }
 
-/**
- * Stop a TTS server by provider name
- * Returns true if server was running and stopped, false otherwise
- */
-export async function stopServer(provider: TTSProvider): Promise<boolean> {
-  const info = getServerInfo(provider);
-  if (!info) {
-    // Provider doesn't use a server
-    return false;
-  }
-
-  // Check if PID file exists
-  if (!fs.existsSync(info.pidFile)) {
-    console.log(`[ServerManager] No PID file for ${provider}, server not running`);
-    return false;
-  }
-
-  // Read PID
-  const pidStr = fs.readFileSync(info.pidFile, 'utf-8').trim();
-  const pid = parseInt(pidStr, 10);
-
-  if (isNaN(pid)) {
-    console.warn(`[ServerManager] Invalid PID in ${info.pidFile}: ${pidStr}`);
-    fs.unlinkSync(info.pidFile);
-    return false;
-  }
-
-  // Check if process is actually running
-  if (!isProcessRunning(pid)) {
-    console.log(`[ServerManager] Process ${pid} for ${provider} not running, cleaning up PID file`);
-    fs.unlinkSync(info.pidFile);
-    return false;
-  }
-
-  console.log(`[ServerManager] Stopping ${provider} server (PID: ${pid})...`);
+function ownsSovitsProcess(pid: number): boolean {
+  if (!isProcessRunning(pid)) return false
 
   try {
-    // Send SIGTERM for graceful shutdown
-    process.kill(pid, 'SIGTERM');
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)
+    return argv.some(argument => path.resolve(argument) === SOVITS_SCRIPT)
+  } catch {
+    // Process ownership cannot be proven without its command line.
+    return false
+  }
+}
 
-    // Wait up to 5 seconds for graceful shutdown
-    const timeout = 5000;
-    const pollInterval = 100;
-    const start = Date.now();
+function readPidRecord(removeInvalid = true): SovitsPidRecord | undefined {
+  if (!fs.existsSync(SOVITS_PID_FILE)) return undefined
 
-    while (Date.now() - start < timeout) {
-      if (!isProcessRunning(pid)) {
-        console.log(`[ServerManager] ${provider} server stopped gracefully`);
-        break;
+  try {
+    const value = JSON.parse(fs.readFileSync(SOVITS_PID_FILE, 'utf8')) as Partial<SovitsPidRecord> & { startTime?: string }
+    const pid = Number(value.pid)
+    const port = Number(value.port)
+    const startedAt = value.startedAt ?? value.startTime
+
+    if (
+      !Number.isSafeInteger(pid)
+      || pid <= 0
+      || !Number.isSafeInteger(port)
+      || port < 1
+      || port > 65535
+      || typeof startedAt !== 'string'
+      || !ownsSovitsProcess(pid)
+    ) {
+      if (removeInvalid) fs.rmSync(SOVITS_PID_FILE, { force: true })
+      return undefined
+    }
+
+    return { pid, port, startedAt }
+  } catch {
+    if (removeInvalid) fs.rmSync(SOVITS_PID_FILE, { force: true })
+    return undefined
+  }
+}
+
+function removePidFile(expectedPid: number): void {
+  try {
+    const current = JSON.parse(fs.readFileSync(SOVITS_PID_FILE, 'utf8')) as { pid?: unknown }
+    if (Number(current.pid) === expectedPid) fs.rmSync(SOVITS_PID_FILE, { force: true })
+  } catch {
+    // The process is already stopped; an unreadable stale record is safe to remove.
+    fs.rmSync(SOVITS_PID_FILE, { force: true })
+  }
+}
+
+function writePidRecord(record: SovitsPidRecord): void {
+  fs.mkdirSync(RUN_DIR, { recursive: true })
+  const temporaryPath = `${SOVITS_PID_FILE}.${process.pid}.tmp`
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+  fs.renameSync(temporaryPath, SOVITS_PID_FILE)
+}
+
+function findPython(): string | undefined {
+  const venvPython = path.join(SOVITS_DIR, 'venv', 'bin', 'python3')
+  try {
+    fs.accessSync(venvPython, fs.constants.X_OK)
+    return venvPython
+  } catch {
+    // Fall through to PATH candidates.
+  }
+
+  const pathDirectories = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
+  for (const executable of ['python3.11', 'python3.10', 'python3.9', 'python3', 'python']) {
+    for (const directory of pathDirectories) {
+      const candidate = path.join(directory, executable)
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK)
+        return candidate
+      } catch {
+        // Try the next candidate.
       }
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  }
+
+  return undefined
+}
+
+function acquireStartLock(): number | undefined {
+  fs.mkdirSync(RUN_DIR, { recursive: true })
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const descriptor = fs.openSync(SOVITS_START_LOCK, 'wx', 0o600)
+      fs.writeFileSync(descriptor, `${process.pid}\n`)
+      return descriptor
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+
+      let lockPid = Number.NaN
+      try {
+        lockPid = Number.parseInt(fs.readFileSync(SOVITS_START_LOCK, 'utf8').trim(), 10)
+      } catch {
+        // Treat an unreadable lock as stale.
+      }
+      if (isProcessRunning(lockPid)) return undefined
+      fs.rmSync(SOVITS_START_LOCK, { force: true })
+    }
+  }
+
+  return undefined
+}
+
+function releaseStartLock(descriptor: number): void {
+  try {
+    fs.closeSync(descriptor)
+  } finally {
+    fs.rmSync(SOVITS_START_LOCK, { force: true })
+  }
+}
+
+async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) return true
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  return !isProcessRunning(pid)
+}
+
+export async function getSovitsServerStatus(): Promise<SovitsStatus> {
+  const installed = fs.existsSync(SOVITS_SCRIPT)
+  if (!installed) return { running: false, installed: false }
+
+  const record = readPidRecord()
+  if (!record) return { running: false, installed: true }
+
+  let healthy = false
+  try {
+    const response = await fetch(`http://127.0.0.1:${record.port}/`, {
+      signal: AbortSignal.timeout(2000),
+    })
+    healthy = response.status >= 200 && response.status < 500
+  } catch {
+    // A live process can still be warming up or unhealthy.
+  }
+
+  return {
+    running: true,
+    installed: true,
+    healthy,
+    pid: record.pid,
+    port: record.port,
+    serverUrl: `http://127.0.0.1:${record.port}`,
+  }
+}
+
+export async function startSovitsServer(port = 9880): Promise<SovitsActionResult> {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    return { success: false, error: 'Port must be an integer between 1 and 65535.' }
+  }
+
+  if (!fs.existsSync(SOVITS_SCRIPT)) {
+    return { success: false, error: 'GPT-SoVITS is not installed. Install it from the Addons page or CLI first.' }
+  }
+
+  const lockDescriptor = acquireStartLock()
+  if (lockDescriptor === undefined) {
+    return { success: false, error: 'Another GPT-SoVITS start is already in progress.' }
+  }
+
+  try {
+    const existing = readPidRecord()
+    if (existing) {
+      return {
+        success: false,
+        error: `GPT-SoVITS is already running on port ${existing.port} (PID: ${existing.pid}).`,
+      }
     }
 
-    // If still running, force kill
-    if (isProcessRunning(pid)) {
-      console.warn(`[ServerManager] ${provider} server didn't stop gracefully, sending SIGKILL`);
-      process.kill(pid, 'SIGKILL');
-      await new Promise(resolve => setTimeout(resolve, 500));
+    const python = findPython()
+    if (!python) return { success: false, error: 'Python 3.9 or newer was not found.' }
+
+    fs.mkdirSync(RUN_DIR, { recursive: true })
+    const logDescriptor = fs.openSync(SOVITS_LOG_FILE, 'a')
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(python, [SOVITS_SCRIPT, '-a', '127.0.0.1', '-p', String(port)], {
+        cwd: SOVITS_DIR,
+        detached: true,
+        stdio: ['ignore', logDescriptor, logDescriptor],
+      })
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve)
+        child.once('error', reject)
+      })
+    } finally {
+      fs.closeSync(logDescriptor)
     }
 
-    // Clean up PID file
-    if (fs.existsSync(info.pidFile)) {
-      fs.unlinkSync(info.pidFile);
+    if (child.pid === undefined) {
+      return { success: false, error: 'GPT-SoVITS did not return a process ID.' }
+    }
+
+    child.unref()
+    writePidRecord({ pid: child.pid, port, startedAt: new Date().toISOString() })
+    await new Promise(resolve => setTimeout(resolve, 2000))
+
+    const status = await getSovitsServerStatus()
+    if (!status.running) {
+      return { success: false, error: `GPT-SoVITS exited during startup. Check ${SOVITS_LOG_FILE}.` }
     }
 
     audit({
       level: 'info',
       category: 'system',
-      event: 'tts_server_stopped',
-      details: { provider, pid },
+      event: 'tts_server_started',
+      details: { provider: 'gpt-sovits', pid: child.pid, port },
       actor: 'system',
-    });
+    })
 
-    return true;
+    return {
+      success: true,
+      message: status.healthy
+        ? `GPT-SoVITS started on port ${port}.`
+        : `GPT-SoVITS started on port ${port} and is still warming up.`,
+      pid: child.pid,
+      port,
+    }
   } catch (error) {
-    console.error(`[ServerManager] Error stopping ${provider} server:`, error);
+    return { success: false, error: `Failed to start GPT-SoVITS: ${(error as Error).message}` }
+  } finally {
+    releaseStartLock(lockDescriptor)
+  }
+}
 
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  process.kill(-pid, signal)
+}
+
+export async function stopSovitsServer(): Promise<SovitsActionResult> {
+  const record = readPidRecord()
+  if (!record) return { success: true, message: 'GPT-SoVITS is not running.' }
+
+  try {
+    signalProcessGroup(record.pid, 'SIGTERM')
+    if (!(await waitForExit(record.pid, 5000)) && ownsSovitsProcess(record.pid)) {
+      signalProcessGroup(record.pid, 'SIGKILL')
+      await waitForExit(record.pid, 1000)
+    }
+
+    if (ownsSovitsProcess(record.pid)) {
+      return { success: false, error: `GPT-SoVITS process ${record.pid} did not stop.` }
+    }
+
+    removePidFile(record.pid)
     audit({
-      level: 'error',
+      level: 'info',
       category: 'system',
-      event: 'tts_server_stop_failed',
-      details: { provider, pid, error: (error as Error).message },
+      event: 'tts_server_stopped',
+      details: { provider: 'gpt-sovits', pid: record.pid },
       actor: 'system',
-    });
-
-    return false;
+    })
+    return { success: true, message: 'GPT-SoVITS stopped.' }
+  } catch (error) {
+    return { success: false, error: `Failed to stop GPT-SoVITS: ${(error as Error).message}` }
   }
 }
 
-/**
- * Stop all TTS servers
- * Returns count of servers that were stopped
- */
+export async function stopServer(provider: TTSProvider): Promise<boolean> {
+  if (provider === 'piper') return false
+  const wasRunning = readPidRecord() !== undefined
+  const result = await stopSovitsServer()
+  return wasRunning && result.success
+}
+
 export async function stopAllServers(): Promise<number> {
-  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
-  let stoppedCount = 0;
-
-  console.log('[ServerManager] Stopping all TTS servers...');
-
-  for (const provider of providers) {
-    const stopped = await stopServer(provider);
-    if (stopped) {
-      stoppedCount++;
-    }
-  }
-
-  console.log(`[ServerManager] Stopped ${stoppedCount} TTS server(s)`);
-  return stoppedCount;
+  return (await stopServer('gpt-sovits')) ? 1 : 0
 }
 
-/**
- * Get running TTS servers
- * Returns array of providers that have running servers
- */
 export function getRunningServers(): TTSProvider[] {
-  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
-  const running: TTSProvider[] = [];
-
-  for (const provider of providers) {
-    const info = getServerInfo(provider);
-    if (!info || !fs.existsSync(info.pidFile)) {
-      continue;
-    }
-
-    const pidStr = fs.readFileSync(info.pidFile, 'utf-8').trim();
-    const pid = parseInt(pidStr, 10);
-
-    if (!isNaN(pid) && isProcessRunning(pid)) {
-      running.push(provider);
-    }
-  }
-
-  return running;
+  return readPidRecord() ? ['gpt-sovits'] : []
 }
 
-/**
- * Clean up stale PID files (processes that aren't running)
- */
 export function cleanupStalePidFiles(): number {
-  const providers: TTSProvider[] = ['rvc', 'gpt-sovits'];
-  let cleaned = 0;
-
-  for (const provider of providers) {
-    const info = getServerInfo(provider);
-    if (!info || !fs.existsSync(info.pidFile)) {
-      continue;
-    }
-
-    const pidStr = fs.readFileSync(info.pidFile, 'utf-8').trim();
-    const pid = parseInt(pidStr, 10);
-
-    if (isNaN(pid) || !isProcessRunning(pid)) {
-      console.log(`[ServerManager] Cleaning stale PID file for ${provider} (PID: ${pid})`);
-      fs.unlinkSync(info.pidFile);
-      cleaned++;
-    }
-  }
-
-  return cleaned;
+  const hadPidFile = fs.existsSync(SOVITS_PID_FILE)
+  const record = readPidRecord()
+  return hadPidFile && !record ? 1 : 0
 }

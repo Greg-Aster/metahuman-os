@@ -4,6 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   const replyToQuestionId = context.replyToQuestionId || inputs[0]?.replyToQuestionId;
@@ -16,53 +17,25 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   }
 
-  // Priority 1: Curiosity question (from audit logs)
+  // Priority 1: Curiosity question from the authenticated profile's canonical store.
   if (replyToQuestionId) {
-    try {
-      const { ROOT } = await import('../../paths.js');
-      const path = await import('node:path');
-      const fs = await import('node:fs');
-
-      const auditDir = path.join(ROOT, 'logs', 'audit');
-      const today = new Date().toISOString().split('T')[0];
-      const auditFile = path.join(auditDir, `${today}.ndjson`);
-
-      if (!fs.existsSync(auditFile)) {
-        return {
-          replyToContext: null,
-          curiosityMetadata: null,
-        };
-      }
-
-      const auditContent = fs.readFileSync(auditFile, 'utf-8');
-      const lines = auditContent.split('\n').filter(Boolean);
-
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const entry = JSON.parse(lines[i]);
-          if (
-            entry.actor === 'curiosity-service' &&
-            entry.event === 'chat_assistant' &&
-            entry.details?.curiosityQuestionId === replyToQuestionId &&
-            entry.details?.curiosityData
-          ) {
-            const questionText = entry.details.curiosityData.questionText;
-            const curiosityData = entry.details.curiosityData;
-
-            return {
-              replyToContext: `# User is Replying To\n💭 ${questionText}`,
-              curiosityMetadata: {
-                questionId: replyToQuestionId,
-                questionText,
-                ...curiosityData,
-              },
-            };
-          }
-        } catch {}
-      }
-    } catch (error) {
-      console.error(`[ReplyToHandler] Error:`, error);
-    }
+    const username = typeof context.username === 'string' && context.username.trim()
+      ? context.username.trim()
+      : context.userId;
+    if (!username) throw new Error('Reply-To Handler requires a username for curiosity replies');
+    const question = await curiosityQuestionStore.get(username, replyToQuestionId);
+    if (!question) throw new Error(`Curiosity reply target not found: ${replyToQuestionId}`);
+    return {
+      replyToContext: `# User is Replying To\n💭 ${question.question}`,
+      curiosityMetadata: {
+        questionId: question.id,
+        questionText: question.question,
+        rawQuestion: question.question,
+        seedMemories: question.seedMemories,
+        askedAt: question.askedAt,
+        isCuriosityQuestion: true,
+      },
+    };
   }
 
   // Priority 2: Selected message content

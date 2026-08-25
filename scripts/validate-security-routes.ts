@@ -45,6 +45,8 @@ const AUTH_BOOTSTRAP_PATTERNS = [
   '/api/profile-sync/memories',
   '/api/environment-bridge/observation',
   '/api/environment-bridge/action-result',
+  '/api/environment-bridge/diagnostics/audio',
+  '/api/environment-bridge/telemetry',
   '/api/internal/work-coordinator/enqueue',
 ];
 
@@ -60,7 +62,7 @@ const OWNER_ROUTE_PATTERNS = [
   '/api/queue/lane-control',
   '/api/cloudflare/',
   '/api/training/launch',
-  '/api/training/load-model',
+  '/api/training/cancel',
   '/api/lifeline/trigger',
   '/api/execute',
   '/api/file_operations',
@@ -75,7 +77,6 @@ const HIGH_RISK_READ_PATTERNS = [
   '/api/active-operator/approvals',
   '/api/conversation-buffer',
   '/api/training-config',
-  '/api/adapters',
   '/api/voice-training',
   '/api/rvc-training',
   '/api/sovits-training',

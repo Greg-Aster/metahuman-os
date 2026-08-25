@@ -32,22 +32,14 @@ export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedRe
 
     // Get active adapter info
     let adapter: any = null;
-    let adapter2: any = null;
     const active = getActiveAdapter();
     if (active && active.status === 'loaded') {
       adapter = {
         name: active.modelName,
         dataset: active.dataset,
-        evalScore: active.evalScore,
         activatedAt: active.activatedAt,
         adapterPath: active.adapterPath ?? active.ggufAdapterPath,
       };
-      if (active.isDualAdapter || active.dual) {
-        adapter2 = {
-          name: 'history-merged',
-          mergedPath: active.mergedPath ?? active.adapters?.historical,
-        };
-      }
       if (active.baseModel) {
         baseModel = active.baseModel;
       }
@@ -63,7 +55,6 @@ export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedRe
     return successResponse({
       baseModel: actualBaseModel,
       adapter,
-      adapter2,
       activeModel: adapter?.name || baseModel,
     });
   } catch (error) {

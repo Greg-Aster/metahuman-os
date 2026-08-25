@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
 import { ROOT, audit, ProgressTracker, getProfilePaths } from '@metahuman/core';
-import { getActiveBackend } from '@metahuman/core/llm-backend';
 import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
 import dotenv from 'dotenv';
 import { ensureDirSync } from 'fs-extra';
@@ -538,10 +537,10 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     cfg = { base_model, training_mode: 'lora' };
   }
 
-  // Check if vLLM is the active backend - if so, skip GGUF conversion
-  // vLLM uses safetensors adapters directly, not merged GGUF files
-  const activeBackend = getActiveBackend();
-  const isVllmBackend = activeBackend === 'vllm';
+  // The requested target owns the output format. Runtime state must not change
+  // the artifact selected by the training request.
+  const targetBackend = cfg.trainingTarget === 'vllm' ? 'vllm' : 'ollama';
+  const isVllmBackend = targetBackend === 'vllm';
   if (isVllmBackend) {
     log(logFilePath, 'vLLM backend detected - disabling GGUF conversion (safetensors mode)');
     cfg.gguf_conversion = { enabled: false };
@@ -549,7 +548,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     fs.writeFileSync(opts.CONFIG_FILE, JSON.stringify(cfg, null, 2));
   }
 
-  tracker.setMetadata({ base_model, samples: opts.samples_used, backend: activeBackend });
+  tracker.setMetadata({ base_model, samples: opts.samples_used, backend: targetBackend });
   tracker.completeStage('initialization');
 
   const summary: any = {

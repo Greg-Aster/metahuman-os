@@ -122,7 +122,7 @@
         </svg>
         <span>Node Palette</span>
       </div>
-      <button onclick={() => collapsed = true} class="palette-btn" title="Collapse palette">
+      <button onclick={() => collapsed = true} class="palette-btn" aria-label="Collapse node palette" title="Collapse palette">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
@@ -140,7 +140,7 @@
         class="flex-1 bg-transparent border-0 text-white text-sm outline-none placeholder:text-neutral-600"
       />
       {#if searchQuery}
-        <button onclick={() => searchQuery = ''} class="palette-btn">
+        <button onclick={() => searchQuery = ''} class="palette-btn" aria-label="Clear node search">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>

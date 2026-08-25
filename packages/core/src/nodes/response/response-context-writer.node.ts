@@ -88,6 +88,9 @@ export const ResponseContextWriterNode: NodeDefinition = defineNode({
     const actionTaken = structuredInput?.actionTaken || (inputs[4] as string | undefined) || '';
     const message = structuredInput?.message || (inputs[5] as string | undefined) || context.userMessage || '';
     const desire = structuredInput?.desire || (inputs[6] as Desire | undefined);
+    const questionId = typeof context.cardData?.questionId === 'string'
+      ? context.cardData.questionId
+      : undefined;
 
     const saveMemory = properties?.saveMemory !== false;
     let memorySaved = false;
@@ -125,6 +128,7 @@ export const ResponseContextWriterNode: NodeDefinition = defineNode({
               responseBufferId,
               desireId: desire?.id,
               desireTitle: desire?.title,
+              questionId,
               userMessage: message,
               assistantResponse: response,
               actionTaken,

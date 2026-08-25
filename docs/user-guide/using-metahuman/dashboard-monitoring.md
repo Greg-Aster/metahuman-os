@@ -113,20 +113,17 @@ process list only while a queued Mood run is actually executing.
 
 **Displays:**
 - Active LLM model and provider (Ollama, OpenAI, etc.)
-- LoRA adapter status (if using dual-adapter system)
-  - Historical adapter: Consolidated long-term memory
-  - Recent adapter: Last 14 days training
+- Active LoRA or merged-model artifact, when configured
 - Model role assignments (orchestrator, persona, curator, fallback)
 - Cognitive mode mappings
 
 **Example:**
 ```
-Active Model: greggles-dual-2025-11-22
-├─ Historical: history-merged.gguf
-└─ Recent: 2025-11-22/adapter.gguf
+Active Model: greggles-2026-08-24
+└─ Artifact: 2026-08-24/adapter.gguf
 
 Roles:
-├─ persona: greggles-dual-2025-11-22
+├─ persona: greggles-2026-08-24
 ├─ orchestrator: default.coder
 └─ curator: default.coder
 ```

@@ -6,10 +6,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { ROOT, systemPaths } from '@metahuman/core';
+import {
+  ROOT,
+  generateSpeech,
+  getSovitsServerStatus,
+  startSovitsServer,
+  stopSovitsServer,
+  systemPaths,
+} from '@metahuman/core';
 
 const SOVITS_DIR = path.join(ROOT, 'external', 'gpt-sovits');
-const SOVITS_PID_FILE = path.join(systemPaths.logs, 'run', 'sovits.pid');
 
 export async function sovitsCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -108,153 +114,23 @@ async function installSoVITS(): Promise<void> {
 }
 
 async function startServer(args: string[]): Promise<void> {
-  // Check if already running
-  if (isServerRunning()) {
-    console.log('✗ GPT-SoVITS server is already running');
-    console.log('  Use "mh sovits stop" to stop it first');
-    process.exit(1);
-  }
-
-  // Check installation
-  if (!fs.existsSync(SOVITS_DIR)) {
-    console.error('✗ GPT-SoVITS not installed');
-    console.error('  Run: mh sovits install');
-    process.exit(1);
-  }
-
-  // Use virtual environment Python if available, otherwise system Python
-  const venvPython = path.join(SOVITS_DIR, 'venv', 'bin', 'python3');
-  let pythonBin = 'python3';
-
-  if (fs.existsSync(venvPython)) {
-    pythonBin = venvPython;
-    console.log('Using GPT-SoVITS virtual environment');
-  } else {
-    // Fallback to system Python
-    const pythonCandidates = ['python3.11', 'python3.10', 'python3.9', 'python3', 'python'];
-    for (const cmd of pythonCandidates) {
-      try {
-        execSync(`command -v ${cmd}`, { encoding: 'utf-8' });
-        pythonBin = cmd;
-        break;
-      } catch {
-        // Try next candidate
-      }
-    }
-    console.log('Warning: Using system Python (virtual environment not found)');
-  }
-
-  // Parse arguments
   const portIndex = args.indexOf('--port');
-  const port = portIndex !== -1 && args[portIndex + 1] ? args[portIndex + 1] : '9880';
+  const portValue = portIndex !== -1 ? args[portIndex + 1] : undefined;
+  if (portIndex !== -1 && !portValue) throw new Error('--port requires a value');
 
-  console.log(`Starting GPT-SoVITS server on port ${port}...`);
+  const port = portValue === undefined ? 9880 : Number(portValue);
+  const result = await startSovitsServer(port);
+  if (!result.success) throw new Error(result.error ?? 'GPT-SoVITS did not start');
 
-  // Ensure log directory exists
-  const logDir = path.join(systemPaths.logs, 'run');
-  if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true });
-  }
-
-  const logFile = path.join(logDir, 'sovits.log');
-
-  // Open log file descriptor (not stream - streams cause ERR_INVALID_ARG_VALUE)
-  const logFd = fs.openSync(logFile, 'a');
-
-  // Start server in background using system Python
-  // Use api.py which doesn't require pretrained models (uses reference audio only)
-  const serverScript = path.join(SOVITS_DIR, 'api.py');
-
-  const serverProcess = spawn(
-    pythonBin,
-    [serverScript, '-p', port, '-a', '0.0.0.0'],
-    {
-      cwd: SOVITS_DIR,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-    }
-  );
-
-  // Close file descriptor in parent (child has its own copy)
-  fs.closeSync(logFd);
-
-  // Save PID as JSON to match API format
-  fs.writeFileSync(
-    SOVITS_PID_FILE,
-    JSON.stringify({
-      pid: serverProcess.pid,
-      port: Number(port),
-      startTime: new Date().toISOString(),
-    })
-  );
-
-  serverProcess.unref();
-
-  console.log(`✓ Server started (PID: ${serverProcess.pid})`);
-  console.log(`  Logs: ${logFile}`);
-  console.log(`  Server URL: http://localhost:${port}/`);
-  console.log(`\nWaiting for server to be ready...`);
-
-  // Wait for server to be ready
-  await waitForServer(port, 30);
-}
-
-async function waitForServer(port: string, timeoutSeconds: number): Promise<void> {
-  const startTime = Date.now();
-  const timeout = timeoutSeconds * 1000;
-
-  while (Date.now() - startTime < timeout) {
-    try {
-      // GPT-SoVITS doesn't have /health endpoint, check root instead
-      const response = await fetch(`http://localhost:${port}/`);
-      // Server responds even with error (400 is expected without reference audio)
-      if (response.status >= 200 && response.status < 500) {
-        console.log('✓ Server is ready!');
-        return;
-      }
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-
-  console.warn('⚠ Server may not be fully ready yet');
-  console.log('  Check logs with: mh sovits logs');
+  console.log(`✓ ${result.message}`);
+  console.log(`  PID: ${result.pid}`);
+  console.log(`  Logs: ${path.join(systemPaths.logs, 'run', 'sovits.log')}`);
 }
 
 async function stopServer(): Promise<void> {
-  if (!isServerRunning()) {
-    console.log('✗ GPT-SoVITS server is not running');
-    return;
-  }
-
-  const pidData = JSON.parse(fs.readFileSync(SOVITS_PID_FILE, 'utf-8'));
-  const pid = pidData.pid;
-  console.log(`Stopping GPT-SoVITS server (PID: ${pid})...`);
-
-  try {
-    process.kill(pid, 'SIGTERM');
-
-    // Wait a moment for graceful shutdown
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Force kill if still running
-    try {
-      process.kill(pid, 0);
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already stopped
-    }
-
-    fs.unlinkSync(SOVITS_PID_FILE);
-    console.log('✓ Server stopped');
-  } catch (error) {
-    console.error('✗ Failed to stop server:', (error as Error).message);
-    // Clean up stale PID file
-    if (fs.existsSync(SOVITS_PID_FILE)) {
-      fs.unlinkSync(SOVITS_PID_FILE);
-    }
-  }
+  const result = await stopSovitsServer();
+  if (!result.success) throw new Error(result.error ?? 'GPT-SoVITS did not stop');
+  console.log(`✓ ${result.message}`);
 }
 
 async function checkStatus(): Promise<void> {
@@ -270,31 +146,13 @@ async function checkStatus(): Promise<void> {
   }
 
   // Check if running
-  const running = isServerRunning();
-  console.log(`Server:       ${running ? '✓ Running' : '✗ Stopped'}`);
+  const status = await getSovitsServerStatus();
+  console.log(`Server:       ${status.running ? '✓ Running' : '✗ Stopped'}`);
 
-  if (running) {
-    const pidData = JSON.parse(fs.readFileSync(SOVITS_PID_FILE, 'utf-8'));
-    console.log(`PID:          ${pidData.pid}`);
-
-    // Try to get server info
-    try {
-      const response = await fetch('http://localhost:9880/health', {
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (response.ok) {
-        console.log(`Health:       ✓ Healthy`);
-        const data = await response.json();
-        if (data.version) {
-          console.log(`Version:      ${data.version}`);
-        }
-      } else {
-        console.log(`Health:       ⚠ Unhealthy (HTTP ${response.status})`);
-      }
-    } catch (error) {
-      console.log(`Health:       ✗ Not responding`);
-    }
+  if (status.running) {
+    console.log(`PID:          ${status.pid}`);
+    console.log(`Port:         ${status.port}`);
+    console.log(`Health:       ${status.healthy ? '✓ Healthy' : '⚠ Warming up or unhealthy'}`);
   }
 
   // Show disk usage
@@ -435,34 +293,17 @@ async function testServer(args: string[]): Promise<void> {
   console.log('Testing GPT-SoVITS server...\n');
   console.log(`Text: "${testText}"\n`);
 
-  if (!isServerRunning()) {
+  const status = await getSovitsServerStatus();
+  if (!status.running) {
     console.error('✗ Server is not running');
     console.error('  Start it with: mh sovits start');
-    process.exit(1);
+    return;
   }
 
   try {
-    const response = await fetch('http://localhost:9880/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: testText,
-        text_lang: 'en',
-        ref_text_free: true,
-      }),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (response.ok) {
-      const audioData = await response.arrayBuffer();
-      console.log(`✓ Server responded successfully`);
-      console.log(`  Audio size: ${formatBytes(audioData.byteLength)}`);
-      console.log(`  Content-Type: ${response.headers.get('content-type')}`);
-    } else {
-      console.error(`✗ Server error: HTTP ${response.status}`);
-      const text = await response.text();
-      console.error(`  ${text}`);
-    }
+    const audio = await generateSpeech(testText, { provider: 'gpt-sovits' });
+    console.log('✓ Speech generated successfully');
+    console.log(`  Audio size: ${formatBytes(audio.byteLength)}`);
   } catch (error) {
     console.error('✗ Test failed:', (error as Error).message);
   }
@@ -472,9 +313,7 @@ async function uninstallSoVITS(): Promise<void> {
   console.log('Uninstalling GPT-SoVITS...\n');
 
   // Stop server if running
-  if (isServerRunning()) {
-    await stopServer();
-  }
+  await stopServer();
 
   if (!fs.existsSync(SOVITS_DIR)) {
     console.log('GPT-SoVITS is not installed');
@@ -485,26 +324,6 @@ async function uninstallSoVITS(): Promise<void> {
   fs.rmSync(SOVITS_DIR, { recursive: true, force: true });
 
   console.log('✓ GPT-SoVITS uninstalled');
-}
-
-// Helper functions
-
-function isServerRunning(): boolean {
-  if (!fs.existsSync(SOVITS_PID_FILE)) {
-    return false;
-  }
-
-  try {
-    const pidData = JSON.parse(fs.readFileSync(SOVITS_PID_FILE, 'utf-8'));
-    const pid = pidData.pid;
-
-    process.kill(pid, 0); // Signal 0 checks if process exists
-    return true;
-  } catch {
-    // Process doesn't exist or PID file is invalid, clean up stale PID file
-    fs.unlinkSync(SOVITS_PID_FILE);
-    return false;
-  }
 }
 
 function getDirSize(dirPath: string): number {

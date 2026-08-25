@@ -18,8 +18,7 @@ export type { MobileRequest, MobileResponse } from '../api/adapters/mobile.js';
 // Re-export route listing for debugging
 export { listRoutes } from '../api/router.js';
 
-// Legacy exports for backward compatibility
-// These will be deprecated in favor of the unified API
+// Mobile bridge response contracts.
 export type { MobileUserContext } from './types.js';
 export { successResponse, errorResponse } from './types.js';
 
@@ -28,7 +27,6 @@ export {
   initializeMobileAgents,
   stopMobileAgents,
   type MobileAgentContext,
-  type MobileAgentPriority,
   type MobileAgentRegistration,
 } from './mobile-agents.js';
 

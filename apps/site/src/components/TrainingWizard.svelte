@@ -7,7 +7,7 @@
   // Wizard state machine
   type WizardStep = 1 | 2 | 3 | 4 | 5;
   type TrainingMethod = 'local-lora' | 'remote-lora' | 'fine-tune' | null;
-  type TrainingTarget = 'ollama' | 'vllm' | 'both';
+  type TrainingTarget = 'ollama' | 'vllm';
 
   interface SystemCapabilities {
     hasLocalGPU: boolean;
@@ -65,7 +65,7 @@
   }
 
   const baseModelOptions: BaseModelOption[] = [
-    { value: DEFAULT_TRAINING_MODEL, label: 'Qwen 3.5 9B (Ollama)', targets: ['ollama', 'both'], description: 'Maintained 16-bit LoRA base; approximately 22GB VRAM before dataset-dependent overhead' },
+    { value: DEFAULT_TRAINING_MODEL, label: 'Qwen 3.5 9B (Ollama)', targets: ['ollama'], description: 'Maintained 16-bit LoRA base; approximately 22GB VRAM before dataset-dependent overhead' },
     { value: DEFAULT_VLLM_TRAINING_MODEL, label: 'Qwen 3.5 9B (vLLM)', targets: ['vllm'], description: 'Maintained Qwen 3.5 base for safetensors adapters' },
   ];
 
@@ -187,8 +187,6 @@
   let trainingComplete = false;
   let trainingFailed = false;
   let failureReason = '';
-  let loadingModel = false;
-  let modelLoadSuccess = '';
 
   // Progress tracking state
   interface ProgressInfo {
@@ -235,11 +233,11 @@
     }
   }
 
-  $: filteredBaseModels = baseModelOptions.filter(opt =>
-    opt.targets.includes(trainingTarget) || opt.targets.includes('both')
-  );
+  $: filteredBaseModels = baseModelOptions.filter(opt => opt.targets.includes(trainingTarget));
 
-  $: console.log('[TrainingWizard] trainingTarget:', trainingTarget, 'filteredModels:', filteredBaseModels.map(m => m.label));
+  $: if (trainingTarget === 'vllm' && selectedMethod !== null && selectedMethod !== 'remote-lora') {
+    selectedMethod = null;
+  }
 
   $: usesLoRA = selectedMethod === 'local-lora' || selectedMethod === 'remote-lora';
 
@@ -251,7 +249,7 @@
       if (res.ok) {
         const data = await res.json();
         systemCapabilities = {
-          hasLocalGPU: data.hasGPU || false,
+          hasLocalGPU: data.hasLocalGPU || false,
           gpuModel: data.gpuModel || null,
           vramGB: data.vramGB || null,
           hasUnsloth: data.hasUnsloth || false,
@@ -322,6 +320,11 @@
   }
 
   function selectMethod(method: TrainingMethod) {
+    if (trainingTarget === 'vllm' && method !== 'remote-lora') {
+      error = 'vLLM artifacts require Remote LoRA training.';
+      return;
+    }
+    error = '';
     selectedMethod = method;
   }
 
@@ -546,10 +549,8 @@
     }
     cancelling = true;
     try {
-      const res = await apiFetch('/api/adapters', {
+      const res = await apiFetch('/api/training/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancelFullCycle' })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -562,28 +563,6 @@
       alert((err as Error).message);
     } finally {
       cancelling = false;
-    }
-  }
-
-  async function loadModel(modelType: 'merged' | 'adapter' | 'both') {
-    loadingModel = true;
-    modelLoadSuccess = '';
-    error = '';
-    try {
-      const res = await apiFetch('/api/training/load-model', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelType })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to load model');
-      }
-      modelLoadSuccess = `${data.message || 'Model loaded successfully!'}`;
-    } catch (err) {
-      error = (err as Error).message;
-    } finally {
-      loadingModel = false;
     }
   }
 
@@ -615,9 +594,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error('Failed to launch training');
       const data = await res.json();
-      if (!data.success) {
+      if (!res.ok || !data.success) {
         throw new Error(data.error || 'Training launch failed');
       }
       trainingComplete = false;
@@ -625,7 +603,7 @@
       startLogsPolling();
     } catch (err) {
       console.error('[TrainingWizard] Failed to launch training:', err);
-      error = 'Failed to launch training. Please try again.';
+      error = (err as Error).message;
     } finally {
       loading = false;
     }
@@ -763,17 +741,6 @@
               </div>
             </button>
 
-            <button
-              class="flex items-center gap-3 px-6 py-4 rounded-xl border-2 cursor-pointer transition-all min-w-[160px]
-                {trainingTarget === 'both' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600'}"
-              on:click={() => trainingTarget = 'both'}
-            >
-              <div class="text-2xl">🔄</div>
-              <div>
-                <h5 class="m-0 text-base text-white">Both</h5>
-                <span class="text-xs text-gray-500">Safetensors + GGUF conversion</span>
-              </div>
-            </button>
           </div>
 
           {#if trainingTarget === 'vllm'}
@@ -790,9 +757,11 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           <!-- Local LoRA Training -->
           <button
-            class="p-6 rounded-xl border-2 cursor-pointer transition-all text-left flex flex-col gap-4
+            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4
+              {trainingTarget === 'vllm' ? 'cursor-not-allowed opacity-50 border-gray-700 bg-gray-900' : 'cursor-pointer'}
               {selectedMethod === 'local-lora' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
             on:click={() => selectMethod('local-lora')}
+            disabled={trainingTarget === 'vllm'}
           >
             <div class="text-3xl">🏠 💻</div>
             <h3 class="text-xl m-0 text-gray-100">Local LoRA Training</h3>
@@ -850,9 +819,11 @@
 
           <!-- Full Fine-Tuning -->
           <button
-            class="p-6 rounded-xl border-2 cursor-pointer transition-all text-left flex flex-col gap-4
+            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4
+              {trainingTarget === 'vllm' ? 'cursor-not-allowed opacity-50 border-gray-700 bg-gray-900' : 'cursor-pointer'}
               {selectedMethod === 'fine-tune' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
             on:click={() => selectMethod('fine-tune')}
+            disabled={trainingTarget === 'vllm'}
           >
             <div class="text-3xl">🎯 🧠</div>
             <h3 class="text-xl m-0 text-gray-100">Full Fine-Tuning</h3>
@@ -1038,26 +1009,28 @@
             </div>
           </div>
 
-          <div class="mt-8">
-            <h4 class="text-lg mb-4 text-gray-100">Curation Strategy</h4>
-            <label class="flex items-center gap-3 cursor-pointer text-sm">
-              <input type="checkbox" class="w-5 h-5 cursor-pointer accent-emerald-600" bind:checked={trainingConfig.monthly_training} />
-              <span>Monthly Training (last 30 days + 3000 random old samples)</span>
-            </label>
+          {#if selectedMethod === 'fine-tune'}
+            <div class="mt-8">
+              <h4 class="text-lg mb-4 text-gray-100">Fine-Tune Dataset Window</h4>
+              <label class="flex items-center gap-3 cursor-pointer text-sm">
+                <input type="checkbox" class="w-5 h-5 cursor-pointer accent-emerald-600" bind:checked={trainingConfig.monthly_training} />
+                <span>Use a recent-data window plus a sample of older records</span>
+              </label>
 
-            {#if trainingConfig.monthly_training}
-              <div class="grid grid-cols-2 gap-4 mt-4 pl-8">
-                <div class="form-group">
-                  <label class="form-label" for="daysRecent">Recent Days</label>
-                  <input type="number" id="daysRecent" class="input-field" bind:value={trainingConfig.days_recent} min="1" max="365" />
+              {#if trainingConfig.monthly_training}
+                <div class="grid grid-cols-2 gap-4 mt-4 pl-8">
+                  <div class="form-group">
+                    <label class="form-label" for="daysRecent">Recent Days</label>
+                    <input type="number" id="daysRecent" class="input-field" bind:value={trainingConfig.days_recent} min="1" max="365" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="oldSamples">Old Samples</label>
+                    <input type="number" id="oldSamples" class="input-field" bind:value={trainingConfig.old_samples} min="0" max="10000" />
+                  </div>
                 </div>
-                <div class="form-group">
-                  <label class="form-label" for="oldSamples">Old Samples</label>
-                  <input type="number" id="oldSamples" class="input-field" bind:value={trainingConfig.old_samples} min="0" max="10000" />
-                </div>
-              </div>
-            {/if}
-          </div>
+              {/if}
+            </div>
+          {/if}
 
           <!-- Training Data Controls -->
           <div class="mt-8 border-t border-gray-700 pt-6">
@@ -1216,7 +1189,7 @@
                 </div>
               {:else}
                 <div class="form-group">
-                  <label class="form-label">Output Format</label>
+                  <div class="form-label">Output Format</div>
                   <div class="flex items-center gap-3 p-3 bg-emerald-600/10 border border-emerald-600/30 rounded-lg text-emerald-500 font-medium">
                     <span class="text-xl">⚡</span>
                     <span>vLLM target: Safetensors format (no GGUF conversion)</span>
@@ -1227,7 +1200,7 @@
 
               <!-- Pipeline Settings -->
               <div class="col-span-2 border-t border-gray-700 pt-4 mt-4 flex flex-col gap-4">
-                <label class="font-semibold text-gray-100">Pipeline Settings</label>
+                <div class="font-semibold text-gray-100">Pipeline Settings</div>
 
                 <div class="flex flex-col gap-2">
                   <label class="flex items-center gap-3 cursor-pointer select-none">
@@ -1384,18 +1357,18 @@
                   }}>📋 Copy</button>
                 </div>
 
-                <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🔧 Fine-Tune Cycle (Incremental)</h4>
-                <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune an existing adapter with new data. Faster than full training.</p>
+                <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🔧 Full Fine-Tune Cycle</h4>
+                <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune the model-registry base model through the canonical remote workflow.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm tsx brain/agents/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm tsx brain/agents/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
 
                 <p class="text-sm text-gray-500 m-0 mt-4 p-3 bg-emerald-600/10 rounded">
-                  <strong>Tip:</strong> Running from terminal lets you see full output in real-time and run multiple sessions.
+                  <strong>Tip:</strong> Running from a terminal exposes the complete live output. Keep one training job active at a time.
                 </p>
               </div>
             </details>
@@ -1427,16 +1400,8 @@
               <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-green-500/10 text-green-500 border border-green-500/30">
                 <span>✅ Training Complete!</span>
               </div>
-              <div class="flex gap-3 flex-wrap">
-                <button class="btn-primary btn-sm" on:click={() => loadModel('merged')} disabled={loadingModel}>
-                  {loadingModel ? 'Loading...' : '📦 Load Merged Model'}
-                </button>
-                <button class="btn-secondary btn-sm" on:click={() => loadModel('adapter')} disabled={loadingModel}>
-                  {loadingModel ? 'Loading...' : '🔧 Load LoRA Adapter'}
-                </button>
-                <button class="btn-secondary btn-sm" on:click={() => loadModel('both')} disabled={loadingModel}>
-                  {loadingModel ? 'Loading...' : '📦🔧 Load Both'}
-                </button>
+              <div class="flex gap-3 flex-wrap items-center">
+                <span class="text-sm text-gray-500">Manage the trained artifact in Backend Settings.</span>
                 <button class="btn-ghost btn-sm border border-gray-700" on:click={() => currentStep = 1}>
                   🔄 New Training
                 </button>
@@ -1452,10 +1417,6 @@
             <div class="bg-red-500/5 border border-red-500/20 rounded-lg p-4 mb-6">
               <p class="text-gray-400 text-sm m-0 leading-relaxed">{failureReason}</p>
             </div>
-          {/if}
-
-          {#if modelLoadSuccess}
-            <div class="banner banner-success mb-6">{modelLoadSuccess}</div>
           {/if}
 
           <div class="flex flex-col gap-6">

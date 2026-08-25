@@ -96,29 +96,38 @@ export function isTunnelRunning(): boolean {
   try {
     if (fs.existsSync(TUNNEL_PID_FILE)) {
       const pid = parseInt(fs.readFileSync(TUNNEL_PID_FILE, 'utf8').trim());
-      // Check if process is actually running
-      try {
-        process.kill(pid, 0); // Signal 0 checks if process exists
+      if (isOwnedTunnelProcess(pid)) {
         return true;
-      } catch {
-        // Process doesn't exist, clean up stale PID file
-        fs.unlinkSync(TUNNEL_PID_FILE);
       }
+      fs.unlinkSync(TUNNEL_PID_FILE);
     }
   } catch (error) {
     console.error('[cloudflare] Error checking tunnel status:', error);
   }
 
-  // Fallback: Check if any cloudflared tunnel process is running
+  return false;
+}
+
+function isOwnedTunnelProcess(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false;
   try {
-    const { execSync } = require('child_process');
-    execSync('pgrep -f "cloudflared tunnel"', { stdio: 'ignore' });
-    return true;
+    process.kill(pid, 0);
   } catch {
-    // No tunnel process found
+    return false;
   }
 
-  return false;
+  if (process.platform === 'linux') {
+    try {
+      const command = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
+      return command.some(part => part.endsWith('/cloudflared') || part === 'cloudflared')
+        && command.includes('tunnel')
+        && command.includes('run');
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -180,11 +189,13 @@ export function stopTunnel(): boolean {
     // Also kill process from PID file
     if (fs.existsSync(TUNNEL_PID_FILE)) {
       const pid = parseInt(fs.readFileSync(TUNNEL_PID_FILE, 'utf8').trim());
-      try {
-        process.kill(pid, 'SIGTERM');
-        console.log(`[cloudflare] Stopped tunnel (PID ${pid})`);
-      } catch (error) {
-        console.error(`[cloudflare] Failed to kill process ${pid}:`, error);
+      if (isOwnedTunnelProcess(pid)) {
+        try {
+          process.kill(pid, 'SIGTERM');
+          console.log(`[cloudflare] Stopped tunnel (PID ${pid})`);
+        } catch (error) {
+          console.error(`[cloudflare] Failed to kill process ${pid}:`, error);
+        }
       }
       fs.unlinkSync(TUNNEL_PID_FILE);
     }
@@ -224,18 +235,6 @@ export function getTunnelStatus(): {
     // Try PID file first
     if (fs.existsSync(TUNNEL_PID_FILE)) {
       pid = parseInt(fs.readFileSync(TUNNEL_PID_FILE, 'utf8').trim());
-    } else {
-      // Fallback: Get PID from running process
-      try {
-        const { execSync } = require('child_process');
-        const output = execSync('pgrep -f "cloudflared tunnel run"', { encoding: 'utf8' });
-        const pids = output.trim().split('\n').filter(Boolean);
-        if (pids.length > 0) {
-          pid = parseInt(pids[0]);
-        }
-      } catch {
-        // Couldn't get PID
-      }
     }
   }
 

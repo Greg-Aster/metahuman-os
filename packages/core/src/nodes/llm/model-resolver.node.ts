@@ -5,6 +5,9 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
+import { loadModelRegistry } from '../../model-resolver.js';
+import { getActiveFacet } from '../../identity.js';
+import { loadMoodSettings } from '../../mood-settings.js';
 
 export const ModelResolverNode: NodeDefinition = defineNode({
   id: 'model_resolver',
@@ -26,10 +29,6 @@ export const ModelResolverNode: NodeDefinition = defineNode({
     const role = inputs[0] || context.role || 'persona';
 
     try {
-      const { loadModelRegistry } = await import('../../model-resolver.js');
-      const { getActiveFacet } = await import('../../identity.js');
-      const { loadMoodSettings } = await import('../../mood-settings.js');
-
       const registry = loadModelRegistry();
 
       const defaults = registry.defaults as Record<string, string> | undefined;

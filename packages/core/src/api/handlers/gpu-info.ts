@@ -9,9 +9,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import { systemPaths } from '../../paths.js';
+import { hasRunpodCredentials } from '../../runpod-config.js';
 
 const execAsync = promisify(exec);
 
@@ -69,21 +67,10 @@ export async function handleGetGpuInfo(req: UnifiedRequest): Promise<UnifiedResp
   }
 
   // 3. Check for RunPod API key
-  if (process.env.RUNPOD_API_KEY) {
-    info.hasRunpodKey = true;
-  } else {
-    // Check if saved in config
-    try {
-      const configPath = path.join(systemPaths.etc, 'runpod.json');
-      if (existsSync(configPath)) {
-        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        if (config.apiKey) {
-          info.hasRunpodKey = true;
-        }
-      }
-    } catch {
-      // No config file
-    }
+  try {
+    info.hasRunpodKey = hasRunpodCredentials(req.user.username);
+  } catch (error) {
+    console.error('[gpu-info] Invalid RunPod profile configuration:', error);
   }
 
   // 4. Check for previous training models

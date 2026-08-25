@@ -4,6 +4,7 @@ import type { EnvironmentObservation } from './types.js';
 import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
 import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
 import {
+  MOVEMENT_GENERATOR_JSON_SCHEMA,
   movementGeneratorNode,
   normalizeGeneratedMotionPlan,
 } from '../nodes/environment/movement-generator.node.js';
@@ -91,6 +92,19 @@ test('normalizes one bounded generated plan and assigns the coordinator session'
   assert.equal(compact.action.frames?.[0]?.targets[0]?.joint, 'R1');
   assert.equal(compact.action.frames?.[0]?.targets[0]?.degrees, 135);
   assert.equal(compact.summary, 'Raise both front legs, pause, then stand.');
+});
+
+test('Movement Generator structured output constrains every joint before runtime validation', () => {
+  const schema = MOVEMENT_GENERATOR_JSON_SCHEMA as any;
+  const frame = schema.properties.frames.items;
+  assert.equal(frame.minItems, 9);
+  assert.equal(frame.maxItems, 9);
+  assert.equal(frame.prefixItems[0].minimum, 100);
+  assert.equal(frame.prefixItems[0].maximum, 5_000);
+  for (const joint of frame.prefixItems.slice(1)) {
+    assert.equal(joint.minimum, 0);
+    assert.equal(joint.maximum, 180);
+  }
 });
 
 test('rejects prose, raw control fields, incomplete joints, precision, and duration overflow', () => {

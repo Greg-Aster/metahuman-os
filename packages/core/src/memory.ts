@@ -79,23 +79,9 @@ import {
   ENCRYPTED_EXTENSION,
 } from './encryption.js';
 import { getProfileStorageConfig } from './users.js';
+import * as agencyStorage from './agency/storage.js';
 
 const LOG_PREFIX = '[memory]';
-
-// Dynamic import for agency module to avoid circular dependencies
-// Used for task-desire reinforcement when tasks complete
-let agencyModule: typeof import('./agency/storage.js') | null = null;
-async function getAgencyModule() {
-  if (!agencyModule) {
-    try {
-      agencyModule = await import('./agency/storage.js');
-    } catch (error) {
-      console.error(`${LOG_PREFIX} Failed to load agency module:`, error);
-      throw new Error('Failed to load agency module for desire reinforcement');
-    }
-  }
-  return agencyModule;
-}
 
 // ============================================================================
 // Memory Deduplication
@@ -746,7 +732,7 @@ export function updateTaskStatus(taskId: string, status: Task['status']): void {
  */
 async function reinforceLinkedDesire(desireId: string, taskTitle: string): Promise<void> {
   try {
-    const agency = await getAgencyModule();
+    const agency = agencyStorage;
     const ctx = getUserContext();
     const username = ctx?.username;
 

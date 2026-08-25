@@ -6,7 +6,8 @@
  *
  * Save behavior:
  * - Creates backup before overwriting existing graphs
- * - Saves to original location (built-in or custom)
+ * - Saves existing graphs to their original location
+ * - Saves new user graphs to the custom runtime directory
  * - Backups stored in etc/cognitive-graphs/backups/
  */
 
@@ -203,7 +204,7 @@ export async function handleGetCognitiveGraph(req: UnifiedRequest): Promise<Unif
  *
  * Behavior:
  * - If graph exists (built-in or custom), creates backup then overwrites
- * - If new graph, saves to built-in location (not custom)
+ * - If new graph, saves to the custom runtime directory
  * - Always creates backup before overwriting existing files
  */
 export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -235,9 +236,9 @@ export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<U
       targetPath = customPath;
       scope = 'custom';
     } else {
-      // New graph - save to built-in location
-      targetPath = builtinPath;
-      scope = 'builtin';
+      await ensureCustomDir();
+      targetPath = customPath;
+      scope = 'custom';
     }
 
     const now = new Date().toISOString();

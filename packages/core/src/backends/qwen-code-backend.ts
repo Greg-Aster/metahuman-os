@@ -17,7 +17,7 @@ import {
   registerBackend,
 } from '../escalation-backend.js';
 import { BACKEND_IDS } from '../escalation-constants.js';
-import { executeWithQwenCode } from '../legacy-cli-adapters.js';
+import { executeWithQwenCode } from '../cli-tool-adapters.js';
 import { loadToolExecutorConfig, type CLIBackendConfig } from '../tool-executor-config.js';
 
 // ============================================================================

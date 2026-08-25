@@ -39,6 +39,9 @@ import {
   callLLM,
   proposeGoalFromDesire,
   GOAL_PROPOSAL_THRESHOLDS,
+  loadTrustLevel,
+  curiosityQuestionStore,
+  getUserContext,
   type RouterMessage,
 } from '@metahuman/core';
 
@@ -421,45 +424,13 @@ function detectTimePatterns(
  * Load pending curiosity questions
  */
 export async function loadCuriosityQuestions(): Promise<CuriosityQuestion[]> {
-  try {
-    const result = storageClient.resolvePath({
-      category: 'state',
-      subcategory: 'curiosity',
-      relativePath: 'questions/pending',
-    });
-
-    if (!result.success || !result.path) return [];
-
-    const questions: CuriosityQuestion[] = [];
-    let files: string[];
-
-    try {
-      files = await fs.readdir(result.path);
-    } catch {
-      return [];
-    }
-
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-
-      try {
-        const content = JSON.parse(await fs.readFile(path.join(result.path, file), 'utf-8'));
-        questions.push({
-          id: content.id || file,
-          question: content.question,
-          askedAt: content.askedAt,
-          topic: content.topic,
-        });
-      } catch {
-        // Skip invalid files
-      }
-    }
-
-    return questions;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Error loading curiosity questions:`, error);
-    return [];
-  }
+  const username = getUserContext()?.username;
+  if (!username) throw new Error('Curiosity desire input requires an authenticated user context');
+  return (await curiosityQuestionStore.listPending(username)).map(record => ({
+    id: record.id,
+    question: record.question,
+    askedAt: record.askedAt,
+  }));
 }
 
 /**
@@ -661,7 +632,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     pendingCuriosityQuestions: curiosityQuestions,
     recentReflections: reflections,
     recentDreams: dreams,
-    currentTrustLevel: 'supervised_auto', // TODO: Load from config
+    currentTrustLevel: loadTrustLevel(),
     recentlyRejected: existingDesires.rejected,
     activeDesires: existingDesires.active,
   };

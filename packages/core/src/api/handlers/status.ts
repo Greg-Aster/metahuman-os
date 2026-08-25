@@ -20,6 +20,7 @@ import { getProfilePaths, systemPaths } from '../../index.js';
 import { loadCuriosityConfig, loadOperatorConfig } from '../../config.js';
 import { getMemoryMetrics } from '../../memory-metrics-cache.js';
 import { fetchRemoteModels } from './remote-server.js';
+import { hasRunpodCredentials } from '../../runpod-config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -37,57 +38,19 @@ interface BackendAvailability {
 }
 
 /**
- * Detect RunPod configuration availability
- * Checks env vars, etc/runpod.json, and .env file
+ * Detect RunPod configuration availability for one authenticated profile.
  */
-function detectRunPodAvailability(): { available: boolean; configured: boolean } {
-  let hasApiKey = false;
-
-  // 1. Check environment variables
-  if (process.env.RUNPOD_API_KEY) {
-    hasApiKey = true;
-  }
-
-  // 2. Check etc/runpod.json
-  if (!hasApiKey) {
-    const configPath = path.join(systemPaths.root, 'etc', 'runpod.json');
-    if (fs.existsSync(configPath)) {
-      try {
-        const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        if (fileConfig.apiKey) {
-          hasApiKey = true;
-        }
-      } catch {
-        // Invalid JSON, ignore
-      }
+function detectRunPodAvailability(username?: string): { available: boolean; configured: boolean } {
+  let hasApiKey = Boolean(process.env.RUNPOD_API_KEY);
+  if (username) {
+    try {
+      hasApiKey = hasRunpodCredentials(username);
+    } catch (error) {
+      console.error('[status] Invalid RunPod profile configuration:', error);
     }
   }
-
-  // 3. Check .env file in root directory
-  if (!hasApiKey) {
-    const envPath = path.join(systemPaths.root, '.env');
-    if (fs.existsSync(envPath)) {
-      try {
-        const envContent = fs.readFileSync(envPath, 'utf-8');
-        const lines = envContent.split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('RUNPOD_API_KEY=')) {
-            const value = trimmed.substring('RUNPOD_API_KEY='.length).trim().replace(/^["']|["']$/g, '');
-            if (value) {
-              hasApiKey = true;
-              break;
-            }
-          }
-        }
-      } catch {
-        // Can't read .env, ignore
-      }
-    }
-  }
-
   return {
-    available: hasApiKey, // Available if API key is configured
+    available: hasApiKey,
     configured: hasApiKey,
   };
 }
@@ -276,7 +239,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     let currentModel: string | null = null;
     let baseModel: string | null = null;
     let adapter: any = null;
-    let adapterMode: 'none' | 'adapter' | 'merged' | 'dual' = 'none';
+    let adapterMode: 'none' | 'adapter' | 'merged' = 'none';
     let useAdapter = false;
     let includePersonaSummary = false;
     let adapterModelName: string | null = null;
@@ -311,24 +274,20 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     const isMergedActive = !useAdapter && adapterModelName && currentModel && adapterModelName === currentModel;
 
     if (useAdapter && adapterModelName) {
-      const isDual = !!(adapterMetaCfg.isDualAdapter || adapterMetaCfg.dual);
-      adapterMode = isDual ? 'dual' : 'adapter';
+      adapterMode = 'adapter';
       const status = active?.status || 'configured';
       adapter = {
         status,
         modelName: adapterModelName,
-        isDualAdapter: isDual,
         activatedAt: active?.activatedAt,
         source: active ? 'active' : 'config',
       };
       if (active?.baseModel) baseModel = active.baseModel;
     } else if (isMergedActive) {
-      const isDual = !!(adapterMetaCfg.isDualAdapter || adapterMetaCfg.dual);
-      adapterMode = isDual ? 'dual' : 'merged';
+      adapterMode = 'merged';
       adapter = {
         status: 'merged',
         modelName: adapterModelName,
-        isDualAdapter: isDual,
         activatedAt: adapterMetaCfg.activatedAt,
         source: 'merged',
       };
@@ -540,7 +499,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
 
       // Build backend availability for status widget icons
       // availableBackends already declared above for availableProviders check
-      const runpodStatus = detectRunPodAvailability();
+      const runpodStatus = detectRunPodAvailability(isAuthenticated ? user.username : undefined);
       const bigBrotherStatus = detectBigBrotherAvailability(isAuthenticated ? user.username : undefined);
       const localModelsStatus = await detectLocalModelsAvailability();
       // remoteServerStatus already defined above for fetching models

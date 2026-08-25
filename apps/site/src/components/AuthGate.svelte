@@ -855,7 +855,7 @@
       {:else if view === 'login'}
         <!-- Login Form -->
         <div class="relative">
-          <button class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+          <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -945,7 +945,7 @@
       {:else if view === 'register'}
         <!-- Registration Form -->
         <div class="relative">
-          <button class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+          <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1082,7 +1082,7 @@
       {:else if view === 'forgot-password'}
         <!-- Forgot Password / Recovery Code Form -->
         <div class="relative">
-          <button class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+          <button aria-label="Back to sign in" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'login'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1173,7 +1173,7 @@
       {:else if view === 'sync-prompt'}
         <!-- User Not Found - shown when user not found locally -->
         <div class="relative">
-          <button class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+          <button aria-label="Back to sign in" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'login'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1258,7 +1258,7 @@
       {:else if view === 'register-local'}
         <!-- Local Profile Registration -->
         <div class="relative">
-          <button class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+          <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>

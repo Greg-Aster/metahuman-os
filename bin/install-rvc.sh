@@ -52,7 +52,6 @@ fi
 echo ""
 echo "[3/7] Setting up directories..."
 mkdir -p "$METAHUMAN_ROOT/external"
-mkdir -p "$METAHUMAN_ROOT/out/voices/rvc"
 
 # Clone Applio RVC repository
 echo ""
@@ -124,106 +123,11 @@ echo "[7/7] Downloading pretrained models..."
 ./venv/bin/python -c "from rvc.lib.tools.prerequisites_download import prequisites_download_pipeline; prequisites_download_pipeline(True, True, True)"
 echo "✓ Pretrained models downloaded"
 
-# Create inference script if it doesn't exist
-echo ""
-echo "Creating RVC inference script..."
-cat > "$RVC_DIR/infer.py" << 'PYTHON_SCRIPT'
-#!/usr/bin/env python3
-"""
-RVC Inference Script for MetaHuman OS
-Standalone voice conversion inference
-"""
-
-import argparse
-import sys
-import os
-import numpy as np
-import soundfile as sf
-import torch
-from scipy import signal
-
-def convert_voice(input_path, output_path, model_path, pitch_shift=0, index_path=None):
-    """
-    Apply RVC voice conversion to input audio
-
-    Args:
-        input_path: Path to input WAV file
-        output_path: Path to output WAV file
-        model_path: Path to RVC model (.pth file)
-        pitch_shift: Pitch shift in semitones (-12 to +12)
-        index_path: Optional path to index file for retrieval
-    """
-    try:
-        # Load input audio
-        audio, sr = sf.read(input_path)
-
-        # Convert to mono if stereo
-        if len(audio.shape) > 1:
-            audio = np.mean(audio, axis=1)
-
-        # Resample to 16kHz (RVC standard)
-        if sr != 16000:
-            audio = signal.resample(audio, int(len(audio) * 16000 / sr))
-            sr = 16000
-
-        # Placeholder: this script does not perform real RVC inference yet.
-        # It only applies a pitch shift to demonstrate the flow.
-
-        # Apply pitch shift using simple resampling (placeholder)
-        if pitch_shift != 0:
-            shift_factor = 2 ** (pitch_shift / 12)
-            new_length = int(len(audio) / shift_factor)
-            audio = signal.resample(audio, new_length)
-
-        # Save output
-        sf.write(output_path, audio, sr)
-
-        print(f"✓ Voice conversion completed: {output_path}")
-        return 0
-
-    except Exception as e:
-        print(f"✗ Error during voice conversion: {e}", file=sys.stderr)
-        return 1
-
-def main():
-    parser = argparse.ArgumentParser(description='RVC Voice Conversion Inference')
-    parser.add_argument('--input', required=True, help='Input WAV file')
-    parser.add_argument('--output', required=True, help='Output WAV file')
-    parser.add_argument('--model', required=True, help='RVC model file (.pth)')
-    parser.add_argument('--pitch', type=int, default=0, help='Pitch shift in semitones')
-    parser.add_argument('--index', help='Optional index file')
-
-    args = parser.parse_args()
-
-    return convert_voice(
-        args.input,
-        args.output,
-        args.model,
-        args.pitch,
-        args.index
-    )
-
-if __name__ == '__main__':
-    sys.exit(main())
-PYTHON_SCRIPT
-
-chmod +x "$RVC_DIR/infer.py"
-echo "✓ Inference script created"
-
-# Ensure training script is reachable from root directory
-TRAIN_SOURCE="$RVC_DIR/rvc/train/train.py"
-TRAIN_TARGET="$RVC_DIR/train.py"
-if [ -f "$TRAIN_SOURCE" ]; then
-    if [ -L "$TRAIN_TARGET" ] || [ -f "$TRAIN_TARGET" ]; then
-        ln -sf "rvc/train/train.py" "$TRAIN_TARGET"
-        echo "✓ Training script link refreshed"
-    else
-        ln -s "rvc/train/train.py" "$TRAIN_TARGET"
-        echo "✓ Training script link created"
-    fi
-else
-    echo "⚠ Unable to find Applio training script at $TRAIN_SOURCE"
+if [ ! -f "$RVC_DIR/core.py" ]; then
+    echo "✗ Applio inference entrypoint is missing: $RVC_DIR/core.py"
+    exit 1
 fi
+echo "✓ Applio inference entrypoint verified"
 
 echo ""
 echo "========================================="

@@ -64,15 +64,12 @@ export {
 export {
   // State updates
   updateTTSState,
-  setCuriosityAwaiting,
-  clearCuriosityAwaiting,
   setDesireAwaiting,
   clearDesireAwaiting,
   recordUserMessage,
   setLLMStreaming,
   // State queries
   isTTSSpeaking,
-  isAwaitingCuriosity,
   isAwaitingDesireInput,
   isActiveConversation,
   shouldPauseForUser,

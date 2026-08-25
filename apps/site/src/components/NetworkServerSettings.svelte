@@ -17,7 +17,6 @@
     getQualityLabel,
     type HealthStatus
   } from '../lib/client/server-health';
-  import TierSelector from './TierSelector.svelte';
   import SyncStatus from './SyncStatus.svelte';
   import UpdateManager from './UpdateManager.svelte';
   import ProfileManager from './ProfileManager.svelte';
@@ -917,33 +916,6 @@
         </div>
       </div>
     {/if}
-
-    <!-- ============ MOBILE FEATURES (Shown on all platforms) ============ -->
-    <!-- Tier Selection -->
-    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
-      <div class="flex items-center gap-4 flex-wrap mb-3">
-        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">⚡ Compute Tier</h2>
-        {#if !isMobile}
-          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
-        {/if}
-      </div>
-      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
-        Automatically select the best compute tier based on connectivity, battery, and task requirements.
-      </p>
-      {#if isMobile}
-        <TierSelector />
-      {:else}
-        <div class="opacity-50">
-          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
-            <div class="flex items-center gap-2 mb-3">
-              <span class="w-3 h-3 rounded-full bg-red-500"></span>
-              <strong>—</strong>
-            </div>
-            <p class="text-sm text-gray-500">Use mobile app to select compute tier</p>
-          </div>
-        </div>
-      {/if}
-    </div>
 
     <!-- Memory Sync -->
     <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">

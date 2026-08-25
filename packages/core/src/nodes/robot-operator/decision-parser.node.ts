@@ -3,9 +3,21 @@ import { defineNode } from '../types.js';
 export interface RobotOperatorDecision {
   observed: string;
   instruction: string;
-  requiresAction: boolean;
   reason: string;
 }
+
+export const ROBOT_OPERATOR_DECISION_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['observed', 'instruction', 'reason'],
+  properties: {
+    observed: { type: 'string', minLength: 1, maxLength: 500 },
+    instruction: { type: 'string', minLength: 1, maxLength: 1_000 },
+    reason: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const;
+
+const DECISION_FIELDS = new Set(['observed', 'instruction', 'reason']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -17,38 +29,12 @@ function cleanText(value: unknown, maxLength: number): string {
     : '';
 }
 
-function extractJsonObject(value: string): unknown {
-  const trimmed = value.trim();
+function strictJsonObject(value: string): unknown {
   try {
-    return JSON.parse(trimmed);
-  } catch {}
-  const start = trimmed.indexOf('{');
-  if (start < 0) return null;
-  let depth = 0;
-  let quoted = false;
-  let escaped = false;
-  for (let index = start; index < trimmed.length; index += 1) {
-    const character = trimmed[index]!;
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === '"') quoted = false;
-      continue;
-    }
-    if (character === '"') quoted = true;
-    else if (character === '{') depth += 1;
-    else if (character === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          return JSON.parse(trimmed.slice(start, index + 1));
-        } catch {
-          return null;
-        }
-      }
-    }
+    return JSON.parse(value.trim());
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export const robotOperatorDecisionParserNode = defineNode({
@@ -61,62 +47,49 @@ export const robotOperatorDecisionParserNode = defineNode({
   outputs: [
     { name: 'decision', type: 'object', description: 'Validated grounded observation and free-form high-level intention' },
     { name: 'observed', type: 'string', description: 'Concise summary grounded in the current robot stimulus' },
-    { name: 'instruction', type: 'string', description: 'High-level intention delegated to Environment Mode' },
-    { name: 'requiresAction', type: 'boolean', description: 'LLM-authored decision that satisfying the intention requires environment work rather than conversation alone' },
+    { name: 'instruction', type: 'string', description: 'High-level intention delegated to Boredom Autonomy' },
     { name: 'reason', type: 'string', description: 'Concise inspectable decision reason' },
     { name: 'valid', type: 'boolean', description: 'Whether the model response satisfied the graph contract' },
     { name: 'error', type: 'string', description: 'Parsing or contract error' },
   ],
-  properties: { requireAction: false },
-  propertySchemas: {
-    requireAction: {
-      type: 'toggle',
-      default: false,
-      label: 'Require Environment Action',
-      description: 'Reject observation-only decisions when this graph represents an action-first trigger.',
-    },
-  },
-  description: 'Validates one grounded observation and free-form intention without classifying or inventing robot behavior.',
-  async execute(inputs, _context, properties) {
+  properties: {},
+  propertySchemas: {},
+  description: 'Strictly validates one planner-authored observation and high-level autonomy instruction.',
+  async execute(inputs) {
     const raw = typeof inputs.response === 'string'
       ? inputs.response
       : typeof inputs.response?.content === 'string'
         ? inputs.response.content
         : '';
-    const parsed = extractJsonObject(raw);
+    const parsed = strictJsonObject(raw);
     const invalid = (error: string) => ({
       decision: null,
       observed: '',
       instruction: '',
-      requiresAction: false,
       reason: '',
       valid: false,
       error,
     });
     if (!isRecord(parsed)) return invalid('Robot Operator response was not a JSON object.');
+    const unknown = Object.keys(parsed).filter(field => !DECISION_FIELDS.has(field));
+    if (unknown.length > 0 || Object.keys(parsed).length !== DECISION_FIELDS.size) {
+      return invalid('Robot Operator decision must contain exactly observed, instruction, and reason.');
+    }
     const observed = cleanText(parsed.observed, 500);
     const reason = cleanText(parsed.reason, 500);
     const instruction = cleanText(parsed.instruction, 1_000);
     if (!observed) return invalid('Robot Operator decision requires a current observation summary.');
     if (!reason) return invalid('Robot Operator decision requires a concise reason.');
     if (!instruction) return invalid('Environment delegation requires a high-level intention.');
-    if (typeof parsed.requiresAction !== 'boolean') {
-      return invalid('Robot Operator decision requires an explicit requiresAction boolean.');
-    }
-    if (properties?.requireAction === true && parsed.requiresAction !== true) {
-      return invalid('This Robot Operator trigger requires an Environment Mode action intention.');
-    }
     const decision: RobotOperatorDecision = {
       observed,
       instruction,
-      requiresAction: parsed.requiresAction,
       reason,
     };
     return {
       decision,
       observed: decision.observed,
       instruction: decision.instruction,
-      requiresAction: decision.requiresAction,
       reason: decision.reason,
       valid: true,
       error: '',

@@ -11,14 +11,6 @@
   // Model info
   let modelInfo: any = null;
 
-  // LoRA state
-  let loraEnabled = false;
-  let loraToggling = false;
-  let loraDatasets: any[] = [];
-  let dualAvailable = false;
-  let dualEnabled = false;
-  let selecting = false;
-
   // Logging config
   let logLevel = 'info';
   let slowRequestThresholdMs = 1000;
@@ -38,13 +30,6 @@
   let nodePipelineLocked = false;
   let nodePipelineLoading = false;
   let nodePipelineSaving = false;
-
-  // Embedding model control
-  let embeddingEnabled = true;
-  let embeddingModel = 'nomic-embed-text';
-  let embeddingPreload = true;
-  let embeddingLoading = false;
-  let embeddingSaving = false;
 
   // Storage status
   let storageStatus: {
@@ -104,11 +89,9 @@
   onMount(async () => {
     loadWelcomeModalSetting();
     loadModelInfo();
-    loadLoraState();
     loadLoggingConfig();
     loadAuditLoggingState();
     loadNodePipelineState();
-    loadEmbeddingConfig();
     loadStorageStatus();
     loadReflectorContentMode();
     loadIndexContentMode();
@@ -291,103 +274,6 @@
     }
   }
 
-  async function loadEmbeddingConfig() {
-    embeddingLoading = true;
-    try {
-      const res = await apiFetch('/api/embeddings-control');
-      if (res.ok) {
-        const data = await res.json();
-        embeddingEnabled = !!data.enabled;
-        embeddingModel = data.model || 'nomic-embed-text';
-        embeddingPreload = !!data.preloadAtStartup;
-      }
-    } catch (err) {
-      console.error('[SystemSettings] Error loading embedding config:', err);
-    } finally {
-      embeddingLoading = false;
-    }
-  }
-
-  async function handleEmbeddingToggle(event: Event) {
-    if (embeddingSaving) {
-      event?.preventDefault();
-      return;
-    }
-    const target = event.currentTarget as HTMLInputElement | null;
-    const desired = target?.checked ?? !embeddingEnabled;
-    embeddingSaving = true;
-    try {
-      const res = await apiFetch('/api/embeddings-control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: desired })
-      });
-      if (!res.ok) {
-        throw new Error('Failed to update embedding state');
-      }
-      const data = await res.json();
-      embeddingEnabled = !!data.config.enabled;
-    } catch (err) {
-      console.error('[SystemSettings] Error updating embedding state:', err);
-      embeddingEnabled = !desired;
-      alert(`Failed to update embedding: ${(err as Error).message}`);
-    } finally {
-      embeddingSaving = false;
-    }
-  }
-
-  async function handleEmbeddingPreloadToggle(event: Event) {
-    if (embeddingSaving) {
-      event?.preventDefault();
-      return;
-    }
-    const target = event.currentTarget as HTMLInputElement | null;
-    const desired = target?.checked ?? !embeddingPreload;
-    embeddingSaving = true;
-    try {
-      const res = await apiFetch('/api/embeddings-control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preloadAtStartup: desired })
-      });
-      if (!res.ok) {
-        throw new Error('Failed to update preload state');
-      }
-      const data = await res.json();
-      embeddingPreload = !!data.config.preloadAtStartup;
-    } catch (err) {
-      console.error('[SystemSettings] Error updating preload state:', err);
-      embeddingPreload = !desired;
-      alert(`Failed to update preload: ${(err as Error).message}`);
-    } finally {
-      embeddingSaving = false;
-    }
-  }
-
-  async function preloadEmbeddingNow() {
-    if (!embeddingEnabled) {
-      alert('Enable embeddings first before preloading');
-      return;
-    }
-    embeddingSaving = true;
-    try {
-      const res = await apiFetch('/api/embeddings-control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preloadNow: true })
-      });
-      if (!res.ok) {
-        throw new Error('Failed to preload model');
-      }
-      alert('Embedding model is being preloaded in the background');
-    } catch (err) {
-      console.error('[SystemSettings] Error preloading model:', err);
-      alert(`Failed to preload: ${(err as Error).message}`);
-    } finally {
-      embeddingSaving = false;
-    }
-  }
-
   function loadWelcomeModalSetting() {
     const stored = localStorage.getItem('showWelcomeModal');
     showWelcomeModal = stored === null ? true : stored === 'true';
@@ -405,62 +291,6 @@
       }
     } catch (err) {
       console.error('[SystemSettings] Error loading model info:', err);
-    }
-  }
-
-  async function loadLoraState() {
-    try {
-      const res = await apiFetch('/api/lora-state');
-      if (res.ok) {
-        const data = await res.json();
-        loraEnabled = data.enabled;
-        loraDatasets = data.datasets || [];
-        dualAvailable = data.dualAvailable || false;
-        dualEnabled = data.dualEnabled || false;
-      }
-    } catch (err) {
-      console.error('[SystemSettings] Error loading LoRA state:', err);
-    }
-  }
-
-  async function toggleLora() {
-    if (loraToggling) return;
-    loraToggling = true;
-    try {
-      const res = await apiFetch('/api/lora-toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: loraEnabled }),
-      });
-      if (!res.ok) throw new Error('Failed to toggle LoRA');
-      await loadModelInfo();
-    } catch (err) {
-      console.error('[SystemSettings] Error toggling LoRA:', err);
-      loraEnabled = !loraEnabled;
-    } finally {
-      loraToggling = false;
-    }
-  }
-
-  async function handleLoraSelect(e: Event) {
-    const target = e.target as HTMLSelectElement;
-    const date = target.value;
-    if (!date || selecting) return;
-
-    selecting = true;
-    try {
-      const res = await apiFetch('/api/lora-select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, dualEnabled }),
-      });
-      if (!res.ok) throw new Error('Failed to select adapter');
-      await loadModelInfo();
-      target.value = '';
-    } catch (err) {
-      console.error('[SystemSettings] Error selecting adapter:', err);
-    } finally {
-      selecting = false;
     }
   }
 
@@ -645,7 +475,7 @@
 
   <!-- Resources Section -->
   <div class="setting-group">
-    <label class="setting-label">Resources</label>
+    <div class="setting-label">Resources</div>
     <div class="flex flex-col gap-3">
       <a href="/user-guide" class="flex items-center gap-3 p-3.5 rounded-lg bg-violet-500/5 dark:bg-violet-400/10 border border-violet-500/15 dark:border-violet-400/20 no-underline text-inherit transition-all hover:bg-violet-500/10 dark:hover:bg-violet-400/15 hover:border-violet-500/30 dark:hover:border-violet-400/35 hover:translate-x-0.5">
         <span class="text-2xl shrink-0">📖</span>
@@ -778,7 +608,7 @@
 
   <!-- Reflector Content Mode -->
   <div class="setting-group">
-    <label class="setting-label">Idle Thoughts Content</label>
+    <div class="setting-label">Idle Thoughts Content</div>
     <div class="flex flex-col gap-2">
       <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
         Controls what content agents (reflector, curiosity, etc.) reflect on when generating idle thoughts and inner dialogue.
@@ -804,7 +634,7 @@
 
   <!-- Index Content Mode -->
   <div class="setting-group">
-    <label class="setting-label">Memory Search Index</label>
+    <div class="setting-label">Memory Search Index</div>
     <div class="flex flex-col gap-2">
       <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-3">
         Controls what content is included in the semantic search index. Affects what memories can be found when searching.
@@ -838,7 +668,7 @@
 
   <!-- Node Pipeline Toggle -->
   <div class="setting-group">
-    <label class="setting-label">Node Pipeline</label>
+    <div class="setting-label">Node Pipeline</div>
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between">
         <span class="setting-label">
@@ -877,7 +707,7 @@
 
   <!-- Audit Logging Control -->
   <div class="setting-group mt-6">
-    <label class="setting-label">Audit Logging</label>
+    <div class="setting-label">Audit Logging</div>
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between">
         <span class="setting-label">Enable detailed activity logs</span>
@@ -915,110 +745,20 @@
     </div>
   </div>
 
-  <!-- Embedding Model Control -->
-  <div class="setting-group mt-6">
-    <label class="setting-label">Embedding Model (Semantic Memory)</label>
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center justify-between">
-        <span class="setting-label">Enable semantic memory search</span>
-        <label
-          class="toggle-switch"
-          for="embedding-toggle"
-          aria-label="Toggle embedding model"
-        >
-          <input
-            id="embedding-toggle"
-            type="checkbox"
-            bind:checked={embeddingEnabled}
-            disabled={embeddingLoading || embeddingSaving}
-            on:change={handleEmbeddingToggle}
-          />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
-        {#if embeddingEnabled}
-          ✓ Semantic search is ON. The "{embeddingModel}" model enables memory-based conversations.
-        {:else}
-          ⚠️ Semantic search is OFF. Conversations will use basic keyword search only.
-        {/if}
-      </p>
-
-      {#if embeddingEnabled}
-        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-          <div class="flex items-center justify-between">
-            <span class="setting-label">Preload model at startup</span>
-            <label
-              class="toggle-switch"
-              for="embedding-preload-toggle"
-              aria-label="Toggle preload at startup"
-            >
-              <input
-                id="embedding-preload-toggle"
-                type="checkbox"
-                bind:checked={embeddingPreload}
-                disabled={embeddingLoading || embeddingSaving}
-                on:change={handleEmbeddingPreloadToggle}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <p class="text-[0.85rem] text-gray-500 dark:text-gray-400 m-0 mt-2">
-            {#if embeddingPreload}
-              ✓ Model will load automatically on system startup (keeps it in memory)
-            {:else}
-              Model will load on-demand when needed (may cause delays on first use)
-            {/if}
-          </p>
-        </div>
-
-        <div class="mt-3">
-          <button
-            class="btn-secondary btn-sm"
-            on:click={preloadEmbeddingNow}
-            disabled={embeddingSaving}
-          >
-            🔄 Load Model Now
-          </button>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            Current model: <strong>{embeddingModel}</strong> (~791MB VRAM)
-          </p>
-        </div>
-      {/if}
-    </div>
-  </div>
-
   <!-- Active Model Info -->
   {#if modelInfo}
     <div class="setting-group">
-      <label class="setting-label">Active Model Info</label>
+      <div class="setting-label">Active Model Info</div>
       <div class="info-grid">
         <div class="info-item">
           <span class="info-key">Base Model:</span>
           <span class="info-value font-mono">{modelInfo.activeModel}</span>
         </div>
-        {#if modelInfo.adapter2}
-          <div class="info-item">
-            <span class="info-key">📚 Historical:</span>
-            <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">history-merged</span>
-          </div>
-          <div class="info-item">
-            <span class="info-key">🆕 Recent:</span>
-            <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">
-              {modelInfo.adapter.dataset}
-              {#if modelInfo.adapter.evalScore}
-                <span class="text-xs text-emerald-500 dark:text-emerald-400 ml-1">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
-              {/if}
-            </span>
-          </div>
-        {:else if modelInfo.adapter}
+        {#if modelInfo.adapter}
           <div class="info-item">
             <span class="info-key">LoRA Adapter:</span>
             <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">
               {modelInfo.adapter.dataset}
-              {#if modelInfo.adapter.evalScore}
-                <span class="text-xs text-emerald-500 dark:text-emerald-400 ml-1">({(modelInfo.adapter.evalScore * 100).toFixed(0)}%)</span>
-              {/if}
             </span>
           </div>
         {:else}
@@ -1031,7 +771,7 @@
     </div>
   {:else}
     <div class="setting-group">
-      <label class="setting-label">Active Model Info</label>
+      <div class="setting-label">Active Model Info</div>
       <div class="info-grid">
         <div class="info-item">
           <span class="info-key">Status:</span>
@@ -1041,52 +781,9 @@
     </div>
   {/if}
 
-  <!-- LoRA Enable/Disable Toggle -->
-  <div class="setting-group">
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center justify-between">
-        <span class="setting-label">LoRA Adapters</span>
-        <label class="toggle-switch" for="lora-toggle-input" aria-label="Enable LoRA Adapters">
-          <input
-            id="lora-toggle-input"
-            type="checkbox"
-            bind:checked={loraEnabled}
-            on:change={toggleLora}
-            disabled={loraToggling}
-          />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <p class="text-sm text-gray-500 dark:text-gray-400 m-0">
-        {loraEnabled ? 'LoRA adapters enabled - personalized responses active' : 'LoRA adapters disabled - using base model only'}
-      </p>
-    </div>
-  </div>
-
-  <!-- Adapter Selector -->
-  {#if loraDatasets.length > 0 && loraEnabled}
-    <div class="setting-group">
-      <label class="setting-label" for="adapter-selector">Switch Adapter</label>
-      <div id="adapter-selector" class="flex gap-2 items-center flex-wrap">
-        <select class="select-field flex-1 min-w-[200px]" on:change={handleLoraSelect} disabled={selecting}>
-          <option value="">Select adapter to load...</option>
-          {#each loraDatasets as d}
-            <option value={d.date}>{d.date} {d.evalScore ? `(${(d.evalScore * 100).toFixed(0)}%)` : ''}</option>
-          {/each}
-        </select>
-        {#if dualAvailable}
-          <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer" for="dual-mode-checkbox">
-            <input id="dual-mode-checkbox" type="checkbox" bind:checked={dualEnabled} class="cursor-pointer accent-violet-600" />
-            <span>Dual Mode</span>
-          </label>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
   <!-- Logging Configuration -->
   <div class="setting-group">
-    <label class="setting-label">Logging Configuration</label>
+    <div class="setting-label">Logging Configuration</div>
     <div class="flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <label for="log-level-select" class="text-sm font-medium text-gray-600 dark:text-gray-400">Log Level</label>
@@ -1131,14 +828,14 @@
 
   <!-- GPU Monitoring -->
   <div class="setting-group">
-    <label class="setting-label">GPU Memory Status</label>
+    <div class="setting-label">GPU Memory Status</div>
     <GPUMonitor />
   </div>
 
   <!-- File Path Manager -->
   <div class="setting-group mt-6">
     <div class="flex items-center justify-between mb-3">
-      <label class="setting-label">File Path Manager</label>
+      <div class="setting-label">File Path Manager</div>
       <button
         class="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 cursor-pointer text-base transition-all hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={refreshStorageStatus}

@@ -691,15 +691,6 @@ export async function syncCredentials(authToken?: string): Promise<SyncableCrede
   return getLocalCredentials();
 }
 
-/**
- * Clear credentials (placeholder - credentials live in filesystem)
- */
-export async function clearLocalCredentials(): Promise<void> {
-  // Credentials are in filesystem - clearing would require API call
-  // For now, this is a no-op. User can manually delete etc/runpod.json
-  console.log('[profile-sync] clearLocalCredentials is a no-op - credentials are in filesystem');
-}
-
 // ============================================================================
 // Remote Server Sync (with authentication)
 // ============================================================================

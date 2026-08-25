@@ -7,6 +7,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { renderPromptTemplate } from '../prompt-template.js';
+import { getUserContext } from '../../context.js';
 
 const DEFAULT_FULL_TASK_PROMPT_TEMPLATE = `You are an autonomous AI operator with FULL PERMISSIONS to execute any task. You have been granted complete access to all tools and should execute tasks WITHOUT asking for permission.
 {{conversationContext}}{{desireInfo}}
@@ -71,7 +72,6 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     emitProgress('big_brother_init', '🔧 Loading Big Brother backends...');
 
     const { audit } = await import('../../audit.js');
-    const { getUserContext } = await import('../../context.js');
     const { loadFreshOperatorConfig } = await import('../../config.js');
     const { escalate, getActiveBackend, getBackend, ensureBackendsInitialized } = await import('../../escalation-backend.js');
 

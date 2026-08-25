@@ -302,15 +302,15 @@
 
       <div class="flex gap-4 md:justify-between md:w-full">
         <div class="flex flex-col items-end">
-          <label class="text-xs text-gray-400 uppercase tracking-wide">Selected:</label>
+          <span class="text-xs text-gray-400 uppercase tracking-wide">Selected:</span>
           <span class="text-base font-semibold mt-0.5">{selectedIds.size} samples</span>
         </div>
         <div class="flex flex-col items-end">
-          <label class="text-xs text-gray-400 uppercase tracking-wide">Duration:</label>
+          <span class="text-xs text-gray-400 uppercase tracking-wide">Duration:</span>
           <span class="text-base font-semibold mt-0.5">{formatDuration(selectedDuration)}</span>
         </div>
         <div class="flex flex-col items-end">
-          <label class="text-xs text-gray-400 uppercase tracking-wide">Avg Quality:</label>
+          <span class="text-xs text-gray-400 uppercase tracking-wide">Avg Quality:</span>
           <span class="text-base font-semibold mt-0.5 {selectedQuality >= 0.9 ? 'text-green-400' : selectedQuality >= 0.7 ? 'text-yellow-400' : 'text-red-400'}">
             {(selectedQuality * 100).toFixed(0)}%
           </span>
@@ -327,8 +327,7 @@
       {:else}
         {#each samples as sample (sample.id)}
           <div
-            class="flex items-center px-4 py-3 border-b border-gray-800 cursor-pointer transition-all relative hover:bg-gray-800 {selectedIds.has(sample.id) ? 'bg-blue-900/30 border-l-[3px] border-l-blue-500' : ''}"
-            on:click={() => toggleSelection(sample.id)}
+            class="flex items-center px-4 py-3 border-b border-gray-800 transition-all relative hover:bg-gray-800 {selectedIds.has(sample.id) ? 'bg-blue-900/30 border-l-[3px] border-l-blue-500' : ''}"
           >
             <div class="mr-3">
               <input
@@ -399,19 +398,18 @@
     <div class="mt-4 pt-4 border-t border-gray-700">
       <div class="flex justify-around gap-4">
         <div class="flex flex-col items-center">
-          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Available:</label>
+          <span class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Available:</span>
           <span class="text-base font-semibold">{samples.length} samples</span>
         </div>
         <div class="flex flex-col items-center">
-          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Duration:</label>
+          <span class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Total Duration:</span>
           <span class="text-base font-semibold">{formatDuration(totalDuration)}</span>
         </div>
         <div class="flex flex-col items-center">
-          <label class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Avg Quality:</label>
+          <span class="text-xs text-gray-400 mb-0.5 uppercase tracking-wide">Avg Quality:</span>
           <span class="text-base font-semibold">{(avgQuality * 100).toFixed(0)}%</span>
         </div>
       </div>
     </div>
   {/if}
 </div>
-

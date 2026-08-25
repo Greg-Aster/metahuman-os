@@ -105,8 +105,6 @@ echo ""
 echo "[4/8] Setting up directories..."
 mkdir -p "$METAHUMAN_ROOT/external"
 mkdir -p "$KOKORO_DIR"
-mkdir -p "$METAHUMAN_ROOT/out/voices/kokoro-voicepacks"
-mkdir -p "$METAHUMAN_ROOT/out/voices/kokoro-datasets"
 echo "✓ Directories created"
 
 # Create virtual environment
@@ -138,16 +136,15 @@ echo "  Installing language support packages..."
 }
 echo "✓ Dependencies installed"
 
-# Download voice catalog and base models
+# Verify the maintained catalog and download base models
 echo ""
-echo "[7/8] Downloading voice catalog and models..."
+echo "[7/8] Verifying voice catalog and downloading models..."
 echo "  This may take several minutes (~1.5GB of data)"
 
-# Download VOICES.md for voice metadata
-curl -sL "https://raw.githubusercontent.com/hexgrad/kokoro/main/VOICES.md" -o "$KOKORO_DIR/VOICES.md" || {
-    echo "⚠ Failed to download VOICES.md, will create placeholder"
-    echo "# Kokoro Voices\nVoice catalog will be populated on first use." > "$KOKORO_DIR/VOICES.md"
-}
+if [ ! -f "$KOKORO_DIR/VOICES.md" ]; then
+    echo "✗ Maintained voice catalog is missing: $KOKORO_DIR/VOICES.md"
+    exit 1
+fi
 
 # Download base model using Python
 cat > "$KOKORO_DIR/download_model.py" <<'EOF'
@@ -171,13 +168,12 @@ try:
     sys.exit(0)
 
 except Exception as e:
-    print(f"⚠ Error downloading models: {e}")
-    print("  Models will be downloaded on first use")
-    sys.exit(0)
+    print(f"✗ Error downloading models: {e}")
+    sys.exit(1)
 EOF
 
 chmod +x "$KOKORO_DIR/download_model.py"
-./venv/bin/python3 "$KOKORO_DIR/download_model.py" || echo "⚠ Model download skipped, will download on first use"
+./venv/bin/python3 "$KOKORO_DIR/download_model.py"
 rm -f "$KOKORO_DIR/download_model.py"
 
 echo "✓ Voice catalog and models ready"
@@ -194,28 +190,7 @@ if [ ! -f "$KOKORO_DIR/kokoro_server.py" ]; then
 fi
 chmod +x "$KOKORO_DIR/kokoro_server.py"
 
-# Create voicepack builder script (placeholder)
-cat > "$KOKORO_DIR/build_voicepack.py" <<'EOF'
-#!/usr/bin/env python3
-"""
-Kokoro Voicepack Builder for MetaHuman OS
-Creates custom .pt voicepack from training audio
-"""
-import argparse
-import sys
-from pathlib import Path
-
-print("Kokoro voicepack training is not yet implemented")
-print("This feature requires StyleTTS2 fine-tuning integration")
-print("See: https://github.com/hexgrad/kokoro for training guidance")
-sys.exit(1)
-
-# Voicepack training is not implemented yet.
-EOF
-
-chmod +x "$KOKORO_DIR/build_voicepack.py"
-
-echo "✓ Helper scripts created"
+echo "✓ Maintained Kokoro server ready"
 
 echo ""
 echo "========================================"
@@ -232,5 +207,5 @@ echo "  2. Select a voice from 54 built-in options"
 echo "  3. Test synthesis with: mh kokoro test"
 echo ""
 echo "The Kokoro server will auto-start when you select it as provider."
-echo "Or manually start it with: mh kokoro serve"
+echo "Or manually start it with: mh kokoro serve start"
 echo ""

@@ -19,7 +19,6 @@ export interface STTConfig {
 
 interface VoiceConfig {
   stt: STTConfig;
-  providerPriority?: Array<'python' | 'whisper.cpp' | 'mock'>;
 }
 
 let config: VoiceConfig | null = null;

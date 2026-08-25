@@ -5,30 +5,22 @@
  * Monitors user inactivity and asks thoughtful questions.
  *
  * Usage:
- *   npx tsx brain/agents/curiosity-service/cli.ts [options]
- *
- * Options:
- *   --single-user  Process only the default user
+ *   npx tsx brain/agents/curiosity-service/cli.ts
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type CuriosityServiceOptions } from './core.js';
+import { runCycle } from './core.js';
 
 async function main() {
   initGlobalLogger('curiosity-service');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: CuriosityServiceOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  console.log('[curiosity-service] Starting with options:', options);
-
   try {
-    const result = await runCycle(options);
+    const args = process.argv.slice(2);
+    if (args.length > 0) throw new Error('Curiosity Service does not accept command-line arguments');
+    console.log('[curiosity-service] Starting one coordinator-managed cycle');
+    const result = await runCycle();
 
-    console.log(`[curiosity-service] Completed: ${result.questionsAsked} questions asked`);
+    console.log(`[curiosity-service] Completed: ${result.questionsAsked} asked, ${result.questionsSkipped} skipped`);
 
     if (result.errors.length > 0) {
       console.error('[curiosity-service] Errors:', result.errors);

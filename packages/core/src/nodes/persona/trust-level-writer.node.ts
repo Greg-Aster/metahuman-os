@@ -4,6 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { setTrustLevel } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
   const trustLevel = inputs[0]?.trustLevel || inputs[0];
@@ -16,7 +17,6 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
   }
 
   try {
-    const { setTrustLevel } = await import('../../identity.js');
     setTrustLevel(trustLevel);
 
     return {

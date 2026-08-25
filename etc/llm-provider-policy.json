@@ -1,0 +1,9 @@
+{
+  "allowSystemFallback": true,
+  "providerPriority": [
+    "runpod",
+    "claude",
+    "openrouter",
+    "openai"
+  ]
+}

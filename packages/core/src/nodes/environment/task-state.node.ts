@@ -13,7 +13,6 @@ import {
   environmentTaskContractFromObservation,
   environmentTaskStateFromObservation,
   robotOperatorActionRequirement,
-  robotOperatorLifecycleContractFromObservation,
   type EnvironmentCompletionBasis,
   type EnvironmentActionPurpose,
   type EnvironmentTaskDecision,
@@ -617,13 +616,10 @@ export const environmentTaskStateNode = defineNode({
           ? cleanText(taskDecision?.reason, 300)
           : '')
       : '';
-    const operatorActionRequired = robotOperatorActionRequirement(observation) === true;
-    const triggerContract = persistedPass || !autonomous
-      ? null
-      : robotOperatorLifecycleContractFromObservation(observation);
+    const operatorActionRequired = !persistedPass
+      && robotOperatorActionRequirement(observation) === true;
     const revisingAction = persistedPass && Boolean(action);
     const contractLocked = (persistedPass && !revisingAction)
-      || Boolean(triggerContract)
       || userVisualStoppingContract;
     const actionPurpose = persistedPass && !revisingAction
       ? preparedState.actionPurpose

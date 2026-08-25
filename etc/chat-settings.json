@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/chat-settings.json",
   "version": "1.0.0",
   "description": "Chat behavior configuration - controls how context, history, and personality influence responses",
   "lastUpdated": "2025-11-15T07:04:09.268Z",

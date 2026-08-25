@@ -74,7 +74,6 @@
     await loadTrustLevel();
     await loadAgentConfig();
     await loadTrustCoupling();
-    await loadCognitiveLayersConfig();
     await fetchVisibility();
     await loadTunnelStatus();
     await loadRecoveryCodes();
@@ -476,64 +475,6 @@
       console.error(err);
     } finally {
       couplingSaving = false;
-    }
-  }
-
-  // Cognitive Layers configuration state
-  let cognitiveLayersConfig = {
-    useCognitivePipeline: true,
-    enableSafetyChecks: true,
-    enableResponseRefinement: true,
-    enableBlockingMode: false
-  };
-  let cognitiveLayersLoading = false;
-  let cognitiveLayersSaving = false;
-
-  async function loadCognitiveLayersConfig() {
-    cognitiveLayersLoading = true;
-    try {
-      const response = await apiFetch('/api/cognitive-layers-config');
-      const data = await response.json();
-      if (response.ok && data.success && data.config) {
-        cognitiveLayersConfig = data.config;
-      }
-    } catch (err) {
-      console.error('Failed to load cognitive layers config:', err);
-    } finally {
-      cognitiveLayersLoading = false;
-    }
-  }
-
-  async function handleCognitiveLayerToggle(setting: keyof typeof cognitiveLayersConfig) {
-    cognitiveLayersSaving = true;
-    error = '';
-    success = '';
-
-    try {
-      const newConfig = {
-        ...cognitiveLayersConfig,
-        [setting]: !cognitiveLayersConfig[setting]
-      };
-
-      const response = await apiFetch('/api/cognitive-layers-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig)
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        cognitiveLayersConfig = data.config;
-        success = `Cognitive layer setting updated successfully`;
-      } else {
-        error = data.error || 'Failed to update cognitive layer settings';
-      }
-    } catch (err) {
-      error = 'Network error. Please try again.';
-      console.error(err);
-    } finally {
-      cognitiveLayersSaving = false;
     }
   }
 
@@ -1102,135 +1043,6 @@
         {/if}
       </div>
 
-      <!-- Cognitive Architecture Safety Controls -->
-      <div class="panel mb-6">
-        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 m-0 mb-4">🛡️ Cognitive Architecture (Layer 3 Safety)</h2>
-        <p class="text-gray-500 dark:text-gray-400 m-0 mb-4">Configure safety validation and response refinement for all AI responses</p>
-        {#if cognitiveLayersLoading}
-          <p class="text-gray-500 dark:text-gray-400 italic">Loading cognitive layer settings...</p>
-        {:else}
-          <div class="flex flex-col gap-6 mb-6">
-            <!-- Master Switch -->
-            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-              <div class="flex-1">
-                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">3-Layer Pipeline</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Enable full cognitive architecture (context → generation → validation)</p>
-              </div>
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={cognitiveLayersConfig.useCognitivePipeline}
-                  on:change={() => handleCognitiveLayerToggle('useCognitivePipeline')}
-                  disabled={cognitiveLayersSaving}
-                  class="hidden peer"
-                />
-                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
-                <span class="font-medium text-gray-900 dark:text-gray-100">
-                  {cognitiveLayersConfig.useCognitivePipeline ? 'Enabled' : 'Disabled'}
-                </span>
-              </label>
-            </div>
-
-            <!-- Safety Checks -->
-            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.useCognitivePipeline ? 'opacity-50' : ''}">
-              <div class="flex-1">
-                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">Safety Validation (Phase 4.2)</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Pattern-based detection of sensitive data, security violations, and harmful content</p>
-                <small class="block text-xs font-medium text-violet-500">Non-blocking • &lt;5ms overhead</small>
-              </div>
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={cognitiveLayersConfig.enableSafetyChecks}
-                  on:change={() => handleCognitiveLayerToggle('enableSafetyChecks')}
-                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
-                  class="hidden peer"
-                />
-                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
-                <span class="font-medium text-gray-900 dark:text-gray-100">
-                  {cognitiveLayersConfig.enableSafetyChecks ? 'Enabled' : 'Disabled'}
-                </span>
-              </label>
-            </div>
-
-            <!-- Response Refinement -->
-            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.useCognitivePipeline ? 'opacity-50' : ''}">
-              <div class="flex-1">
-                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">Response Refinement (Phase 4.3)</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Auto-sanitize API keys, passwords, file paths, and internal IPs</p>
-                <small class="block text-xs font-medium text-violet-500">Non-blocking • &lt;10ms average</small>
-              </div>
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={cognitiveLayersConfig.enableResponseRefinement}
-                  on:change={() => handleCognitiveLayerToggle('enableResponseRefinement')}
-                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.useCognitivePipeline}
-                  class="hidden peer"
-                />
-                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
-                <span class="font-medium text-gray-900 dark:text-gray-100">
-                  {cognitiveLayersConfig.enableResponseRefinement ? 'Enabled' : 'Disabled'}
-                </span>
-              </label>
-            </div>
-
-            <!-- Blocking Mode -->
-            <div class="flex justify-between items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border-l-3 border-amber-500 border border-gray-200 dark:border-gray-700 {!cognitiveLayersConfig.enableResponseRefinement ? 'opacity-50' : ''}">
-              <div class="flex-1">
-                <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 m-0 mb-1">⚠️ Blocking Mode (Phase 4.4)</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 m-0 mb-2">Send refined (sanitized) responses to users instead of originals</p>
-                <small class="block text-xs font-medium">
-                  {#if cognitiveLayersConfig.enableBlockingMode}
-                    <strong class="text-red-600 dark:text-red-400">ENFORCEMENT MODE ACTIVE</strong> - Users receive sanitized responses
-                  {:else}
-                    <strong class="text-gray-500 dark:text-gray-400">MONITORING MODE</strong> - Users receive original responses, refinements logged
-                  {/if}
-                </small>
-              </div>
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={cognitiveLayersConfig.enableBlockingMode}
-                  on:change={() => handleCognitiveLayerToggle('enableBlockingMode')}
-                  disabled={cognitiveLayersSaving || !cognitiveLayersConfig.enableResponseRefinement}
-                  class="hidden peer"
-                />
-                <span class="relative w-12 h-6 bg-gray-300 dark:bg-gray-600 rounded-full transition-colors peer-checked:bg-violet-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-6 peer-disabled:opacity-50"></span>
-                <span class="font-medium text-gray-900 dark:text-gray-100">
-                  {cognitiveLayersConfig.enableBlockingMode ? 'Enforcement' : 'Monitoring'}
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Info Panel -->
-          <div class="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 border-l-3 border-violet-500">
-            <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0 mb-3">What gets detected & refined:</h4>
-            <div class="grid grid-cols-2 sm:grid-cols-1 gap-4 mb-3">
-              <div class="text-xs">
-                <strong class="block text-gray-700 dark:text-gray-300 mb-1">Sensitive Data:</strong>
-                <ul class="m-0 pl-5 list-disc">
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">API keys (sk-*, pk-*, Bearer)</li>
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">Passwords & credentials</li>
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">SSH private keys</li>
-                </ul>
-              </div>
-              <div class="text-xs">
-                <strong class="block text-gray-700 dark:text-gray-300 mb-1">Security Violations:</strong>
-                <ul class="m-0 pl-5 list-disc">
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">File paths (/home/, /etc/, C:\)</li>
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">Internal IPs (192.168.*, 10.*)</li>
-                  <li class="text-gray-500 dark:text-gray-400 mb-0.5">System configurations</li>
-                </ul>
-              </div>
-            </div>
-            <small class="block text-xs text-gray-500 dark:text-gray-400 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-              All Layer 3 operations are fully audited to <code class="bg-gray-200 dark:bg-gray-700 text-violet-500 px-1.5 py-0.5 rounded text-[0.6875rem] font-mono">logs/audit/YYYY-MM-DD.ndjson</code>
-            </small>
-          </div>
-        {/if}
-      </div>
     {/if}
 
     {#if currentUser.role === 'owner'}

@@ -17,7 +17,6 @@ export const meta: AgentMeta = {
   description: 'Monitors user inactivity and asks thoughtful questions',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 900, // 15 minutes
   tags: ['curiosity', 'llm', 'background', 'user-facing'],
 };
 
@@ -36,6 +35,8 @@ export {
   runCycle,
   generateUserQuestion,
   loadCuriosityGraph,
-  type CuriosityServiceOptions,
+  evaluateQuestionAdmission,
+  type CuriosityQuestionOutcome,
+  type CuriosityQuestionSkipReason,
   type CuriosityServiceResult,
 } from './core.js';

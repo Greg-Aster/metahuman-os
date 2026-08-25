@@ -24,46 +24,6 @@ import { getUserContext } from './context.js'
 import { loadBackendConfig } from './llm-backend.js'
 import { getTargetUser } from './sessions.js'
 
-export type EmbeddingProvider = 'local-models'
-
-/**
- * Embedding configuration type (for API compatibility)
- */
-export interface EmbeddingConfig {
-  enabled: boolean;
-  model: string;
-  provider: EmbeddingProvider;
-  preloadAtStartup: boolean;
-  cpuOnly: boolean;
-}
-
-/**
- * Load embedding configuration from llm-backend.json
- * Provides compatibility with embeddings-control API
- */
-export function loadEmbeddingConfig(): EmbeddingConfig {
-  const backendConfig = loadBackendConfig();
-  const localModels = backendConfig.localModels as Record<string, unknown> | undefined;
-
-  return {
-    enabled: (localModels?.enabled as boolean) ?? true,
-    model: DEFAULTS.model,
-    provider: 'local-models',
-    preloadAtStartup: (localModels?.preloadEmbeddings as boolean) ?? true,
-    cpuOnly: (localModels?.cpuOnly as boolean) ?? true,
-  };
-}
-
-/**
- * Save embedding configuration (stub - config comes from llm-backend.json)
- * This is a no-op since config is managed via llm-backend
- */
-export function saveEmbeddingConfig(_config: Partial<EmbeddingConfig>): void {
-  console.log('[embeddings] saveEmbeddingConfig: Config is managed via llm-backend.json');
-  // Config is managed via llm-backend.json, not a separate embeddings.json
-  // This function exists for API compatibility
-}
-
 /**
  * Error thrown when embedding service is unavailable
  */
@@ -96,13 +56,14 @@ export async function isEmbeddingServiceAvailable(userId?: string): Promise<bool
  *
  * @param userId - Optional user ID to get model config from profile
  */
-export async function preloadEmbeddingModel(_userId?: string): Promise<void> {
+export async function preloadEmbeddingModel(): Promise<void> {
   const backendConfig = loadBackendConfig();
-  const endpoint = backendConfig.localModels?.endpoint || DEFAULTS.endpoint;
-
-  // Note: Could optionally look up user's profile model config if needed in future
-  // For now use default since preload is typically called at startup
-  const model = DEFAULTS.model;
+  const localModels = backendConfig.localModels;
+  if (!localModels?.enabled || !localModels.embeddings.preloadAtStartup) {
+    return;
+  }
+  const endpoint = localModels.endpoint || DEFAULTS.endpoint;
+  const model = localModels.embeddings.model || DEFAULTS.model;
 
   try {
     const isRunning = await isLocalModelServiceRunning(endpoint);

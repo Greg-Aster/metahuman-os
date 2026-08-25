@@ -2,39 +2,158 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Boredom Observer Mode",
-  "description": "Requests one correlated robot-camera image without an LLM call, then routes the returned frame and editable observation stimulus to Boredom Autonomy.",
+  "description": "Acquires one correlated camera frame, then uses it with persona, recent narrative, and verified action history to author an intention for Boredom Autonomy.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-24",
+  "last_modified": "2026-08-25",
   "nodes": [
     {
       "id": "observation",
       "type": "environmentNode",
-      "position": { "x": 60, "y": 220 },
+      "position": { "x": 40, "y": 260 },
       "data": {
-        "label": "Robot Session and Capabilities",
+        "label": "Current Robot Stimulus",
         "nodeType": "environment_observation",
         "properties": {}
       }
     },
     {
-      "id": "observer-policy",
-      "type": "inputNode",
-      "position": { "x": 60, "y": -80 },
+      "id": "image-input",
+      "type": "environmentNode",
+      "position": { "x": 300, "y": 260 },
       "data": {
-        "label": "Editable Observer Policy",
+        "label": "Fresh Correlated Image",
+        "nodeType": "environment_image_input",
+        "properties": {}
+      }
+    },
+    {
+      "id": "planner-policy",
+      "type": "inputNode",
+      "position": { "x": 40, "y": -100 },
+      "data": {
+        "label": "Editable Observer Planner Policy",
         "nodeType": "text_input",
         "properties": {
-          "message": "Treat the returned fresh robot-camera image as autonomous input for Boredom Autonomy. The executive must use current evidence to author or revise its own episode intent and choose the next consequence; this trigger does not choose it. Do not stop at captioning the scene or generic readiness. The correlated image is present evidence, while conversation, reflection, and memories provide narrative continuity only.",
+          "message": "You are Ainekio's Boredom Observer planner. Use the fresh correlated camera image as current evidence, together with the active persona, recent conversation and reflection, current state, and verified prior actions, to form one high-level interest, question, or concern worth pursuing now. Interpret the scene rather than merely captioning it. Historical narrative may influence meaning but cannot prove current physical facts. Do not select a technical command, completion rule, or execution sequence. Return only the configured JSON decision.",
           "inputKey": ""
         }
       }
     },
     {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": { "x": 40, "y": 510 },
+      "data": {
+        "label": "Recent Conversation",
+        "nodeType": "conversation_history",
+        "properties": { "mode": "conversation", "limit": 4 }
+      }
+    },
+    {
+      "id": "inner-history",
+      "type": "contextNode",
+      "position": { "x": 300, "y": 510 },
+      "data": {
+        "label": "Recent Reflection",
+        "nodeType": "conversation_history",
+        "properties": { "mode": "inner", "limit": 2 }
+      }
+    },
+    {
+      "id": "robot-history",
+      "type": "contextNode",
+      "position": { "x": 560, "y": 510 },
+      "data": {
+        "label": "Verified Robot Action History",
+        "nodeType": "conversation_history",
+        "properties": { "mode": "robot", "limit": 20 }
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": { "x": 40, "y": 710 },
+      "data": {
+        "label": "Active Persona",
+        "nodeType": "persona_loader",
+        "properties": {}
+      }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": { "x": 300, "y": 710 },
+      "data": {
+        "label": "Compact Persona Context",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": true
+        }
+      }
+    },
+    {
+      "id": "planner-context",
+      "type": "operatorNode",
+      "position": { "x": 850, "y": 200 },
+      "data": {
+        "label": "Build Observation Planning Context",
+        "nodeType": "robot_operator_context_builder",
+        "properties": { "outputContract": "delegation" }
+      }
+    },
+    {
+      "id": "planner-gate",
+      "type": "routerNode",
+      "position": { "x": 1240, "y": 190 },
+      "data": {
+        "label": "Plan Only After Image Result",
+        "nodeType": "gateway",
+        "properties": { "invertCondition": false }
+      }
+    },
+    {
+      "id": "planner",
+      "type": "llmNode",
+      "position": { "x": 1510, "y": 190 },
+      "data": {
+        "label": "Author Observation Intention",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "persona",
+          "maxTokens": 384,
+          "temperature": 0.7,
+          "format": "json"
+        }
+      }
+    },
+    {
+      "id": "decision-parser",
+      "type": "operatorNode",
+      "position": { "x": 1800, "y": 190 },
+      "data": {
+        "label": "Validate Planner Instruction",
+        "nodeType": "robot_operator_decision_parser",
+        "properties": {}
+      }
+    },
+    {
+      "id": "environment-dispatch",
+      "type": "operatorNode",
+      "position": { "x": 2110, "y": 190 },
+      "data": {
+        "label": "Send Intention to Boredom Autonomy",
+        "nodeType": "robot_operator_environment_dispatch",
+        "properties": { "graph": "boredom-autonomy" }
+      }
+    },
+    {
       "id": "capture-command",
       "type": "inputNode",
-      "position": { "x": 360, "y": 70 },
+      "position": { "x": 850, "y": -120 },
       "data": {
-        "label": "Editable Camera Request",
+        "label": "Camera Acquisition Action",
         "nodeType": "text_input",
         "properties": {
           "message": "{\"type\":\"captureImage\"}",
@@ -45,65 +164,246 @@
     {
       "id": "parse-capture",
       "type": "utilityNode",
-      "position": { "x": 670, "y": 70 },
+      "position": { "x": 1120, "y": -120 },
       "data": {
-        "label": "Parse Camera Request",
+        "label": "Parse Camera Action",
         "nodeType": "json_parser",
         "properties": {}
       }
     },
     {
+      "id": "capture-gate",
+      "type": "routerNode",
+      "position": { "x": 1390, "y": -120 },
+      "data": {
+        "label": "Capture Only Before Image Result",
+        "nodeType": "gateway",
+        "properties": { "invertCondition": true }
+      }
+    },
+    {
       "id": "capture-image",
       "type": "environmentNode",
-      "position": { "x": 990, "y": 190 },
+      "position": { "x": 1660, "y": -120 },
       "data": {
-        "label": "Request Image and Continue in Boredom Autonomy",
+        "label": "Request Image and Return Here",
         "nodeType": "environment_send_action",
         "properties": {
           "allowedActions": ["captureImage"],
           "maxDurationMs": 1500,
           "defaultDurationMs": 0,
-          "feedbackGraph": "boredom-autonomy"
+          "feedbackGraph": "boredom-observer"
         }
       }
     }
   ],
   "edges": [
     {
-      "id": "e-command-parser",
+      "id": "e-observation-visual-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-observation-visuals-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-policy-context",
+      "source": "planner-policy",
+      "target": "planner-context",
+      "sourceHandle": "text",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": { "type": "string" }
+    },
+    {
+      "id": "e-observation-context",
+      "source": "observation",
+      "target": "planner-context",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-images-context",
+      "source": "image-input",
+      "target": "planner-context",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-frames-context",
+      "source": "image-input",
+      "target": "planner-context",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-conversation-context",
+      "source": "conversation-history",
+      "target": "planner-context",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-inner-context",
+      "source": "inner-history",
+      "target": "planner-context",
+      "sourceHandle": "history",
+      "targetHandle": "innerHistory",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-robot-context",
+      "source": "robot-history",
+      "target": "planner-context",
+      "sourceHandle": "history",
+      "targetHandle": "actionHistory",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-persona-loader-formatter",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-persona-context",
+      "source": "persona-formatter",
+      "target": "planner-context",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": { "type": "string" }
+    },
+    {
+      "id": "e-context-messages-planner-gate",
+      "source": "planner-context",
+      "target": "planner-gate",
+      "sourceHandle": "messages",
+      "targetHandle": "data",
+      "type": "default",
+      "data": { "type": "array" }
+    },
+    {
+      "id": "e-context-ready-planner-gate",
+      "source": "planner-context",
+      "target": "planner-gate",
+      "sourceHandle": "stimulusReady",
+      "targetHandle": "open",
+      "type": "default",
+      "data": { "type": "boolean" }
+    },
+    {
+      "id": "e-planner-gate-planner",
+      "source": "planner-gate",
+      "target": "planner",
+      "sourceHandle": "output",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": { "type": "any" }
+    },
+    {
+      "id": "e-context-schema-planner",
+      "source": "planner-context",
+      "target": "planner",
+      "sourceHandle": "jsonSchema",
+      "targetHandle": "jsonSchema",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-planner-parser",
+      "source": "planner",
+      "target": "decision-parser",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": { "type": "llm_response" }
+    },
+    {
+      "id": "e-parser-dispatch",
+      "source": "decision-parser",
+      "target": "environment-dispatch",
+      "sourceHandle": "decision",
+      "targetHandle": "decision",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-observation-dispatch",
+      "source": "observation",
+      "target": "environment-dispatch",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-capture-command-parser",
       "source": "capture-command",
       "target": "parse-capture",
       "sourceHandle": "text",
       "targetHandle": "text",
       "type": "default",
-      "data": { "type": "string", "comment": "Visible editable captureImage action" }
+      "data": { "type": "string" }
     },
     {
-      "id": "e-parser-action",
+      "id": "e-parse-capture-gate",
       "source": "parse-capture",
-      "target": "capture-image",
+      "target": "capture-gate",
       "sourceHandle": "data",
+      "targetHandle": "data",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-context-ready-capture-gate",
+      "source": "planner-context",
+      "target": "capture-gate",
+      "sourceHandle": "stimulusReady",
+      "targetHandle": "open",
+      "type": "default",
+      "data": { "type": "boolean" }
+    },
+    {
+      "id": "e-capture-gate-action",
+      "source": "capture-gate",
+      "target": "capture-image",
+      "sourceHandle": "output",
       "targetHandle": "action",
       "type": "default",
-      "data": { "type": "object", "comment": "One capability-checked camera action" }
+      "data": { "type": "any" }
     },
     {
-      "id": "e-observation-session",
+      "id": "e-observation-session-capture",
       "source": "observation",
       "target": "capture-image",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
       "type": "default",
-      "data": { "type": "string", "comment": "Connected robot session" }
-    },
-    {
-      "id": "e-policy-instruction",
-      "source": "observer-policy",
-      "target": "capture-image",
-      "sourceHandle": "text",
-      "targetHandle": "taskInstruction",
-      "type": "default",
-      "data": { "type": "string", "comment": "Carry the editable observer policy with the returned frame" }
+      "data": { "type": "string" }
     }
   ]
 }

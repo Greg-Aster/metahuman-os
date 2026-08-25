@@ -159,18 +159,20 @@ export function environmentInputSource(
 }
 
 /**
- * Robot Operator may contribute a typed action preference to its delegated
- * intention. The Environment LLM remains the semantic action owner.
+ * The Boredom Movement planner requires one initial physical consequence. The
+ * planner still authors only a high-level intention; the Environment selector
+ * remains the sole semantic action owner.
  */
 export function robotOperatorActionRequirement(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): boolean | null {
-  const decision = isRecord(observation?.metadata?.robotOperatorDecision)
-    ? observation.metadata.robotOperatorDecision
+  const cycle = isRecord(observation?.metadata?.robotObserver)
+    ? observation.metadata.robotObserver
     : null;
-  return typeof decision?.requiresAction === 'boolean'
-    ? decision.requiresAction
-    : null;
+  const requestedBy = typeof cycle?.requestedBy === 'string'
+    ? cycle.requestedBy
+    : observation?.metadata?.autonomousStimulus;
+  return requestedBy === 'boredom-movement' ? true : null;
 }
 
 function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis | null {
@@ -224,43 +226,6 @@ export function environmentTaskContractFromRouting(
   };
 }
 
-/**
- * A trigger may define the evidence needed for its high-level intention while
- * leaving action selection and lifecycle ownership to Environment Mode.
- */
-export function robotOperatorLifecycleContractFromObservation(
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): EnvironmentTaskContract | null {
-  const decision = isRecord(observation?.metadata?.robotOperatorDecision)
-    ? observation.metadata.robotOperatorDecision
-    : null;
-  const lifecycle = isRecord(decision?.lifecycleContract)
-    ? decision.lifecycleContract
-    : null;
-  if (!lifecycle) return null;
-  const objective = typeof lifecycle.objective === 'string'
-    ? lifecycle.objective.trim().slice(0, 1_000)
-    : '';
-  const continuationPolicy = lifecycle.continuationPolicy;
-  const requiredCompletionBasis = normalizedCompletionBasis(lifecycle.requiredCompletionBasis);
-  const visualEvidenceMode = lifecycle.visualEvidenceMode === 'single'
-    || lifecycle.visualEvidenceMode === 'comparison'
-    ? lifecycle.visualEvidenceMode
-    : undefined;
-  if (
-    !objective
-    || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
-    || !requiredCompletionBasis
-    || requiredCompletionBasis === 'none'
-  ) return null;
-  return {
-    objective,
-    continuationPolicy,
-    requiredCompletionBasis,
-    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-  };
-}
-
 export function environmentTaskContractFromObservation(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): EnvironmentTaskContract | null {
@@ -287,8 +252,6 @@ export function environmentTaskContractFromObservation(
       ...(currentInstruction ? { currentInstruction } : {}),
     };
   }
-  const robotOperatorContract = robotOperatorLifecycleContractFromObservation(observation);
-  if (robotOperatorContract) return robotOperatorContract;
   const taskState = parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
   if (taskState) {
     return {
@@ -982,6 +945,7 @@ export interface EnvironmentSelectorJsonSchemaInput {
   requireAction?: boolean;
   requireObjective?: boolean;
   requireProgress?: boolean;
+  requireAutonomousConsequence?: boolean;
 }
 
 /**
@@ -1006,17 +970,37 @@ export function buildEnvironmentSelectorJsonSchema(
   ));
   const movementSupported = !capabilityBound || advertisedActions.has('robotMotionPlan');
   const progressBranches: Record<string, unknown>[] = [];
+  const autonomyWorkBranches: Record<string, unknown>[] = [];
   if (directActionTypes.length > 0) {
-    progressBranches.push({
+    progressBranches.push({ properties: { actions: { minItems: 1 } } });
+    autonomyWorkBranches.push({
       properties: {
         actions: { minItems: 1 },
+        movementRequest: { type: 'null' },
+        taskDecision: {
+          required: ['outcome', 'objectiveComplete', 'actionPurpose'],
+          properties: {
+            outcome: { type: 'string', enum: ['act'] },
+            objectiveComplete: { type: 'boolean', enum: [false] },
+          },
+        },
       },
     });
   }
   if (movementSupported) {
-    progressBranches.push({
+    progressBranches.push({ properties: { movementRequest: { type: 'object' } } });
+    autonomyWorkBranches.push({
       properties: {
+        actions: { maxItems: 0 },
         movementRequest: { type: 'object' },
+        taskDecision: {
+          required: ['outcome', 'objectiveComplete', 'actionPurpose'],
+          properties: {
+            outcome: { type: 'string', enum: ['act'] },
+            objectiveComplete: { type: 'boolean', enum: [false] },
+            motionClass: { type: 'string', enum: ['body_local'] },
+          },
+        },
       },
     });
   }
@@ -1035,13 +1019,35 @@ export function buildEnvironmentSelectorJsonSchema(
       },
     },
   });
+  const autonomyCompletionBranch = {
+    properties: {
+      response: { type: 'string', minLength: 1 },
+      actions: { maxItems: 0 },
+      movementRequest: { type: 'null' },
+      taskDecision: {
+        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          requiredCompletionBasis: { type: 'string', enum: ['response'] },
+        },
+      },
+    },
+  };
+  const autonomyBranches = [...autonomyWorkBranches, autonomyCompletionBranch];
 
   return {
     type: 'object',
     additionalProperties: false,
     required: ['response', 'actions', 'movementRequest', 'taskDecision'],
-    ...(input.requireProgress === true
-      ? { allOf: [{ anyOf: progressBranches }] }
+    ...(input.requireAutonomousConsequence === true
+      ? {
+          allOf: [{
+            anyOf: input.requireAction === true ? autonomyWorkBranches : autonomyBranches,
+          }],
+        }
+      : input.requireProgress === true
+        ? { allOf: [{ anyOf: progressBranches }] }
       : {}),
     properties: {
       response: SELECTOR_SCHEMA_STRING,

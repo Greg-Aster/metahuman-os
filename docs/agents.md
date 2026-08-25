@@ -42,7 +42,9 @@ services configured in `etc/services.json`.
 The curiosity agents remain separate by responsibility: `curiosity` asks the
 user questions, `curiosity-researcher` investigates those pending questions on
 its own hourly schedule, and `inner-curiosity` generates and answers private
-self-directed questions.
+self-directed questions. Curiosity Service stops before model execution when the
+authenticated profile has reached `maxOpenQuestions`; user answers and skips
+durably resolve those pending records through the shared Core question store.
 
 ## Configuration
 

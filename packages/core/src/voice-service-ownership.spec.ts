@@ -11,6 +11,10 @@ const launcher = read('bin/start-voice-server')
 const bootLauncher = read('bin/start-services')
 const manager = read('packages/core/src/voice-service-manager.ts')
 const voiceSettings = read('packages/core/src/api/handlers/voice-settings.ts')
+const sovitsManager = read('packages/core/src/tts/server-manager.ts')
+const sovitsRoutes = read('packages/core/src/api/handlers/tts-service-routes.ts')
+const sovitsCli = read('packages/cli/src/commands/sovits.ts')
+const stopLauncher = read('bin/stop-voice-server')
 
 for (const id of ['kokoro', 'whisper']) {
   assert.equal(voiceConfig[id]?.enabled, true, `${id} must be enabled in the voice server configuration`)
@@ -63,5 +67,12 @@ assert.doesNotMatch(
   /Auto-starting Whisper server|Running start-voice-server/,
   'reading user voice settings must not spawn system processes',
 )
+assert.match(sovitsRoutes, /from '..\/..\/tts\/server-manager\.js'/, 'SoVITS API transport must delegate to the core lifecycle owner')
+assert.match(sovitsCli, /getSovitsServerStatus/, 'SoVITS CLI must delegate status to the core lifecycle owner')
+assert.doesNotMatch(sovitsCli, /process\.kill|sovits\.pid/, 'SoVITS CLI must not own PID files or signal processes')
+assert.doesNotMatch(voiceSettings, /sovits\.pid|process\.kill/, 'voice settings must not own SoVITS processes')
+assert.match(stopLauncher, /mh" sovits stop/, 'voice stop launcher must delegate SoVITS shutdown to the CLI')
+assert.doesNotMatch(stopLauncher, /sovits\.pid|kill "\$PID"/, 'voice stop launcher must not own SoVITS PID files')
+assert.match(sovitsManager, /ownsSovitsProcess/, 'SoVITS lifecycle owner must verify process identity before signaling')
 
 console.log('voice-service-ownership.spec.ts passed')

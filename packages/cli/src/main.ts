@@ -39,6 +39,8 @@ import {
   listVoiceSamples,
   deleteVoiceSample,
   exportTrainingDataset,
+  getBigBrotherSessionState,
+  stopBigBrotherSession,
   // Multi-user support
   withUserContext,
   listUsers,
@@ -60,7 +62,6 @@ import {
   submitMemoryIndexRefresh,
 } from '@metahuman/core/queue';
 import { personaCommand } from './commands/persona.js';
-import { adapterCommand } from './commands/adapter.js';
 import { sovitsCommand } from './commands/sovits.js';
 import { rvcCommand } from './commands/rvc.js';
 import { kokoroCommand } from './commands/kokoro.js';
@@ -1697,9 +1698,6 @@ async function main() {
       case 'persona':
         await personaCommand(args);
         break;
-      case 'adapter':
-        adapterCommand(args);
-        break;
       case 'sovits':
         await sovitsCommand(args);
         break;
@@ -1714,6 +1712,16 @@ async function main() {
         break;
       case 'voice-server':
         await voiceServerCommand(args);
+        break;
+      case 'big-brother':
+        if (args[0] === 'status') {
+          console.log(JSON.stringify(getBigBrotherSessionState(), null, 2));
+        } else if (args[0] === 'stop') {
+          await stopBigBrotherSession('Stopped from the MetaHuman CLI');
+          console.log('✓ Big Brother session stopped');
+        } else {
+          console.log('Usage: mh big-brother <status|stop>');
+        }
         break;
       case 'user':
         userCmd(args);

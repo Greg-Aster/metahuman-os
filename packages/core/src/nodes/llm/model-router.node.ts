@@ -66,7 +66,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     if (precomputedResponse) {
       return { response: precomputedResponse, precomputed: true };
     }
-    const messages = inputs.messages || inputs[0] || [];
+    const messages = inputs.messages ?? inputs[0] ?? [];
     const role = inputs.role || inputs[1] || properties?.role || 'persona';
     const jsonSchema = inputs.jsonSchema
       && typeof inputs.jsonSchema === 'object'
@@ -74,6 +74,10 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       ? inputs.jsonSchema as Record<string, unknown>
       : null;
     const username = context.userId || context.username;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return { response: '', skipped: true };
+    }
 
     try {
       const response = await callLLM({
@@ -86,8 +90,10 @@ export const ModelRouterNode: NodeDefinition = defineNode({
           repeatPenalty: properties?.repeatPenalty || 1.15,
           temperature: properties?.temperature || 0.7,
           format: properties?.format === 'json' ? 'json' : undefined,
-          jsonSchema: role === 'environmentActionSelector'
-            ? jsonSchema ?? ENVIRONMENT_SELECTOR_JSON_SCHEMA
+          jsonSchema: properties?.format === 'json'
+            ? jsonSchema ?? (role === 'environmentActionSelector'
+              ? ENVIRONMENT_SELECTOR_JSON_SCHEMA
+              : undefined)
             : undefined,
         },
         onProgress: context.emitProgress,

@@ -7,97 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { audit } from '../../audit.js';
-import { loadCuriosityConfig, saveCuriosityConfig } from '../../config.js';
-import { getTriggerConfigService } from '../../queue/index.js';
-
-// Boredom interval mapping (in seconds)
-const BOREDOM_INTERVALS = {
-  high: 60,      // ~1 minute
-  medium: 300,   // ~5 minutes
-  low: 900,      // ~15 minutes
-  off: -1        // disabled
-} as const;
-
-/**
- * Derives the boredom level from agents.json configuration
- */
-function getBoredomLevelFromConfig(agentsConfig: any): string {
-  const reflectorAgent = agentsConfig.agents?.reflector;
-  if (!reflectorAgent || !reflectorAgent.enabled) {
-    return 'off';
-  }
-
-  const threshold = reflectorAgent.inactivityThreshold;
-  if (threshold <= 60) return 'high';
-  if (threshold <= 300) return 'medium';
-  return 'low';
-}
-
-/**
- * GET /api/boredom - Get current boredom level
- */
-export async function handleGetBoredom(_req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    const agentsConfig = getTriggerConfigService().load(false).config;
-    const level = getBoredomLevelFromConfig(agentsConfig);
-
-    return successResponse({ level });
-  } catch (error) {
-    return {
-      status: 500,
-      error: (error as Error).message,
-    };
-  }
-}
-
-/**
- * POST /api/boredom - Set boredom level
- *
- * Body: { level: 'high' | 'medium' | 'low' | 'off' }
- */
-export async function handleSetBoredom(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { body } = req;
-  const { level } = (body || {}) as { level?: keyof typeof BOREDOM_INTERVALS };
-
-  if (!level || !BOREDOM_INTERVALS[level]) {
-    return {
-      status: 400,
-      error: 'Invalid level. Must be one of: high, medium, low, off',
-    };
-  }
-
-  try {
-    const intervalSeconds = BOREDOM_INTERVALS[level];
-    const enabled = intervalSeconds > 0;
-    const threshold = enabled ? intervalSeconds : 900;
-    getTriggerConfigService().update({
-      agents: { reflector: { enabled, inactivityThreshold: threshold } },
-    }, req.user.username || 'boredom-api');
-
-    audit({
-      category: 'system',
-      level: 'info',
-      event: 'boredom_level_changed',
-      actor: 'boredom-api',
-      details: {
-        level,
-        intervalSeconds,
-        enabled,
-        note: 'Reflections are now inner_dialogue only (never show in chat)'
-      }
-    });
-
-    console.log(`[boredom-handler] Updated to ${level} (${enabled ? `${intervalSeconds}s` : 'disabled'})`);
-
-    return successResponse({ success: true, level });
-  } catch (error) {
-    return {
-      status: 500,
-      error: (error as Error).message,
-    };
-  }
-}
+import { loadCuriosityConfig, parseCuriosityConfig, saveCuriosityConfig } from '../../config.js';
 
 /**
  * GET /api/curiosity-config - Get curiosity configuration
@@ -152,21 +62,29 @@ export async function handleSetCuriosityConfig(req: UnifiedRequest): Promise<Uni
     };
   }
 
-  const updates = body || {};
-
+  let current;
   try {
-    const current = loadCuriosityConfig(user.username);
-
-    // Merge updates with validation
-    const newConfig = {
-      ...current,
-      ...updates,
-      // Clamp maxOpenQuestions to 0-5 range
-      maxOpenQuestions: Math.max(0, Math.min(5, (updates as any).maxOpenQuestions ?? current.maxOpenQuestions))
+    current = loadCuriosityConfig(user.username);
+  } catch (error) {
+    return {
+      status: 500,
+      error: (error as Error).message,
     };
-
+  }
+  let newConfig;
+  try {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error('Curiosity configuration update must contain an object');
+    }
+    newConfig = parseCuriosityConfig({ ...current, ...body });
+  } catch (error) {
+    return {
+      status: 400,
+      error: (error as Error).message,
+    };
+  }
+  try {
     saveCuriosityConfig(newConfig, user.username);
-
     return successResponse({ success: true, config: newConfig });
   } catch (error) {
     return {

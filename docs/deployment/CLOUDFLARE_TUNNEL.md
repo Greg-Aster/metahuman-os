@@ -393,9 +393,9 @@ See `docs/deployment/CLOUDFLARE_PAGES.md` for full guide (coming soon).
 
 ## Related Documentation
 
-- [Authentication Setup](../user-guide/17-authentication-setup.md)
-- [Security Settings](../user-guide/XX-security-settings.md)
-- [Guest User Management](../user-guide/XX-guest-users.md)
+- [Authentication Setup](../user-guide/configuration-admin/authentication.md)
+- [Security Settings](../user-guide/configuration-admin/security-trust.md)
+- [Guest User Management](../user-guide/advanced-features/multi-user-profiles.md)
 - [Cloudflare Tunnel Docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
 - [Cloudflare Access Docs](https://developers.cloudflare.com/cloudflare-one/policies/access/)
 

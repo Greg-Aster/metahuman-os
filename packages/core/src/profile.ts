@@ -14,6 +14,7 @@ import { systemPaths, ROOT, getProfilePaths } from './path-builder.js';
 import { audit } from './audit.js';
 import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from './model-defaults.js';
 import { createDefaultSleepConfig, loadSleepConfigFile } from './sleep-config.js';
+import { deleteUser, getUserByUsername } from './users.js';
 
 /** Path to the master profile template directory */
 const TEMPLATE_DIR = path.join(systemPaths.profiles, '_template');
@@ -711,7 +712,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         protect: 0.15,
         f0Method: 'rmvpe',
         device: 'cuda',
-        pauseOllamaDuringInference: true,
       },
       sovits: {
         serverUrl: 'http://127.0.0.1:9880',
@@ -767,7 +767,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   // agents.json - Agent scheduler configuration
   const agents = {
-    $schema: 'https://metahuman.dev/schemas/agents.json',
     version: '1.1.0',
     revision: 0,
     description: 'Finite-work Trigger Manager configuration',
@@ -786,7 +785,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: false,
         type: 'interval',
         priority: 'normal',
-        agentPath: 'reflector.ts',
+        agentPath: 'reflector/cli.ts',
         usesLLM: true,
         interval: 900,
         startupPolicy: 'skip',
@@ -798,7 +797,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'activity',
         priority: 'high',
-        agentPath: 'organizer.ts',
+        agentPath: 'organizer/cli.ts',
         usesLLM: true,
         inactivityThreshold: 600,
         startupPolicy: 'skip',
@@ -810,7 +809,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'manual',
         priority: 'normal',
-        agentPath: 'curator/index.ts',
+        agentPath: 'curator/cli.ts',
         usesLLM: true,
         startupPolicy: 'skip',
         maxRetries: 2,
@@ -836,7 +835,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'activity',
         priority: 'low',
-        agentPath: 'reflector.ts',
+        agentPath: 'reflector/cli.ts',
         usesLLM: true,
         inactivityThreshold: 900,
         startupPolicy: 'skip',
@@ -847,7 +846,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'activity',
         priority: 'low',
-        agentPath: 'curiosity-service.ts',
+        agentPath: 'curiosity-service/cli.ts',
         usesLLM: true,
         inactivityThreshold: 900,
         startupPolicy: 'skip',
@@ -874,7 +873,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'interval',
         priority: 'low',
-        agentPath: 'inner-curiosity.ts',
+        agentPath: 'inner-curiosity/cli.ts',
         usesLLM: true,
         interval: 3600,
         startupPolicy: 'skip',
@@ -886,7 +885,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         enabled: true,
         type: 'manual',
         priority: 'normal',
-        agentPath: 'psychoanalyzer.ts',
+        agentPath: 'psychoanalyzer/cli.ts',
         usesLLM: true,
         startupPolicy: 'skip',
         maxRetries: 1,
@@ -899,7 +898,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   // chat-settings.json - Chat behavior configuration
   const chatSettings = {
-    $schema: 'https://metahuman.dev/schemas/chat-settings.json',
     version: '1.0.0',
     description: 'Chat behavior configuration - controls how context, history, and personality influence responses',
     lastUpdated: new Date().toISOString(),
@@ -1179,19 +1177,8 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   await writeJsonIfMissing(path.join(etcDir, 'model-registry.json'), modelRegistry);
 
-  // addons.json - Addon configuration (empty by default)
-  const addons = {
-    $schema: 'https://metahuman.dev/schemas/addons.json',
-    version: '1.0.0',
-    description: 'Addon configuration for extending MetaHuman capabilities',
-    addons: {},
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'addons.json'), addons);
-
   // agency.json - Agency system configuration
   const agency = {
-    $schema: 'https://metahuman.dev/schemas/agency.json',
     version: '1.0.0',
     description: 'Agency system configuration for autonomous goal-directed behavior',
     enabled: true,
@@ -1234,7 +1221,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   // training-data.json - Training data configuration
   const trainingData = {
-    $schema: 'https://metahuman.dev/schemas/training-data.json',
     version: '1.0.0',
     description: 'Training data generation configuration',
     outputDirectory: 'training-data',
@@ -1253,14 +1239,11 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   // Copy additional system config files if they exist
   const systemConfigsToCopy = [
-    'cognitive-layers.json',
     'fine-tune-config.json',
     'persona-generator.json',
     'psychoanalyzer.json',
     'runpod.json',
     'training.json', // Unified training config (v2.0)
-    'auto-approval.json',
-    'adapter-builder.json',
     'logging.json',
   ];
 
@@ -1491,7 +1474,6 @@ export async function initializeGuestProfile(): Promise<void> {
     const configFilesToCopy = [
       'models.json',
       'training.json',
-      'cognitive-layers.json',
       'autonomy.json',
       'trust-coupling.json',
       'boredom.json',
@@ -1500,8 +1482,6 @@ export async function initializeGuestProfile(): Promise<void> {
       'audio.json',
       'ingestor.json',
       'agents.json',
-      'auto-approval.json',
-      'adapter-builder.json',
       'logging.json', // Optional: per-user logging preferences
     ];
 
@@ -1800,7 +1780,6 @@ export async function copyPersonaToGuest(sourceUsername: string): Promise<void> 
     const configFilesToCopy = [
       'models.json',
       'training.json',
-      'cognitive-layers.json',
       'autonomy.json',
       'trust-coupling.json',
       'boredom.json',
@@ -1809,8 +1788,6 @@ export async function copyPersonaToGuest(sourceUsername: string): Promise<void> 
       'audio.json',
       'ingestor.json',
       'agents.json',
-      'auto-approval.json',
-      'adapter-builder.json',
       'logging.json',
     ];
 
@@ -1911,8 +1888,7 @@ export async function deleteProfileComplete(
   error?: string;
 }> {
   try {
-    // Import user/session functions dynamically to avoid circular dependency
-    const { getUserByUsername, deleteUser } = await import('./users.js');
+    // Load the session owner only when profile deletion is requested.
     const { deleteUserSessions } = await import('./sessions.js');
 
     // Step 1: Validate target user exists

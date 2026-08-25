@@ -233,7 +233,7 @@ export let onRecordingComplete: (success: boolean) => void = () => {};
   </div>
 
   <div class="bg-gray-800 p-4 rounded mb-4">
-    <label class="block text-gray-500 text-sm mb-2">Recommended prompt:</label>
+    <div class="block text-gray-500 text-sm mb-2">Recommended prompt:</div>
     <div class="text-gray-300 italic leading-relaxed">{RECOMMENDED_PROMPT}</div>
   </div>
 

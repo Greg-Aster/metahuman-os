@@ -53,7 +53,7 @@ function loadAudioConfig(): AudioConfig {
   if (!fs.existsSync(AUDIO_CONFIG_PATH)) {
     return {
       transcription: {
-        provider: 'mock',
+        provider: 'whisper.cpp',
         model: 'base.en',
         language: 'en',
         temperature: 0.0,

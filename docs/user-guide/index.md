@@ -26,7 +26,7 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 - [Cognitive Modes](training-personalization/cognitive-modes.md) - Dual, Agent, and Emulation modes
 
 ### 🎓 4. Advanced Features
-- [Architecture](advanced-features/architecture.md) - System design and cognitive layers
+- [Architecture](advanced-features/architecture.md) - System design and ownership boundaries
 - [Node Editor](advanced-features/node-editor.md) - Visual workflow design
 - [Autonomous Agents](advanced-features/autonomous-agents.md) - Background processing agents
 - [Agency System](advanced-features/agency-system.md) - Desires, goals, and autonomous goal pursuit
@@ -46,14 +46,11 @@ Welcome to **MetaHuman OS** — an autonomous digital personality extension oper
 ### 📖 6. Reference
 - [CLI Command Reference](reference/cli-reference.md) - Complete `mh` command list
 - [Troubleshooting Guide](reference/troubleshooting.md) - Common issues and solutions
-- [Known Issues](reference/known-issues.md) - Current limitations
 - [FAQ](reference/faq.md) - Frequently asked questions
 
-### 📋 7. Appendix
-- [Terms of Service](appendix/terms-of-service.md) - Usage terms
-- [Ethical Use Policy](appendix/ethical-use.md) - Responsible AI guidelines
-- [Roadmap](appendix/roadmap.md) - Future development
-- [Easter Eggs](appendix/easter-eggs.md) - Hidden features and fun
+### 📋 7. Policies
+- [Terms of Service](../technical/TERMS_OF_SERVICE.md) - Usage terms
+- [Ethical Use Policy](../technical/ETHICAL_USE_POLICY.md) - Responsible AI guidelines
 
 ---
 

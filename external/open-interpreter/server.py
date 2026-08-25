@@ -317,8 +317,9 @@ async def execute(request: ExecuteRequest):
             messages = []
 
             if request.streaming:
-                # For now, collect all streaming output
-                # TODO: Implement SSE endpoint for true streaming
+                # The non-SSE endpoint returns streamed interpreter events as
+                # one structured response. Clients that need live delivery use
+                # /execute/stream.
                 for chunk in i.chat(request.prompt, stream=True, display=False):
                     outputs.append(chunk)
             else:

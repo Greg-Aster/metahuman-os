@@ -1,6 +1,5 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import {
-  clearCuriosityAwaiting,
   getPauseState,
   updateTTSState,
 } from '../../active-operator/index.js';
@@ -47,7 +46,7 @@ export async function handleUpdatePauseState(req: UnifiedRequest): Promise<Unifi
     }
 
     const body = req.body || {};
-    const { action, speaking, reason } = body;
+    const { action, speaking } = body;
 
     switch (action) {
       case 'setTTS':
@@ -70,34 +69,12 @@ export async function handleUpdatePauseState(req: UnifiedRequest): Promise<Unifi
           },
         };
 
-      case 'clearCuriosity': {
-        const validReasons = ['responded', 'skipped', 'timeout'];
-        if (!validReasons.includes(reason)) {
-          return {
-            status: 400,
-            data: {
-              success: false,
-              error: `reason must be one of: ${validReasons.join(', ')}`,
-            },
-          };
-        }
-
-        clearCuriosityAwaiting(req.user.username, reason);
-        return {
-          status: 200,
-          data: {
-            success: true,
-            message: `Curiosity state cleared: reason=${reason}`,
-          },
-        };
-      }
-
       default:
         return {
           status: 400,
           data: {
             success: false,
-            error: `Unknown action: ${action}. Valid actions: setTTS, clearCuriosity`,
+            error: `Unknown action: ${action}. Valid action: setTTS`,
           },
         };
     }

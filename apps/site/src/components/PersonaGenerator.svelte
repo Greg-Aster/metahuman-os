@@ -825,8 +825,8 @@
 
 <!-- Purge Confirmation Modal -->
 {#if showPurgeConfirm}
-  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4" on:click={() => showPurgeConfirm = false}>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="m-0 mb-4 text-red-300">⚠️ Purge All Sessions</h3>
       <p class="m-0 mb-4 text-gray-200 leading-relaxed">
         This will permanently delete <strong class="text-gray-50">all interview sessions</strong> ({sessions.length} total)
@@ -854,8 +854,8 @@
 
 <!-- Reset Persona Confirmation Modal -->
 {#if showResetConfirm}
-  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4" on:click={() => showResetConfirm = false}>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[10000] p-4">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg max-w-[500px] w-full p-8 shadow-2xl" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="m-0 mb-4 text-red-300">⚠️ Reset Persona File</h3>
       <p class="m-0 mb-4 text-gray-200 leading-relaxed">
         This will reset your <code class="bg-gray-900 px-1.5 py-0.5 rounded text-gray-50 font-mono text-sm">persona/core.json</code> file to default settings.

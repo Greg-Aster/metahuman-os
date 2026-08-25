@@ -199,8 +199,8 @@
 
   <!-- Skip Modal -->
   {#if showSkipModal}
-    <div class="modal-overlay !z-[11000]" on:click={() => showSkipModal = false}>
-      <div class="skip-modal" on:click|stopPropagation>
+    <div class="modal-overlay !z-[11000]">
+      <div class="skip-modal" role="dialog" aria-modal="true" tabindex="-1">
         <h2 class="text-2xl font-bold mb-4 text-white dark:text-white">Skip Onboarding?</h2>
 
         <p class="text-white/80 dark:text-white/80 mb-6 leading-relaxed">

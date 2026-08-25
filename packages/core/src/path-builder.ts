@@ -65,40 +65,25 @@ export function registerProfileStorageConfigGetter(
 
 /**
  * Get profile storage config for a user
- * If the getter hasn't been registered yet, we dynamically import users.ts
- * to ensure the registration happens (this handles tree-shaking issues)
- *
- * SECURITY FIX: If getter fails to load, we also check users.json directly
- * to detect if user has custom storage with fallbackBehavior: error.
- * This prevents race conditions during startup from bypassing security.
+ * If users.ts has not registered its resolver yet, read the canonical user
+ * registry directly so custom-storage safety rules still apply.
  */
 function getProfileStorageConfigLazy(username: string): ProfileStorageConfigFull | undefined {
-  // If getter isn't registered, force-load users.ts (handles tree-shaking)
   if (!_getProfileStorageConfig) {
     try {
-      // Dynamic require to force users.ts to load and register the getter
-      require('./users.js');
-    } catch {
-      // During bootstrap or if users.ts fails to load, try direct file read
-      // This prevents race conditions from bypassing custom storage config
-      console.warn(`[path-builder] Warning: users.ts not loaded yet, falling back to direct file read`);
-      try {
-        const usersPath = path.join(ROOT, 'persona', 'users.json');
-        if (fs.existsSync(usersPath)) {
-          const usersData = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
-          const user = usersData.users?.find((u: { username: string }) => u.username === username);
-          const storageConfig = user?.metadata?.profileStorage;
-          if (storageConfig) {
-            // Found config via direct read - return it
-            // This handles the race condition where users.ts hasn't registered yet
-            return storageConfig as ProfileStorageConfigFull;
-          }
+      const usersPath = path.join(ROOT, 'persona', 'users.json');
+      if (fs.existsSync(usersPath)) {
+        const usersData = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
+        const user = usersData.users?.find((u: { username: string }) => u.username === username);
+        const storageConfig = user?.metadata?.profileStorage;
+        if (storageConfig) {
+          return storageConfig as ProfileStorageConfigFull;
         }
-      } catch (e) {
-        console.error(`[path-builder] Error reading users.json directly:`, e);
       }
-      return undefined;
+    } catch (error) {
+      console.error('[path-builder] Failed to read profile storage configuration:', error);
     }
+    return undefined;
   }
   return _getProfileStorageConfig?.(username);
 }

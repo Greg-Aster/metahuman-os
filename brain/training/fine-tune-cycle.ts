@@ -18,14 +18,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { systemPaths, audit } from '@metahuman/core';
+import { systemPaths, audit, storageClient } from '@metahuman/core';
 import { withUserContext, getUserContext } from '@metahuman/core/context';
 import { requireUserInfo } from '@metahuman/core/user-resolver';
 import { applySchemaBatch } from '@metahuman/core/schema-manager';
 import type { FormattedSample } from '@metahuman/core/schema-manager';
 import { getCurrentBaseModel, registerTrainingRun } from '@metahuman/core/model-registry';
 import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
-import { storage } from '../services/storage-router.js';
 
 const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
 
@@ -47,14 +46,9 @@ const TSX_PATH = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
  */
 async function runAgent(agentName: string, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    // Check multiple paths after agent refactor:
-    // 1. brain/agents/{name}/cli.ts (new directory structure)
-    // 2. brain/training/{name}.ts (training scripts)
-    // 3. brain/agents/{name}.ts (legacy flat structure)
     const possiblePaths = [
       path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),
       path.join(systemPaths.brain, 'training', `${agentName}.ts`),
-      path.join(systemPaths.brain, 'agents', `${agentName}.ts`),
     ];
 
     const agentPath = possiblePaths.find(p => fs.existsSync(p));
@@ -106,7 +100,7 @@ async function mainWithContext(options: FineTuneOptions) {
   console.log(`[fine-tune-cycle] Base model: ${options.baseModel}`);
 
   // Resolve output directory via storage router
-  const outputPathResponse = storage.resolvePath({
+  const outputPathResponse = storageClient.resolvePath({
     username: ctx.username,
     category: 'output',
     subcategory: 'fine-tuned-models',
@@ -244,7 +238,7 @@ async function mainWithContext(options: FineTuneOptions) {
     console.log(`[fine-tune-cycle] This may take 2-6 hours depending on dataset size`);
 
     // Create work directory structure via storage router (matching lora-trainer expectations)
-    const workPathResponse = storage.resolvePath({
+    const workPathResponse = storageClient.resolvePath({
       username: ctx.username,
       category: 'training',
       subcategory: 'runs',

@@ -25,6 +25,8 @@ const retiredModelIds = [
 function walkFiles(directory: string): string[] {
   if (!fs.existsSync(directory)) return []
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isSymbolicLink()) return []
+    if (entry.isDirectory() && ['node_modules', 'dist', 'build'].includes(entry.name)) return []
     const absolutePath = path.join(directory, entry.name)
     if (entry.isDirectory()) return walkFiles(absolutePath)
     return [absolutePath]

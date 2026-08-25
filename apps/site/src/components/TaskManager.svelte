@@ -599,8 +599,9 @@
               <!-- Edit Form -->
               <div class="space-y-3">
                 <div>
-                  <label class="block text-xs font-semibold mb-1">Title</label>
+                  <label for="task-edit-title" class="block text-xs font-semibold mb-1">Title</label>
                   <input
+                    id="task-edit-title"
                     type="text"
                     bind:value={editForm.title}
                     class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
@@ -608,8 +609,9 @@
                   />
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold mb-1">Description</label>
+                  <label for="task-edit-description" class="block text-xs font-semibold mb-1">Description</label>
                   <textarea
+                    id="task-edit-description"
                     bind:value={editForm.description}
                     rows="2"
                     class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
@@ -618,8 +620,9 @@
                 </div>
                 <div class="flex gap-3">
                   <div class="flex-1">
-                    <label class="block text-xs font-semibold mb-1">Priority</label>
+                    <label for="task-edit-priority" class="block text-xs font-semibold mb-1">Priority</label>
                     <select
+                      id="task-edit-priority"
                       bind:value={editForm.priority}
                       class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
                     >
@@ -630,8 +633,9 @@
                     </select>
                   </div>
                   <div class="flex-1">
-                    <label class="block text-xs font-semibold mb-1">Due Date</label>
+                    <label for="task-edit-due" class="block text-xs font-semibold mb-1">Due Date</label>
                     <input
+                      id="task-edit-due"
                       type="datetime-local"
                       bind:value={editForm.due}
                       class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
@@ -639,8 +643,9 @@
                   </div>
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold mb-1">List</label>
+                  <label for="task-edit-list" class="block text-xs font-semibold mb-1">List</label>
                   <select
+                    id="task-edit-list"
                     bind:value={editForm.listId}
                     class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
                   >
@@ -651,7 +656,7 @@
                   </select>
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold mb-1">Tags</label>
+                  <label for="task-edit-tag" class="block text-xs font-semibold mb-1">Tags</label>
                   <div class="flex flex-wrap gap-1 mb-2">
                     {#each editForm.tags || [] as tag}
                       <span class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 flex items-center gap-1">
@@ -665,6 +670,7 @@
                     {/each}
                   </div>
                   <input
+                    id="task-edit-tag"
                     type="text"
                     on:keydown={handleTagInput}
                     placeholder="Type tag and press Enter..."

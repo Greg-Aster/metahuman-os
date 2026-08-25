@@ -20,20 +20,8 @@ import { getWebExecutor } from './executors/web-process.js';
  * Detect if we're running on mobile (nodejs-mobile)
  */
 function isMobilePlatform(): boolean {
-  // nodejs-mobile sets specific environment or has limited capabilities
-  try {
-    // Check for common mobile indicators
-    if (typeof process !== 'undefined') {
-      // nodejs-mobile typically doesn't have full child_process support
-      // or runs in a specific mobile environment
-      const { spawn } = require('node:child_process');
-      // Try to detect if spawn would work
-      return typeof spawn !== 'function';
-    }
-  } catch {
-    return true; // If we can't load child_process, we're on mobile
-  }
-  return false;
+  return process.env.METAHUMAN_MOBILE === 'true'
+    || process.platform === 'android';
 }
 
 /**

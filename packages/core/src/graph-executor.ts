@@ -12,6 +12,7 @@ import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-
 import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
+import { getNode, getNodeExecutor, materializeNodeProperties } from './nodes/index.js';
 
 const log = createLogger('graph-pipeline');
 
@@ -424,10 +425,8 @@ async function executeNodeByType(
     };
   }
 
-  // In Node.js (or forced server mode): Import the real node executors
+  // In Node.js (or forced server mode): use the canonical node registry.
   log.debug(`     Server mode: Using real executor for ${nodeType}`);
-  const { getNode, getNodeExecutor, materializeNodeProperties } = await import('./nodes/index.js');
-
   // Get the executor for this node type
   const executor = getNodeExecutor(nodeType);
   const nodeDefinition = getNode(nodeType);

@@ -7,32 +7,30 @@ import test from 'node:test'
 import { safeWriteJSON } from '@metahuman/core'
 import {
   parseCuriosityResearcherArgs,
-  parsePendingCuriosityQuestion,
   processResearchQueue,
   runCycle,
   type CuriosityResearchDependencies,
   type CuriosityResearchRecord,
+  type PendingCuriosityQuestion,
 } from './core.js'
 
 const NOW = '2026-08-24T22:00:00.000Z'
 
-function temporaryQueue(): { root: string; pendingQuestions: string; research: string } {
+function temporaryQueue(): { root: string; research: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'curiosity-researcher-'))
-  const pendingQuestions = path.join(root, 'state', 'curiosity', 'questions', 'pending')
   const research = path.join(root, 'memory', 'curiosity', 'research')
-  fs.mkdirSync(pendingQuestions, { recursive: true })
-  return { root, pendingQuestions, research }
+  return { root, research }
 }
 
-function writeQuestion(pendingQuestions: string, id: string): void {
-  safeWriteJSON(path.join(pendingQuestions, `${id}.json`), {
+function question(id: string, askedAt = '2026-08-24T20:00:00.000Z'): PendingCuriosityQuestion {
+  return {
     id,
     question: 'What patterns connect this question to prior memories?',
-    askedAt: '2026-08-24T20:00:00.000Z',
+    askedAt,
     status: 'pending',
     seedMemories: ['evt-seed'],
     username: 'test-user',
-  })
+  }
 }
 
 function dependencies(overrides: Partial<CuriosityResearchDependencies> = {}): CuriosityResearchDependencies {
@@ -58,27 +56,6 @@ test('Curiosity Researcher CLI arguments are strict and accept scheduler context
   assert.throws(() => parseCuriosityResearcherArgs(['--username', '../escape']), /Invalid username format/)
 })
 
-test('pending question validation blocks filename and path traversal mismatches', () => {
-  assert.throws(
-    () => parsePendingCuriosityQuestion({
-      id: '../escape',
-      question: 'Unsafe question',
-      askedAt: NOW,
-      status: 'pending',
-    }),
-    /Curiosity question id/,
-  )
-  assert.throws(
-    () => parsePendingCuriosityQuestion({
-      id: 'cur-q-1',
-      question: 'Mismatched question',
-      askedAt: NOW,
-      status: 'pending',
-    }, 'other.json'),
-    /filename does not match/,
-  )
-})
-
 test('scheduled cycle reports user-resolution failures instead of exiting successfully', async () => {
   const result = await runCycle({ username: 'definitely-missing-curiosity-user' })
   assert.equal(result.success, false)
@@ -91,7 +68,7 @@ test('research queue commits one typed finding and is idempotent', async t => {
   const queue = temporaryQueue()
   t.after(() => fs.rmSync(queue.root, { recursive: true, force: true }))
   const questionId = 'cur-q-1787600000000-abc123'
-  writeQuestion(queue.pendingQuestions, questionId)
+  const firstQuestion = question(questionId)
 
   let researchCalls = 0
   let captureCalls = 0
@@ -113,7 +90,7 @@ test('research queue commits one typed finding and is idempotent', async t => {
     },
   })
 
-  assert.equal(await processResearchQueue(queue, 'test-user', deps), 1)
+  assert.equal(await processResearchQueue([firstQuestion], queue.research, 'test-user', deps), 1)
   const record = JSON.parse(fs.readFileSync(path.join(queue.research, `${questionId}.json`), 'utf8'))
   assert.equal(record.status, 'completed')
   assert.equal(record.questionId, questionId)
@@ -121,13 +98,13 @@ test('research queue commits one typed finding and is idempotent', async t => {
   assert.deepEqual(record.sourceMemoryIds, ['evt-related'])
 
   const secondQuestionId = 'cur-q-1787600000002-ghi789'
-  writeQuestion(queue.pendingQuestions, secondQuestionId)
-  assert.equal(await processResearchQueue(queue, 'test-user', deps), 1)
+  const secondQuestion = question(secondQuestionId, '2026-08-24T20:00:02.000Z')
+  assert.equal(await processResearchQueue([firstQuestion, secondQuestion], queue.research, 'test-user', deps), 1)
   assert.equal(priorResearchCount, 1)
   const secondRecord = JSON.parse(fs.readFileSync(path.join(queue.research, `${secondQuestionId}.json`), 'utf8'))
   assert.deepEqual(secondRecord.sourceResearchIds, [`curiosity-research:${questionId}`])
 
-  assert.equal(await processResearchQueue(queue, 'test-user', deps), 0)
+  assert.equal(await processResearchQueue([firstQuestion, secondQuestion], queue.research, 'test-user', deps), 0)
   assert.equal(researchCalls, 2)
   assert.equal(captureCalls, 2)
 })
@@ -136,10 +113,10 @@ test('a failed memory capture leaves prepared research retryable without another
   const queue = temporaryQueue()
   t.after(() => fs.rmSync(queue.root, { recursive: true, force: true }))
   const questionId = 'cur-q-1787600000001-def456'
-  writeQuestion(queue.pendingQuestions, questionId)
+  const pendingQuestion = question(questionId)
 
   await assert.rejects(
-    processResearchQueue(queue, 'test-user', dependencies({
+    processResearchQueue([pendingQuestion], queue.research, 'test-user', dependencies({
       captureLearning: () => {
         throw new Error('capture unavailable')
       },
@@ -150,7 +127,7 @@ test('a failed memory capture leaves prepared research retryable without another
   assert.equal(JSON.parse(fs.readFileSync(recordPath, 'utf8')).status, 'prepared')
 
   let researchCalls = 0
-  assert.equal(await processResearchQueue(queue, 'test-user', dependencies({
+  assert.equal(await processResearchQueue([pendingQuestion], queue.research, 'test-user', dependencies({
     researchQuestion: async () => {
       researchCalls++
       throw new Error('research should not repeat')

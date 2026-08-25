@@ -26,6 +26,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { storageClient } from './storage-client.js';
 import { safeReadJSON, safeWriteJSON, listFileBackups, restoreFromBackup, recoverCorruptedFiles, isValidJSON } from './safe-file.js';
+import type { TrustLevel } from './skills.js';
 
 // Get project root for fallback paths
 const ROOT = process.cwd().includes('/apps/site')
@@ -115,8 +116,8 @@ function ensureUserConfig<T>(filename: string, defaultGenerator: () => T, userna
 /**
  * Load user-specific config file
  *
- * Automatically resolves to the correct user's etc/ directory based on
- * username or falls back to system etc/.
+ * Resolves to the authenticated user's etc/ directory. The system etc/
+ * directory is used only to seed a missing profile file.
  *
  * ╔═══════════════════════════════════════════════════════════════════════════╗
  * ║  NO SILENT DEFAULTS: If config is missing, it will be created from        ║
@@ -126,12 +127,12 @@ function ensureUserConfig<T>(filename: string, defaultGenerator: () => T, userna
  *
  * @param filename - Config filename (e.g., 'models.json', 'training.json')
  * @param defaultValue - Default value used to GENERATE config if template missing (NOT returned directly)
- * @param username - Optional username to load config for (falls back to system if not provided)
+ * @param username - Optional explicit username; otherwise uses the active user context
  * @returns Parsed JSON config from user's profile
  *
  * @example
  * ```typescript
- * // Without username - loads from system etc/models.json
+ * // Without username - resolves the active user's profile
  * const config = loadUserConfig('models.json', {});
  *
  * // With username - loads from profiles/alice/etc/models.json
@@ -170,7 +171,7 @@ export function loadUserConfig<T = any>(filename: string, defaultValue: T, usern
  *
  * @param filename - Config filename (e.g., 'models.json', 'training.json')
  * @param data - Data to save (will be JSON.stringify'd)
- * @param username - Optional username to save config for (falls back to system if not provided)
+ * @param username - Optional explicit username; otherwise uses the active user context
  *
  * @example
  * ```typescript
@@ -428,10 +429,67 @@ export interface CuriosityConfig {
   maxOpenQuestions: number;          // 0 = off, 1 = gentle, 3 = chatty
   researchMode: 'off' | 'local';
   innerQuestionMode: 'off' | 'local';
-  minTrustLevel: string;              // Minimum trust to ask questions
+  minTrustLevel: TrustLevel;
 }
 
 const curiosityConfigCache = new Map<string, CuriosityConfig>();
+const CURIOSITY_CONFIG_FIELDS = new Set<keyof CuriosityConfig>([
+  'maxOpenQuestions',
+  'researchMode',
+  'innerQuestionMode',
+  'minTrustLevel',
+]);
+const LEGACY_CURIOSITY_CONFIG_FIELDS = new Set([
+  '_TEMPLATE_WARNING',
+  '_TEMPLATE_WARNING2',
+  '_TEMPLATE_WARNING3',
+  '_TEMPLATE_WARNING4',
+  'inactivityThresholdSeconds',
+  'questionTopics',
+  'questionIntervalSeconds',
+  'innerQuestionIntervalSeconds',
+]);
+const CURIOSITY_TRUST_LEVELS = new Set<CuriosityConfig['minTrustLevel']>([
+  'observe',
+  'suggest',
+  'supervised_auto',
+  'bounded_auto',
+  'adaptive_auto',
+]);
+
+export function parseCuriosityConfig(value: unknown, options: { allowLegacy?: boolean } = {}): CuriosityConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('curiosity.json must contain an object');
+  }
+  const raw = value as Record<string, unknown>;
+  for (const field of Object.keys(raw)) {
+    const isCanonical = CURIOSITY_CONFIG_FIELDS.has(field as keyof CuriosityConfig);
+    const isKnownLegacy = options.allowLegacy && LEGACY_CURIOSITY_CONFIG_FIELDS.has(field);
+    if (!isCanonical && !isKnownLegacy) {
+      throw new Error(`Unknown curiosity configuration field: ${field}`);
+    }
+  }
+  if (!Number.isInteger(raw.maxOpenQuestions) || (raw.maxOpenQuestions as number) < 0 || (raw.maxOpenQuestions as number) > 5) {
+    throw new Error('maxOpenQuestions must be an integer between 0 and 5');
+  }
+  if (raw.researchMode !== 'off' && raw.researchMode !== 'local') {
+    throw new Error('researchMode must be off or local');
+  }
+  const innerQuestionMode = raw.innerQuestionMode
+    ?? (options.allowLegacy ? getDefaultCuriosityConfig().innerQuestionMode : undefined);
+  if (innerQuestionMode !== 'off' && innerQuestionMode !== 'local') {
+    throw new Error('innerQuestionMode must be off or local');
+  }
+  if (!CURIOSITY_TRUST_LEVELS.has(raw.minTrustLevel as CuriosityConfig['minTrustLevel'])) {
+    throw new Error('minTrustLevel is not a supported trust level');
+  }
+  return {
+    maxOpenQuestions: raw.maxOpenQuestions as number,
+    researchMode: raw.researchMode,
+    innerQuestionMode,
+    minTrustLevel: raw.minTrustLevel as CuriosityConfig['minTrustLevel'],
+  };
+}
 
 /**
  * Load curiosity configuration for a user
@@ -442,7 +500,15 @@ export function loadCuriosityConfig(username: string): CuriosityConfig {
   const cached = curiosityConfigCache.get(username);
   if (cached) return cached;
 
-  const config = loadUserConfig<CuriosityConfig>('curiosity.json', getDefaultCuriosityConfig(), username);
+  const etcPath = resolveEtcPath(username);
+  ensureUserConfig('curiosity.json', getDefaultCuriosityConfig, username);
+  const configPath = path.join(etcPath, 'curiosity.json');
+  const raw = safeReadJSON<unknown>(configPath);
+  const config = parseCuriosityConfig(raw, { allowLegacy: true });
+  if (JSON.stringify(raw) !== JSON.stringify(config)) {
+    console.log(`[config] Migrating legacy curiosity.json for ${username} to the canonical contract`);
+    safeWriteJSON(configPath, config);
+  }
   curiosityConfigCache.set(username, config);
   return config;
 }
@@ -454,8 +520,9 @@ export function loadCuriosityConfig(username: string): CuriosityConfig {
  * @param username - REQUIRED: Username to save config for. All configs are user-specific.
  */
 export function saveCuriosityConfig(config: CuriosityConfig, username: string): void {
-  saveUserConfig('curiosity.json', config, username);
-  curiosityConfigCache.set(username, config);
+  const parsed = parseCuriosityConfig(config);
+  saveUserConfig('curiosity.json', parsed, username);
+  curiosityConfigCache.set(username, parsed);
 }
 
 /**

@@ -5,8 +5,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execSync } from 'node:child_process';
-import { ROOT, systemPaths } from '@metahuman/core';
+import { spawn } from 'node:child_process';
+import {
+  ROOT,
+  getRVCTrainingStatus,
+  listRVCSamples,
+  startRVCTraining,
+  type RVCTrainingOptions,
+} from '@metahuman/core';
 
 const RVC_DIR = path.join(ROOT, 'external', 'applio-rvc');
 
@@ -20,11 +26,8 @@ export async function rvcCommand(args: string[]): Promise<void> {
     case 'train':
       await trainVoice(args.slice(1));
       break;
-    case 'test':
-      await testInference(args.slice(1));
-      break;
     case 'status':
-      await checkStatus();
+      await checkStatus(args.slice(1));
       break;
     case 'uninstall':
       await uninstallRVC();
@@ -42,15 +45,14 @@ Usage: mh rvc <command> [options]
 
 Commands:
   install              Install RVC (Applio) and dependencies
-  train [--name]       Train a new RVC voice model from audio samples
-  test [--model]       Test voice conversion with a sample
-  status               Check RVC installation status
+  train [options]      Train a voice model from exported samples
+  status [--name]      Check installation and training status
   uninstall            Remove RVC installation
 
 Examples:
   mh rvc install                              # Install RVC
   mh rvc train --name greg                    # Train model named "greg"
-  mh rvc test --model greg --input test.wav  # Test conversion
+  mh rvc train --name greg --device cuda      # Select the training device
 `);
 }
 
@@ -96,96 +98,38 @@ async function trainVoice(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // Parse arguments
-  const nameIndex = args.indexOf('--name');
-  const modelName = nameIndex !== -1 && args[nameIndex + 1] ? args[nameIndex + 1] : 'default';
+  const getArg = (flag: string): string | undefined => {
+    const index = args.indexOf(flag);
+    return index >= 0 ? args[index + 1] : undefined;
+  };
+  const parseInteger = (flag: string, min: number): number | undefined => {
+    const raw = getArg(flag);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < min) {
+      throw new Error(`${flag} must be an integer of at least ${min}`);
+    }
+    return value;
+  };
 
-  console.log(`Model name: ${modelName}`);
-  console.log('\nNote: RVC training requires audio samples to be prepared first.');
-  console.log('      Use the Voice Training widget in the web UI to collect samples.');
-  console.log('\nTraining workflow:');
-  console.log('  1. Collect voice samples (10-15 minutes of clean audio)');
-  console.log('  2. Export samples to training dataset');
-  console.log('  3. Run this command to train the RVC model');
-  console.log('\nTraining is not yet fully automated. Please use external RVC tools for now.');
+  const modelName = getArg('--name') || 'default';
+  const rawDevice = getArg('--device');
+  if (rawDevice && !['auto', 'cpu', 'cuda'].includes(rawDevice)) {
+    throw new Error('--device must be auto, cpu, or cuda');
+  }
+
+  const options: RVCTrainingOptions = {
+    totalEpochs: parseInteger('--epochs', 1),
+    saveEveryEpoch: parseInteger('--save-every', 1),
+    batchSize: parseInteger('--batch-size', 1),
+    device: rawDevice as RVCTrainingOptions['device'],
+  };
+  const result = startRVCTraining(modelName, options);
+  if (!result.success) throw new Error(result.error || 'RVC training could not start');
+  console.log(`✓ RVC training started for ${modelName}`);
 }
 
-async function testInference(args: string[]): Promise<void> {
-  console.log('Testing RVC voice conversion...\n');
-
-  if (!fs.existsSync(RVC_DIR)) {
-    console.error('✗ RVC not installed');
-    console.error('  Run: mh rvc install');
-    process.exit(1);
-  }
-
-  // Parse arguments
-  const modelIndex = args.indexOf('--model');
-  const modelName = modelIndex !== -1 && args[modelIndex + 1] ? args[modelIndex + 1] : 'default';
-
-  const inputIndex = args.indexOf('--input');
-  const inputFile = inputIndex !== -1 && args[inputIndex + 1] ? args[inputIndex + 1] : null;
-
-  if (!inputFile) {
-    console.error('✗ Missing --input argument');
-    console.error('  Usage: mh rvc test --model <name> --input <audio-file>');
-    process.exit(1);
-  }
-
-  if (!fs.existsSync(inputFile)) {
-    console.error(`✗ Input file not found: ${inputFile}`);
-    process.exit(1);
-  }
-
-  const modelPath = path.join(ROOT, 'out', 'voices', 'rvc', modelName, 'models', `${modelName}.pth`);
-  if (!fs.existsSync(modelPath)) {
-    console.error(`✗ Model not found: ${modelPath}`);
-    console.error('  Train a model first with: mh rvc train --name ' + modelName);
-    process.exit(1);
-  }
-
-  const outputFile = path.join(ROOT, 'out', 'voices', 'rvc', `test-output-${Date.now()}.wav`);
-
-  console.log(`Input:  ${inputFile}`);
-  console.log(`Model:  ${modelPath}`);
-  console.log(`Output: ${outputFile}`);
-  console.log('');
-
-  const venvPython = path.join(RVC_DIR, 'venv', 'bin', 'python3');
-  const pythonBin = fs.existsSync(venvPython) ? venvPython : 'python3';
-  const inferScript = path.join(RVC_DIR, 'infer.py');
-
-  return new Promise((resolve, reject) => {
-    const infer = spawn(pythonBin, [
-      inferScript,
-      '--input', inputFile,
-      '--output', outputFile,
-      '--model', modelPath,
-      '--pitch', '0',
-    ], {
-      cwd: RVC_DIR,
-      stdio: 'inherit',
-    });
-
-    infer.on('close', (code) => {
-      if (code === 0) {
-        console.log('\n✓ Voice conversion completed!');
-        console.log(`  Output saved to: ${outputFile}`);
-        resolve();
-      } else {
-        console.error(`\n✗ Inference failed with code ${code}`);
-        reject(new Error(`Inference failed with code ${code}`));
-      }
-    });
-
-    infer.on('error', (err) => {
-      console.error('✗ Failed to run inference:', err.message);
-      reject(err);
-    });
-  });
-}
-
-async function checkStatus(): Promise<void> {
+async function checkStatus(args: string[]): Promise<void> {
   console.log('RVC Installation Status\n');
 
   // Check installation
@@ -201,30 +145,18 @@ async function checkStatus(): Promise<void> {
   const venvExists = fs.existsSync(path.join(RVC_DIR, 'venv'));
   console.log(`Python venv:  ${venvExists ? '✓ Created' : '✗ Missing'}`);
 
-  // Check inference script
-  const inferScriptExists = fs.existsSync(path.join(RVC_DIR, 'infer.py'));
-  console.log(`Infer script: ${inferScriptExists ? '✓ Ready' : '✗ Missing'}`);
+  const cliExists = fs.existsSync(path.join(RVC_DIR, 'core.py'));
+  console.log(`Applio CLI:   ${cliExists ? '✓ Ready' : '✗ Missing'}`);
 
-  // List trained models
-  const modelsDir = path.join(ROOT, 'out', 'voices', 'rvc');
-  if (fs.existsSync(modelsDir)) {
-    const models = fs.readdirSync(modelsDir)
-      .filter(f => {
-        const modelPath = path.join(modelsDir, f, 'models', `${f}.pth`);
-        return fs.existsSync(modelPath);
-      });
-
-    console.log(`\nTrained models: ${models.length}`);
-    if (models.length > 0) {
-      models.forEach(m => {
-        const modelPath = path.join(modelsDir, m, 'models', `${m}.pth`);
-        const stats = fs.statSync(modelPath);
-        console.log(`  - ${m} (${formatBytes(stats.size)})`);
-      });
-    }
-  } else {
-    console.log('\nTrained models: 0');
-  }
+  const nameIndex = args.indexOf('--name');
+  const modelName = nameIndex >= 0 && args[nameIndex + 1] ? args[nameIndex + 1] : 'default';
+  const samples = listRVCSamples(modelName);
+  const totalDuration = samples.reduce((sum, sample) => sum + sample.duration, 0);
+  const training = getRVCTrainingStatus(modelName);
+  console.log(`\nModel:          ${modelName}`);
+  console.log(`Training:       ${training.status}${training.progress ? ` (${training.progress}%)` : ''}`);
+  console.log(`Exported data:  ${samples.length} samples / ${(totalDuration / 60).toFixed(1)} minutes`);
+  if (training.modelPath) console.log(`Model path:     ${training.modelPath}`);
 
   // Show disk usage
   const rvcSize = getDirSize(RVC_DIR);

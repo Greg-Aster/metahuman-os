@@ -557,7 +557,6 @@ export function isBuiltInTemplate(name: string): boolean {
     'agent-mode',
     'emulation-mode',
     'environment-mode',
-    'robot-operator-mode',
   ].includes(name);
 }
 

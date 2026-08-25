@@ -8,6 +8,7 @@
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter';
   import type { Node } from '@xyflow/svelte';
   import {
+    enrichGraphWithSchemas,
     loadSchemas,
     materializeSchemaProperties,
     serializeGraphForPersistence,
@@ -42,7 +43,7 @@
       if (res.ok) {
         const data = await res.json();
         // Show all graphs (builtin + custom), exclude the main modes already hardcoded
-        const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode', 'robot-operator-mode'];
+        const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode'];
         savedGraphs = data.graphs?.filter((g: any) => !excludeHardcoded.includes(g.name)) || [];
         backupGraphs = data.backups || [];
       }
@@ -175,8 +176,6 @@
       if (res.ok) {
         const data = await res.json();
         if (data.graph && flowEditorRef) {
-          // Load graph into editor using the enrichGraphWithSchemas via loadGraph
-          const { enrichGraphWithSchemas } = await import('../../lib/client/flow-editor/template-converter');
           const sfGraph = enrichGraphWithSchemas(data.graph);
           flowEditorRef.loadGraph(sfGraph);
           graphName = sfGraph.name || name;
@@ -418,8 +417,7 @@
           Load
         </button>
         {#if showLoadMenu}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="absolute top-full left-0 mt-2 min-w-[250px] bg-[#1a1a1a] border border-neutral-600 rounded-md shadow-2xl z-[1000] overflow-hidden" onclick={(e) => e.stopPropagation()}>
+          <div class="absolute top-full left-0 mt-2 min-w-[250px] bg-[#1a1a1a] border border-neutral-600 rounded-md shadow-2xl z-[1000] overflow-hidden">
             <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">Cognitive Mode Templates</div>
             <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('dual-mode')}>
               Dual Consciousness Mode
@@ -433,10 +431,6 @@
             <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('environment-mode')}>
               Environment Mode
             </button>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadTemplate('robot-operator-mode')}>
-              Robot Operator Mode
-            </button>
-
             {#if savedGraphs.length > 0}
               <div class="h-px bg-neutral-700 my-2"></div>
               <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">All Graphs</div>
@@ -536,11 +530,9 @@
 
   <!-- Save Dialog -->
   {#if showSaveDialog}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]" onclick={() => (showSaveDialog = false)}>
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="bg-[#1a1a1a] border border-neutral-700 rounded-lg p-8 min-w-[400px]" onclick={(e) => e.stopPropagation()}>
-        <h3 class="m-0 mb-6 text-white text-xl">Save Graph</h3>
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]">
+      <div class="bg-[#1a1a1a] border border-neutral-700 rounded-lg p-8 min-w-[400px]" role="dialog" aria-modal="true" aria-labelledby="save-graph-title" tabindex="-1">
+        <h3 id="save-graph-title" class="m-0 mb-6 text-white text-xl">Save Graph</h3>
         <div class="flex items-center gap-2 mb-4 p-3 bg-[#0a0a0a] rounded-md">
           <span class="text-neutral-500 text-sm">Graph:</span>
           <span class="text-white font-medium">{graphName}</span>

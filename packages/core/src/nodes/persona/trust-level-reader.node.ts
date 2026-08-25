@@ -4,10 +4,10 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { loadDecisionRules } from '../../identity.js';
 
 const execute: NodeExecutor = async (_inputs, _context, _properties) => {
   try {
-    const { loadDecisionRules } = await import('../../identity.js');
     const rules = loadDecisionRules();
 
     return {

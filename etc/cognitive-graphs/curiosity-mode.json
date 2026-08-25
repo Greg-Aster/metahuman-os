@@ -201,7 +201,7 @@
       "source": "7",
       "target": "3",
       "sourceHandle": "formatted",
-      "targetHandle": "slot_1",
+      "targetHandle": "personaPrompt",
       "data": {
         "type": "string",
         "comment": "Formatted persona → Question Generator (for persona voice)"
@@ -220,7 +220,7 @@
     },
     {
       "id": "e-3-question-9-conversation",
-      "source": "3",
+      "source": "4",
       "target": "9",
       "sourceHandle": "question",
       "targetHandle": "conversation",

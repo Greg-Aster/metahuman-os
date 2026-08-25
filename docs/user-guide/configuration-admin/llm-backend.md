@@ -1,250 +1,68 @@
 # LLM Backend Configuration
 
-**Implementation**:
-- `packages/core/src/llm-backend.ts` (744 lines) - Backend switching and management
-- `packages/core/src/llm.ts` (490 lines) - Unified LLM adapter
-- `packages/core/src/ollama.ts` (703 lines) - Ollama integration
-- `packages/core/src/vllm.ts` (975 lines) - vLLM integration
+MetaHuman routes model requests through the backend owner in `packages/core/src/llm-backend.ts`. The supported execution targets are Ollama, vLLM, and a configured remote server.
 
-MetaHuman OS requires a local LLM backend for AI capabilities. This guide covers setup, configuration, and switching between backends.
+## Configuration owner
 
----
+`etc/llm-backend.json` is the system seed. Profile-aware configuration is resolved by the core configuration and storage owners. Prefer the Backend Settings UI or the CLI instead of creating provider-specific configuration files.
 
-## Supported Backends
+Important fields include:
 
-| Backend | Best For | Implementation | Requirements |
-|---------|----------|---------------|--------------|
-| **Ollama** | Most users, models up to ~14B | `ollama.ts` (703 lines) | 8GB+ RAM |
-| **vLLM** | Large models (30B+), high throughput | `vllm.ts` (975 lines) | NVIDIA GPU with CUDA |
-| **Remote** | No local resources | Remote API | Network connection |
+- `activeBackend`: `ollama`, `vllm`, `remote`, or the supported automatic mode;
+- `ollama.endpoint` and `ollama.defaultModel`;
+- `vllm.endpoint`, model identity, context length, and memory controls;
+- `remote.serverUrl` and remote model identity;
+- `preferredLocalBackend` for automatic local routing.
 
-**Model Routing**: `model-router.ts` (498 lines) - Role-based model selection and routing
+Do not store credentials in this tracked seed file. Use the credential owner exposed by the application.
 
----
-
-## Ollama Setup
-
-Ollama is the recommended backend for most users. It's simple to set up and handles model management automatically.
-
-### Installation
+## Inspect and switch backends
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
+./bin/mh backend status
+./bin/mh backend list
+./bin/mh backend switch ollama
+./bin/mh backend switch vllm
 ```
 
-### Starting Ollama
+The switch command updates the canonical configuration. Do not run parallel router implementations or edit call sites to bypass it.
 
-Ollama runs as a background service. Start it with:
+## Ollama
 
-```bash
-ollama serve
-```
-
-For auto-start on boot (systemd):
-```bash
-sudo systemctl enable ollama
-sudo systemctl start ollama
-```
-
-### Verify Installation
+Start Ollama using the installation's normal service mechanism or `ollama serve`, then inspect it through MetaHuman:
 
 ```bash
-# Check if Ollama is running
-curl http://localhost:11434
-
-# Or use MetaHuman CLI
 ./bin/mh ollama status
-```
-
-### Managing Models
-
-```bash
-# List installed models
 ./bin/mh ollama list
-
-# Pull a model
-./bin/mh ollama pull qwen2.5:7b
-
-# Delete a model
-./bin/mh ollama delete phi3:mini
-
-# Show model details
-./bin/mh ollama info qwen2.5:7b
+./bin/mh ollama pull <model>
+./bin/mh ollama info <model>
 ```
 
-### Recommended Models
+The model named by `ollama.defaultModel` must be installed. Role-specific model selection remains owned by the model catalog/router; changing a single call site is not a supported routing mechanism.
 
-| Model | Size | Use Case |
-|-------|------|----------|
-| `qwen2.5:7b` | ~4GB | General purpose, good balance |
-| `llama3.2:3b` | ~2GB | Limited hardware |
-| `qwen2.5-coder:14b` | ~8GB | Code and reasoning |
-| `phi3:mini` | ~2GB | Fast, lightweight tasks |
-| `nomic-embed-text` | ~300MB | Semantic search (required) |
+## vLLM
 
----
-
-## vLLM Setup
-
-vLLM offers higher throughput for large models using PagedAttention. Requires NVIDIA GPU with CUDA.
-
-### Installation
+Use the vLLM lifecycle owner so startup parameters, model identity, adapters, and memory limits stay consistent:
 
 ```bash
-# Create Python virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install vLLM
-pip install vllm
+./bin/mh vllm status
+./bin/mh vllm start
+./bin/mh vllm stop
+./bin/mh vllm restart
 ```
 
-### Starting vLLM
+Run `./bin/mh vllm` for supported overrides. If startup fails, reduce configured GPU utilization or context length and inspect the reported log rather than launching a second unmanaged server.
 
-vLLM loads ONE model at a time. Specify the model when starting:
+## Remote backend
 
-```bash
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
-```
-
-For large models, configure GPU memory:
-```bash
-vllm serve Qwen/Qwen2.5-30B-Instruct \
-  --port 8000 \
-  --gpu-memory-utilization 0.9 \
-  --tensor-parallel-size 2
-```
-
-### Configure MetaHuman
-
-Edit `etc/llm-backend.json`:
-
-```json
-{
-  "active": "vllm",
-  "vllm": {
-    "baseUrl": "http://localhost:8000",
-    "model": "Qwen/Qwen2.5-7B-Instruct",
-    "gpuMemoryUtilization": 0.9,
-    "tensorParallelSize": 1
-  }
-}
-```
-
----
-
-## Remote Backend
-
-If connecting to a remote MetaHuman server or external LLM API, configure in Settings after login.
-
-Edit `etc/llm-backend.json`:
-
-```json
-{
-  "active": "remote",
-  "remote": {
-    "baseUrl": "https://your-server.com/api",
-    "apiKey": "your-api-key"
-  }
-}
-```
-
----
-
-## Switching Backends
-
-### Via Web UI
-
-1. Open **Settings** (gear icon in right sidebar)
-2. Navigate to **LLM Backend**
-3. Select your backend and configure
-
-### Via API
-
-```bash
-curl -X POST http://localhost:4321/api/llm-backend \
-  -H "Content-Type: application/json" \
-  -d '{"active": "ollama"}'
-```
-
-### Via Configuration File
-
-Edit `etc/llm-backend.json` directly and restart the server.
-
----
-
-## Configuration Reference
-
-The `etc/llm-backend.json` file controls all backend settings:
-
-```json
-{
-  "active": "ollama",
-  "ollama": {
-    "baseUrl": "http://localhost:11434",
-    "defaultModel": "qwen2.5:7b"
-  },
-  "vllm": {
-    "baseUrl": "http://localhost:8000",
-    "model": "Qwen/Qwen2.5-7B-Instruct",
-    "gpuMemoryUtilization": 0.9,
-    "tensorParallelSize": 1,
-    "enableThinking": false
-  },
-  "remote": {
-    "baseUrl": "",
-    "apiKey": ""
-  }
-}
-```
-
----
+Configure the server URL and credentials in Backend Settings. Test the connection there before selecting the remote target. Remote requests still pass through the same provider bridge and authorization path as local requests.
 
 ## Troubleshooting
 
-### Ollama Not Running
+- **Backend unavailable:** run `./bin/mh backend status`, then the selected provider's status command.
+- **Model not found:** compare the configured model identity with the provider's installed or served model name.
+- **GPU out of memory:** stop competing GPU work or lower vLLM memory/context settings.
+- **Remote connection fails:** verify the URL, credentials, TLS, and remote health endpoint.
+- **A role uses an unexpected model:** inspect the model catalog and role routing; do not patch the consumer.
 
-```bash
-# Check status
-curl http://localhost:11434
-
-# Start manually
-ollama serve &
-
-# Check logs
-journalctl -u ollama -f
-```
-
-### Model Not Found
-
-```bash
-# List available models
-./bin/mh ollama list
-
-# Pull the model
-./bin/mh ollama pull <model-name>
-```
-
-### vLLM Out of Memory
-
-Reduce GPU memory utilization:
-```bash
-vllm serve <model> --gpu-memory-utilization 0.7
-```
-
-Or use a smaller model.
-
-### Connection Refused
-
-Ensure the backend is running on the expected port:
-- Ollama: `localhost:11434`
-- vLLM: `localhost:8000`
-
-Check firewall settings if accessing remotely.
-
----
-
-## Next Steps
-
-- [Download a Model](../getting-started/03-setup-and-login.md#download-a-model-local-installs-only) - Get started with your first model
-- [Configuration Files](configuration-files.md) - Other system configuration options
+See [Configuration Files](./configuration-files.md) and [Troubleshooting](../reference/troubleshooting.md).

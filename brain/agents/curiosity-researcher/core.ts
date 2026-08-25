@@ -15,6 +15,7 @@ import {
   audit,
   callLLM,
   captureEventWithDetails,
+  curiosityQuestionStore,
   getProfilePaths,
   getTargetUser,
   loadCuriosityConfig,
@@ -22,6 +23,7 @@ import {
   safeWriteJSON,
   withUserContext,
   type CaptureResult,
+  type CuriosityQuestionRecord,
   type RouterMessage,
   type VectorIndexItem,
 } from '@metahuman/core'
@@ -43,13 +45,11 @@ export interface CuriosityResearcherResult {
   errors: string[]
 }
 
-export interface PendingCuriosityQuestion {
-  id: string
-  question: string
-  askedAt: string
+export type PendingCuriosityQuestion = Pick<
+  CuriosityQuestionRecord,
+  'id' | 'question' | 'askedAt' | 'seedMemories' | 'username'
+> & {
   status: 'pending'
-  seedMemories: string[]
-  username?: string
 }
 
 export interface CuriosityResearchFinding {
@@ -78,11 +78,6 @@ export interface CompletedCuriosityResearch extends Omit<PreparedCuriosityResear
 }
 
 export type CuriosityResearchRecord = PreparedCuriosityResearch | CompletedCuriosityResearch
-
-export interface CuriosityResearchPaths {
-  pendingQuestions: string
-  research: string
-}
 
 export interface CuriosityResearchDependencies {
   researchQuestion: (
@@ -132,37 +127,6 @@ function stringArray(value: unknown, label: string, maxItems: number): string[] 
   if (!Array.isArray(value)) throw new Error(`${label} must be an array`)
   if (value.length > maxItems) throw new Error(`${label} exceeds ${maxItems} items`)
   return value.map((item, index) => requireNonEmptyString(item, `${label}[${index}]`, 256))
-}
-
-export function parsePendingCuriosityQuestion(
-  value: unknown,
-  filename?: string,
-  expectedUsername?: string,
-): PendingCuriosityQuestion {
-  const record = requireObject(value, 'Curiosity question')
-  const id = requireSafeId(record.id, 'Curiosity question id')
-  if (filename && filename !== `${id}.json`) {
-    throw new Error(`Curiosity question filename does not match its id: ${filename}`)
-  }
-
-  const status = record.status ?? 'pending'
-  if (status !== 'pending') throw new Error(`Curiosity question ${id} is not pending`)
-
-  const username = record.username === undefined
-    ? undefined
-    : requireNonEmptyString(record.username, 'Curiosity question username', 50)
-  if (username && expectedUsername && username !== expectedUsername) {
-    throw new Error(`Curiosity question ${id} belongs to ${username}, not ${expectedUsername}`)
-  }
-
-  return {
-    id,
-    question: requireNonEmptyString(record.question, 'Curiosity question text', 10_000),
-    askedAt: requireTimestamp(record.askedAt, 'Curiosity question askedAt'),
-    status: 'pending',
-    seedMemories: stringArray(record.seedMemories, 'Curiosity question seedMemories', 1_000),
-    username,
-  }
 }
 
 function parseFinding(record: Record<string, unknown>): CuriosityResearchFinding {
@@ -384,21 +348,22 @@ function completePreparedResearch(
 }
 
 /**
- * Process at most one research question from explicit paths. This is exported
- * so the filesystem lifecycle can be tested without touching profile data.
+ * Process at most one canonical pending question into the research store. This
+ * is exported so the durable research lifecycle can be tested without profile
+ * data or a second question-file reader.
  */
 export async function processResearchQueue(
-  paths: CuriosityResearchPaths,
+  pendingQuestions: PendingCuriosityQuestion[],
+  researchPath: string,
   username: string,
   dependencies: CuriosityResearchDependencies = defaultDependencies,
 ): Promise<number> {
-  if (!fsSync.existsSync(paths.pendingQuestions)) return 0
-  await fs.mkdir(paths.research, { recursive: true })
+  await fs.mkdir(researchPath, { recursive: true })
 
   const priorResearch: CompletedCuriosityResearch[] = []
-  for (const filename of (await fs.readdir(paths.research)).filter(name => name.endsWith('.json')).sort()) {
+  for (const filename of (await fs.readdir(researchPath)).filter(name => name.endsWith('.json')).sort()) {
     const record = parseCuriosityResearchRecord(
-      JSON.parse(await fs.readFile(path.join(paths.research, filename), 'utf8')),
+      JSON.parse(await fs.readFile(path.join(researchPath, filename), 'utf8')),
     )
     if (filename !== `${record.questionId}.json`) {
       throw new Error(`Curiosity research filename does not match its question id: ${filename}`)
@@ -406,18 +371,13 @@ export async function processResearchQueue(
     if (record.status === 'completed') priorResearch.push(record)
   }
 
-  const filenames = (await fs.readdir(paths.pendingQuestions))
-    .filter(filename => filename.endsWith('.json'))
-    .sort()
-
-  for (const filename of filenames) {
-    const questionPath = path.join(paths.pendingQuestions, filename)
-    const question = parsePendingCuriosityQuestion(
-      JSON.parse(await fs.readFile(questionPath, 'utf8')),
-      filename,
-      username,
-    )
-    const recordPath = path.join(paths.research, `${question.id}.json`)
+  const questions = [...pendingQuestions].sort((left, right) => left.askedAt.localeCompare(right.askedAt)
+    || left.id.localeCompare(right.id))
+  for (const question of questions) {
+    if (question.username !== username) {
+      throw new Error(`Curiosity question ${question.id} belongs to ${question.username}, not ${username}`)
+    }
+    const recordPath = path.join(researchPath, `${question.id}.json`)
 
     if (fsSync.existsSync(recordPath)) {
       const existing = parseCuriosityResearchRecord(JSON.parse(await fs.readFile(recordPath, 'utf8')))
@@ -466,10 +426,13 @@ export async function processUserResearch(username: string): Promise<number> {
     }
 
     const profilePaths = getProfilePaths(username)
-    return processResearchQueue({
-      pendingQuestions: path.join(profilePaths.state, 'curiosity', 'questions', 'pending'),
-      research: profilePaths.curiosityResearch,
-    }, username)
+    const questions = (await curiosityQuestionStore.listPending(username)).map(record => {
+      if (record.status !== 'pending') {
+        throw new Error(`Curiosity question store returned non-pending record ${record.id}`)
+      }
+      return { ...record, status: 'pending' as const }
+    })
+    return processResearchQueue(questions, profilePaths.curiosityResearch, username)
   })
 }
 

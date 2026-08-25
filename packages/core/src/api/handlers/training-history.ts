@@ -219,27 +219,7 @@ function parseTrainingHistory(): TrainingRun[] {
         const entry = JSON.parse(line);
         const event = entry.event as string;
 
-        // Track full cycle starts (from /api/adapters fullCycle action)
-        if (event === 'full_cycle_queued') {
-          const pid = entry.details?.pid;
-          const logPath = entry.details?.logPath;
-
-          if (pid && logPath) {
-            const run: TrainingRun = {
-              id: `run-${pid}`,
-              startTime: entry.timestamp,
-              status: 'completed',
-              pid,
-              method: entry.details?.dualMode ? 'full-cycle (dual)' : 'full-cycle',
-              logFile: path.basename(logPath),
-              baseModel: entry.details?.model,
-            };
-
-            runsByPid.set(pid, run);
-          }
-        }
-
-        // Track training starts (from /api/training/launch endpoint)
+        // Track training starts from the canonical training lifecycle.
         if (event === 'training_started') {
           const pid = entry.details?.pid;
           const method = entry.details?.method || 'unknown';
@@ -261,9 +241,10 @@ function parseTrainingHistory(): TrainingRun[] {
         }
 
         // Track cancellations
-        if (event === 'full_cycle_cancelled') {
-          const pids = entry.details?.pids || [];
-          for (const pid of pids) {
+        if (event === 'training_cancelled') {
+          const processes = Array.isArray(entry.details?.processes) ? entry.details.processes : [];
+          for (const processInfo of processes) {
+            const pid = processInfo?.pid;
             const run = runsByPid.get(pid);
             if (run) {
               run.status = 'cancelled';
@@ -274,7 +255,7 @@ function parseTrainingHistory(): TrainingRun[] {
         }
 
         // Track failures
-        if (event.includes('_failed') && event.includes('cycle')) {
+        if (event === 'training_failed') {
           const pid = entry.details?.pid;
           if (pid) {
             const run = runsByPid.get(pid);
@@ -287,18 +268,12 @@ function parseTrainingHistory(): TrainingRun[] {
           }
         }
 
-        // Track successful completions (adapter activation)
-        if (event === 'adapter_activated') {
-          const dataset = entry.details?.date || entry.details?.dataset;
-
-          // Find the most recent run that doesn't have a dataset yet
-          for (const [pid, run] of runsByPid.entries()) {
-            if (!run.dataset && run.status === 'completed') {
-              run.dataset = dataset;
-              run.endTime = entry.timestamp;
-              run.duration = calculateDuration(run.startTime, entry.timestamp);
-              break;
-            }
+        if (event === 'training_completed') {
+          const pid = entry.details?.pid;
+          const run = runsByPid.get(pid);
+          if (run) {
+            run.endTime = entry.timestamp;
+            run.duration = calculateDuration(run.startTime, entry.timestamp);
           }
         }
       } catch (err) {

@@ -4,7 +4,7 @@ This document is the chronological evidence ledger for the MetaHuman cleanup and
 refactor. The canonical program, principles, scope, and completion criteria live
 in `docs/technical/REFACTOR_BLUEPRINT.md`.
 
-## Active System-Wide Refactor Goal - 2026-08-24
+## Completed System-Wide Refactor Goal - 2026-08-24 to 2026-08-25
 
 The Installation Owner opened a repository-wide refactor under the Engineering
 Principles in the System Refactor Blueprint. The goal covers the complete
@@ -26,7 +26,7 @@ Current phase:
 
 1. Canonical refactor principles and repository-wide execution order: complete.
 2. Starting architecture and maintained-source baseline: complete.
-3. Attribute the existing dirty worktree by owner and validation state: active.
+3. Attribute the existing dirty worktree by owner and validation state: complete.
 4. Site validation and client cleanup slice: complete.
 5. Core backup export ownership slice: complete.
 6. Agent graph executor ownership slice: complete.
@@ -47,7 +47,8 @@ Current phase:
 21. Retired Environment Context Router cleanup slice: complete.
 22. Mobile and secondary maintained applications: complete.
 23. Curator agent and curated-training ownership slice: complete.
-24. Root configuration, scripts, tests, support files, and public docs: active.
+24. Root configuration, scripts, tests, support files, and public docs: complete.
+25. Final cross-repository validation and evidence reconciliation: complete.
 
 No production source was changed while establishing this goal and baseline.
 
@@ -96,6 +97,56 @@ Validation:
   `user` index-content policy intentionally declined indexing the generated
   inner-dialogue events; the researcher's own typed prior-finding reuse remains
   active and was covered by the focused test.
+
+## Curiosity Service Lifecycle Repair - 2026-08-25
+
+Scope and surviving owners:
+
+- Kept Curiosity Service as the separate user-facing question owner. Trigger
+  Manager remains its sole inactivity/admission owner; the editable Curiosity
+  graph remains its execution path; Curiosity Researcher and Inner Curiosity
+  retain their distinct responsibilities.
+- Added one typed Core question-store contract for profile-isolated pending,
+  answered, and skipped records. The graph saver, reply-context node, response
+  pipeline, Skip transport, memory browser, and open-question guard now use that
+  contract instead of audit-log lookup or transient pause state.
+
+Findings and repair:
+
+- `maxOpenQuestions` previously acted only as an on/off flag. Current profiles
+  had accumulated 1,214 pending records and no answered records. The agent now
+  counts canonical pending state before model execution and stops at the exact
+  configured limit. Existing user-owned records were preserved.
+- Question publication previously preceded its non-atomic filesystem write,
+  and TTS could execute directly from the generator. Pending records are now
+  written atomically before chat audit, conversation-buffer, or TTS publication.
+- Answers and skips now durably resolve the exact profile record. Removed the
+  unused Active Operator curiosity pause state and the same-day global audit-log
+  reply lookup. Resolution publication is atomic and exclusive: duplicate
+  requests are idempotent, while competing answer/skip requests report a
+  conflict instead of overwriting or falsely succeeding.
+- Graph/node failures now produce failed agent work rather than successful
+  zero-question cycles. Expected disabled, trust, limit, and no-memory outcomes
+  remain explicit successful skips.
+- Removed per-agent mobile timing metadata and registration. Mobile supplies
+  in-process executors only; canonical Trigger Manager configuration owns timing.
+- Curiosity configuration now validates its complete contract and explicitly
+  migrates legacy profile fields instead of retaining unused interval settings.
+- Curiosity Researcher, Desire Generator, and the memory browser now consume the
+  same public Core question-store contract; their distinct research, desire,
+  and presentation responsibilities remain separate.
+- Curiosity uses strict trust loading, so missing, malformed, or unsupported
+  decision rules fail the work item instead of silently lowering trust and
+  reporting a misleading successful cycle.
+
+Validation:
+
+- Focused Core question lifecycle, configuration, response-resolution, graph
+  ordering, cap, and truthful-failure tests: pass.
+- Core, Brain, mobile, Agent Runtime, and site typechecks; all cognitive graphs;
+  memory inventory; Agent Catalog; Trigger Manager catalog; work-owner
+  architecture; and `./bin/audit check`: pass. The audit retained one unrelated
+  warning for the tracked environment-action-selector training JSONL file.
 
 ## Failed System Coder Removal - 2026-08-24
 
@@ -1067,6 +1118,72 @@ Validation:
 - No APK was assembled in this environment: no Android SDK is installed, and a
   signed release intentionally also requires an external production keystore.
   Gradle reached Android project configuration before reporting the missing SDK.
+
+## System-Wide Refactor Slice 19 - Root Support and Final Ownership Cleanup
+
+Scope and owners:
+
+- Root package metadata owns the complete type, architecture, test, and production
+  build gate. The maintained-source policy owns inventory membership, and
+  `bin/audit` consumes that policy instead of maintaining a second exclusion set.
+- Core owns embeddings, provider transport, security policy, work-coordinator
+  authentication, and GPT-SoVITS lifecycle. Site, CLI, add-ons, and shell helpers
+  delegate to those owners.
+- Agent Catalog definitions and modular `brain/agents/<id>/cli.ts` entrypoints are
+  the only maintained agent discovery contract.
+
+Baseline findings:
+
+- Root support retained false add-on installation state, duplicate GPT-SoVITS
+  process control, ineffective tier routing, profile-generated configuration,
+  stale public schema URLs, and flat-agent compatibility fallbacks.
+- The audit command duplicated maintained-source exclusions, while the normal
+  build omitted the complete type and behavior suites. Several validators used
+  the IPC-dependent `tsx` launcher and one scanned generated dependency trees.
+- Site compilation reported inaccessible interaction semantics and dynamic
+  imports of modules already loaded statically. The lockfile retained duplicate
+  dependency versions and obsolete stub type packages.
+
+Implementation and cleanup:
+
+- Replaced add-on placeholders with a truthful static catalog and explicit
+  installers, removed false tier routing and unused compatibility/configuration
+  surfaces, consolidated embedding control and provider proxy behavior, and
+  repaired the security allowlist at its policy owner.
+- Made the Core server manager the sole GPT-SoVITS lifecycle owner with atomic
+  process identity, bounded group shutdown, and delegating API, UI, CLI, add-on,
+  and shell consumers. Removed the competing Site server manager.
+- Extracted work-coordinator ownership/authentication from submission so the
+  queue facade has no hidden dynamic-import cycle. Replaced other ineffective
+  dynamic imports with direct canonical owners, including direct node contracts
+  inside Loop Controller rather than registry self-import.
+- Removed flat-agent discovery, stale schema claims, orphan registry helpers,
+  and misleading legacy naming. Generated agent defaults now resolve real
+  modular entrypoints.
+- Added one root `test`/`validate` contract and made `build` run all workspace
+  typechecks, architecture checks, registered behavior suites, and the Site
+  production build. The inventory generator now owns listing for both reports
+  and audit policy.
+- Repaired Site labels, dialogs, keyboard controls, and icon names with native
+  semantics; removed all Svelte and Vite code warnings. Deduplicated the lockfile,
+  removed obsolete bundled-type stubs, refreshed browser data, and aligned Core
+  and CLI compilation with the Node 22 / ES2022 runtime contract.
+
+Validation:
+
+- `pnpm -s build`: pass. All workspace typechecks pass; Site checks 353 files
+  with zero errors, warnings, or hints; architecture reports zero violations;
+  every registered behavior suite passes; all 30 cognitive graphs validate; and
+  the production Site server/client build completes.
+- A post-refresh `pnpm --dir apps/site build`: pass with no compiler, Vite, or
+  stale browser-data warning.
+- `./bin/audit check`: pass with zero architecture violations. Its only warning
+  is the retained Action Selector development-training corpus already documented
+  as an intentional maintained training artifact.
+- Maintained-source inventory: 1,587 files, including 1,315 code files.
+- No external GPT-SoVITS model, signed Android package, robot hardware, or remote
+  provider was started by this source-validation slice; no live or physical
+  completion claim is made for those systems.
 
 ## Previous Consolidation Work
 

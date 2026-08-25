@@ -5,7 +5,7 @@
  * This is the foundation for the three-layer cognitive architecture.
  *
  * Current implementation: Refactor of existing getRelevantContext() logic
- * Future enhancements: Pattern recognition, smarter fallbacks, mode-specific depth
+ * Context retrieval, persona grounding, and short-term state assembly.
  */
 
 import { queryIndex, getIndexStatus } from './vector-index.js';
@@ -226,52 +226,6 @@ function setCachedContext(key: string, pkg: ContextPackage): void {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Analyze memories to detect recurring patterns
- */
-function analyzeMemoryPatterns(memories: RelevantMemory[]): DetectedPattern[] {
-  const patterns: DetectedPattern[] = [];
-
-  // Extract entities (people, projects) from memory tags
-  const entityCounts = new Map<string, number>();
-  const entityLastSeen = new Map<string, string>();
-
-  for (const mem of memories) {
-    if (!mem.tags || mem.tags.length === 0) continue;
-
-    for (const tag of mem.tags) {
-      // Skip common generic tags
-      if (['processed', 'memory', 'event'].includes(tag)) continue;
-
-      // Count entity frequency
-      entityCounts.set(tag, (entityCounts.get(tag) || 0) + 1);
-
-      // Track last seen
-      if (!entityLastSeen.has(tag) || mem.timestamp > entityLastSeen.get(tag)!) {
-        entityLastSeen.set(tag, mem.timestamp);
-      }
-    }
-  }
-
-  // Convert to patterns (only entities mentioned 2+ times)
-  for (const [entity, count] of entityCounts.entries()) {
-    if (count >= 2) {
-      patterns.push({
-        type: 'entity',
-        pattern: entity,
-        frequency: count,
-        lastSeen: entityLastSeen.get(entity) || new Date().toISOString()
-      });
-    }
-  }
-
-  // Sort by frequency descending
-  patterns.sort((a, b) => b.frequency - a.frequency);
-
-  // Limit to top 5
-  return patterns.slice(0, 5);
-}
 
 /**
  * Query conversation summary for a specific session
@@ -533,16 +487,6 @@ export interface PersonaSummary {
   frequentFacts: Record<string, string>;
 }
 
-export interface DetectedPattern {
-  type: 'theme' | 'person' | 'project' | 'behavior' | 'entity';
-  pattern: string;
-  frequency: number;
-  lastSeen: string;
-  // Extended properties used by cognitive-layers
-  count?: number;  // Alias for frequency
-  context?: string;  // Additional context about the pattern
-}
-
 /**
  * Tool invocation record for context package
  * Extracted from episodic memories to show recent tool usage
@@ -574,9 +518,6 @@ export interface ContextPackage {
   currentFocus?: string;
   activeTasks: string[];
   recentTopics: string[];
-
-  // Patterns (future: from digest agent)
-  patterns: DetectedPattern[];
 
   // Tool history (Phase 2: Memory Continuity)
   recentTools: ToolInvocation[];
@@ -610,9 +551,6 @@ export interface ContextBuilderOptions {
   includeShortTermState?: boolean; // Default: true
   includePersonaCache?: boolean; // Default: true
   includeTaskContext?: boolean; // Include active tasks (default: only if user mentions them)
-
-  // Pattern recognition (future)
-  detectPatterns?: boolean; // Default: false (not implemented yet)
 
   // Hybrid search (keyword + semantic)
   metadataFilters?: {
@@ -690,7 +628,6 @@ export async function buildContextPackage(
     includeShortTermState = true,
     includePersonaCache = true,
     includeTaskContext = false,
-    detectPatterns = false,
     metadataFilters,
     forceSemanticSearch = mode === 'dual',
     usingLoRA = false
@@ -925,45 +862,7 @@ export async function buildContextPackage(
   }
 
   // ========================================================================
-  // Step 4: Pattern Recognition
-  // ========================================================================
-
-  let patterns: DetectedPattern[] = [];
-
-  if (detectPatterns) {
-    try {
-      // Extract patterns from persona cache (pre-computed themes)
-      const personaCache = loadPersonaCache();
-      if (personaCache?.recentThemes) {
-        patterns = personaCache.recentThemes.slice(0, 5).map((theme: any) => ({
-          type: 'theme' as const,
-          pattern: theme.theme || theme,
-          frequency: theme.frequency || 1,
-          lastSeen: theme.lastSeen || new Date().toISOString()
-        }));
-      }
-
-      // Analyze retrieved memories for additional patterns
-      if (memories.length > 0) {
-        const memoryPatterns = analyzeMemoryPatterns(memories);
-        patterns = [...patterns, ...memoryPatterns];
-
-        // Deduplicate by pattern text
-        const seen = new Set<string>();
-        patterns = patterns.filter(p => {
-          if (seen.has(p.pattern)) return false;
-          seen.add(p.pattern);
-          return true;
-        });
-      }
-    } catch (error) {
-      // Pattern detection is optional, don't fail on error
-      console.error('[context-builder] Pattern recognition error:', error);
-    }
-  }
-
-  // ========================================================================
-  // Step 5: Query Recent Tool Invocations (Phase 2: Memory Continuity)
+  // Step 4: Query Recent Tool Invocations (Phase 2: Memory Continuity)
   // ========================================================================
 
   let recentTools: ToolInvocation[] = [];
@@ -1060,7 +959,6 @@ export async function buildContextPackage(
     currentFocus,
     activeTasks,
     recentTopics,
-    patterns,
     recentTools,
     functionGuides,
     conversationSummary,
@@ -1092,7 +990,6 @@ export async function buildContextPackage(
       fallbackUsed,
       searchDepth,
       activeTasks: activeTasks.length,
-      patternsDetected: patterns.length,
       recentTools: recentTools.length,
       functionGuides: functionGuides.length,
       hasSummary: !!conversationSummary,

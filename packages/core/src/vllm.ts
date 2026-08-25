@@ -11,7 +11,7 @@
  * - Requires CUDA and more VRAM
  */
 
-import { spawn, execSync, execFileSync, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +23,63 @@ import type { ProviderMessageContent } from './providers/types.js';
 import type { LocalModelArtifact } from './model-artifacts.js';
 
 const LOG_PREFIX = '[vllm]';
+const VLLM_PID_FILE = path.join(ROOT, 'logs', 'run', 'vllm.pid');
+
+function readOwnedVllmPid(): number | null {
+  if (!fs.existsSync(VLLM_PID_FILE)) return null;
+
+  const pid = Number.parseInt(fs.readFileSync(VLLM_PID_FILE, 'utf8').trim(), 10);
+  if (!Number.isInteger(pid) || pid <= 1) {
+    fs.rmSync(VLLM_PID_FILE, { force: true });
+    return null;
+  }
+
+  try {
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+    const moduleIndex = argv.indexOf('-m');
+    if (moduleIndex < 0 || argv[moduleIndex + 1] !== 'vllm.entrypoints.openai.api_server') {
+      fs.rmSync(VLLM_PID_FILE, { force: true });
+      return null;
+    }
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    fs.rmSync(VLLM_PID_FILE, { force: true });
+    return null;
+  }
+}
+
+async function stopOwnedVllmProcess(pid: number): Promise<'term' | 'kill' | 'exited'> {
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      fs.rmSync(VLLM_PID_FILE, { force: true });
+      return 'exited';
+    }
+  }
+
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch {
+      fs.rmSync(VLLM_PID_FILE, { force: true });
+      return 'term';
+    }
+  }
+
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+  }
+  fs.rmSync(VLLM_PID_FILE, { force: true });
+  return 'kill';
+}
 
 // ============================================================================
 // Python Environment Detection
@@ -662,39 +719,15 @@ export class VLLMClient {
   // Pre-flight Checks
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Clean up any zombie vLLM processes that might be holding GPU memory
-   */
+  /** Clean up only the stale or unhealthy process owned by this lifecycle. */
   async cleanupZombieProcesses(): Promise<void> {
-    try {
-      // Kill any orphaned vLLM processes
-      execSync('pkill -9 -f "vllm.entrypoints"', { stdio: 'ignore' });
-    } catch { /* No processes found - that's fine */ }
+    const pid = readOwnedVllmPid();
+    if (!pid) return;
 
-    try {
-      execSync('pkill -9 -f "VLLM::EngineCore"', { stdio: 'ignore' });
-    } catch { /* No processes found */ }
-
-    // Clean up stale PID file
-    const pidFile = path.join(ROOT, 'logs', 'run', 'vllm.pid');
-    if (fs.existsSync(pidFile)) {
-      try {
-        const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim());
-        // Check if process is actually running
-        try {
-          process.kill(pid, 0); // Signal 0 just checks if process exists
-        } catch {
-          // Process doesn't exist, remove stale PID file
-          fs.unlinkSync(pidFile);
-        }
-      } catch (error) {
-        console.warn(`${LOG_PREFIX} Error cleaning stale PID file:`, error);
-        try { fs.unlinkSync(pidFile); } catch { /* File doesn't exist */ }
-      }
-    }
-
-    // Give GPU time to release memory
-    await new Promise(r => setTimeout(r, 1000));
+    await stopOwnedVllmProcess(pid);
+    this.serverProcess = null;
+    this.currentModel = null;
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   /**
@@ -707,9 +740,10 @@ export class VLLMClient {
     requiredGB: number;
   }> {
     try {
-      const output = execSync(
-        'nvidia-smi --query-gpu=memory.free,memory.total --format=csv,noheader,nounits',
-        { encoding: 'utf-8' }
+      const output = execFileSync(
+        'nvidia-smi',
+        ['--query-gpu=memory.free,memory.total', '--format=csv,noheader,nounits'],
+        { encoding: 'utf-8' },
       ).trim();
 
       const [freeStr, totalStr] = output.split(',').map(s => s.trim());
@@ -839,8 +873,18 @@ export class VLLMClient {
         return { pid: this.serverProcess?.pid || 0, success: true };
       }
       // Different model - need to stop first
+      if (!readOwnedVllmPid() && !this.serverProcess?.pid) {
+        return {
+          pid: 0,
+          success: false,
+          error: 'A different vLLM server is running outside MetaHuman ownership. Stop it with its own process manager first.',
+        };
+      }
       console.log(`${LOG_PREFIX} Stopping existing server (different model)...`);
       await this.stopServer();
+      if (await this.isRunning()) {
+        return { pid: 0, success: false, error: 'The existing vLLM server did not stop.' };
+      }
     }
 
     // STEP 2: Clean up any zombie vLLM processes before launching a new one.
@@ -985,6 +1029,7 @@ export class VLLMClient {
           console.error(`${LOG_PREFIX} Failed to spawn process:`, error.message);
           logStream.write(`\n=== Spawn error: ${error.message} ===\n`);
           logStream.end();
+          fs.rmSync(VLLM_PID_FILE, { force: true });
           this.serverProcess = null;
           this.currentModel = null;
 
@@ -1007,8 +1052,11 @@ export class VLLMClient {
         this.currentModel = servedModelName;
 
         // Save PID for later management
-        const pidFile = path.join(ROOT, 'logs', 'run', 'vllm.pid');
-        fs.writeFileSync(pidFile, String(this.serverProcess.pid));
+        const processPid = this.serverProcess.pid;
+        if (!processPid) {
+          throw new Error('vLLM did not return a process identifier');
+        }
+        fs.writeFileSync(VLLM_PID_FILE, String(processPid));
 
         // Handle stdout - write to log file
         this.serverProcess.stdout?.on('data', (data: Buffer) => {
@@ -1051,7 +1099,10 @@ export class VLLMClient {
           this.serverProcess = null;
           this.currentModel = null;
           // Clean up PID file
-          try { fs.unlinkSync(pidFile); } catch { }
+          try {
+            const recordedPid = Number.parseInt(fs.readFileSync(VLLM_PID_FILE, 'utf8').trim(), 10);
+            if (recordedPid === processPid) fs.unlinkSync(VLLM_PID_FILE);
+          } catch {}
         });
 
         // Wait for server to be ready
@@ -1099,53 +1150,28 @@ export class VLLMClient {
     console.log(`${LOG_PREFIX} ========== stopServer HIT ==========`);
     console.log(`${LOG_PREFIX} Stopping server...`);
 
-    // Try to kill our managed process
-    if (this.serverProcess) {
-      this.serverProcess.kill('SIGTERM');
-      this.serverProcess = null;
-      this.currentModel = null;
+    const pid = this.serverProcess?.pid || readOwnedVllmPid();
+    let stopMethod: 'term' | 'kill' | 'exited' | 'not-owned' = 'not-owned';
+    if (pid) {
+      stopMethod = await stopOwnedVllmProcess(pid);
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Also check for PID file (for processes started in previous sessions)
-    const pidFile = path.join(ROOT, 'logs', 'run', 'vllm.pid');
-    if (fs.existsSync(pidFile)) {
-      try {
-        const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim());
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // Process may not exist
-      }
-      try { fs.unlinkSync(pidFile); } catch { }
-    }
-
-    // Kill ALL vLLM-related processes (they spawn subprocesses)
-    try {
-      execSync('pkill -f "vllm.entrypoints"', { stdio: 'ignore' });
-    } catch { /* No processes found */ }
-
-    // Wait a moment for graceful shutdown
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Force kill any remaining vLLM processes
-    try {
-      execSync('pkill -9 -f "vllm.entrypoints"', { stdio: 'ignore' });
-      execSync('pkill -9 -f "VLLM::EngineCore"', { stdio: 'ignore' });
-    } catch { /* No processes found */ }
-
-    // Give GPU time to release memory
-    await new Promise(r => setTimeout(r, 1000));
+    this.serverProcess = null;
+    this.currentModel = null;
 
     audit({
       level: 'info',
       category: 'system',
       event: 'vllm_stopped',
       actor: 'system',
+      details: { pid, method: stopMethod },
     });
 
     // Publish server stopped event to event bus
-    eventBus.emit('vllm', EventTypes.VLLM_SERVER_STOPPED, {});
+    eventBus.emit('vllm', EventTypes.VLLM_SERVER_STOPPED, { pid, method: stopMethod });
 
-    console.log(`${LOG_PREFIX} Server stopped`);
+    console.log(`${LOG_PREFIX} ${pid ? 'Server stopped' : 'No owned server process found'}`);
   }
 
   /**

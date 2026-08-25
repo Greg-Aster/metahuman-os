@@ -28,6 +28,7 @@
 import { defineNode, type NodeDefinition } from '../types.js';
 import { saveDesireManifest, addScratchpadEntryToFolder } from '../../agency/storage.js';
 import { proposalEvents } from '../../active-operator/index.js';
+import { createTask } from '../../memory.js';
 import type { Desire, DesireStatus, ClarifyingAnswer } from '../../agency/types.js';
 import type { ResponseBuffer } from '../../response-buffer.js';
 
@@ -483,8 +484,17 @@ async function handleAgencyNotification(
   let actionTaken = 'Notification acknowledged';
 
   if (action === 'create_task' && data.taskToCreate) {
-    // TODO: Integrate with task creation system
-    actionTaken = `Task creation requested: ${data.taskToCreate}`;
+    const taskTitle = typeof data.taskToCreate === 'string'
+      ? data.taskToCreate.trim()
+      : '';
+    if (!taskTitle) {
+      throw new Error('Task creation requested without a valid task title');
+    }
+    createTask(taskTitle, {
+      description: response,
+      tags: ['agency-notification'],
+    });
+    actionTaken = `Task created: ${taskTitle}`;
   }
 
   return {

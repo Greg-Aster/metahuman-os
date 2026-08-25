@@ -139,14 +139,12 @@ export interface AutoExportOptions {
  *
  * @param provider - Voice provider
  * @param speakerId - Speaker identifier
- * @param minQuality - Minimum quality threshold (0-1) (deprecated, use options.minQuality)
  * @param options - Export options (selection method, duration, max samples)
  * @returns Path to created reference directory
  */
 export function autoExportBestSamples(
   provider: VoiceProvider,
   speakerId: string = 'default',
-  minQuality: number = 0.8,
   options: AutoExportOptions = {}
 ): string {
   const {
@@ -156,7 +154,7 @@ export function autoExportBestSamples(
     minQuality: optMinQuality,
   } = options;
 
-  const effectiveMinQuality = optMinQuality ?? minQuality;
+  const effectiveMinQuality = optMinQuality ?? 0.8;
 
   audit({
     level: 'info',

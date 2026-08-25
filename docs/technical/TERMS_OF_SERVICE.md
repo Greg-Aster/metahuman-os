@@ -82,7 +82,7 @@ We may update these Terms of Service from time to time. Continued use of MetaHum
 
 For questions about these Terms of Service:
 - GitHub: https://github.com/Greg-Aster/metahuman-os
-- Documentation: See [User Guide](/user-guide)
+- Documentation: See the [User Guide](../user-guide/index.md)
 
 ---
 

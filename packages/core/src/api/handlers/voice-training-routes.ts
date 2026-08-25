@@ -340,7 +340,7 @@ export const handlePostSovitsTraining: UnifiedHandler = async (req) => {
       const targetDuration = req.body?.targetDuration;
       const maxSamples = req.body?.maxSamples;
 
-      const outputDir = autoExportBestSamples(provider, speakerId, minQuality, {
+      const outputDir = autoExportBestSamples(provider, speakerId, {
         selectionMethod,
         targetDuration,
         maxSamples,

@@ -253,9 +253,9 @@ curl http://localhost:4321/api/cloudflare/status
 
 ## Next Steps
 
-- [Share with Friends](./18-sharing-with-friends.md) - Invite others to use your instance
-- [Security Settings](./19-security-settings.md) - Configure users and permissions
-- [Cloudflare Access Setup](../dev/CLOUDFLARE_DEPLOYMENT_GUIDE.md) - Advanced access control
+- [Share with Friends](../../deployment/SHARE_WITH_FRIENDS.md) - Invite others to use your instance
+- [Security Settings](security-trust.md) - Configure users and permissions
+- [Cloudflare Tunnel Setup](../../deployment/CLOUDFLARE_TUNNEL.md) - Configure remote transport
 
 ## Additional Resources
 

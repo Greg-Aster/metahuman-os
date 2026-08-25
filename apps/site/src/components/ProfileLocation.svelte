@@ -828,13 +828,14 @@
                       <button class="btn-ghost btn-sm" title="Reset to default" on:click={() => resetDevicePath(device)}>↺</button>
                     {/if}
                   {:else}
-                    <code
-                      class="flex-1 text-xs text-violet-600 dark:text-violet-400 cursor-pointer px-2 py-1 rounded hover:bg-violet-500/10 break-all {devicePaths[device.id] && devicePaths[device.id] !== device.suggestedPath ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}"
+                    <button
+                      type="button"
+                      class="flex-1 text-left text-xs text-violet-600 dark:text-violet-400 cursor-pointer px-2 py-1 rounded hover:bg-violet-500/10 break-all {devicePaths[device.id] && devicePaths[device.id] !== device.suggestedPath ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}"
                       on:click={() => startEditingPath(device)}
                       title="Click to edit path"
                     >
                       {getDevicePath(device)}
-                    </code>
+                    </button>
                     <button class="btn-ghost btn-sm" title="Edit path" on:click={() => startEditingPath(device)}>✏️</button>
                   {/if}
                 </div>
@@ -934,19 +935,19 @@
 
 <!-- Confirmation Dialog with Migration Options -->
 {#if showConfirmDialog}
-  <div class="modal-overlay" on:click={() => showConfirmDialog = false}>
-    <div class="modal-content max-w-[500px]" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[500px]" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">📁 Configure Migration</h3>
 
       <div class="space-y-4">
         <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
-          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-2">Destination</label>
+          <div class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-2">Destination</div>
           <code class="block p-3 bg-gray-100 dark:bg-gray-800 text-violet-600 dark:text-violet-400 rounded-lg font-mono text-sm break-all">{pendingPath}</code>
         </div>
 
         <!-- Encryption Selection -->
         <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
-          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">🔐 Encryption</label>
+          <div class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">🔐 Encryption</div>
           <div class="flex gap-2 mb-3">
             {#each [
               { value: 'none', label: '📁 None' },
@@ -990,8 +991,8 @@
 
               {#if encryptionType === 'luks' || encryptionType === 'veracrypt'}
                 <div class="flex items-center gap-2">
-                  <label class="text-sm text-gray-500 dark:text-gray-400">Container Size:</label>
-                  <select bind:value={containerSize} class="select-field">
+                  <label for="migration-container-size" class="text-sm text-gray-500 dark:text-gray-400">Container Size:</label>
+                  <select id="migration-container-size" bind:value={containerSize} class="select-field">
                     {#each CONTAINER_SIZES as size}
                       <option value={size.value}>{size.label}</option>
                     {/each}
@@ -1014,7 +1015,7 @@
 
         <!-- Migration Options -->
         <div class="pb-4 border-b border-gray-200 dark:border-gray-700">
-          <label class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">⚙️ Options</label>
+          <div class="block font-semibold text-sm text-gray-700 dark:text-gray-300 mb-3">⚙️ Options</div>
           <div class="space-y-2">
             <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300">
               <input type="checkbox" bind:checked={keepSourceFiles} class="w-4 h-4 accent-violet-500" />
@@ -1118,8 +1119,8 @@
 
 <!-- Encrypt Profile Modal -->
 {#if showEncryptModal}
-  <div class="modal-overlay" on:click={() => !encryptingInPlace && (showEncryptModal = false)}>
-    <div class="modal-content max-w-[450px]" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[450px]" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">🔒 Encrypt Profile Data</h3>
 
       {#if !encryptingInPlace && encryptInPlaceProgress.length === 0}
@@ -1215,8 +1216,8 @@
 
 <!-- Decrypt Profile Modal -->
 {#if showDecryptModal}
-  <div class="modal-overlay" on:click={() => !decryptingInPlace && (showDecryptModal = false)}>
-    <div class="modal-content max-w-[450px]" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[450px]" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">🔓 Decrypt Profile Data</h3>
 
       {#if !decryptingInPlace && encryptInPlaceProgress.length === 0}
@@ -1290,8 +1291,8 @@
 
 <!-- Change Location Modal -->
 {#if showChangeLocationModal}
-  <div class="modal-overlay" on:click={() => !switchingLocation && (showChangeLocationModal = false)}>
-    <div class="modal-content max-w-[550px]" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[550px]" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">📂 Change Profile Location</h3>
 
       <div class="space-y-4">
@@ -1314,7 +1315,7 @@
 
         {#if devices.length > 0}
           <div class="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Quick Select:</label>
+            <div class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Quick Select:</div>
             <div class="flex gap-2 flex-wrap">
               {#each devices as device}
                 {#if device.writable}

@@ -162,10 +162,17 @@ test('a Robot Operator action handoff admits its current image and requires one 
     metadata: {
       correlationId: 'operator-cycle',
       originatingInstruction: 'I will scan the room for any other hazards.',
+      autonomousStimulus: 'boredom-movement',
+      robotObserver: {
+        cycleId: 'operator-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
+      },
       robotOperatorDecision: {
         observed: 'A knife and wires are on the floor.',
         instruction: 'I will scan the room for any other hazards.',
-        requiresAction: true,
         reason: 'The visible hazard needs further assessment.',
       },
     },
@@ -238,17 +245,17 @@ test('action-required autonomy does not present future-action prose as executed 
     metadata: {
       correlationId: 'missing-action-cycle',
       autonomousStimulus: 'boredom-movement',
+      robotObserver: {
+        cycleId: 'missing-action-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
+      },
       robotOperatorDecision: {
         observed: 'A safe expressive movement opportunity is available.',
         instruction,
-        requiresAction: true,
         reason: 'The trigger requires an embodied action.',
-        lifecycleContract: {
-          objective: instruction,
-          continuationPolicy: 'bounded',
-          requiredCompletionBasis: 'visual_observation',
-          visualEvidenceMode: 'single',
-        },
       },
     },
   });
@@ -287,10 +294,17 @@ test('Task State exposes one rejected movement generation instead of hiding it a
   const current = observation({
     metadata: {
       correlationId: 'generation-failure-cycle',
+      autonomousStimulus: 'boredom-movement',
+      robotObserver: {
+        cycleId: 'generation-failure-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
+      },
       robotOperatorDecision: {
         observed: 'A movement opportunity is available.',
         instruction,
-        requiresAction: true,
         reason: 'The autonomy trigger requires one embodied action.',
       },
     },
@@ -325,7 +339,7 @@ test('Task State exposes one rejected movement generation instead of hiding it a
   assert.equal(reduced.decision.blockedReason, 'movement_generation_failed');
 });
 
-test('a trigger-authored movement contract requires a fresh reaction after the action result', async () => {
+test('Boredom Movement requires an initial physical consequence and then yields continuation to Task State', async () => {
   clearEnvironmentTaskFrameCache();
   const instruction = 'I will turn once, then interpret the fresh view before deciding whether to react.';
   const movementObservation = observation({
@@ -336,20 +350,13 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
         cycleId: 'movement-cycle',
         step: 1,
         triggerSource: 'autonomy',
-        graph: 'environment',
-        requestedBy: 'environment-perception',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
       },
       robotOperatorDecision: {
         observed: 'The robot is ready for a small movement.',
         instruction,
-        requiresAction: true,
         reason: 'Movement followed by observation supports embodied autonomy.',
-        lifecycleContract: {
-          objective: instruction,
-          continuationPolicy: 'bounded',
-          requiredCompletionBasis: 'visual_observation',
-          visualEvidenceMode: 'single',
-        },
       },
     },
   });
@@ -364,9 +371,7 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
 
   assert.equal(initial.taskState.phase, 'new');
   assert.equal(initial.taskState.step, 0);
-  assert.equal(initial.taskState.continuationPolicy, 'bounded');
-  assert.equal(initial.taskState.requiredCompletionBasis, 'visual_observation');
-  assert.equal(initial.taskState.visualEvidenceMode, 'single');
+  assert.equal(initial.routingAnalysis.needsAction, true);
 
   const queued = await environmentTaskStateNode.execute({
     observation: movementObservation,
@@ -391,8 +396,7 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
 
   assert.equal(queued.actions.length, 1);
   assert.equal(queued.taskState.continuationPolicy, 'bounded');
-  assert.equal(queued.taskState.requiredCompletionBasis, 'visual_observation');
-  assert.equal(queued.taskState.visualEvidenceMode, 'single');
+  assert.equal(queued.taskState.requiredCompletionBasis, 'action_result');
 
   const freshView = frame('movement-after', 'movement-cycle', 'movement-action');
   const terminal = observation({
@@ -406,8 +410,8 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
         cycleId: 'movement-cycle',
         step: 2,
         triggerSource: 'autonomy',
-        graph: 'environment',
-        requestedBy: 'environment-perception',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
       },
     },
     feedback: [{
@@ -422,7 +426,6 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
   const returned = await prepare(terminal);
   assert.equal(returned.deterministicComplete, false);
   assert.equal(returned.precomputedResponse, '');
-  assert.equal(returned.routingAnalysis.needsVision, true);
   assert.equal(returned.visuals.at(-1)?.id, 'movement-after');
 
   const reacted = await environmentTaskStateNode.execute({
@@ -437,9 +440,7 @@ test('a trigger-authored movement contract requires a fresh reaction after the a
       objectiveComplete: true,
       reason: 'The fresh view inspired a specific persona-grounded reaction.',
       continuationPolicy: 'bounded',
-      requiredCompletionBasis: 'visual_observation',
-      visualEvidenceMode: 'single',
-      completionEvidence: 'Frame movement-after shows the brighter patch that prompted this reaction.',
+      requiredCompletionBasis: 'response',
     },
   }, {
     userMessage: '',

@@ -8,12 +8,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   ROOT,
-  systemPaths,
   ensureVoiceServiceRunning,
   getVoiceServiceStatus,
-  startKokoroVoicepackTraining,
   stopVoiceService,
-  type KokoroTrainingOptions,
 } from '@metahuman/core';
 import { createTTSService } from '@metahuman/core';
 
@@ -38,9 +35,6 @@ export async function kokoroCommand(args: string[]): Promise<void> {
     case 'test':
       await testSynthesis(args.slice(1));
       break;
-    case 'train-voicepack':
-      await trainVoicepack(args.slice(1));
-      break;
     case 'uninstall':
       await uninstallKokoro();
       break;
@@ -61,7 +55,6 @@ Commands:
   serve <start|stop>       Start or stop the Kokoro FastAPI server
   voices                   List available built-in voices
   test [--text TEXT]       Test synthesis with sample text
-  train-voicepack [opts]   Train a custom Kokoro voice pack from collected samples
   uninstall                Remove Kokoro installation
 
 Examples:
@@ -72,7 +65,7 @@ Examples:
   mh kokoro status                        # Check status
 
 Server Options:
-  mh kokoro serve start [--port 9882] [--lang a]
+  mh kokoro serve start
   mh kokoro serve stop
 `);
 }
@@ -275,59 +268,19 @@ async function testSynthesis(args: string[]): Promise<void> {
   }
 }
 
-async function trainVoicepack(args: string[]): Promise<void> {
-  const getArg = (flag: string): string | undefined => {
-    const index = args.indexOf(flag);
-    return index !== -1 ? args[index + 1] : undefined;
-  };
-
-  if (args.includes('--dataset')) {
-    throw new Error('Custom dataset paths are not supported. Curate samples through the Voice Training owner first.');
-  }
-
-  const parseNumber = (flag: string): number | undefined => {
-    const raw = getArg(flag);
-    if (raw === undefined) return undefined;
-    const value = Number(raw);
-    if (!Number.isFinite(value)) throw new Error(`${flag} must be a number`);
-    return value;
-  };
-  const rawDevice = getArg('--device');
-  if (rawDevice && rawDevice !== 'auto' && rawDevice !== 'cpu' && rawDevice !== 'cuda') {
-    throw new Error('--device must be auto, cpu, or cuda');
-  }
-
-  const speaker = getArg('--speaker') || 'default';
-  const options: KokoroTrainingOptions = {
-    langCode: getArg('--lang'),
-    baseVoice: getArg('--base-voice'),
-    epochs: parseNumber('--epochs'),
-    learningRate: parseNumber('--learning-rate'),
-    regularization: parseNumber('--regularization'),
-    device: rawDevice as KokoroTrainingOptions['device'],
-    maxSamples: parseNumber('--max-samples'),
-    outputPath: getArg('--output'),
-    continueFromCheckpoint: args.includes('--continue-from-checkpoint'),
-    pureTraining: args.includes('--pure-training'),
-  };
-  const result = await startKokoroVoicepackTraining(speaker, options);
-  if (!result.success) throw new Error(result.error || 'Kokoro voicepack training failed to start');
-  console.log(`✓ ${result.message}`);
-}
-
 async function uninstallKokoro(): Promise<void> {
   console.log('⚠ Uninstalling Kokoro TTS...\n');
 
   // Stop the shared voice server before removing its installation.
   await stopServer();
 
-  if (!fs.existsSync(KOKORO_DIR)) {
+  const venvDir = path.join(KOKORO_DIR, 'venv');
+  if (!fs.existsSync(venvDir)) {
     console.log('⚠ Kokoro is not installed');
     return;
   }
 
-  // Confirm before deleting
-  console.log(`This will delete: ${KOKORO_DIR}`);
+  console.log(`This will delete the Kokoro runtime environment: ${venvDir}`);
   console.log('Press Ctrl+C to cancel, or Enter to continue...');
 
   await new Promise<void>((resolve) => {
@@ -335,20 +288,9 @@ async function uninstallKokoro(): Promise<void> {
   });
 
   try {
-    fs.rmSync(KOKORO_DIR, { recursive: true, force: true });
+    fs.rmSync(venvDir, { recursive: true, force: true });
+    fs.rmSync(path.join(KOKORO_DIR, '__pycache__'), { recursive: true, force: true });
     console.log('\n✓ Kokoro uninstalled successfully');
-
-    // Update addons.json
-    const addonsPath = path.join(systemPaths.etc, 'addons.json');
-    if (fs.existsSync(addonsPath)) {
-      const addons = JSON.parse(fs.readFileSync(addonsPath, 'utf-8'));
-      if (addons.addons?.kokoro) {
-        addons.addons.kokoro.installed = false;
-        addons.addons.kokoro.enabled = false;
-        fs.writeFileSync(addonsPath, JSON.stringify(addons, null, 2));
-        console.log('✓ Updated addons.json');
-      }
-    }
   } catch (err) {
     console.error('✗ Uninstall failed:', (err as Error).message);
     process.exit(1);

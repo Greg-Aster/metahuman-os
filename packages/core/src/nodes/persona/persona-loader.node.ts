@@ -4,10 +4,10 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { getActiveFacet, loadPersonaWithFacet } from '../../identity.js';
 
 const execute: NodeExecutor = async (_inputs, _context, _properties) => {
   try {
-    const { loadPersonaWithFacet, getActiveFacet } = await import('../../identity.js');
     const persona = loadPersonaWithFacet();
     const activeFacet = getActiveFacet();
 

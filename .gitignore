@@ -121,9 +121,12 @@ profiles/*/etc/*.pem
 /etc/legacy/
 /etc/default-user.txt
 /etc/model-registry.json
+/etc/cognitive-graphs/backups/
+/etc/cognitive-graphs/custom/
+/etc/cognitive-graphs/*.backup-*
 # Keep template/example configs
 !/etc/*.template
-!/etc/README*.md
+!/etc/README.md
 !/etc/training*.json
 !/etc/model_map.json
 
@@ -245,6 +248,14 @@ GEMINI.md
 # vendor/ subdirectories are tracked as git submodules
 # Only ignore non-submodule vendor contents
 external/
+!external/
+external/*
+!external/kokoro/
+external/kokoro/*
+!external/kokoro/VOICES.md
+!external/kokoro/kokoro_server.py
+!external/kokoro/server_defaults.py
+!external/kokoro/test_server_defaults.py
 vendor/cmake*/
 vendor/*.tar.gz
 vendor/qwen*/

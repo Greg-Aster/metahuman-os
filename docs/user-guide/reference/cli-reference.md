@@ -76,19 +76,6 @@ Commands:
 - `discard <id>` (delete a session)
 - `cleanup [--dry-run] [--max-age <days>]`
 
-### `./bin/mh adapter <command>`
-Manage LoRA adapter datasets and training.
-
-Commands:
-- `list`
-- `merge`
-- `review <date>`
-- `approve <date> [notes]`
-- `reject <date> [reason]`
-- `train <date>`
-- `eval <date>`
-- `activate <date>`
-
 ## Agents & Automation
 
 ### `./bin/mh agent <command>`
@@ -177,9 +164,8 @@ RVC (Applio) management.
 
 Commands:
 - `install`
-- `train [--name <model>]`
-- `test [--model <model>] [--input <file>]`
-- `status`
+- `train [--name <model>] [--epochs <n>] [--save-every <n>] [--batch-size <n>] [--device auto|cpu|cuda]`
+- `status [--name <model>]`
 - `uninstall`
 
 ### `./bin/mh sovits <command>`
@@ -202,10 +188,9 @@ Kokoro TTS management.
 Commands:
 - `install`
 - `status`
-- `serve <start|stop> [--port <port>] [--lang <lang>]`
+- `serve <start|stop>`
 - `voices`
 - `test [--text <text>]`
-- `train-voicepack [options]`
 - `uninstall`
 
 ## User Management

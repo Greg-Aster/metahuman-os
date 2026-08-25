@@ -19,7 +19,16 @@ import type { ITextToSpeechService, TTSConfig, CacheConfig, TTSSynthesizeOptions
 
 // Re-export types and utilities for external use
 export type { TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus };
-export { stopServer, stopAllServers, getRunningServers, cleanupStalePidFiles } from './tts/server-manager.js';
+export {
+  cleanupStalePidFiles,
+  getRunningServers,
+  getSovitsServerStatus,
+  startSovitsServer,
+  stopAllServers,
+  stopServer,
+  stopSovitsServer,
+} from './tts/server-manager.js';
+export type { SovitsActionResult, SovitsStatus } from './tts/server-manager.js';
 
 interface VoiceConfig {
   tts: TTSConfig;

@@ -42,7 +42,6 @@ export interface RobotOperatorConfig {
   boredomReflectionInactivityThresholdSeconds: number
   boredomReflectionJitterMs: number
   maxCycleSteps: number
-  graph: string
   boredomObserverGraph: string
   boredomMovementGraph: string
   boredomReflectionGraph: string
@@ -82,7 +81,6 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomReflectionInactivityThresholdSeconds: 900,
   boredomReflectionJitterMs: 180_000,
   maxCycleSteps: 8,
-  graph: 'robot-operator',
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
   boredomReflectionGraph: 'boredom-reflection',
@@ -114,7 +112,6 @@ function serviceConfig(): Record<string, unknown> {
 
 export function loadRobotOperatorConfig(): RobotOperatorConfig {
   const configured = serviceConfig()
-  const graph = configuredGraph(configured.graph, DEFAULT_CONFIG.graph)
   const autonomyGraph = configuredGraph(configured.autonomyGraph, DEFAULT_CONFIG.autonomyGraph)
   const environmentGraph = configuredGraph(configured.environmentGraph, DEFAULT_CONFIG.environmentGraph)
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
@@ -159,7 +156,6 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       3_600_000,
     ),
     maxCycleSteps: Math.floor(boundedNumber(configured.maxCycleSteps, DEFAULT_CONFIG.maxCycleSteps, 1, 10)),
-    graph,
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
     boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),

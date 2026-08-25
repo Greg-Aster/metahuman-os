@@ -7,7 +7,9 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { ollama } from '../../ollama.js';
 
 interface GPUInfo {
   index: number;
@@ -42,23 +44,19 @@ interface Recommendation {
  */
 export async function handleGetGpuStatus(_req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    // Check if nvidia-smi is available
-    let hasGPU = false;
+    // Get GPU information
+    let gpuQuery: string;
     try {
-      execSync('which nvidia-smi', { stdio: 'pipe' });
-      hasGPU = true;
+      gpuQuery = execFileSync('nvidia-smi', [
+        '--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory',
+        '--format=csv,noheader,nounits',
+      ], { encoding: 'utf8' });
     } catch {
       return successResponse({
         available: false,
-        error: 'No NVIDIA GPU detected (nvidia-smi not found)',
+        error: 'No NVIDIA GPU detected (nvidia-smi unavailable)',
       });
     }
-
-    // Get GPU information
-    const gpuQuery = execSync(
-      'nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory --format=csv,noheader,nounits',
-      { encoding: 'utf-8' }
-    );
 
     const lines = gpuQuery.trim().split('\n');
     const gpus: GPUInfo[] = lines.map(line => {
@@ -88,52 +86,36 @@ export async function handleGetGpuStatus(_req: UnifiedRequest): Promise<UnifiedR
     });
 
     // Check if Ollama is running
-    let ollamaRunning = false;
-    let ollamaPid: number | null = null;
+    const ollamaRunning = await ollama.isRunning();
     let ollamaVramLimit: string | null = null;
 
-    try {
-      const pidOutput = execSync('pgrep -f ollama', { encoding: 'utf-8', stdio: 'pipe' });
-      ollamaPid = parseInt(pidOutput.trim().split('\n')[0], 10);
-      ollamaRunning = true;
-
+    if (ollamaRunning) {
       // Check if systemd service has VRAM limit configured
       try {
-        const serviceActive = execSync('systemctl is-active ollama 2>/dev/null || echo inactive', {
-          encoding: 'utf-8',
+        const serviceActive = execFileSync('systemctl', ['is-active', 'ollama'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
         }).trim();
 
         if (serviceActive === 'active') {
-          try {
-            const limitConfig = execSync(
-              'grep OLLAMA_GPU_MEM_FRACTION /etc/systemd/system/ollama.service.d/gpu-mem-limit.conf 2>/dev/null || echo ""',
-              { encoding: 'utf-8' }
-            ).trim();
-
-            if (limitConfig) {
-              const match = limitConfig.match(/OLLAMA_GPU_MEM_FRACTION=["']?([0-9.]+)["']?/);
-              if (match) {
-                ollamaVramLimit = match[1];
-              }
-            }
-          } catch {
-            // Config file doesn't exist
+          const limitPath = '/etc/systemd/system/ollama.service.d/gpu-mem-limit.conf';
+          if (fs.existsSync(limitPath)) {
+            const match = fs.readFileSync(limitPath, 'utf8').match(/OLLAMA_GPU_MEM_FRACTION=["']?([0-9.]+)["']?/);
+            if (match) ollamaVramLimit = match[1];
           }
         }
       } catch {
         // systemd not available or ollama not a service
       }
-    } catch {
-      // Ollama not running
     }
 
     // Get GPU processes
     let processes: GPUProcess[] = [];
     try {
-      const processOutput = execSync(
-        'nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader',
-        { encoding: 'utf-8', stdio: 'pipe' }
-      );
+      const processOutput = execFileSync('nvidia-smi', [
+        '--query-compute-apps=pid,process_name,used_memory',
+        '--format=csv,noheader',
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 
       processes = processOutput
         .trim()
@@ -188,7 +170,7 @@ export async function handleGetGpuStatus(_req: UnifiedRequest): Promise<UnifiedR
       gpus,
       ollama: {
         running: ollamaRunning,
-        pid: ollamaPid,
+        pid: null,
         vramLimit: ollamaVramLimit,
       },
       processes,

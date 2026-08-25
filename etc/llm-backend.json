@@ -56,7 +56,6 @@
     }
   },
   "preferredLocalBackend": "ollama",
-  "$schema": "https://metahuman.dev/schemas/llm-backend.json",
   "version": "1.0.0",
   "description": "LLM backend configuration - controls which local inference engine is used",
   "remote": {

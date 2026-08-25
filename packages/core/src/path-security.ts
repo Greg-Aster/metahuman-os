@@ -306,13 +306,3 @@ export function isExternalStoragePath(inputPath: string): boolean {
 
   return externalPrefixes.some((prefix) => normalized.startsWith(prefix));
 }
-
-/**
- * Get the default profile path for a user
- *
- * @param username - Username
- * @returns Default profile path
- */
-export function getDefaultProfilePath(username: string): string {
-  return path.join(ROOT, 'profiles', username);
-}

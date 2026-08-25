@@ -464,8 +464,8 @@
 
 <!-- Conflict Resolution Modal -->
 {#if showConflictModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showConflictModal = false}>
-    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[500px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[500px] max-h-[80vh] overflow-hidden flex flex-col" role="dialog" aria-modal="true" tabindex="-1">
       <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
         <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">Resolve Conflicts</h3>
         <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showConflictModal = false}>×</button>
@@ -506,8 +506,8 @@
 
 <!-- App Update Modal -->
 {#if showUpdateModal && appUpdate?.latestMobileVersion}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showUpdateModal = false}>
-    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" role="dialog" aria-modal="true" tabindex="-1">
       <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
         <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">App Update Available</h3>
         <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showUpdateModal = false}>×</button>
@@ -576,8 +576,8 @@
 
 <!-- Sync Report Modal - ALWAYS shows after sync to prevent silent failures -->
 {#if showSyncReport && syncReport}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showSyncReport = false}>
-    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" role="dialog" aria-modal="true" tabindex="-1">
       <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
         <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">{syncReport.success ? '✅ Sync Complete' : '❌ Sync Failed'}</h3>
         <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showSyncReport = false}>×</button>

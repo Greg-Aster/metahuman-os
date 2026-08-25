@@ -94,8 +94,8 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="modal-overlay" on:click={close}>
-    <div class="modal-container bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-5xl w-full h-[80vh] flex flex-col" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-container bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-5xl w-full h-[80vh] flex flex-col" role="dialog" aria-modal="true" tabindex="-1">
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <div class="flex items-center gap-3">
           <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

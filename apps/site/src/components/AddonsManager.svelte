@@ -7,7 +7,6 @@
     name: string;
     description: string;
     category: string;
-    enabled: boolean;
     installed: boolean;
     size: string;
     requirements: Record<string, string>;
@@ -32,8 +31,6 @@
   let loading = true;
   let error: string | null = null;
   let installing: Record<string, boolean> = {};
-  let toggling: Record<string, boolean> = {};
-  let selectedCategory: string | null = null;
 
   // Installation progress modal
   let showInstallModal = false;
@@ -73,28 +70,15 @@
       showInstallModal = true;
       installing = { ...installing, [addonId]: true };
 
-      const scriptMap: Record<string, { script: string; args: string[] }> = {
-        'kokoro': { script: 'bin/install-kokoro.sh', args: ['--yes'] },
-        'gpt-sovits': { script: 'bin/install-sovits.sh', args: [] },
-        'rvc': { script: 'bin/install-rvc.sh', args: [] },
-      };
-
-      const installConfig = scriptMap[addonId];
-      if (!installConfig) {
-        throw new Error(`No installation script configured for ${addonId}`);
-      }
-
-      const response = await apiFetch('/api/process-stream', {
+      const response = await apiFetch('/api/addons/install-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          command: 'bash',
-          args: [installConfig.script, ...installConfig.args],
-        }),
+        body: JSON.stringify({ addonId }),
       });
 
       if (!response.ok || !response.body) {
-        throw new Error('Failed to start installation stream');
+        const details = await response.json().catch(() => ({}));
+        throw new Error(details.error || 'Failed to start installation stream');
       }
 
       const reader = response.body.getReader();
@@ -141,12 +125,6 @@
               installing = { ...installing, [addonId]: false };
 
               if (data.success) {
-                await apiFetch('/api/addons/mark-installed', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ addonId, installed: true }),
-                }).catch(err => console.error('Failed to mark addon as installed:', err));
-
                 await loadAddons();
               }
               break;
@@ -203,38 +181,6 @@
     }
   }
 
-  async function toggleAddon(addonId: string) {
-    try {
-      toggling = { ...toggling, [addonId]: true };
-      const newState = !addons[addonId].enabled;
-
-      const response = await apiFetch('/api/addons/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addonId, enabled: newState }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Toggle failed');
-      }
-
-      await loadAddons();
-    } catch (e) {
-      error = `Toggle failed: ${String(e)}`;
-      console.error('[AddonsManager] Toggle error:', e);
-    } finally {
-      toggling = { ...toggling, [addonId]: false };
-    }
-  }
-
-  function getAddonsByCategory(categoryId: string | null): [string, Addon][] {
-    const entries = Object.entries(addons);
-    if (!categoryId) return entries;
-    return entries.filter(([_, addon]) => addon.category === categoryId);
-  }
-
-  $: filteredAddons = getAddonsByCategory(selectedCategory);
 </script>
 
 <div class="p-6 max-w-[1200px] mx-auto">
@@ -250,27 +196,8 @@
   {#if loading}
     <div class="text-center py-12 text-gray-500 dark:text-gray-400">Loading addons...</div>
   {:else}
-    <!-- Category filter -->
-    <div class="flex gap-2 mb-6 flex-wrap">
-      <button
-        class="px-4 py-2 border-2 rounded-md font-medium cursor-pointer transition-all {selectedCategory === null ? 'border-violet-600 bg-violet-600 text-white' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:border-violet-600 hover:text-violet-600'}"
-        on:click={() => (selectedCategory = null)}
-      >
-        All Addons
-      </button>
-      {#each Object.entries(categories) as [catId, category]}
-        <button
-          class="px-4 py-2 border-2 rounded-md font-medium cursor-pointer transition-all {selectedCategory === catId ? 'border-violet-600 bg-violet-600 text-white' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:border-violet-600 hover:text-violet-600'}"
-          on:click={() => (selectedCategory = catId)}
-        >
-          {category.name}
-        </button>
-      {/each}
-    </div>
-
-    <!-- Addons grid -->
     <div class="grid grid-cols-[repeat(auto-fill,minmax(350px,1fr))] gap-6">
-      {#each filteredAddons as [addonId, addon]}
+      {#each Object.entries(addons) as [addonId, addon]}
         <div class="border-2 rounded-xl p-6 bg-white dark:bg-gray-800 transition-all hover:border-violet-600 hover:shadow-lg hover:shadow-violet-500/10 {addon.installed ? 'border-emerald-500 dark:border-emerald-600' : 'border-gray-200 dark:border-gray-700'}">
           <div class="flex justify-between items-start mb-4">
             <div>
@@ -280,11 +207,6 @@
             <div class="flex gap-2 flex-wrap">
               {#if addon.installed}
                 <span class="px-3 py-1 rounded-md text-xs font-semibold bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300">Installed</span>
-                {#if addon.enabled}
-                  <span class="px-3 py-1 rounded-md text-xs font-semibold bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300">Enabled</span>
-                {:else}
-                  <span class="px-3 py-1 rounded-md text-xs font-semibold bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">Disabled</span>
-                {/if}
               {:else}
                 <span class="px-3 py-1 rounded-md text-xs font-semibold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">Not Installed</span>
               {/if}
@@ -336,13 +258,6 @@
           <div class="flex gap-3">
             {#if addon.installed}
               <button
-                class="flex-1 py-2.5 px-4 border-none rounded-md font-semibold cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed {addon.enabled ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-emerald-600 hover:text-white'}"
-                on:click={() => toggleAddon(addonId)}
-                disabled={toggling[addonId]}
-              >
-                {toggling[addonId] ? 'Updating...' : addon.enabled ? '✓ Enabled' : 'Enable'}
-              </button>
-              <button
                 class="flex-1 py-2.5 px-4 border-none rounded-md font-semibold cursor-pointer transition-all bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 on:click={() => uninstallAddon(addonId)}
                 disabled={installing[addonId]}
@@ -363,7 +278,7 @@
       {/each}
     </div>
 
-    {#if filteredAddons.length === 0}
+    {#if Object.keys(addons).length === 0}
       <div class="text-center py-12 text-gray-500 dark:text-gray-400">
         <p>No addons found in this category.</p>
       </div>
@@ -372,8 +287,8 @@
 
   <!-- Installation Progress Modal -->
   {#if showInstallModal && currentInstallAddon}
-    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]" on:click={closeInstallModal}>
-      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[800px] max-h-[80vh] flex flex-col shadow-2xl" on:click|stopPropagation>
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]">
+      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[800px] max-h-[80vh] flex flex-col shadow-2xl" role="dialog" aria-modal="true" tabindex="-1">
         <div class="p-6 border-b-2 border-gray-200 dark:border-gray-700 flex justify-between items-center">
           <h3 class="m-0 text-xl text-gray-800 dark:text-gray-100">Installing {addons[currentInstallAddon]?.name || currentInstallAddon}</h3>
           <button class="bg-transparent border-none text-3xl leading-none text-gray-500 cursor-pointer w-8 h-8 flex items-center justify-center hover:text-gray-800 dark:hover:text-gray-100" on:click={closeInstallModal}>×</button>

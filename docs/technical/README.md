@@ -16,14 +16,8 @@
 - CLI reference: [../user-guide/reference/cli-reference.md](../user-guide/reference/cli-reference.md)
 - User guide: [../user-guide/index.md](../user-guide/index.md)
 
-## Historical Material
-
-Older design, roadmap, migration, mobile, voice, and implementation-plan documents may describe retired owners or stale status. Treat them as archive/context unless a current authority document above explicitly references them.
-
-Archived voice notes
-- Continuous Mode: [../archive/VOICE_CONTINUOUS_MODE.md](../archive/VOICE_CONTINUOUS_MODE.md)
-- Conversations: [../archive/VOICE_CONVERSATIONS_COMPLETE.md](../archive/VOICE_CONVERSATIONS_COMPLETE.md)
-- Cloning (passive): [../archive/VOICE_CLONING_PASSIVE.md](../archive/VOICE_CLONING_PASSIVE.md)
+Historical material is isolated under `docs/archive/` and is not an
+implementation authority.
 
 Tips
 - Use `./bin/mh help` for current CLI.

@@ -9,7 +9,8 @@ import fs from 'fs';
 import path from 'path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { getProfilePaths } from '../../path-builder.js';
+import { getProfilePaths } from '../../paths.js';
+import { verifyUserPassword } from '../../users.js';
 
 /**
  * File entry in the profile bundle
@@ -246,7 +247,6 @@ export async function handleExportPriorityProfile(req: UnifiedRequest): Promise<
     const { username, password } = req.body as { username?: string; password?: string };
     if (username && password) {
       // Validate credentials directly
-      const { verifyUserPassword } = await import('../../users.js');
       if (verifyUserPassword(username, password)) {
         authenticatedUsername = username;
         console.log(`[profile-sync] Authenticated via POST credentials: ${username}`);
@@ -268,13 +268,6 @@ export async function handleExportPriorityProfile(req: UnifiedRequest): Promise<
 
   // Use the authenticated username for the rest of the handler
   const user = { username: authenticatedUsername, isAuthenticated: true };
-
-  // DEBUG: Force load users.ts to ensure profile storage config is registered
-  try {
-    require('../../../users.js');
-  } catch {
-    console.log('[profile-sync] Users module not found in require, trying import...');
-  }
 
   const profilePaths = getProfilePaths(user.username);
   const profileRoot = profilePaths.root;
@@ -520,7 +513,6 @@ export async function handleGetProfileMemories(req: UnifiedRequest): Promise<Uni
   else if (req.method === 'POST' && req.body) {
     const { username, password } = req.body as { username?: string; password?: string };
     if (username && password) {
-      const { verifyUserPassword } = await import('../../users.js');
       if (verifyUserPassword(username, password)) {
         authenticatedUsername = username;
         console.log(`[profile-sync] Memories: Authenticated via POST credentials: ${username}`);

@@ -58,6 +58,7 @@ export * from './memory-metrics-cache';
 export * from './recent-tools-cache';
 export * from './summary-state';
 export * from './function-memory';
+export * from './curiosity-questions';
 export * from './audit';
 export {
   buildEnvironmentSelectorEnvelope,
@@ -94,10 +95,6 @@ export * from './agent-process-runner';
 export * from './vector-index';
 // Embeddings - exclude isEmbeddingServiceAvailable (conflicts with model-router)
 export {
-  type EmbeddingProvider,
-  type EmbeddingConfig,
-  loadEmbeddingConfig,
-  saveEmbeddingConfig,
   EmbeddingServiceError,
   preloadEmbeddingModel,
   embedText,
@@ -185,6 +182,11 @@ export {
 export { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
 export * from './stt';
 export * from './voice-training';
+export {
+  getBigBrotherSessionState,
+  stopBigBrotherSession,
+  type BigBrotherSessionState,
+} from './big-brother-session.js';
 export * from './audio-manager';
 export * from './autonomy';
 export * from './environment-interface';
@@ -262,8 +264,6 @@ export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';
 export * from './context-builder';
-// Cognitive layers - primary source for ValidationResult
-export * from './cognitive-layers';
 
 // Schema manager - rename FormattedSample to avoid conflict with mode-validator
 export type {
@@ -369,6 +369,7 @@ export {
 
 export * from './context';  // DEPRECATED - will be removed
 export * from './config';
+export * from './runpod-config';
 export * from './safe-file';  // Atomic file writes with backup for data safety
 // users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
@@ -646,7 +647,7 @@ export * from './drift/index.js';
 // Escalation backends (Big Brother mode - external LLM tool executors)
 export * from './tool-executor-config.js';
 export * from './open-interpreter.js';
-export * from './legacy-cli-adapters.js';
+export * from './cli-tool-adapters.js';
 
 // Phase 3 Connectors (data ingestion)
 export * from './connectors/photo-ingestor.js';

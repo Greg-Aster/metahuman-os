@@ -13,7 +13,7 @@ MetaHuman OS is built for long-running personal AI operation:
 - **Conversation**: a chat surface backed by mode-specific cognitive graphs, streaming reasoning events, conversation buffers, memory grounding, and persona voice.
 - **Inner life**: separate inner-dialogue streams for reflections, dreams, curiosity, recursive thought, and autonomous memory associations.
 - **Memory**: local JSON/profile storage for conversations, episodic events, tasks, summaries, preferences, audio transcripts, and training-ready examples.
-- **Learning**: curation, dataset building, LoRA/fine-tune workflows, adapter evaluation, and model activation from the user's own memories and persona data.
+- **Learning**: curation, dataset building, LoRA/fine-tune workflows, and backend-owned model activation from the user's own memories and persona data.
 - **Agency**: supervised autonomous desire generation, planning, review, execution, outcome review, and goal proposal.
 - **Tools**: trust-aware skills for files, tasks, calendar, memory search, shell-safe commands, agents, code changes, and remote/operator escalation.
 - **Voice**: local STT/TTS, voice chat, transcript ingestion, Kokoro voices, GPT-SoVITS, RVC, and voice-training workflows.
@@ -43,11 +43,11 @@ conversation / tasks / memories / transcripts / reflections
   -> memory organization and curation
   -> training dataset export
   -> local or remote LoRA/fine-tune run
-  -> adapter evaluation and activation
+  -> one trained artifact registered with its target backend
   -> future responses routed through the updated model stack
 ```
 
-Training can use profile memories, persona data, conversation history, therapy/persona-generator sessions, cognitive-mode metadata, and curated samples. The training system includes local GPU workflows, RunPod-oriented remote workflows, monthly/recent data splits, adapter builders, adapter merging, evaluation, GGUF conversion, and active-adapter management.
+Training can use profile memories, persona data, conversation history, therapy/persona-generator sessions, cognitive-mode metadata, and curated samples. The training system includes local GPU workflows, RunPod-oriented remote workflows, bounded dataset selection, and one target-specific artifact per run.
 
 The goal is a rolling personalization loop: the system captures experience as memory, curates it into useful training material, and produces adapters that change how the persona thinks and speaks over time.
 

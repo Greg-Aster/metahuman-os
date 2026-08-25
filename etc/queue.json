@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/queue.json",
   "version": "2.0.0",
   "description": "Single MetaHuman work coordinator resource and recovery limits",
   "enabled": true,

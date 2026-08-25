@@ -31,9 +31,7 @@ export function resolveAgentExecutablePath(agentName: string): string | null {
   const directoryName = sourceAgentId(agentName);
   const candidates = [
     path.join(systemPaths.brain, 'agents', directoryName, 'cli.ts'),
-    path.join(systemPaths.brain, 'agents', directoryName, `${directoryName}.ts`),
     path.join(systemPaths.brain, 'agents', directoryName, 'index.ts'),
-    path.join(systemPaths.brain, 'agents', `${directoryName}.ts`),
   ];
 
   return candidates.find(candidate => fs.existsSync(candidate)) ?? null;

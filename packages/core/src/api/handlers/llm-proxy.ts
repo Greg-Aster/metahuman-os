@@ -15,7 +15,7 @@
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse, errorResponse } from '../types.js';
+import { successResponse, errorResponse, streamResponse } from '../types.js';
 import { audit } from '../../audit.js';
 import { resolveModelById } from '../../model-resolver.js';
 import { ProviderInputError } from '../../providers/types.js';
@@ -32,6 +32,25 @@ import {
 let callProvider: any;
 let loadBackendConfig: any;
 let getBackendStatus: any;
+
+async function* streamOpenAICompletion(
+  id: string,
+  created: number,
+  model: string,
+  content: string,
+): AsyncGenerator<string> {
+  const chunk = (delta: Record<string, unknown>, finishReason: string | null) => ({
+    id,
+    object: 'chat.completion.chunk',
+    created,
+    model,
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  })
+
+  yield `data: ${JSON.stringify(chunk({ role: 'assistant', content }, null))}\n\n`
+  yield `data: ${JSON.stringify(chunk({}, 'stop'))}\n\n`
+  yield 'data: [DONE]\n\n'
+}
 
 async function ensureLlmFunctions(): Promise<boolean> {
   try {
@@ -150,7 +169,7 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
  *   temperature?: number,
  *   max_tokens?: number,
  *   top_p?: number,
- *   stream?: boolean,        // Streaming not yet supported
+ *   stream?: boolean,
  * }
  *
  * Response (OpenAI format):
@@ -196,14 +215,9 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
       return { status: 400, error: 'messages array is required' };
     }
 
-    if (stream) {
-      // TODO: Implement streaming support
-      return { status: 501, error: 'Streaming not yet supported' };
-    }
-
     // Resolve the user-configured model (NOT hardcoded!)
-    const modelId = proxyConfig.modelId || 'default.coder';
-    const resolvedModel = resolveModelById(modelId, user.username);
+    let modelId = proxyConfig.modelId || 'default.coder';
+    let resolvedModel = resolveModelById(modelId, user.username);
 
     if (!resolvedModel) {
       console.error(`[llm-proxy] Failed to resolve model: ${modelId}`);
@@ -216,10 +230,12 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
       }
 
       console.log(`[llm-proxy] Using fallback model: ${fallbackModelId}`);
+      modelId = fallbackModelId;
+      resolvedModel = fallbackModel;
     }
 
-    const modelName = resolvedModel?.model || modelId;
-    const provider = resolvedModel?.provider || 'ollama';
+    const modelName = resolvedModel.model;
+    const provider = resolvedModel.provider;
 
     console.log(`[llm-proxy] OpenAI proxy: user=${user.username}, modelId=${modelId}, provider=${provider}, model=${modelName}`);
 
@@ -265,11 +281,22 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
 
     // Return OpenAI-compatible response format
     const completionId = `chatcmpl-mh-${Date.now()}`;
+    const created = Math.floor(Date.now() / 1000);
+    const responseModel = response.model || modelName;
+    const usage = response.usage ? {
+      prompt_tokens: response.usage.promptTokens ?? response.usage.prompt_tokens ?? 0,
+      completion_tokens: response.usage.completionTokens ?? response.usage.completion_tokens ?? 0,
+      total_tokens: response.usage.totalTokens ?? response.usage.total_tokens ?? 0,
+    } : {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    };
     const openAIResponse = {
       id: completionId,
       object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model: response.model || modelName,
+      created,
+      model: responseModel,
       choices: [
         {
           index: 0,
@@ -280,11 +307,7 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
           finish_reason: 'stop',
         },
       ],
-      usage: response.usage || {
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-      },
+      usage,
       // MetaHuman extensions (for debugging)
       _metahuman: {
         modelId,
@@ -307,6 +330,15 @@ export async function handleLLMProxy(req: UnifiedRequest): Promise<UnifiedRespon
       },
       actor: user.username,
     });
+
+    if (stream === true) {
+      return streamResponse(streamOpenAICompletion(
+        completionId,
+        created,
+        responseModel,
+        response.content,
+      ));
+    }
 
     return successResponse(openAIResponse);
   } catch (error) {

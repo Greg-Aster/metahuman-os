@@ -65,7 +65,6 @@ export interface ModelDefinition {
     estimatedLatency?: 'fast' | 'medium' | 'slow';
     adapterLoadTime?: number;
     trainedOn?: string;
-    evalScore?: number;
     // Additional metadata fields - intentionally flexible for different model types
     [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   };
@@ -657,12 +656,4 @@ export function getProviderConfig(provider: ModelProvider, username?: string): {
     timeout: 120000,
     retries: 2,
   };
-}
-
-/**
- * Clear the registry cache (useful for hot-reload)
- * @deprecated Use invalidateModelCache() instead
- */
-export function clearRegistryCache(): void {
-  invalidateModelCache();
 }

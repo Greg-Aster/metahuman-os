@@ -6,6 +6,8 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
+import { loadChatSettingsForUser } from '../../chat-settings.js';
+import { loadBufferForUser } from '../../conversation-buffer.js';
 
 export const ConversationHistoryNode: NodeDefinition = defineNode({
   id: 'conversation_history',
@@ -65,9 +67,6 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     if (username) {
       try {
         const loadStart = Date.now();
-        const { loadChatSettingsForUser } = await import('../../chat-settings.js');
-        const { loadBufferForUser } = await import('../../conversation-buffer.js');
-
         const parsed = loadBufferForUser(username, mode);
         messages = parsed.messages;
         summaryMarkers = parsed.summaryMarkers;

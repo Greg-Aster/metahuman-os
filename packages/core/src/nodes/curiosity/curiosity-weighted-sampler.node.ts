@@ -113,7 +113,12 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
       for (let idx = 0; idx < allMemories.length; idx++) {
         cumulativeWeight += weights[idx];
         if (rand <= cumulativeWeight) {
-          selected.push(allMemories[idx].content);
+          const selectedMemory = allMemories[idx];
+          const contentId = selectedMemory.content?.id;
+          const memoryId = typeof contentId === 'string' && contentId.trim()
+            ? contentId.trim()
+            : path.basename(selectedMemory.file, '.json');
+          selected.push({ ...selectedMemory.content, __memoryId: memoryId });
           usedIndices.add(idx);
           break;
         }
@@ -127,13 +132,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
       decayFactor
     };
   } catch (error) {
-    console.error('[CuriosityWeightedSampler] Error:', error);
-    return {
-      memories: [],
-      count: 0,
-      error: (error as Error).message,
-      username
-    };
+    throw new Error(`Curiosity memory sampling failed: ${(error as Error).message}`);
   }
 };
 

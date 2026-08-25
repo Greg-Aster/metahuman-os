@@ -23,6 +23,7 @@
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
+  import TerminalManager from './TerminalManager.svelte';
   import TTSQueueConsumer from './TTSQueueConsumer.svelte';
 
   const ownerSystemSections = new Set([
@@ -32,7 +33,6 @@
     'addons',
     'agent-catalog',
     'trigger-manager',
-    'lifeline',
   ]);
 
   $: if (!$isOwner && ownerSystemSections.has($systemSection)) {
@@ -97,9 +97,6 @@
         case 'VoiceSettings':
           module = await import('./VoiceSettings.svelte');
           break;
-        case 'AdapterDashboard':
-          module = await import('./AdapterDashboard.svelte');
-          break;
         case 'TrainingMonitor':
           module = await import('./TrainingMonitor.svelte');
           break;
@@ -111,15 +108,6 @@
           break;
         case 'TrainingHistory':
           module = await import('./TrainingHistory.svelte');
-          break;
-        case 'DatasetManagement':
-          module = await import('./DatasetManagement.svelte');
-          break;
-        case 'SystemControls':
-          module = await import('./SystemControls.svelte');
-          break;
-        case 'Lifeline':
-          module = await import('./Lifeline.svelte');
           break;
         case 'OvernightLearnings':
           module = await import('./OvernightLearnings.svelte');
@@ -161,7 +149,7 @@
           module = await import('./ProfileLocation.svelte');
           break;
         case 'TerminalManager':
-          module = await import('./TerminalManager.svelte');
+          module = { default: TerminalManager };
           break;
         case 'AgencyDashboard':
           module = await import('./AgencyDashboard.svelte');
@@ -216,7 +204,7 @@ let audioTranscriptMemories: EventItem[] = []
 let dreamMemories: EventItem[] = [];
 let reflectionMemories: EventItem[] = [];
 let prunedMemories: EventItem[] = [];
-let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; answeredAt?: string }> = []
+let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; resolvedAt?: string; answeredAt?: string; skippedAt?: string }> = []
 let functionMemories: Array<{
   id: string
   title: string
@@ -238,7 +226,7 @@ const itemsPerPage = 50
 let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
 let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'pruned' = 'episodic'
 let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
-let trainingTab: 'wizard' | 'datasets' | 'manage' | 'system' | 'monitor' | 'adapters' = 'wizard'
+let trainingTab: 'wizard' | 'datasets' | 'monitor' = 'wizard'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -604,8 +592,6 @@ async function loadMemoryContent(relPath: string) {
       case 'training':
         void loadComponent('TrainingWizard');
         void loadComponent('TrainingHistory');
-        void loadComponent('DatasetManagement');
-        void loadComponent('SystemControls');
         void loadComponent('TrainingMonitor');
         break;
       case 'persona':
@@ -621,7 +607,6 @@ async function loadMemoryContent(relPath: string) {
           void loadComponent('SystemSettings');
           void loadComponent('NetworkServerSettings');
           void loadComponent('AddonsManager');
-          void loadComponent('Lifeline');
           void loadComponent('TriggerManagerSettings');
         }
         break;
@@ -758,14 +743,12 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container">
       <div class="view-header">
         <h2 class="view-title">🧠 AI Training</h2>
-        <p class="view-subtitle">LoRA datasets, training & adapters</p>
+        <p class="view-subtitle">Build, run, and monitor model training</p>
       </div>
       <div class="view-content">
         <div class="tab-group">
           <button class="tab-button {trainingTab === 'wizard' ? 'active' : ''}" on:click={() => trainingTab = 'wizard'}>🧙 Training Wizard</button>
           <button class="tab-button {trainingTab === 'datasets' ? 'active' : ''}" on:click={() => trainingTab = 'datasets'}>📜 Training History</button>
-          <button class="tab-button {trainingTab === 'manage' ? 'active' : ''}" on:click={() => trainingTab = 'manage'}>📊 Dataset Management</button>
-          <button class="tab-button {trainingTab === 'system' ? 'active' : ''}" on:click={() => trainingTab = 'system'}>⚙️ System Controls</button>
           <button class="tab-button {trainingTab === 'monitor' ? 'active' : ''}" on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
         </div>
         {#if trainingTab === 'wizard'}
@@ -777,18 +760,6 @@ async function loadMemoryContent(relPath: string) {
         {:else if trainingTab === 'datasets'}
           {#await loadComponent('TrainingHistory')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training history...</div>
-          {:then Component}
-            <svelte:component this={Component} />
-          {/await}
-        {:else if trainingTab === 'manage'}
-          {#await loadComponent('DatasetManagement')}
-            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading dataset management...</div>
-          {:then Component}
-            <svelte:component this={Component} />
-          {/await}
-        {:else if trainingTab === 'system'}
-          {#await loadComponent('SystemControls')}
-            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading system controls...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -1353,7 +1324,7 @@ async function loadMemoryContent(relPath: string) {
             {#each curiosityQuestionsTab as question}
               <div class="event-card curiosity-question" class:pending={question.status === 'pending'} class:answered={question.status === 'answered'}>
                 <div class="event-card-header">
-                  <span class="event-icon">{question.status === 'pending' ? '❓' : question.status === 'answered' ? '✅' : '💭'}</span>
+                  <span class="event-icon">{question.status === 'pending' ? '❓' : question.status === 'answered' ? '✅' : question.status === 'skipped' ? '⏭️' : '💭'}</span>
                   <div class="event-card-meta">
                     <span class="event-card-type">{question.status}</span>
                     <span class="event-card-time">{new Date(question.askedAt).toLocaleString()}</span>
@@ -1375,6 +1346,8 @@ async function loadMemoryContent(relPath: string) {
                   {/if}
                   {#if question.answeredAt}
                     <span class="answered-badge">Answered {new Date(question.answeredAt).toLocaleDateString()}</span>
+                  {:else if question.skippedAt}
+                    <span class="answered-badge">Skipped {new Date(question.skippedAt).toLocaleDateString()}</span>
                   {/if}
                 </div>
               </div>
@@ -1511,7 +1484,6 @@ async function loadMemoryContent(relPath: string) {
             <button class="tab-button" class:active={$systemSection==='addons'} on:click={() => systemSection.set('addons')}>Addons</button>
             <button class="tab-button" class:active={$systemSection==='agent-catalog'} on:click={() => systemSection.set('agent-catalog')}>Agent Catalog</button>
             <button class="tab-button" class:active={$systemSection==='trigger-manager'} on:click={() => systemSection.set('trigger-manager')}>Trigger Manager</button>
-            <button class="tab-button" class:active={$systemSection==='lifeline'} on:click={() => systemSection.set('lifeline')}>Lifeline</button>
           {/if}
         </div>
         {#if $systemSection === 'chat'}
@@ -1556,12 +1528,6 @@ async function loadMemoryContent(relPath: string) {
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if $systemSection === 'lifeline'}
-          {#await loadComponent('Lifeline')}
-            <div class="loading-placeholder">Loading lifeline...</div>
-          {:then Component}
-              <svelte:component this={Component} />
-            {/await}
         {:else if $systemSection === 'agent-catalog'}
           {#await loadComponent('AgentCatalogSettings')}
             <div class="loading-placeholder">Loading Agent Catalog…</div>

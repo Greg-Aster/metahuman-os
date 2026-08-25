@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/persona-generator.json",
   "version": "1.0.0",
   "description": "Configuration for persona generation interview system",
   "baselineQuestions": [

@@ -75,12 +75,7 @@ export class WebProcessExecutor implements Executor {
     const startTime = Date.now();
     const agentId = agent.meta.id;
 
-    // Resolve CLI path for this agent
-    const cliPath = path.join(this.rootDir, 'brain', 'agents', agentId, 'cli.ts');
-
-    // Fall back to legacy single-file agent if new structure doesn't exist
-    const legacyPath = path.join(this.rootDir, 'brain', 'agents', `${agentId}.ts`);
-    const agentPath = fs.existsSync(cliPath) ? cliPath : legacyPath;
+    const agentPath = path.join(this.rootDir, 'brain', 'agents', agentId, 'cli.ts');
 
     if (!fs.existsSync(agentPath)) {
       return {

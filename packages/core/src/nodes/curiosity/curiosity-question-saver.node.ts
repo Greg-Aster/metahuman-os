@@ -3,122 +3,90 @@
  * Saves generated question to audit log and pending questions directory
  */
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { audit, getProfilePaths } from '../../index.js';
+import { audit } from '../../audit.js';
+import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
-  // Access inputs by handle name with fallbacks for flexible edge connections
-  // Can receive: questionData object OR separate question/memories inputs
-  const questionData = inputs['questionData'] || inputs.questionData || inputs[0];
-  const questionInput = inputs['question'] || inputs.question;
-  const memoriesInput = inputs['memories'] || inputs.memories;
-
-  // Extract question (prefer direct input, fallback to questionData object)
-  const question = questionInput?.question || questionInput || questionData?.question || '';
-  // Extract memories (prefer direct input, fallback to questionData object)
-  const memories = memoriesInput || questionData?.memories || [];
+  const question = typeof inputs.question === 'string' ? inputs.question.trim() : '';
+  const memories = Array.isArray(inputs.memories) ? inputs.memories : [];
   const username = context.userId;
 
   if (!username) {
-    return {
-      questionId: null,
-      saved: false,
-      error: 'No username in context'
-    };
+    throw new Error('Curiosity Question Saver requires a username in graph context');
   }
 
   if (!question) {
-    return {
-      questionId: null,
-      saved: false,
-      error: 'No question provided'
-    };
+    if (memories.length === 0) {
+      return {
+        questionId: null,
+        question: '',
+        saved: false,
+        skipReason: 'no-memories',
+      };
+    }
+    throw new Error('Curiosity Question Saver received memories without a generated question');
   }
 
-  try {
-    const questionId = `cur-q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const askedAt = new Date().toISOString();
-    const seedMemories = memories.map((m: any) => m.__file).filter(Boolean);
-    const questionText = `💭 ${question}`;
+  const seedMemories = [...new Set(memories.flatMap((memory: unknown) => {
+    if (!memory || typeof memory !== 'object') return [];
+    const id = (memory as Record<string, unknown>).__memoryId;
+    return typeof id === 'string' && id.trim() ? [id.trim()] : [];
+  }))];
+  const record = await curiosityQuestionStore.create(username, {
+    question,
+    seedMemories,
+  });
+  const questionText = `💭 ${question}`;
 
-    audit({
-      category: 'action',
-      level: 'info',
-      event: 'chat_assistant',
-      details: {
-        mode: 'conversation',
-        content: questionText,
-        cognitiveMode: 'dual',
-        usedOperator: false,
-        curiosityQuestionId: questionId,
-        curiosityData: {
-          questionId,
-          questionText,
-          rawQuestion: question,
-          topic: 'general',
-          seedMemories,
-          askedAt,
-          isCuriosityQuestion: true
-        }
-      },
-      actor: 'curiosity-service',
-      metadata: {
-        questionId,
-        question: question.substring(0, 100),
-        autonomy: 'normal',
-        username
-      }
-    });
-
-    const profilePaths = getProfilePaths(username);
-    const curiosityDir = path.join(profilePaths.state, 'curiosity', 'questions', 'pending');
-    await fs.mkdir(curiosityDir, { recursive: true });
-
-    const questionData = {
-      id: questionId,
-      question,
-      askedAt,
-      seedMemories,
-      status: 'pending',
-      username
-    };
-
-    await fs.writeFile(
-      path.join(curiosityDir, `${questionId}.json`),
-      JSON.stringify(questionData, null, 2),
-      'utf-8'
-    );
-
-    const entry = {
-      role: 'assistant',
+  audit({
+    category: 'action',
+    level: 'info',
+    event: 'chat_assistant',
+    details: {
+      mode: 'conversation',
       content: questionText,
-      meta: {
-        type: 'curiosity',
-        questionId,
-        isCuriosityQuestion: true,
+      cognitiveMode: 'dual',
+      usedOperator: false,
+      curiosityQuestionId: record.id,
+      curiosityData: {
+        questionId: record.id,
+        questionText,
+        rawQuestion: question,
+        topic: 'general',
         seedMemories,
-        askedAt,
+        askedAt: record.askedAt,
+        isCuriosityQuestion: true,
       },
-    } as const;
-
-    return {
-      questionId,
-      saved: true,
-      entry,
+    },
+    actor: 'curiosity-service',
+    metadata: {
+      questionId: record.id,
+      autonomy: 'normal',
       username,
-      askedAt
-    };
-  } catch (error) {
-    console.error('[CuriosityQuestionSaver] Error:', error);
-    return {
-      questionId: null,
-      saved: false,
-      error: (error as Error).message,
-      username
-    };
-  }
+    },
+  });
+
+  const entry = {
+    role: 'assistant',
+    content: questionText,
+    meta: {
+      type: 'curiosity',
+      questionId: record.id,
+      isCuriosityQuestion: true,
+      seedMemories,
+      askedAt: record.askedAt,
+    },
+  } as const;
+
+  return {
+    questionId: record.id,
+    question,
+    saved: true,
+    entry,
+    username,
+    askedAt: record.askedAt,
+  };
 };
 
 export const CuriosityQuestionSaverNode: NodeDefinition = defineNode({
@@ -126,10 +94,12 @@ export const CuriosityQuestionSaverNode: NodeDefinition = defineNode({
   name: 'Curiosity Question Saver',
   category: 'curiosity',
   inputs: [
-    { name: 'questionData', type: 'object', description: 'Question and memories' },
+    { name: 'question', type: 'string', description: 'Generated question' },
+    { name: 'memories', type: 'array', description: 'Sampled seed memories' },
   ],
   outputs: [
     { name: 'questionId', type: 'string' },
+    { name: 'question', type: 'string', description: 'Persisted question text' },
     { name: 'saved', type: 'boolean' },
     { name: 'entry', type: 'message', description: 'Typed user-facing conversation entry' },
   ],

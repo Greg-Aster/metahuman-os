@@ -72,7 +72,7 @@ function createNavigationStore(defaultValue: string) {
 export const activeView = createNavigationStore('chat');
 
 export type DashboardSection = 'overview' | 'tasks' | 'approvals' | 'operator' | 'sleep' | 'agent-catalog' | 'trigger-manager';
-export type SystemSection = 'chat' | 'lifeline' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'agent-catalog' | 'trigger-manager' | 'terminal';
+export type SystemSection = 'chat' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'agent-catalog' | 'trigger-manager' | 'terminal';
 
 export const dashboardSection = writable<DashboardSection>('overview');
 export const systemSection = writable<SystemSection>('settings');

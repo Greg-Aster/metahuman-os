@@ -19,18 +19,13 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `Recent experiences you're reflecting on:
 What are you genuinely curious about? Ask one natural question.`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Access inputs by handle name, with fallback to indexed access
-  const memoriesInput = inputs['memories'] || inputs.memories || inputs[0];
-  const memories = Array.isArray(memoriesInput) ? memoriesInput : memoriesInput?.memories || [];
-  const personaInput = inputs['personaPrompt'] || inputs.personaPrompt || inputs[1];
+  const memories = Array.isArray(inputs.memories) ? inputs.memories : [];
+  const personaInput = inputs.personaPrompt;
   const temperature = properties?.temperature || 0.6;
   const username = context.userId;
 
   if (!username) {
-    return {
-      question: '',
-      error: 'No username in context'
-    };
+    throw new Error('Curiosity Question Generator requires a username in graph context');
   }
 
   if (memories.length === 0) {
@@ -86,12 +81,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const errMsg = error instanceof Error
       ? error.message
       : (typeof error === 'object' ? JSON.stringify(error) : String(error));
-    console.error('[CuriosityQuestionGenerator] Error:', errMsg);
-    return {
-      question: '',
-      error: errMsg || 'Unknown error',
-      username
-    };
+    throw new Error(`Curiosity question generation failed: ${errMsg || 'Unknown error'}`);
   }
 };
 

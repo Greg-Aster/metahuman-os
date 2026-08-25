@@ -18,9 +18,11 @@ type AuditItem = {
 
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
-const unknownArgs = args.filter(arg => arg !== '--dry-run');
+const unknownArgs = args.filter(arg => arg !== '--dry-run' && arg !== '--list');
 if (unknownArgs.length > 0) throw new Error(`Unknown argument: ${unknownArgs[0]}`);
 const DRY_RUN = args.includes('--dry-run');
+const LIST = args.includes('--list');
+if (DRY_RUN && LIST) throw new Error('--dry-run and --list cannot be combined');
 const OUT_DIR = path.join(ROOT, 'docs/audits');
 const JSON_OUT = path.join(OUT_DIR, 'maintained-source-inventory.json');
 const MD_OUT = path.join(OUT_DIR, 'maintained-source-inventory.md');
@@ -35,6 +37,12 @@ function gitLsFiles(): string[] {
 
 function isMaintained(file: string): boolean {
   return existsSync(path.join(ROOT, file)) && isMaintainedSourcePath(file, maintainedPolicy);
+}
+
+const maintainedFiles = gitLsFiles().filter(isMaintained);
+if (LIST) {
+  process.stdout.write(maintainedFiles.join('\n') + (maintainedFiles.length > 0 ? '\n' : ''));
+  process.exit(0);
 }
 
 function areaFor(file: string): string {
@@ -95,8 +103,7 @@ function groupCount(items: AuditItem[], selector: (item: AuditItem) => string): 
   return new Map([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])));
 }
 
-const items: AuditItem[] = gitLsFiles()
-  .filter(isMaintained)
+const items: AuditItem[] = maintainedFiles
   .map((file) => {
     const area = areaFor(file);
     const kind = kindFor(file);

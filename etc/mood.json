@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/mood.json",
   "version": "1.0.0",
   "description": "System defaults for per-user Mood agent behavior",
   "settings": {

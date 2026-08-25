@@ -15,7 +15,7 @@
     "@metahuman/core": "workspace:*",
     "@xyflow/svelte": "^1.5.0",
     "astro": "^5.16.6",
-    "autoprefixer": "^10.4.20",
+    "autoprefixer": "^10.5.4",
     "idb": "^8.0.3",
     "marked": "^12.0.2",
     "postcss": "^8.4.47",

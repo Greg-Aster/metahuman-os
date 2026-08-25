@@ -1,243 +1,134 @@
 # Troubleshooting
 
-Common issues and solutions for MetaHuman OS.
+Diagnose MetaHuman from the canonical owner outward. A running process proves
+only that the process exists; verify the request, state transition, durable
+output, and user-visible result separately.
 
----
-
-## Installation Issues
-
-### Ollama Not Found or Not Running
+## Start with these checks
 
 ```bash
-# Check if Ollama is running
-curl http://localhost:11434
+./bin/mh status
+./bin/mh backend status
+./bin/mh agent status
+./bin/audit check
+```
 
-# Start Ollama manually
-ollama serve &
+Also inspect the browser console and the relevant record under `logs/run/` or
+the authenticated profile's logs. Do not delete locks, state, or user data until
+you have confirmed the exact owner and PID.
 
-# Or check status via CLI
+## Site does not start
+
+1. Confirm Node and pnpm meet the versions in the root `package.json`.
+2. Run `pnpm install` from the repository root.
+3. Start the canonical launcher with `./start.sh`, or run the site directly with
+   `pnpm --dir apps/site dev` for UI development.
+4. If port 4321 is occupied, identify the owning process before changing ports
+   or stopping anything.
+
+After rebuilding `apps/site/dist`, restart a long-lived Astro server. A server
+that retained an old module graph can request deleted hashed chunks.
+
+## Ollama or vLLM is unavailable
+
+```bash
+./bin/mh backend status
 ./bin/mh ollama status
+./bin/mh vllm status
 ```
 
-### Permission Errors
+Confirm that `etc/llm-backend.json` selects the intended backend and that the
+assigned model exists in the authenticated profile's `models.json`. Use Backend
+Settings or the backend CLI to switch; do not introduce a second backend-state
+file.
+
+If a newly trained model is missing, inspect the training run summary and
+Backend Settings. Ollama targets require a successful model creation step;
+vLLM targets require the compatible base model and explicit adapter loading.
+
+## An agent does not run
 
 ```bash
-# Make bin/mh executable
-chmod +x bin/mh
-
-# Fix directory permissions
-sudo chown -R $USER:$USER .
+./bin/mh agent list
+./bin/mh agent status
+./bin/mh agent logs <name>
 ```
 
-### Port Conflicts
+Check both ownership layers:
 
-The default port is 4321. If it's in use:
+- `etc/agents.json` controls Trigger Manager admission for finite work.
+- `etc/services.json` controls persistent process lifecycle.
+
+Do not register the same worker in both systems. If the monitor reports an
+existing process, compare its PID and command with the owner record before
+removing any lock.
+
+## Semantic search is empty
+
+Confirm the embedding backend is reachable, then queue a rebuild for the exact
+profile:
 
 ```bash
-cd apps/site
-pnpm dev --port 4322
+./bin/mh --user <username> index build
+./bin/mh --user <username> index query "test query"
 ```
 
-### pnpm Not Found
+Queue admission is not semantic completion. Verify that the index job finishes
+and that a subsequent query reads the refreshed profile index.
+
+## A write returns 403
+
+Check the authenticated role and current cognitive mode. Guest sessions and
+Emulation mode are read-only. Switch to Dual or Agent mode only if the user is
+authorized and the special system-state flags permit it.
 
 ```bash
-npm install -g pnpm
-```
-
----
-
-## Runtime Issues
-
-### Slow Boot / UI Takes Long to Load
-
-**Symptom:** Web interface takes 30+ seconds to become interactive after page load.
-
-**Recent Fixes (v1.0):**
-The following optimizations were implemented to dramatically improve boot performance:
-
-1. **Fixed Duplicate Skill Registration**: Skills were being registered multiple times during boot
-   - Solution: Made `initializeSkills()` idempotent
-   - Impact: Eliminated 20+ duplicate audit entries, faster startup
-
-2. **Optimized Chat History Loading**: API was scanning 30+ days of data on every request
-   - Solution: Added server-side caching with file modification time invalidation
-   - Solution: Reduced default scan from 30 days to 7 days
-   - Impact: 60+ second load time reduced to <5 seconds
-
-3. **Fresh Session Interface**: Historical data no longer loads automatically
-   - Solution: Disabled automatic history loading on page load
-   - Impact: Clean, fast interface startup
-
-4. **Audit Stream Optimization**: Live stream was loading all historical events
-   - Solution: Stream now starts from end of file (only shows new events)
-   - Impact: Instant stream connection, no historical data bloat
-
-**Performance Tips:**
-- Use the **Clear button** to reset session and clear audit logs for maximum privacy
-- Chat history is cached for 30 seconds - subsequent loads are instant
-- If boot is still slow, check for stuck agents: `./bin/mh agent ps`
-
-### Boredom Service Not Triggering Reflections
-
-**Symptom:** Reflector agent never runs automatically.
-
-**Solution:**
-1. Check if boredom-service is running:
-   ```bash
-   ./bin/mh agent ps
-   ```
-2. Check for stale lock files:
-   ```bash
-   cat logs/run/locks/service-boredom.lock
-   ps -p <PID_from_lock_file>
-   ```
-3. If PID is not running, remove the stale lock:
-   ```bash
-   rm logs/run/locks/service-boredom.lock
-   ```
-4. Restart the service:
-   ```bash
-   ./bin/mh agent run boredom-service
-   ```
-
-### Organizer Agent Not Processing Memories
-
-**Symptom:** Memories don't have tags or entities.
-
-**Causes:**
-1. Ollama is not running
-2. Model not installed
-3. Memory already processed
-
-**Solutions:**
-1. Check Ollama status:
-   ```bash
-   ./bin/mh ollama status
-   ```
-2. Install phi3:mini if missing:
-   ```bash
-   ./bin/mh ollama pull phi3:mini
-   ```
-3. Run organizer manually:
-   ```bash
-   ./bin/mh agent run organizer
-   ```
-
-### Agent Shows "Another instance is already running"
-
-**Cause:** Stale lock file from crashed process.
-
-**Solution:**
-1. Find the lock file in `logs/run/locks/`
-2. Check if the PID is actually running:
-   ```bash
-   ps -p <PID>
-   ```
-3. If not running, remove the lock file:
-   ```bash
-   rm logs/run/locks/<agent-name>.lock
-   ```
-
-### Web UI Not Updating
-
-**Cause:** Agent services not running in background.
-
-**Solution:**
-The dev server auto-starts `organizer` and `boredom-service`. If you stopped them manually:
-1. Restart the dev server:
-   ```bash
-   cd apps/site && pnpm dev
-   ```
-
-### Semantic Search Not Working
-
-**Cause:** The index has not been built, the Work Coordinator is unavailable,
-or the configured embedding service is not running.
-
-**Solutions:**
-1. Start the MetaHuman server and the embedding backend selected in Settings → LLM Backend.
-2. Queue an index rebuild for the affected user:
-   ```bash
-   ./bin/mh --user <username> index build
-   ```
-
-### "Base path not allowed"
-The skill can't access that directory. Check the skill's `allowedDirectories` in `brain/skills/[skill-name].ts`
-
-### "Trust level insufficient"
-You need a higher trust level. Edit `persona/decision-rules.json` to increase your `trustLevel`.
-
-### "Skill not found"
-Restart the dev server to reload skill manifests:
-```bash
-pkill -f "astro dev"
-cd apps/site && pnpm dev
-```
-
-### Operator keeps retrying with same error
-The planner isn't learning from the error. This is a known issue - try rephrasing your request or being more specific about the path/approach.
-
-### Chat crashes on first request
-Fixed in bug patch. Ensure latest code: `git pull`
-
-### "Model not found" error
-Run `ollama create <model>` or check `active-adapter.json` status field
-
-### 403 Forbidden / "Write operations not allowed" Error
-
-**Symptom:** You receive a "403 Forbidden" error when trying to create a task, capture a memory, or change a setting.
-
-**Cause:** You are likely in **Emulation Mode**.
-
-**Solution:**
-Emulation Mode is a secure, **read-only** mode designed for safe demonstrations. It blocks all write operations. To create or modify data, you must switch to a different cognitive mode.
-
-1.  **Check your current mode** in the Web UI header.
-2.  **Switch to "Dual Consciousness" or "Agent Mode"** using the mode selector in the header.
-3.  Try your action again.
-
-You can switch modes via the API as well:
-```bash
-# Switch to Dual Consciousness mode to re-enable writes
 curl -X POST http://localhost:4321/api/cognitive-mode \
   -H "Content-Type: application/json" \
-  -d '{'''mode''': '''dual'''}'
+  -d '{"mode":"dual"}'
 ```
 
-### Dataset has 0 pairs
-Run `./bin/mh agent run organizer` to process memories first
+An authenticated browser session cookie is required for protected routes; an
+unauthenticated curl request is expected to fail.
 
-### Auto-approver always rejects
-Lower thresholds in `etc/auto-approval.json` or improve data quality
+## A skill rejects a path or trust level
 
-### Persona Toggle Button Requires Server Restart
+Path rejection means the Core path resolver or skill policy did not admit the
+requested target. Use a path inside the declared boundary and correct typos;
+do not widen allowed directories to bypass a single request.
 
-**Symptom:** When clicking the persona badge in the status widget to toggle persona context on/off, the button styling doesn't update to reflect the new state. The toggle only works reliably after restarting the dev server.
+Trust rejection means the canonical security policy requires approval or blocks
+that capability. Change trust through the supported UI/CLI only after reviewing
+the requested action and its audit history.
 
-**Cause:** The `/api/status` endpoint has a 5-second server-side cache to improve performance. When toggling the persona setting, the cache-busting mechanism doesn't fully invalidate the cache across all cognitive modes.
+## Training does not start
 
-**Workaround:**
-1. **Option 1:** Restart the dev server after toggling persona mode:
-   ```bash
-   # Stop dev server (Ctrl+C)
-   pnpm dev
-   ```
+- Confirm no canonical training process is already running.
+- Confirm the intended profile has accepted Curator records.
+- Review local GPU capability or RunPod credentials.
+- Inspect the training log path returned by the launch endpoint.
+- For remote S3 transfer, verify the documented `RUNPOD_S3_*` variables or
+  disable S3 for that run and use the direct transfer path.
 
-2. **Option 2:** Wait 5 seconds after toggling for the cache to expire, then refresh the page
+A failed preprocessing, training, conversion, transfer, or registration stage
+must remain failed; do not treat partial files as a completed model.
 
-3. **Option 3:** Use the API directly to verify the setting:
-   ```bash
-   # Check current persona setting
-   curl http://localhost:4321/api/persona-toggle
+See [AI Training](../training-personalization/ai-training.md).
 
-   # Toggle persona setting
-   curl -X POST http://localhost:4321/api/persona-toggle \
-     -H "Content-Type: application/json" \
-     -d '{"enabled": true}'  # or false
-   ```
+## Voice is silent
 
-**Note:** The setting IS successfully saved to `etc/models.json` even if the UI doesn't update immediately. This is purely a UI refresh issue, not a data persistence problem.
+```bash
+./bin/mh voice-server status --all
+```
 
-**Status:** Known issue - investigating cache invalidation improvements.
+Confirm the profile's provider in `voice.json`, then confirm the corresponding
+shared process in `etc/voice-servers.json`. A successful TTS generation followed
+by silence may be a queue cancellation or playback issue, so inspect both the
+TTS result and the later audio-delivery event.
 
----
+## Reporting a problem
+
+Include the failing command or route, authenticated profile/role (without
+credentials), relevant owner configuration, focused log excerpt, and the last
+successful state transition. Never include secrets, personal memories, or an
+entire runtime-data directory.

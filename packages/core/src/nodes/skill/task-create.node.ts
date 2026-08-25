@@ -6,10 +6,10 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { executeSkill, type TrustLevel } from '../../skills.js';
+import { loadDecisionRules } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   try {
-    const { loadDecisionRules } = await import('../../identity.js');
     const rules = loadDecisionRules();
     const trustLevel: TrustLevel = rules.trustLevel as TrustLevel;
 

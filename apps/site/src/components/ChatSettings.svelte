@@ -177,94 +177,94 @@
 
       <!-- Context Influence -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-context-influence" class="block mb-2 text-sm font-medium">
           Context Influence: {contextInfluence.toFixed(1)}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">How much weight to give memory context</span>
         </label>
-        <input type="range" min="0" max="1" step="0.1" bind:value={contextInfluence} on:change={saveSettings} class="range-slider" />
+        <input id="chat-context-influence" type="range" min="0" max="1" step="0.1" bind:value={contextInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- History Influence -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-history-influence" class="block mb-2 text-sm font-medium">
           History Influence: {historyInfluence.toFixed(1)}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">How much weight to give conversation history</span>
         </label>
-        <input type="range" min="0" max="1" step="0.1" bind:value={historyInfluence} on:change={saveSettings} class="range-slider" />
+        <input id="chat-history-influence" type="range" min="0" max="1" step="0.1" bind:value={historyInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Facet Influence -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-facet-influence" class="block mb-2 text-sm font-medium">
           Facet Influence: {facetInfluence.toFixed(1)}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">How strongly to apply persona facet traits</span>
         </label>
-        <input type="range" min="0" max="1" step="0.1" bind:value={facetInfluence} on:change={saveSettings} class="range-slider" />
+        <input id="chat-facet-influence" type="range" min="0" max="1" step="0.1" bind:value={facetInfluence} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Temperature -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-temperature" class="block mb-2 text-sm font-medium">
           Temperature: {temperature.toFixed(2)}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Model creativity (0 = deterministic, 1 = very creative)</span>
         </label>
-        <input type="range" min="0" max="1" step="0.05" bind:value={temperature} on:change={saveSettings} class="range-slider" />
+        <input id="chat-temperature" type="range" min="0" max="1" step="0.05" bind:value={temperature} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Semantic Search Threshold -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-memory-relevance" class="block mb-2 text-sm font-medium">
           Memory Relevance: {semanticSearchThreshold.toFixed(2)}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Minimum similarity for memory retrieval</span>
         </label>
-        <input type="range" min="0" max="1" step="0.05" bind:value={semanticSearchThreshold} on:change={saveSettings} class="range-slider" />
+        <input id="chat-memory-relevance" type="range" min="0" max="1" step="0.05" bind:value={semanticSearchThreshold} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Max Context Chars -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="chat-context-size" class="block mb-2 text-sm font-medium">
           Max Context Size: {maxContextChars} chars
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum context characters in prompts</span>
         </label>
-        <input type="range" min="200" max="4000" step="100" bind:value={maxContextChars} on:change={saveSettings} class="range-slider" />
+        <input id="chat-context-size" type="range" min="200" max="4000" step="100" bind:value={maxContextChars} on:change={saveSettings} class="range-slider" />
       </div>
 
       <h4 class="mt-6 mb-3 text-base text-gray-300">Buffer Retention</h4>
 
       <!-- Conversation Buffer Limit -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="conversation-buffer-limit" class="block mb-2 text-sm font-medium">
           Conversation Buffer Messages: {conversationBufferLimit}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum spoken conversation messages to retain</span>
         </label>
-        <input type="range" min="5" max="500" step="5" bind:value={conversationBufferLimit} on:change={saveSettings} class="range-slider" />
+        <input id="conversation-buffer-limit" type="range" min="5" max="500" step="5" bind:value={conversationBufferLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Inner Buffer Limit -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="inner-buffer-limit" class="block mb-2 text-sm font-medium">
           Inner Buffer Messages: {innerBufferLimit}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum unvoiced thoughts and generated inner dialogue to retain</span>
         </label>
-        <input type="range" min="20" max="500" step="10" bind:value={innerBufferLimit} on:change={saveSettings} class="range-slider" />
+        <input id="inner-buffer-limit" type="range" min="20" max="500" step="10" bind:value={innerBufferLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- System Buffer Limit -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="system-buffer-limit" class="block mb-2 text-sm font-medium">
           System Buffer Messages: {systemBufferLimit}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum durable system events to retain</span>
         </label>
-        <input type="range" min="20" max="500" step="10" bind:value={systemBufferLimit} on:change={saveSettings} class="range-slider" />
+        <input id="system-buffer-limit" type="range" min="20" max="500" step="10" bind:value={systemBufferLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- Robot Buffer Limit -->
       <div class="setting-group">
-        <label class="block mb-2 text-sm font-medium">
+        <label for="robot-buffer-limit" class="block mb-2 text-sm font-medium">
           Robot Buffer Messages: {robotBufferLimit}
           <span class="block text-xs text-gray-500 font-normal mt-0.5">Maximum outbound robot bridge records to retain</span>
         </label>
-        <input type="range" min="20" max="500" step="10" bind:value={robotBufferLimit} on:change={saveSettings} class="range-slider" />
+        <input id="robot-buffer-limit" type="range" min="20" max="500" step="10" bind:value={robotBufferLimit} on:change={saveSettings} class="range-slider" />
       </div>
 
       <!-- User Input Priority -->

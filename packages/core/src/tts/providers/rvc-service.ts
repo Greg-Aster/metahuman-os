@@ -10,10 +10,9 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, systemPaths } from '../../path-builder.js';
+import { ROOT } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
-import { stopServer } from '../server-manager.js';
 import type {
   ITextToSpeechService,
   TTSSynthesizeOptions,
@@ -24,7 +23,6 @@ import type {
 
 export class RVCService implements ITextToSpeechService {
   private fallbackService?: ITextToSpeechService;
-  private serverStartPromise: Promise<boolean> | null = null;
 
   constructor(
     private config: RVCConfig,
@@ -197,111 +195,8 @@ export class RVCService implements ITextToSpeechService {
   }
 
   /**
-   * Check if RVC HTTP server is available
-   */
-  private async _checkServerAvailable(): Promise<boolean> {
-    const serverUrl = this.config.serverUrl || 'http://127.0.0.1:9881';
-
-    try {
-      // Longer timeout (10s) because server may be busy processing on CPU
-      // RVC on CPU can take 3-7 seconds per segment, blocking the health endpoint
-      const response = await fetch(`${serverUrl}/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(10000), // 10 second timeout for CPU mode
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log('[RVCService] Server health check:', data);
-        return data.status === 'healthy';
-      }
-
-      return false;
-    } catch (error) {
-      console.log('[RVCService] Server not available:', (error as Error).message);
-      return false;
-    }
-  }
-
-  /**
-   * Convert audio using HTTP server (persistent model loading - FAST!)
-   */
-  private async _convertWithRVCServer(
-    inputAudio: Buffer,
-    speakerId: string,
-    pitchShift: number,
-    signal?: globalThis.AbortSignal
-  ): Promise<Buffer> {
-    const serverUrl = this.config.serverUrl || 'http://127.0.0.1:9881';
-    console.log('[RVCService] Using HTTP server for RVC conversion:', serverUrl);
-
-    try {
-      // Encode audio to base64
-      const audioBase64 = inputAudio.toString('base64');
-
-      // Prepare request body
-      const requestBody = {
-        audio_base64: audioBase64,
-        speaker_id: speakerId,
-        pitch_shift: pitchShift,
-        index_rate: this.config.indexRate ?? 1.0,
-        volume_envelope: this.config.volumeEnvelope ?? 0.0,
-        protect: this.config.protect ?? 0.15,
-        f0_method: this.config.f0Method || 'rmvpe',
-      };
-
-      // Call server API
-      const response = await fetch(`${serverUrl}/synthesize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal,
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(`Server returned ${response.status}: ${error.detail || 'Unknown error'}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Server conversion failed');
-      }
-
-      console.log('[RVCService] Server conversion completed in', result.duration_ms, 'ms');
-      console.log('[RVCService] Output audio size:', result.audio_size, 'bytes');
-
-      // Decode base64 audio
-      const outputAudio = Buffer.from(result.audio_base64, 'base64');
-
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'rvc_server_conversion',
-        details: {
-          speakerId,
-          pitchShift,
-          inputSize: inputAudio.length,
-          outputSize: outputAudio.length,
-          durationMs: result.duration_ms,
-        },
-        actor: 'system',
-      });
-
-      return outputAudio;
-
-    } catch (error) {
-      console.error('[RVCService] Server conversion failed:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Apply RVC voice conversion to base audio
-   * Tries HTTP server first (fast), falls back to process spawning (slow)
+   * Uses Applio's maintained command-line interface.
    */
   private async _convertWithRVC(
     inputAudio: Buffer,
@@ -310,26 +205,6 @@ export class RVCService implements ITextToSpeechService {
     signal?: globalThis.AbortSignal
   ): Promise<Buffer> {
     console.log('[RVCService] _convertWithRVC called:', { speakerId, pitchShift, inputSize: inputAudio.length });
-
-    // Try HTTP server first if enabled (default: true)
-    const useServer = this.config.useServer ?? true;
-    if (useServer) {
-      const serverAvailable = await this._ensureServerReady();
-      if (serverAvailable) {
-        console.log('[RVCService] Server available, using HTTP API for fast inference');
-        try {
-          return await this._convertWithRVCServer(inputAudio, speakerId, pitchShift, signal);
-        } catch (error) {
-          console.warn('[RVCService] Server conversion failed, falling back to process spawning:', error);
-          // Fall through to process spawning method below
-        }
-      } else {
-      console.log('[RVCService] Server not available, using process spawning (slow)');
-    }
-    }
-
-    // Fallback to process spawning (original slow method)
-    console.log('[RVCService] Using process spawning method for RVC conversion');
 
     const { tmpdir } = await import('node:os');
     const { unlink, writeFile, readFile } = await import('node:fs/promises');
@@ -357,46 +232,49 @@ export class RVCService implements ITextToSpeechService {
       }
       console.log('[RVCService] Model path validated:', modelPath);
 
-      // Python script path
       const rvcDir = path.join(ROOT, 'external', 'applio-rvc');
       const venvPython = path.join(rvcDir, 'venv', 'bin', 'python3');
-      const inferScript = path.join(rvcDir, 'infer.py');
+      const applioCli = path.join(rvcDir, 'core.py');
 
-      // Check if Python venv exists
-      const pythonBin = fs.existsSync(venvPython) ? venvPython : 'python3';
+      if (!fs.existsSync(venvPython) || !fs.existsSync(applioCli)) {
+        throw new Error('Applio is not installed correctly. Run `mh rvc install`.');
+      }
+
+      const pythonBin = venvPython;
       console.log('[RVCService] Using Python:', pythonBin);
-      console.log('[RVCService] Infer script:', inferScript);
+      console.log('[RVCService] Applio CLI:', applioCli);
 
-      // Build RVC inference arguments
+      const indexRate = Math.round(Math.min(1, Math.max(0, this.config.indexRate ?? 0.3)) * 100) / 100;
+      const volumeEnvelope = Math.round(Math.min(1, Math.max(0, this.config.volumeEnvelope ?? 1)) * 100) / 100;
+      const protect = Math.round(Math.min(0.5, Math.max(0, this.config.protect ?? 0.33)) * 1000) / 1000;
+      const supportedF0Methods = new Set([
+        'crepe',
+        'crepe-tiny',
+        'rmvpe',
+        'fcpe',
+        'hybrid[crepe+rmvpe]',
+        'hybrid[crepe+fcpe]',
+        'hybrid[rmvpe+fcpe]',
+        'hybrid[crepe+rmvpe+fcpe]',
+      ]);
+      const f0Method = supportedF0Methods.has(this.config.f0Method ?? '')
+        ? this.config.f0Method!
+        : 'rmvpe';
+      const normalizedPitch = Math.round(Math.min(24, Math.max(-24, pitchShift)));
+
       const args = [
-        inferScript,
-        '--input', inputFile,
-        '--output', outputFile,
-        '--model', modelPath,
-        '--pitch', pitchShift.toString(),
+        applioCli,
+        'infer',
+        '--input_path', inputFile,
+        '--output_path', outputFile,
+        '--pth_path', modelPath,
+        '--index_path', fs.existsSync(indexPath) ? indexPath : '',
+        '--pitch', normalizedPitch.toString(),
+        '--index_rate', indexRate.toString(),
+        '--volume_envelope', volumeEnvelope.toString(),
+        '--protect', protect.toString(),
+        '--f0_method', f0Method,
       ];
-
-      // Add index file if it exists
-      if (fs.existsSync(indexPath)) {
-        args.push('--index', indexPath);
-      }
-
-      // Add inference quality parameters
-      if (this.config.indexRate !== undefined) {
-        args.push('--index-rate', this.config.indexRate.toString());
-      }
-      if (this.config.volumeEnvelope !== undefined) {
-        args.push('--volume-envelope', this.config.volumeEnvelope.toString());
-      }
-      if (this.config.protect !== undefined) {
-        args.push('--protect', this.config.protect.toString());
-      }
-      if (this.config.f0Method) {
-        args.push('--f0-method', this.config.f0Method);
-      }
-      if (this.config.device) {
-        args.push('--device', this.config.device);
-      }
 
       console.log('[RVCService] Spawning RVC inference with args:', args);
 
@@ -404,6 +282,9 @@ export class RVCService implements ITextToSpeechService {
       await new Promise<void>((resolve, reject) => {
         const child = spawn(pythonBin, args, {
           cwd: rvcDir,
+          env: this.config.device === 'cpu'
+            ? { ...process.env, CUDA_VISIBLE_DEVICES: '-1' }
+            : process.env,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -545,131 +426,5 @@ export class RVCService implements ITextToSpeechService {
 
   clearCache(): void {
     clearCache(this.cacheConfig);
-  }
-
-  private _getServerUrl(): URL {
-    try {
-      return new URL(this.config.serverUrl || 'http://127.0.0.1:9881');
-    } catch {
-      return new URL('http://127.0.0.1:9881');
-    }
-  }
-
-  private async _ensureServerReady(): Promise<boolean> {
-    const available = await this._checkServerAvailable();
-    if (available) return true;
-
-    if (this.config.autoStartServer === false) {
-      return false;
-    }
-
-    if (!this.serverStartPromise) {
-      this.serverStartPromise = this._startRvcServerProcess()
-        .catch((error) => {
-          console.error('[RVCService] Auto-start server failed:', error);
-          return false;
-        })
-        .finally(() => {
-          this.serverStartPromise = null;
-        });
-    }
-
-    const started = await this.serverStartPromise;
-    if (!started) {
-      return false;
-    }
-
-    return this._checkServerAvailable();
-  }
-
-  private async _startRvcServerProcess(): Promise<boolean> {
-    const autoStart = this.config.autoStartServer ?? true;
-    if (!autoStart) {
-      return false;
-    }
-
-    const rvcDir = path.join(ROOT, 'external', 'applio-rvc');
-    const pythonBin = path.join(rvcDir, 'venv', 'bin', 'python3');
-    const serverScript = path.join(rvcDir, 'server.py');
-
-    if (!fs.existsSync(pythonBin) || !fs.existsSync(serverScript)) {
-      console.warn('[RVCService] Cannot auto-start server: missing python env or server.py');
-      return false;
-    }
-
-    if (!this.config.modelsDir || !fs.existsSync(this.config.modelsDir)) {
-      console.warn('[RVCService] Cannot auto-start server: models directory missing');
-      return false;
-    }
-
-    const url = this._getServerUrl();
-    const port = Number(url.port) || 9881;
-    const device = this.config.device || 'cuda';
-    const speaker = this.config.speakerId || 'default';
-    const logFile = path.join(systemPaths.run, 'rvc-server.log');
-
-    try {
-      fs.mkdirSync(path.dirname(logFile), { recursive: true });
-      const logFd = fs.openSync(logFile, 'a');
-
-      const child = spawn(
-        pythonBin,
-        [
-          serverScript,
-          '--port', String(port),
-          '--device', device,
-          '--speaker', speaker,
-          '--models-dir', this.config.modelsDir,
-        ],
-        {
-          cwd: rvcDir,
-          detached: true,
-          stdio: ['ignore', logFd, logFd],
-        }
-      );
-
-      child.unref();
-      fs.closeSync(logFd);
-
-      audit({
-        level: 'info',
-        category: 'system',
-        event: 'rvc_server_auto_start',
-        details: { port, device, speaker },
-        actor: 'system',
-      });
-
-      const timeout = this.config.serverStartupTimeoutMs ?? 8000;
-      const pollInterval = 500;
-      const start = Date.now();
-
-      while (Date.now() - start < timeout) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        if (await this._checkServerAvailable()) {
-          audit({
-            level: 'info',
-            category: 'system',
-            event: 'rvc_server_auto_started',
-            details: { port },
-            actor: 'system',
-          });
-          return true;
-        }
-      }
-
-      console.warn('[RVCService] RVC server failed to become healthy within timeout');
-      return false;
-    } catch (error) {
-      console.error('[RVCService] Failed to start RVC server process:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Shutdown RVC server and cleanup resources
-   */
-  async shutdown(): Promise<void> {
-    console.log('[RVCService] Shutting down RVC server...');
-    await stopServer('rvc');
   }
 }

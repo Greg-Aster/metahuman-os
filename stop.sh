@@ -187,70 +187,19 @@ run_with_timeout() {
 }
 
 stop_vllm() {
-    local api_pattern="vllm.entrypoints.openai.api_server"
-    local engine_pattern="VLLM::EngineCore"
-
-    kill_vllm_pattern() {
-        local pattern="$1"
-        local name="$2"
-        local timeout="${3:-10}"
-        local pids=""
-
-        pids=$(matching_repo_pids "$pattern")
-        if [ -z "$pids" ]; then
-            print_status "$name not running"
-            return 0
-        fi
-
-        echo "Stopping $name (PIDs: $pids)..."
-        kill_pids "$pids" TERM
-
-        for i in $(seq 1 "$timeout"); do
-            pids=$(live_pids "$pids")
-            if [ -z "$pids" ]; then
-                print_status "$name stopped"
-                return 0
-            fi
-            sleep 1
-        done
-
-        pids=$(live_pids "$pids")
-        if [ -n "$pids" ]; then
-            print_warning "$name didn't stop gracefully, forcing..."
-            kill_pids "$pids" KILL
-            sleep 1
-        fi
-
-        pids=$(live_pids "$pids")
-        if [ -n "$pids" ]; then
-            print_error "Failed to stop $name (PIDs: $pids)"
-            return 1
-        fi
-
-        print_status "$name stopped (forced)"
-        return 0
-    }
-
     echo "Stopping vLLM server..."
     if [ -x "$REPO_ROOT/bin/mh" ]; then
-        run_with_timeout 20 "$REPO_ROOT/bin/mh" vllm stop 2>/dev/null || print_warning "vLLM CLI stop did not exit cleanly; continuing with process cleanup"
+        run_with_timeout 20 "$REPO_ROOT/bin/mh" vllm stop 2>/dev/null || print_warning "vLLM lifecycle owner did not stop cleanly"
     else
-        print_warning "mh CLI not found, stopping vLLM manually..."
+        print_warning "mh CLI not found; vLLM was not stopped"
     fi
-
-    kill_vllm_pattern "$api_pattern" "vLLM API Server" 10
-    kill_vllm_pattern "$engine_pattern" "vLLM EngineCore" 10
-    kill_repo_port 8000 "vLLM Server"
 }
 
 # Stop PM2 processes if PM2 is installed
-if command -v pm2 &> /dev/null; then
-    if pm2 list 2>/dev/null | grep -q "metahuman-web"; then
-        echo "Stopping PM2 web server..."
-        pm2 stop metahuman-web 2>/dev/null || true
-        pm2 delete metahuman-web 2>/dev/null || true
-        print_status "PM2 web server stopped"
-    fi
+if command -v pm2 &> /dev/null && pm2 describe metahuman-os >/dev/null 2>&1; then
+    echo "Stopping PM2 MetaHuman process..."
+    pm2 delete metahuman-os 2>/dev/null || true
+    print_status "PM2 MetaHuman process stopped"
 fi
 
 # Stop all MetaHuman agents via CLI
@@ -270,30 +219,27 @@ kill_repo_process_pattern "audio-organizer" "Audio Organizer"
 # Stop any running agents by pattern
 kill_repo_process_pattern "brain/agents" "Background Agents"
 
-# Stop terminal server
-echo "Stopping terminal server..."
-if [ -x "$REPO_ROOT/bin/stop-terminal" ]; then
-    "$REPO_ROOT/bin/stop-terminal" 2>/dev/null || true
-fi
-kill_repo_port 3001 "Terminal Server"
-print_status "Skipped broad terminal-server process match"
+# Stop terminal processes through their scoped listener ports. The terminal API
+# owns terminal-N PID files; there is no second standalone terminal launcher.
+echo "Stopping terminal servers..."
+for terminal_port in $(seq 3001 3010); do
+    kill_repo_port "$terminal_port" "Terminal Server"
+done
 
 # Stop Big Brother terminal (port 3099)
 echo "Stopping Big Brother terminal..."
-kill_repo_port 3099 "Big Brother Terminal"
-BB_PID_FILE="$REPO_ROOT/logs/run/big-brother-terminal.pid"
-if [ -f "$BB_PID_FILE" ]; then
-    rm -f "$BB_PID_FILE"
+if [ -x "$REPO_ROOT/bin/mh" ]; then
+    run_with_timeout 15 "$REPO_ROOT/bin/mh" big-brother stop 2>/dev/null || print_warning "Big Brother lifecycle owner did not stop cleanly"
 fi
 
 # Stop vLLM before voice/web cleanup so GPU memory is released promptly.
 stop_vllm
 
-# Stop voice servers
-kill_repo_process_pattern "sovits" "SoVits Server"
-kill_repo_process_pattern "rvc-server" "RVC Server"
-kill_repo_process_pattern "whisper" "Whisper Server"
-kill_repo_process_pattern "kokoro" "Kokoro Server"
+# Stop voice services through their lifecycle owners.
+if [ -x "$REPO_ROOT/bin/mh" ]; then
+    run_with_timeout 20 "$REPO_ROOT/bin/mh" voice-server stop --all 2>/dev/null || print_warning "Shared voice services did not stop cleanly"
+    run_with_timeout 20 "$REPO_ROOT/bin/mh" sovits stop 2>/dev/null || print_warning "GPT-SoVITS did not stop cleanly"
+fi
 
 # Stop Cloudflare tunnel
 kill_repo_process_pattern "cloudflared" "Cloudflare Tunnel"

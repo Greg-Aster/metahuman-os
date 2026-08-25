@@ -3,7 +3,6 @@
  *
  * Tracks all reasons to pause the Active Operator decision loop:
  * - TTS speaking (client feedback)
- * - Curiosity questions awaiting response
  * - Desires awaiting user input (questioning/approval states)
  * - Active user conversation
  *
@@ -16,7 +15,6 @@ const LOG_PREFIX = '[pause-manager]';
 
 // Timeout constants
 const TTS_TIMEOUT_MS = 60000; // 60 seconds - assume TTS done if no update
-const CURIOSITY_TIMEOUT_MS = 300000; // 5 minutes for curiosity response
 const CONVERSATION_COOLDOWN_MS = 90000; // 90 seconds after last user message
 
 /**
@@ -26,11 +24,6 @@ interface UserPauseState {
   // TTS state
   ttsSpeaking: boolean;
   ttsLastUpdate: Date | null;
-
-  // Curiosity state
-  awaitingCuriosityResponse: boolean;
-  curiosityQuestionId: string | null;
-  curiosityAskedAt: Date | null;
 
   // Desire state
   awaitingDesireInput: boolean;
@@ -49,7 +42,7 @@ export interface PauseCheckResult {
   shouldPause: boolean;
   reason: string;
   waitMs: number;
-  pauseType?: 'tts' | 'curiosity' | 'desire' | 'conversation' | 'streaming';
+  pauseType?: 'tts' | 'desire' | 'conversation' | 'streaming';
 }
 
 // Per-user pause state storage
@@ -64,9 +57,6 @@ function getOrCreateState(username: string): UserPauseState {
     state = {
       ttsSpeaking: false,
       ttsLastUpdate: null,
-      awaitingCuriosityResponse: false,
-      curiosityQuestionId: null,
-      curiosityAskedAt: null,
       awaitingDesireInput: false,
       desireAwaitingId: null,
       activeConversation: false,
@@ -123,81 +113,6 @@ export function isTTSSpeaking(username: string): boolean {
   }
 
   return true;
-}
-
-// ============================================================================
-// Curiosity State Management
-// ============================================================================
-
-/**
- * Set curiosity question awaiting response.
- * Called when a curiosity question is displayed to the user.
- */
-export function setCuriosityAwaiting(username: string, questionId: string): void {
-  const state = getOrCreateState(username);
-  state.awaitingCuriosityResponse = true;
-  state.curiosityQuestionId = questionId;
-  state.curiosityAskedAt = new Date();
-
-  console.log(`${LOG_PREFIX} Curiosity awaiting for ${username}: questionId=${questionId}`);
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'pause_curiosity_awaiting',
-    actor: 'pause-manager',
-    details: { username, questionId },
-  });
-}
-
-/**
- * Clear curiosity awaiting state.
- * Called when user responds or skips the question.
- */
-export function clearCuriosityAwaiting(username: string, reason: 'responded' | 'skipped' | 'timeout'): void {
-  const state = getOrCreateState(username);
-  const questionId = state.curiosityQuestionId;
-
-  state.awaitingCuriosityResponse = false;
-  state.curiosityQuestionId = null;
-  state.curiosityAskedAt = null;
-
-  console.log(`${LOG_PREFIX} Curiosity cleared for ${username}: reason=${reason}`);
-
-  audit({
-    level: 'info',
-    category: 'action',
-    event: 'pause_curiosity_cleared',
-    actor: 'pause-manager',
-    details: { username, reason, questionId },
-  });
-}
-
-/**
- * Check if awaiting curiosity response (with timeout).
- */
-export function isAwaitingCuriosity(username: string): { awaiting: boolean; questionId: string | null; remainingMs: number } {
-  const state = getOrCreateState(username);
-
-  if (!state.awaitingCuriosityResponse || !state.curiosityAskedAt) {
-    return { awaiting: false, questionId: null, remainingMs: 0 };
-  }
-
-  const msSinceAsked = Date.now() - state.curiosityAskedAt.getTime();
-  const remainingMs = Math.max(0, CURIOSITY_TIMEOUT_MS - msSinceAsked);
-
-  // Auto-clear if timeout exceeded
-  if (remainingMs === 0) {
-    console.log(`${LOG_PREFIX} Curiosity timeout for ${username}, auto-clearing`);
-    clearCuriosityAwaiting(username, 'timeout');
-    return { awaiting: false, questionId: null, remainingMs: 0 };
-  }
-
-  return {
-    awaiting: true,
-    questionId: state.curiosityQuestionId,
-    remainingMs,
-  };
 }
 
 // ============================================================================
@@ -355,18 +270,7 @@ export function shouldPauseForUser(username: string): PauseCheckResult {
     };
   }
 
-  // Priority 4: Curiosity question awaiting response
-  const curiosityStatus = isAwaitingCuriosity(username);
-  if (curiosityStatus.awaiting) {
-    return {
-      shouldPause: true,
-      reason: `Awaiting curiosity response (${Math.round(curiosityStatus.remainingMs / 1000)}s remaining)`,
-      waitMs: Math.min(curiosityStatus.remainingMs, 30000), // Check at least every 30 seconds
-      pauseType: 'curiosity',
-    };
-  }
-
-  // Priority 5: Desire awaiting input
+  // Priority 4: Desire awaiting input
   const desireStatus = isAwaitingDesireInput(username);
   if (desireStatus.awaiting) {
     return {

@@ -6,6 +6,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { loadBufferForUser } from '../../conversation-buffer.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   // Trigger input - any truthy value triggers the display
@@ -41,7 +42,6 @@ const execute: NodeExecutor = async (inputs, context) => {
   // If still empty, try to load from buffer file
   if (!displayContent && context.username) {
     try {
-      const { loadBufferForUser } = await import('../../conversation-buffer.js');
       const mode = context.mode || context.dialogueType || 'conversation';
       const bufferMode = mode === 'inner' ? 'inner' : 'conversation';
       const messages = loadBufferForUser(context.username, bufferMode).messages;

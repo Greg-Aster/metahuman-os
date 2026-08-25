@@ -6,7 +6,7 @@ Skills are the executable capabilities of the MetaHuman OS operator model. They 
 1. **Sandboxed Execution**: All skills run in a controlled environment with strict permission boundaries
 2. **Trust-Aware**: Skill availability and auto-execution depends on the current trust level
 3. **Fully Audited**: Every skill invocation is logged with inputs, outputs, results, and (when relevant) fuzzy path resolution suggestions
-4. **Fuzzy Paths by Default**: Before any filesystem skill runs, user-provided paths are passed through the [Fuzzy Path Resolution](../fuzzy-path-resolution.md) module so typos or casing mistakes get auto-corrected or generate helpful suggestions.
+4. **Fuzzy Paths by Default**: Before a filesystem skill runs, supported path fields use Core's path resolver to reject unsafe paths and suggest close matches.
 4. **Risk-Based Approval**: High-risk operations require explicit user approval before execution
 5. **Declarative Manifest**: Each skill declares its inputs, outputs, cost, and risk level
 
@@ -114,7 +114,7 @@ interface SkillManifest {
 Skills are now organized into domains and are namespaced (e.g., `tasks.list`).
 
 #### Fuzzy Path Resolution
-- **Resolver Location**: The logic lives in `packages/core/src/path-resolver.ts` and is documented in [fuzzy-path-resolution.md](../fuzzy-path-resolution.md).
+- **Resolver Location**: The canonical logic lives in `packages/core/src/path-resolver.ts`.
 - **How it behaves**: User input such as `Docs/UserGuide.md` is normalized (case-insensitive), then—if needed—matched against fuzzy glob suggestions (e.g., `**/*user*guide*`).
 - **Operator Integration**: The ReAct operator invokes the resolver before `fs_*` skills. If no exact match exists, the skill’s audit log + observation include the top suggestions so the LLM or user can pick the correct file.
 - **CLI Safety**: Even direct CLI skills benefit because the resolver hooks into common input fields (`path`, `filePath`, `pattern`).

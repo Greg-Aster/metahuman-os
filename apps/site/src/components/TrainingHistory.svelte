@@ -159,10 +159,8 @@
     if (!currentRun) return;
 
     try {
-      const res = await apiFetch('/api/adapters', {
+      const res = await apiFetch('/api/training/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancelFullCycle' })
       });
 
       if (!res.ok) throw new Error('Failed to cancel training');
@@ -403,7 +401,7 @@
         <div class="flex flex-col">
           {#each pastRuns as run (run.id)}
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-4">
-              <div class="flex justify-between items-center cursor-pointer select-none pb-3 border-b border-gray-200 dark:border-gray-700 hover:opacity-80" on:click={() => toggleRunDetails(run.id)}>
+              <button type="button" class="flex w-full justify-between items-center cursor-pointer select-none pb-3 border-b border-gray-200 dark:border-gray-700 hover:opacity-80" on:click={() => toggleRunDetails(run.id)} aria-expanded={expandedRunId === run.id}>
                 <div class="flex items-center gap-3">
                   <span class="text-xl">{getStatusEmoji(run.status)}</span>
                   <span class="font-semibold text-sm">{formatTimestamp(run.startTime)}</span>
@@ -411,10 +409,10 @@
                     {run.status}
                   </span>
                 </div>
-                <button class="bg-transparent border-none text-base cursor-pointer p-2 text-gray-500 transition-transform {expandedRunId === run.id ? '' : ''}">
+                <span class="bg-transparent border-none text-base p-2 text-gray-500 transition-transform">
                   {expandedRunId === run.id ? '▼' : '▶'}
-                </button>
-              </div>
+                </span>
+              </button>
 
               <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 pt-3">
                 <div class="flex gap-2 text-sm">
@@ -470,4 +468,3 @@
     </div>
   {/if}
 </div>
-

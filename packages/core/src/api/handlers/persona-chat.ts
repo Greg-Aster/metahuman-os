@@ -29,6 +29,8 @@ import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../
 import { recordSystemActivity } from '../../system-activity.js';
 import { submitConversationEntry, submitInnerDialogue } from '../../buffer-admission.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
+import { getNodeExecutor } from '../../nodes/index.js';
+import { addScratchpadEntryToFolder, loadDesire, saveDesireManifest } from '../../agency/storage.js';
 // Early buffer save added - saves user message BEFORE graph to survive timeouts
 
 // ============================================================================
@@ -74,7 +76,6 @@ const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
 let executorsReady = false;
 const executorsReadyPromise = (async () => {
   try {
-    const { getNodeExecutor } = await import('../../nodes/index.js');
     if (getNodeExecutor('user_input')) {
       console.log('[persona-chat] ✅ Node executors pre-warmed');
       executorsReady = true;
@@ -589,7 +590,6 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   let desireContext = null;
   if (replyToDesireId && user.isAuthenticated) {
     try {
-      const { loadDesire, saveDesireManifest, addScratchpadEntryToFolder } = await import('../../agency/storage.js');
       desireContext = await loadDesire(replyToDesireId, user.username);
       if (desireContext) {
         console.log(`[persona-chat] Loaded desire context: ${desireContext.title} (${desireContext.status})`);

@@ -87,7 +87,7 @@ test('robot autonomy activity follows the canonical correlated work chain', () =
   assert.equal(hasActiveRobotAutonomyCycle([child], child.id), false)
 })
 
-test('movement and reflection stimuli exclude old frames while preserving timestamped robot state', () => {
+test('movement and reflection stimuli exclude old frames while preserving state and advertised capabilities', () => {
   const cycle = {
     cycleId: 'movement-1',
     step: 1,
@@ -109,6 +109,15 @@ test('movement and reflection stimuli exclude old frames while preserving timest
     state: { stale: true },
     visual: { id: 'old-frame', timestamp: '2026-08-23T12:00:00.000Z' },
     visuals: [{ id: 'old-frame-2', timestamp: '2026-08-23T12:00:00.000Z' }],
+    feedback: [{
+      id: 'old-feedback',
+      timestamp: '2026-08-23T12:00:00.000Z',
+      type: 'completed',
+      message: 'old action completed',
+    }],
+    metadata: {
+      actionContext: { actionId: 'old-action', correlationId: 'old-cycle' },
+    },
   }, cycle, 'boredom-movement')
   assert.equal(stimulus.visual, undefined)
   assert.equal(stimulus.visuals, undefined)
@@ -116,8 +125,14 @@ test('movement and reflection stimuli exclude old frames while preserving timest
   assert.equal(stimulus.metadata?.currentVisualEvidence, false)
   assert.equal(stimulus.metadata?.sourceObservationAt, '2026-08-23T12:00:00.000Z')
   assert.equal(stimulus.metadata?.robotObserver, cycle)
-  assert.deepEqual(stimulus.capabilities.actions, ['robotCommand'])
+  assert.deepEqual(stimulus.capabilities.actions, [
+    'robotCommand',
+    'robotMotionPlan',
+    'captureImage',
+  ])
   assert.deepEqual(stimulus.capabilities.robotCommands, ['gesture_alpha', 'gesture_beta'])
+  assert.deepEqual(stimulus.feedback, [])
+  assert.equal(stimulus.metadata?.actionContext, undefined)
 
   const reflectionStimulus = buildRobotAutonomyStimulus({
     environmentId: 'ainekio',
@@ -189,25 +204,29 @@ test('each boredom child keeps its specialized policy in the editable workflow',
     (node: any) => node.id === nodeId,
   )?.data?.properties?.message ?? ''
 
-  const movement = message('boredom-movement', 'instructions')
-  assert.match(movement, /complete advertised command catalog/i)
-  assert.match(movement, /exactly one safe robotCommand/i)
-  assert.match(movement, /no preferred command or movement category/i)
-  assert.doesNotMatch(movement, /stationary posture|stretch|small reorientation/i)
+  const movement = message('boredom-movement', 'planner-policy')
+  assert.match(movement, /form one new embodied intention/i)
+  assert.match(movement, /advertised capabilities/i)
+  assert.match(movement, /do not select a technical command/i)
+  assert.doesNotMatch(movement, /exactly one safe robotCommand/i)
 
-  const observer = message('boredom-observer', 'observer-policy')
-  assert.match(observer, /returned fresh robot-camera image/i)
-  assert.match(observer, /author or revise its own episode intent/i)
-  assert.match(observer, /do not stop at captioning/i)
+  const executive = message('boredom-autonomy', 'executive-policy')
+  assert.match(executive, /one exact advertised action/i)
+  assert.match(executive, /one supported body-local movement request/i)
 
-  const reflection = message('boredom-reflection', 'instructions')
-  assert.match(reflection, /sampled memory as historical inspiration/i)
-  assert.match(reflection, /author or revise its own intent/i)
-  assert.match(reflection, /concrete memory detail/i)
-  assert.match(reflection, /never evidence of current objects/i)
+  const observer = message('boredom-observer', 'planner-policy')
+  assert.match(observer, /fresh correlated camera image as current evidence/i)
+  assert.match(observer, /form one high-level interest, question, or concern/i)
+  assert.match(observer, /rather than merely captioning/i)
+
+  const reflection = message('boredom-reflection', 'planner-policy')
+  assert.match(reflection, /sampled memory interact with the active persona/i)
+  assert.match(reflection, /form one new high-level intention/i)
+  assert.match(reflection, /concrete connection to the memory/i)
+  assert.match(reflection, /without .* treating it as present-world evidence/i)
 })
 
-test('Robot Operator owns scheduling while three boredom children own finite trigger work', () => {
+test('Robot Operator owns scheduling while three boredom children own finite planning work', () => {
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-observer'].lifecycle, 'workflow')
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-observer'].handler, 'workflow.boredom-observer')
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-movement'].lifecycle, 'workflow')
@@ -270,14 +289,13 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.equal(variables.find(variable => variable.key === 'boredomReflectionInactivityThreshold')?.value, 900)
   assert.equal(variables.find(variable => variable.key === 'boredomReflectionJitterMs')?.value, 180_000)
   assert.equal(variables.find(variable => variable.key === 'maxCycleSteps')?.value, 8)
-  assert.equal(variables.find(variable => variable.key === 'graph')?.value, 'robot-operator')
+  assert.equal(variables.some(variable => variable.key === 'graph'), false)
   assert.equal(variables.find(variable => variable.key === 'boredomObserverGraph')?.value, 'boredom-observer')
   assert.equal(variables.find(variable => variable.key === 'boredomMovementGraph')?.value, 'boredom-movement')
   assert.equal(variables.find(variable => variable.key === 'boredomReflectionGraph')?.value, 'boredom-reflection')
   assert.equal(variables.find(variable => variable.key === 'autonomyGraph')?.value, 'boredom-autonomy')
   assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
   const config = loadRobotOperatorConfig()
-  assert.equal(config.graph, 'robot-operator')
   assert.equal(config.boredomObserverGraph, 'boredom-observer')
   assert.equal(config.boredomMovementGraph, 'boredom-movement')
   assert.equal(config.boredomReflectionGraph, 'boredom-reflection')
@@ -293,7 +311,9 @@ test('Robot Operator owns scheduling while three boredom children own finite tri
   assert.match(engine, /workflow\.boredom-movement/)
   assert.match(engine, /workflow\.boredom-reflection/)
   assert.match(observerHandler, /hasActiveRobotAutonomyCycle/)
-  assert.match(observerHandler, /actions\.filter\(action => action === 'robotCommand'\)/)
+  assert.match(observerHandler, /capabilities: latest\.capabilities/)
+  assert.match(observerHandler, /actions\.includes\('robotMotionPlan'\)/)
+  assert.doesNotMatch(observerHandler, /actions\.filter\(/)
   assert.match(observerHandler, /graph: robotOperatorChildGraph\(config, agentId\)/)
   assert.doesNotMatch(observerHandler, /enqueueEnvironmentAction|type: 'captureImage'/)
   assert.match(observerHandler, /triggerSource: 'autonomy'/)

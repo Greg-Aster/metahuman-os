@@ -24,8 +24,8 @@
   }
 </script>
 
-<div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[1000] p-8" on:click={onDiscard}>
-  <div class="bg-gray-800 rounded-lg max-w-[900px] w-full max-h-[90vh] flex flex-col text-gray-200" on:click|stopPropagation>
+<div class="fixed inset-0 bg-black/75 flex items-center justify-center z-[1000] p-8">
+  <div class="bg-gray-800 rounded-lg max-w-[900px] w-full max-h-[90vh] flex flex-col text-gray-200" role="dialog" aria-modal="true" tabindex="-1">
     <div class="p-6 border-b border-gray-700 flex justify-between items-center">
       <h2 class="m-0 text-gray-50">Review Persona Changes</h2>
       <button class="bg-transparent border-none text-gray-400 text-[2rem] cursor-pointer p-0 w-8 h-8 flex items-center justify-center rounded hover:bg-gray-700 hover:text-gray-50" on:click={onDiscard}>×</button>

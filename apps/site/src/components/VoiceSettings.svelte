@@ -623,7 +623,7 @@
 
     <!-- Provider Selection -->
     <div class="mb-6">
-      <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Provider</label>
+      <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Provider</div>
       <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
         {#each providerEntries as [key, info]}
           <button
@@ -678,7 +678,7 @@
         <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">GPT-SoVITS Settings</h4>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+          <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</div>
           <ServerStatusIndicator serverName="GPT-SoVITS" statusEndpoint="/api/sovits-server" controlEndpoint="/api/sovits-server" autoRefresh={true} refreshInterval={15000} />
         </div>
 
@@ -716,7 +716,7 @@
         </div>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Reference Audio Management</label>
+          <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Reference Audio Management</div>
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Generate reference.wav from the latest recorded sample in your voice profile.</p>
           <button class="w-full py-3 px-6 border-none rounded-lg font-semibold cursor-pointer transition-all mt-2 bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={generateReference} disabled={generatingReference || saving}>
             {generatingReference ? '🔄 Generating...' : '🎯 Generate Reference Audio'}
@@ -735,11 +735,6 @@
     {:else if config.provider === 'rvc' && config.rvc}
       <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
         <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">RVC Settings</h4>
-
-        <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
-          <ServerStatusIndicator serverName="RVC" statusEndpoint="/api/rvc-server" controlEndpoint="/api/rvc-server" autoRefresh={true} refreshInterval={15000} />
-        </div>
 
         <div class="mb-6">
           <label for="rvc-speaker" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Voice Model</label>
@@ -799,8 +794,8 @@
             <select id="rvc-f0-method" bind:value={config.rvc.f0Method} disabled={saving} class="select-field">
               <option value="rmvpe">RMVPE (Recommended)</option>
               <option value="crepe">CREPE (High Quality)</option>
-              <option value="harvest">Harvest (Fast)</option>
-              <option value="dio">DIO (Fastest)</option>
+              <option value="crepe-tiny">CREPE Tiny (Faster)</option>
+              <option value="fcpe">FCPE</option>
             </select>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">RMVPE is the most accurate for most voices</p>
           </div>
@@ -811,7 +806,7 @@
               <option value="cuda">GPU (CUDA) - Faster</option>
               <option value="cpu">CPU - Slower, no GPU conflicts</option>
             </select>
-            <p class="mt-2 text-xs text-amber-500 font-medium">⚠️ Restart server required: Device changes only take effect after restarting the RVC server.</p>
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">The selected device is applied to each conversion process.</p>
           </div>
 
           <div class="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 border-l-[3px] border-blue-500 rounded text-sm">
@@ -846,7 +841,7 @@
         <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Kokoro TTS Settings</h4>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+          <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</div>
           <ServerStatusIndicator serverName="Kokoro" statusEndpoint="/api/kokoro-server" controlEndpoint="/api/kokoro-server" autoRefresh={true} refreshInterval={15000} />
         </div>
 
@@ -956,8 +951,8 @@
         <h4 class="text-xl font-semibold text-gray-800 dark:text-gray-100 m-0 mb-5">🎤 Speech-to-Text (Whisper)</h4>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Model Size</label>
-          <select bind:value={config.stt.model} disabled class="select-field">
+          <label for="stt-model" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Model Size</label>
+          <select id="stt-model" bind:value={config.stt.model} disabled class="select-field">
             <option value="tiny.en">Tiny (~75MB, fastest)</option>
             <option value="base.en">Base (~140MB, balanced)</option>
             <option value="small.en">Small (~460MB, more accurate)</option>
@@ -967,8 +962,8 @@
         </div>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Processing Device</label>
-          <select bind:value={config.stt.device} disabled class="select-field">
+          <label for="stt-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Processing Device</label>
+          <select id="stt-device" bind:value={config.stt.device} disabled class="select-field">
             <option value="cpu">CPU</option>
             <option value="cuda">GPU (CUDA)</option>
           </select>
@@ -976,8 +971,8 @@
         </div>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Compute Type</label>
-          <select bind:value={config.stt.computeType} disabled class="select-field">
+          <label for="stt-compute-type" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Compute Type</label>
+          <select id="stt-compute-type" bind:value={config.stt.computeType} disabled class="select-field">
             <option value="int8">INT8 (fastest, CPU-friendly)</option>
             <option value="float16">FLOAT16 (balanced, GPU-optimized)</option>
             <option value="float32">FLOAT32 (highest precision)</option>
@@ -986,8 +981,8 @@
         </div>
 
         <div class="mb-6">
-          <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Language</label>
-          <select bind:value={config.stt.language} disabled={saving} class="select-field">
+          <label for="stt-language" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Language</label>
+          <select id="stt-language" bind:value={config.stt.language} disabled={saving} class="select-field">
             <option value="en">English</option>
             <option value="es">Spanish</option>
             <option value="fr">French</option>
@@ -1012,7 +1007,7 @@
           <p class="mb-6 text-xs text-gray-500 dark:text-gray-400">Boot lifecycle is system-managed; status and controls are available in the Server tab.</p>
 
           <div class="mb-6">
-            <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</label>
+            <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</div>
             <ServerStatusIndicator serverName="Whisper STT" statusEndpoint="/api/whisper-server" controlEndpoint="/api/whisper-server" autoRefresh={true} refreshInterval={15000} />
           </div>
         {/if}
@@ -1108,7 +1103,7 @@
 
           <!-- VAD Test Recorder -->
           <div class="mt-6 p-6 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-500 dark:border-blue-400 rounded-xl">
-            <label class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Test Voice Detection</label>
+            <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Test Voice Detection</div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Click to start recording. Speak naturally, and the system will auto-stop after silence.</p>
 
             {#if !vadTestRecording}

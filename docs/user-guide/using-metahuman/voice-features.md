@@ -1,359 +1,66 @@
 # Voice Features
 
-MetaHuman OS includes a comprehensive, local-first voice system that enables your digital personality to speak with natural-sounding or even your own cloned voice - all running entirely on your infrastructure.
+MetaHuman provides speech recognition, speech synthesis, voice chat, and profile-owned voice assets. Configure the active provider from the Voice page.
 
-## Overview
+## Provider roles
 
-The voice system provides:
-- **Text-to-Speech (TTS)**: MetaHuman speaks responses aloud
-- **Speech-to-Text (STT)**: Voice input for conversations
-- **Voice Cloning**: Replicate your voice from short samples
-- **Multi-Provider Support**: Choose between fast synthetic or high-quality cloned voices
-- **Privacy-First**: All voice processing happens locally
-- **Real-Time Interaction**: Voice mode in chat interface
+- **Whisper** transcribes microphone audio.
+- **Piper** provides local synthesis from installed ONNX voices.
+- **Kokoro** provides local synthesis from built-in or imported voicepacks.
+- **GPT-SoVITS** synthesizes with profile reference audio through its service.
+- **RVC** converts Piper-generated speech with a trained profile model through Applio's maintained command-line interface.
 
-## TTS Providers
+Each role has one lifecycle owner. Whisper and Kokoro use the shared voice-service manager; GPT-SoVITS has its own service lifecycle; RVC conversion runs on demand and has no separate MetaHuman RVC server.
 
-MetaHuman OS supports three TTS providers, each optimized for different use cases:
+## Configure speech
 
-### 1. Kokoro TTS (Fast Neural Voices · Default)
+1. Open **Voice Settings**.
+2. Select a TTS provider and its voice or speaker.
+3. Select the Whisper model and device for STT.
+4. Save, then use the provider test control.
 
-**Best For**: Quick setup with natural-sounding voices, no training required
+Provider settings are stored in the active profile's `etc/voice.json`. Prefer the UI or API over editing that file directly because the handler validates values and maintains profile paths.
 
-**Features:**
-- Generates audio in real-time (< 1 second)
-- Natural-sounding neural voices
-- Multiple voices and accents
-- Minimal CPU/RAM, no GPU required
-- Default provider, works out of the box
+## Voice chat
 
-**Starting Kokoro:**
+Voice chat records microphone input, sends it to Whisper, submits the transcript through the normal chat path, and plays the resulting TTS audio. If a stage fails, verify it independently:
+
+1. microphone permission and input level;
+2. Whisper service health;
+3. chat backend health;
+4. selected TTS provider and its required artifacts;
+5. browser audio permission and output device.
+
+## Provider requirements
+
+### Piper
+
+Requires an installed Piper binary, an `.onnx` voice model, and its JSON configuration. It is also the base and fallback synthesizer for RVC.
+
+### Kokoro
+
+Requires the Kokoro addon and shared service. The repository supports synthesis and imported voicepack selection, not custom Kokoro training.
+
 ```bash
-# Start the Kokoro server
-./bin/mh kokoro serve start
-
-# Stop the server
-./bin/mh kokoro serve stop
-
-# Check status
-./bin/mh kokoro serve status
+./bin/mh kokoro status
+./bin/mh kokoro voices
+./bin/mh kokoro test --text "Hello"
 ```
 
-**Configuration** (`profiles/<user>/etc/voice.json`):
-```json
-{
-  "tts": {
-    "provider": "kokoro",
-    "kokoro": {
-      "voice": "af_sky",
-      "speed": 1.0
-    }
-  }
-}
-```
+### GPT-SoVITS
 
-### 2. GPT-SoVITS (Real-Time Voice Cloning)
+Requires the addon, a running service, and reference audio for the selected speaker. The Voice page can record, select, and export the reference.
 
-**Best For**: Instant voice cloning with minimal audio samples
+### RVC
 
-**Features:**
-- **Zero-shot cloning**: Replicate your voice from 5-10 seconds of audio
-- No training required - uses reference audio during inference
-- High-quality voice replication
-- Natural prosody and intonation
-- Automated workflow in web UI
+Requires Applio, an RVC model, and Piper. Device and quality settings apply to each conversion process. Use Voice Clone Training or the canonical CLI training command to create models.
 
-**Quick Start:**
-
-1. **Record Reference Audio**:
-   - Go to **Voice** tab → **Voice Clone Training**
-   - Select "GPT-SoVITS" provider
-   - Click **Record** and speak clearly for 5-10 seconds
-   - Recording automatically saved to reference directory
-
-2. **Activate SoVITS**:
-   - Go to **Voice** tab → **Voice Settings**
-   - Select "GPT-SoVITS" from provider dropdown
-   - Click **Save** (server starts automatically)
-
-3. **Test Your Voice**:
-   - Click **Test Voice** button
-   - Voice cloning happens in real-time
-
-**Configuration:**
-```json
-{
-  "tts": {
-    "provider": "gpt-sovits",
-    "sovits": {
-      "serverUrl": "http://127.0.0.1:9880",
-      "speakerId": "default",
-      "speed": 1.0,
-      "autoFallbackToPiper": true
-    }
-  }
-}
-```
-
-### 3. Applio RVC (High-Quality Voice Conversion)
-
-**Best For**: Maximum quality with trained voice models
-
-**Features:**
-- Train a dedicated voice model from your audio samples
-- Highest quality voice replication
-- Requires GPU for training (15-30 minutes)
-- Uses trained model for all future generations
-
-**Training Workflow:**
-
-1. **Collect Voice Samples**:
-   - Record 3-5 minutes of clear speech
-   - Upload via Voice Clone Training tab
-   - System stores samples in training directory
-
-2. **Train Model**:
-   - Click **Start Training** button
-   - Requires GPU with at least 6GB VRAM
-   - Training takes 15-30 minutes
-   - Progress shown in UI
-
-3. **Activate Model**:
-   - Select "Applio RVC" in Voice Settings
-   - Choose your trained model from dropdown
-   - Save and test
-
-## Speech-to-Text (STT) - Whisper
-
-MetaHuman uses OpenAI Whisper for local speech recognition:
-
-**Features:**
-- Accurate transcription
-- Multi-language support
-- Runs entirely locally
-- Real-time voice input
-
-**Starting Whisper and Voice Services:**
 ```bash
-# Launch the correct TTS/STT services for the active profile
-./bin/start-voice-server
-
-# Stop any server that start-voice-server launched (Kokoro, RVC, SoVITS, Whisper)
-./bin/stop-voice-server
+./bin/mh rvc status --name default
 ```
 
-`start-voice-server` inspects `profiles/<user>/etc/voice.json` to determine which providers to launch:
+## Runtime data
 
-- Starts Kokoro automatically when `tts.provider` is `kokoro`
-- Boots Applio RVC or GPT-SoVITS servers when selected
-- Starts Whisper STT if `stt.whisper.server.useServer` and `autoStart` are `true`
+Voice recordings, models, references, caches, and logs are user/runtime data. They must remain outside maintained source and must not be committed.
 
-Leave `autoStart` enabled (default) to have the script start Whisper whenever you bring MetaHuman online; disable it if you prefer to run Whisper manually.
-
-**Configuration** (`profiles/<user>/etc/voice.json`):
-```json
-{
-  "stt": {
-    "provider": "whisper",
-    "whisper": {
-      "model": "base.en",
-      "device": "cpu",
-      "computeType": "int8",
-      "language": "en",
-      "server": {
-        "useServer": true,
-        "url": "http://127.0.0.1:9883",
-        "autoStart": true,
-        "port": 9883
-      }
-    }
-  }
-}
-```
-
-**Model Sizes:**
-- **tiny**: Fastest, lowest accuracy
-- **base**: Good balance (default)
-- **small**: Better accuracy
-- **medium**: High accuracy, slower
-- **large**: Best accuracy, requires GPU
-
-## Voice Chat Interface
-
-### Voice Mode Button
-
-In the chat interface:
-1. Click the **microphone icon** (🎤) next to the input box
-2. Speak your message
-3. MetaHuman transcribes and responds
-4. Response is automatically read aloud
-
-### Per-Message TTS Controls
-
-**In Chat Bubbles:**
-- Small microphone icon (🎤) at bottom-right of each message
-- Click to replay any message aloud
-- Works for both user and assistant messages
-- Useful for re-listening to responses
-
-**Stop Button:**
-- **Stop button** (🛑) appears when audio is playing
-- Click to immediately interrupt playback
-- Cancels active audio and pending TTS
-- Available on desktop and mobile
-
-### Inner Dialogue TTS
-
-Enable automatic reading of reflections and dreams:
-1. Go to **Settings**
-2. Toggle **"Enable TTS for inner dialogue"**
-3. Reflections and dreams will be read aloud as they occur
-4. Creates an auditory consciousness stream
-
-## Voice Workspace (Web UI)
-
-The Voice tab provides centralized voice management:
-
-### Upload & Transcribe
-- Drag-and-drop audio files for transcription
-- Whisper processes and creates memories
-- View transcripts in Memory Browser
-
-### Voice Clone Training
-- Record or upload voice samples
-- Stores per-user samples in `profiles/<username>/out/voice-training`
-- Progress indicators for active profile
-- Provider selection (SoVITS, RVC)
-
-### Voice Settings
-- Choose TTS provider (Kokoro, SoVITS, RVC)
-- Select voice/model from available options
-- Adjust speaking rate and quality
-- Test voice with sample text
-- Preferences stored in `profiles/<username>/etc/voice.json`
-
-### Special TTS Effects
-- **Mutant Super Intelligence** profile uses dual-voice effect
-- Pitch-shifted audio mixing for unique sound
-- Automatically applied when profile is active
-
-## Audio File Organization
-
-Voice data is stored per-user:
-
-```
-profiles/<username>/
-├── out/
-│   ├── voice-training/          # Training samples
-│   │   ├── sovits-reference/    # SoVITS reference audio
-│   │   └── rvc-samples/         # RVC training data
-│   ├── voices/                  # Installed voice models
-│   │   ├── kokoro-*.onnx        # Kokoro voices
-│   │   ├── sovits-*.pth         # SoVITS models
-│   │   └── rvc-*.pth            # RVC trained models
-│   └── audio-cache/             # TTS audio cache
-└── etc/
-    └── voice.json               # Voice preferences
-```
-
-## Voice Settings Configuration
-
-Full configuration example:
-
-```json
-{
-  "tts": {
-    "provider": "kokoro",
-    "kokoro": {
-      "voice": "af_sky",
-      "speed": 1.0
-    },
-    "sovits": {
-      "serverUrl": "http://127.0.0.1:9880",
-      "speakerId": "default",
-      "speed": 1.0,
-      "autoFallbackToPiper": true
-    },
-    "rvc": {
-      "modelPath": "profiles/greggles/out/voices/rvc-greggles.pth",
-      "pitch": 0,
-      "indexRate": 0.75
-    }
-  },
-  "stt": {
-    "provider": "whisper",
-    "whisper": {
-      "model": "base",
-      "serverUrl": "http://127.0.0.1:9000",
-      "language": "en"
-    }
-  },
-  "audioCache": {
-    "enabled": true,
-    "maxSizeMB": 500
-  }
-}
-```
-
-## Multi-User Voice Isolation
-
-Each user has isolated voice settings and training data:
-- **Voice samples**: Stored per-profile
-- **Preferences**: Independent voice.json per user
-- **Shared voices**: Owners can install voices in `out/voices/` for all users
-- **Personal models**: User-trained RVC models stay private
-
-## Best Practices
-
-### For Voice Cloning
-
-1. **Recording Quality**:
-   - Use a quiet environment
-   - Speak clearly and naturally
-   - Avoid background noise
-   - 5-10 seconds minimum for SoVITS
-   - 3-5 minutes for RVC training
-
-2. **Voice Selection**:
-   - **Kokoro**: Best for quick setup, multi-language
-   - **SoVITS**: Best for instant cloning, testing
-   - **RVC**: Best for production use, highest quality
-
-3. **Testing**:
-   - Always test voice output before committing
-   - Adjust speaking rate for clarity
-   - Try different sample text to verify quality
-
-### For Voice Chat
-
-1. Enable both TTS and STT for seamless voice conversation
-2. Use voice mode for hands-free interaction
-3. Stop button for interrupting long responses
-4. Replay important messages using per-message controls
-
-## Troubleshooting
-
-### TTS Not Working
-- Check provider server is running (`./bin/mh kokoro serve status`)
-- Verify voice.json configuration
-- Check audio output device settings
-- Look for errors in web UI console
-
-### STT Not Recognizing
-- Ensure Whisper server is running
-- Check microphone permissions in browser
-- Verify correct input device selected
-- Try speaking more clearly or adjusting volume
-
-### Voice Cloning Quality Issues
-- Record more/better voice samples
-- Use quieter environment for recording
-- Try different provider (SoVITS vs RVC)
-- Adjust pitch and index rate settings
-
-## Next Steps
-
-- Use voice in [Chat Interface](chat-interface.md) for hands-free interaction
-- Integrate voice memories in [Memory System](memory-system.md)
-- Monitor voice services in [Dashboard](dashboard-monitoring.md)
-- Learn about [AI Training](../training-personalization/ai-training.md) to personalize responses
+See [Voice Training](../training-personalization/voice-training.md) for dataset and model workflows.

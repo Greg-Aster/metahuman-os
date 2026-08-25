@@ -27,6 +27,7 @@ import {
 } from '../../graph-runtime.js';
 import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
+import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
 // ============================================================================
 // Types
@@ -73,6 +74,19 @@ export interface ResponsePipelineResult {
 // ============================================================================
 
 const graphCache: Record<string, CachedGraphEntry | null> = {};
+
+export async function resolveCuriosityAnswer(
+  request: ResponsePipelineRequest,
+  username: string,
+  resolver: Pick<typeof curiosityQuestionStore, 'resolve'> = curiosityQuestionStore,
+): Promise<void> {
+  if (request.cardType !== 'curiosity_response') return;
+  const questionId = request.cardData.questionId;
+  if (typeof questionId !== 'string' || !questionId.trim()) {
+    throw new Error('Curiosity response requires a questionId');
+  }
+  await resolver.resolve(username, questionId, 'answered');
+}
 
 /**
  * Load the response pipeline graph with caching
@@ -303,6 +317,8 @@ export async function handleResponsePipeline(
     const pipelineTriggered = output.pipelineTriggered || false;
     const nextStatus = output.nextStatus || null;
 
+    await resolveCuriosityAnswer(request, username);
+
     logStep(7, 'Result ready', {
       hasResponse: !!response,
       responseLength: response.length,
@@ -429,6 +445,8 @@ export function streamResponsePipeline(
           try { controller.close(); } catch {}
           return;
         }
+
+        await resolveCuriosityAnswer(request, username);
 
         // Send result
         push('progress', { step: 'complete', message: `Completed in ${duration}ms` });

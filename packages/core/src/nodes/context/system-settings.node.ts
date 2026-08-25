@@ -5,7 +5,9 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
-import { loadCognitiveMode } from '../../cognitive-mode.js';
+import { canWriteMemory, loadCognitiveMode } from '../../cognitive-mode.js';
+import { loadChatSettings } from '../../chat-settings.js';
+import { getActiveFacet, loadDecisionRules } from '../../identity.js';
 
 export const SystemSettingsNode: NodeDefinition = defineNode({
   id: 'system_settings',
@@ -27,7 +29,6 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
 
       let chatSettings = null;
       try {
-        const { loadChatSettings } = await import('../../chat-settings.js');
         chatSettings = loadChatSettings();
       } catch (error) {
         console.warn('[SystemSettings] Could not load chat settings:', error);
@@ -35,7 +36,6 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
 
       let activeFacet = null;
       try {
-        const { getActiveFacet } = await import('../../identity.js');
         activeFacet = getActiveFacet();
       } catch (error) {
         if ((error as Error).name === 'PersonaFacetConfigurationError') throw error;
@@ -44,7 +44,6 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
 
       let memoryPolicy = null;
       try {
-        const { canWriteMemory } = await import('../../cognitive-mode.js');
         const canWrite = canWriteMemory(mode);
         memoryPolicy = {
           canWriteConversation: canWrite,
@@ -56,7 +55,6 @@ export const SystemSettingsNode: NodeDefinition = defineNode({
 
       let trustLevel = 'supervised_auto';
       try {
-        const { loadDecisionRules } = await import('../../identity.js');
         const rules = loadDecisionRules();
         trustLevel = rules.trustLevel;
       } catch (error) {

@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/services.json",
   "version": "1.0.0",
   "description": "Persistent service lifecycle configuration",
   "services": {
@@ -34,13 +33,12 @@
       "boredomReflectionInactivityThreshold": 900,
       "boredomReflectionJitterMs": 180000,
       "maxCycleSteps": 8,
-      "graph": "robot-operator",
       "boredomObserverGraph": "boredom-observer",
-    "boredomMovementGraph": "boredom-movement",
-    "boredomReflectionGraph": "boredom-reflection",
-    "autonomyGraph": "boredom-autonomy",
-    "environmentGraph": "environment",
-    "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across the three named child workflows between cooldowns. Child workflows provide stimuli; Boredom Autonomy owns semantic idle decisions and reuses canonical robot execution nodes."
+      "boredomMovementGraph": "boredom-movement",
+      "boredomReflectionGraph": "boredom-reflection",
+      "autonomyGraph": "boredom-autonomy",
+      "environmentGraph": "environment",
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across the three named child planners between cooldowns. Each child graph authors one contextual intention; Boredom Autonomy executes and revises it from correlated results."
     },
     "maintenance-service": {
       "id": "maintenance-service",

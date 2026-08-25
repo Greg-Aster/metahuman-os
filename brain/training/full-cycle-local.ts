@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
-import { systemPaths, audit, setActiveAdapter } from '@metahuman/core';
+import { systemPaths, audit, loadUserConfig, setActiveAdapter } from '@metahuman/core';
 import { withUserContext, getUserContext } from '@metahuman/core/context';
 import { requireUserInfo } from '@metahuman/core/user-resolver';
 import dotenv from 'dotenv';
@@ -53,114 +53,11 @@ function cleanupAfterSuccessfulMerge(runRoot: string, workLocal: string) {
   safeRemove(path.join(workLocal, "temp_adapter_download"));
 }
 
-/**
- * ROBUSTNESS: Clean up any stuck training processes before starting
- * Prevents resource conflicts and hung processes from blocking new training runs
- *
- * NOTE: We need to exclude our entire process tree (tsx -> node), not just process.pid,
- * because tsx runs as a wrapper and ps aux may return different PIDs
- */
-function cleanupStuckProcesses(username: string) {
-  console.log('[full-cycle-local] Checking for stuck training processes...');
-
-  try {
-    // Get our process tree PIDs (current PID and parent PID)
-    const currentPid = process.pid.toString();
-    const parentPid = process.ppid?.toString() || '';
-
-    // Build set of PIDs to exclude (our entire process group)
-    const processTreePids = new Set([currentPid, parentPid]);
-
-    try {
-      // Get all PIDs in our process group
-      const pgid = execSync(`ps -o pgid= -p ${currentPid}`, { encoding: 'utf-8' }).trim();
-      if (pgid) {
-        const groupPids = execSync(`ps -o pid= -g ${pgid}`, { encoding: 'utf-8' })
-          .trim()
-          .split('\n')
-          .map(p => p.trim())
-          .filter(Boolean);
-        groupPids.forEach(pid => processTreePids.add(pid));
-      }
-    } catch {
-      // Fallback to just current and parent PID
-    }
-
-    console.log(`[full-cycle-local] Current process tree PIDs to exclude: ${Array.from(processTreePids).join(', ')}`);
-
-    // Find all full-cycle and dataset-builder processes for this user
-    const psOutput = execSync(
-      `ps aux | grep -E "full-cycle.ts|full-cycle-local.ts|adapter-builder.ts" | grep "${username}" | grep -v grep | awk '{print $2}'`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
-    ).trim();
-
-    if (psOutput) {
-      const pids = psOutput.split('\n').filter(Boolean);
-
-      // Filter out our entire process tree
-      const stuckPids = pids.filter(pid => !processTreePids.has(pid));
-
-      if (stuckPids.length > 0) {
-        console.log(`[full-cycle-local] Found ${stuckPids.length} stuck process(es): ${stuckPids.join(', ')}`);
-        console.log('[full-cycle-local] Killing stuck processes...');
-
-        for (const pid of stuckPids) {
-          try {
-            execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
-          } catch (err) {
-            // Process may have already exited, ignore
-          }
-        }
-
-        console.log('[full-cycle-local] Stuck processes cleaned up');
-      } else {
-        console.log('[full-cycle-local] No stuck processes found');
-      }
-    } else {
-      console.log('[full-cycle-local] No stuck processes found');
-    }
-  } catch (err) {
-    // ps command returned no results or failed - not critical
-    console.log('[full-cycle-local] Process cleanup check complete');
-  }
-
-  // Unload Ollama models to free resources
-  try {
-    console.log('[full-cycle-local] Unloading Ollama models to free resources...');
-    execSync('curl -s http://localhost:11434/api/generate -d \'{"model": "", "keep_alive": 0}\'', {
-      timeout: 2000,
-      stdio: 'ignore',
-    });
-    console.log('[full-cycle-local] Ollama models unloaded');
-  } catch (err) {
-    // Ollama may not be running or may timeout - not critical
-    console.log('[full-cycle-local] Ollama cleanup skipped (may not be running)');
-  }
-
-  // Clean up stale PID files
-  try {
-    const pidFile = path.join(systemPaths.logs, 'run', `full-cycle-local-${username}.pid`);
-    if (fs.existsSync(pidFile)) {
-      fs.rmSync(pidFile, { force: true });
-      console.log('[full-cycle-local] Removed stale PID file');
-    }
-  } catch (err) {
-    // Not critical
-  }
-
-  console.log('[full-cycle-local] Pre-flight cleanup complete\n');
-}
-
 async function runAgent(agentName: string, args: string[] = []): Promise<number> {
   return new Promise((resolve, reject) => {
-    // Check multiple paths after agent refactor:
-    // 1. brain/agents/{name}/cli.ts (new directory structure)
-    // 2. brain/training/{name}.ts (training scripts)
-    // 3. brain/agents/{name}.ts (legacy flat structure)
     const possiblePaths = [
       path.join(systemPaths.brain, 'agents', agentName, 'cli.ts'),
       path.join(systemPaths.brain, 'training', `${agentName}.ts`),
-      path.join(systemPaths.brain, 'agents', `${agentName}.ts`),
     ];
 
     const agentPath = possiblePaths.find(p => fs.existsSync(p));
@@ -290,9 +187,6 @@ async function mainWithContext() {
     process.exit(1);
   }
 
-  // ROBUSTNESS: Clean up stuck processes before starting
-  cleanupStuckProcesses(ctx.username);
-
   currentRunId = randomBytes(8).toString('hex');
   console.log(`[${new Date().toISOString()}] === Starting local full cycle for user: ${ctx.username} (${currentRunId}) ===`);
 
@@ -302,6 +196,11 @@ async function mainWithContext() {
     process.exit(1);
   }
   const profileRoot = ctx.profilePaths.root;
+  const profileTrainingConfig = loadUserConfig<Record<string, any>>(
+    'training.json',
+    {},
+    ctx.username,
+  );
 
   // Step 1: Determine dataset date and run label
   const now = new Date();
@@ -317,12 +216,12 @@ async function mainWithContext() {
   console.log(`[${new Date().toISOString()}] Dataset dir: ${datasetDir}`);
 
   const OUT_ROOT = path.join(datasetDir, RUN_LABEL);
-  const legacyRunRoot = path.join(systemPaths.root, 'metahuman-runs', ctx.username, DATE_STR);
-  const WORK_LOCAL = path.join(legacyRunRoot, RUN_LABEL);
+  const workRoot = path.join(systemPaths.root, 'metahuman-runs', ctx.username, DATE_STR);
+  const WORK_LOCAL = path.join(workRoot, RUN_LABEL);
   const FINAL_ADAPTER_DIR = path.join(OUT_ROOT, 'adapter');
 
   // Step 2: Prepare local training data
-  mkdirpSync(legacyRunRoot);
+  mkdirpSync(workRoot);
   mkdirpSync(WORK_LOCAL);
   mkdirpSync(FINAL_ADAPTER_DIR);
 
@@ -333,13 +232,11 @@ async function mainWithContext() {
 
   mkdirpSync(path.dirname(RAW_DATA_FILE));
 
-  // Step 2.2: Build dataset with advanced curation or classic deduplication
-  const datasetStrategy = process.env.METAHUMAN_DATASET_BUILDER?.toLowerCase() || 'advanced';
+  // Step 2.2: Build the canonical curated dataset.
   let samples_used = 0;
 
-  if (datasetStrategy === 'advanced') {
-    // NEW: Use advanced curation pipeline (same as full-cycle.ts)
-    console.log('[full-cycle-local] Using advanced curation pipeline');
+  {
+    console.log('[full-cycle-local] Using canonical curation pipeline');
 
     const CURATED_PATH = path.join(OUT_ROOT, 'curated_memories.json');
     const FORMATTED_PATH = path.join(OUT_ROOT, 'formatted_samples.json');
@@ -395,13 +292,9 @@ async function mainWithContext() {
     const formattedContent = fs.readFileSync(FORMATTED_PATH, 'utf-8');
     const formattedSamples = JSON.parse(formattedContent) as FormattedSample[];
 
-    // Get base model from config (will be loaded below)
-    const trainingConfigPath = path.join(systemPaths.etc, 'training.json');
-    let baseModel = DEFAULT_TRAINING_MODEL;
-    if (fs.existsSync(trainingConfigPath)) {
-      const cfg = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
-      baseModel = process.env.METAHUMAN_BASE_MODEL || cfg.base_model || baseModel;
-    }
+    const baseModel = process.env.METAHUMAN_BASE_MODEL
+      || profileTrainingConfig.base_model
+      || DEFAULT_TRAINING_MODEL;
 
     console.log(`[full-cycle-local] Applying schema for base model: ${baseModel}`);
     const schemaAppliedSamples: SchemaAppliedSample[] = applySchemaBatch(formattedSamples, baseModel);
@@ -424,80 +317,11 @@ async function mainWithContext() {
     fs.writeFileSync(canonicalRawDataFile, jsonlLines.join('\n'));
 
     samples_used = schemaAppliedSamples.length;
-    console.log(`[full-cycle-local] Advanced curation complete: ${samples_used} high-quality samples`);
-
-  } else {
-    // Classic mode: Simple deduplication (legacy behavior)
-    console.log('[full-cycle-local] Using classic deduplication strategy');
-
-    const instructionsPath = path.join(datasetDir, 'instructions.jsonl');
-
-    // If dataset doesn't exist, run adapter-builder
-    if (!fs.existsSync(datasetDir) || !fs.existsSync(instructionsPath)) {
-      console.log('[full-cycle-local] Building new dataset with adapter-builder...');
-      const buildRc = await runAgent('adapter-builder');
-      if (buildRc !== 0) {
-        throw new Error('adapter-builder failed');
-      }
-    }
-
-    // Copy instructions to raw dataset file
-    try {
-      fs.copyFileSync(instructionsPath, RAW_DATA_FILE);
-      fs.copyFileSync(instructionsPath, canonicalRawDataFile);
-    } catch (copyErr) {
-      console.warn('[full-cycle-local] Failed to copy dataset:', (copyErr as Error).message);
-    }
-
-    // Simple deduplication
-    const rawLines = fs.readFileSync(RAW_DATA_FILE, 'utf-8').trim().split('\n').filter(Boolean);
-    const parsed = rawLines
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(obj => obj && obj.instruction && obj.output);
-
-    const seenSamples = new Set<string>();
-    const cleaned: any[] = [];
-    let duplicateCount = 0;
-
-    for (const obj of parsed) {
-      const cleanObj = {
-        instruction: obj.instruction,
-        input: obj.input || '',
-        output: obj.output
-      };
-      const fingerprint = JSON.stringify(cleanObj);
-
-      if (seenSamples.has(fingerprint)) {
-        duplicateCount++;
-        continue;
-      }
-
-      seenSamples.add(fingerprint);
-      cleaned.push(cleanObj);
-    }
-
-    fs.writeFileSync(CLEAN_DATA_FILE, cleaned.map(obj => JSON.stringify(obj)).join('\n'));
-    samples_used = cleaned.length;
-
-    if (duplicateCount > 0) {
-      console.log(`[full-cycle-local] Removed ${duplicateCount} duplicate samples`);
-    }
-    console.log(`[full-cycle-local] Kept ${samples_used} unique samples after cleaning`);
-
-    if (samples_used === 0) {
-      throw new Error('CLEAN_DATA_FILE ended up empty after cleaning');
-    }
+    console.log(`[full-cycle-local] Curation complete: ${samples_used} high-quality samples`);
   }
 
-  // Step 2.3: Load training config
+  // Step 2.3: Merge the local engine baseline and profile configuration.
   const trainingLocalPath = path.join(systemPaths.etc, 'training-local.json');
-  const trainingFallbackPath = path.join(systemPaths.etc, 'training.json');
   let config: any = {
     "base_model": DEFAULT_TRAINING_MODEL,
     "lora_rank": 8,
@@ -512,29 +336,19 @@ async function mainWithContext() {
     "load_in_16bit": true
   };
 
-  let configPathUsed: string | null = null;
   if (fs.existsSync(trainingLocalPath)) {
     try {
       const loadedConfig = JSON.parse(fs.readFileSync(trainingLocalPath, 'utf-8'));
       const { comment, notes, ...trainingParams } = loadedConfig;
       config = { ...config, ...trainingParams };
-      configPathUsed = trainingLocalPath;
       console.log(`[full-cycle-local] Loaded training config from ${trainingLocalPath}`);
     } catch (error) {
       console.warn(`[full-cycle-local] Failed to load training-local.json: ${(error as Error).message}`);
     }
   }
-  if (!configPathUsed && fs.existsSync(trainingFallbackPath)) {
-    try {
-      const loadedConfig = JSON.parse(fs.readFileSync(trainingFallbackPath, 'utf-8'));
-      const { comment, notes, ...trainingParams } = loadedConfig;
-      config = { ...config, ...trainingParams };
-      configPathUsed = trainingFallbackPath;
-      console.log(`[full-cycle-local] Loaded training config from ${trainingFallbackPath}`);
-    } catch (error) {
-      console.warn(`[full-cycle-local] Failed to load fallback training config: ${(error as Error).message}`);
-    }
-  }
+  const { comment, notes, ...profileTrainingParams } = profileTrainingConfig;
+  config = { ...config, ...profileTrainingParams };
+  console.log(`[full-cycle-local] Loaded profile config from ${path.join(ctx.profilePaths.etc, 'training.json')}`);
 
   // Environment variable override for base_model
   if (process.env.METAHUMAN_BASE_MODEL) {
@@ -579,19 +393,19 @@ async function mainWithContext() {
   }
 
   // Step 5: Check for merged GGUF
-  const recentGGUF = path.join(OUT_ROOT, 'adapter.gguf');
+  const trainedGGUF = path.join(OUT_ROOT, 'adapter.gguf');
   const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
 
-  if (fs.existsSync(recentGGUF)) {
+  if (fs.existsSync(trainedGGUF)) {
     try {
       if (fs.existsSync(canonicalGGUF)) {
         fs.rmSync(canonicalGGUF);
       }
-      const relative = path.relative(datasetDir, recentGGUF);
+      const relative = path.relative(datasetDir, trainedGGUF);
       fs.symlinkSync(relative, canonicalGGUF);
     } catch (e) {
       console.warn('[full-cycle-local] Failed to symlink GGUF, copying instead:', (e as Error).message);
-      fs.copyFileSync(recentGGUF, canonicalGGUF);
+      fs.copyFileSync(trainedGGUF, canonicalGGUF);
     }
   } else {
     console.warn('[full-cycle-local] No GGUF file found. You may need to convert manually.');
@@ -603,7 +417,7 @@ async function mainWithContext() {
 
   const modelfile = `# MetaHuman OS Model - ${ctx.username} - ${RUN_LABEL}
 # Trained locally
-FROM ${recentGGUF}
+FROM ${trainedGGUF}
 
 SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
 `;
@@ -628,8 +442,7 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
   const activeInfo: ActiveAdapterInfo = {
     modelName,
     activatedAt,
-    adapterPath: recentGGUF,
-    evalScore: 1.0,
+    adapterPath: trainedGGUF,
     dataset: RUN_LABEL,
     date: DATE_STR,
     modelfilePath,
@@ -637,7 +450,7 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
     activatedBy: 'full-cycle-local',
     trainingMethod: 'local',
     runLabel: RUN_LABEL,
-    ggufAdapterPath: recentGGUF,
+    ggufAdapterPath: trainedGGUF,
     baseModel: config.base_model,
   };
 
@@ -652,7 +465,7 @@ SYSTEM You are ${personaName}'s digital personality extension. Speak naturally i
   });
 
   // Step 8: Auto-load into Ollama
-  if (fs.existsSync(recentGGUF)) {
+  if (fs.existsSync(trainedGGUF)) {
     try {
       console.log(`[full-cycle-local] Creating Ollama model: ${modelName}`);
       execSync(`ollama create ${modelName} -f ${modelfilePath}`, { stdio: 'inherit' });

@@ -483,8 +483,8 @@
 </script>
 
 {#if isOpen}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] backdrop-blur-sm" on:click={handleClose}>
-    <div class="bg-gradient-to-b from-[#1a1a2e] to-[#16213e] border border-emerald-500/20 rounded-2xl w-[90%] max-w-[450px] max-h-[85vh] overflow-hidden flex flex-col shadow-[0_0_40px_rgba(0,255,136,0.1),0_20px_60px_rgba(0,0,0,0.5)]" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] backdrop-blur-sm">
+    <div class="bg-gradient-to-b from-[#1a1a2e] to-[#16213e] border border-emerald-500/20 rounded-2xl w-[90%] max-w-[450px] max-h-[85vh] overflow-hidden flex flex-col shadow-[0_0_40px_rgba(0,255,136,0.1),0_20px_60px_rgba(0,0,0,0.5)]" role="dialog" aria-modal="true" tabindex="-1">
       <!-- Header -->
       <div class="flex justify-between items-start p-5 border-b border-emerald-500/15 bg-emerald-500/[0.03]">
         <div class="flex flex-col gap-1">
@@ -678,8 +678,8 @@
             <div class="p-4 border-b border-emerald-500/15 flex flex-col gap-3">
               <!-- Date Range Selector -->
               <div class="flex flex-col gap-1.5 p-3 bg-black/20 border border-white/10 rounded-lg">
-                <label class="text-xs font-medium text-white/70">Memory sync range:</label>
-                <select class="px-3 py-2 bg-black/30 border border-white/15 rounded-md text-sm text-white cursor-pointer focus:outline-none focus:border-emerald-500/50" bind:value={memoryDays}>
+                <label for="memory-sync-range" class="text-xs font-medium text-white/70">Memory sync range:</label>
+                <select id="memory-sync-range" class="px-3 py-2 bg-black/30 border border-white/15 rounded-md text-sm text-white cursor-pointer focus:outline-none focus:border-emerald-500/50" bind:value={memoryDays}>
                   {#each dateRangeOptions as option}
                     <option value={option.value}>{option.label}</option>
                   {/each}
@@ -797,8 +797,8 @@
 
 <!-- Sync Complete Dialog -->
 {#if showSyncComplete && syncResult}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] backdrop-blur-sm" on:click={handleCloseSyncComplete}>
-    <div class="bg-gradient-to-b from-[#1a1a2e] to-[#16213e] border border-emerald-500/30 rounded-2xl w-[90%] max-w-[360px] p-8 text-center shadow-[0_0_60px_rgba(0,255,136,0.2),0_20px_60px_rgba(0,0,0,0.5)]" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] backdrop-blur-sm">
+    <div class="bg-gradient-to-b from-[#1a1a2e] to-[#16213e] border border-emerald-500/30 rounded-2xl w-[90%] max-w-[360px] p-8 text-center shadow-[0_0_60px_rgba(0,255,136,0.2),0_20px_60px_rgba(0,0,0,0.5)]" role="dialog" aria-modal="true" tabindex="-1">
       <div class="mb-6">
         {#if syncResult.success}
           <span class="inline-flex items-center justify-center w-16 h-16 rounded-full text-3xl font-bold bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 border-2 border-emerald-400 text-emerald-400 shadow-[0_0_30px_rgba(0,255,136,0.3)]">✓</span>

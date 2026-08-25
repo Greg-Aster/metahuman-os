@@ -52,7 +52,6 @@
   type AdapterInfo = {
     status?: string;
     modelName?: string;
-    isDualAdapter?: boolean;
     activatedAt?: string;
     source?: string;
   } | null;
@@ -406,7 +405,6 @@
     path: string;
     date?: string;
     createdAt?: string;
-    isDualAdapter?: boolean;
     size?: number;
     loaded?: boolean;
   }
@@ -967,9 +965,6 @@
                             {:else}
                               <span class="restart-badge">⟳ restart</span>
                             {/if}
-                            {#if adapter.isDualAdapter}
-                              <span class="dual-badge">dual</span>
-                            {/if}
                           </span>
                           {#if adapter.createdAt}
                             <span class="model-desc">{adapter.createdAt}</span>
@@ -1087,7 +1082,6 @@
               title={personaFacetTooltip}
               on:click={cyclePersonaFacet}
               disabled={Boolean(personaFacetError) || !activeFacet}
-              aria-invalid={Boolean(personaFacetError)}
             >
               {personaFacetError
                 ? '⚠ error'
@@ -1112,10 +1106,10 @@
 
 <!-- vLLM LoRA Restart Modal -->
 {#if showRestartModal}
-  <div class="modal-overlay" on:click={dismissRestartModal} on:keydown={(e) => e.key === 'Escape' && dismissRestartModal()} role="dialog" aria-modal="true" tabindex="-1">
-    <div class="modal-content max-w-[400px]" on:click|stopPropagation role="document">
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[400px]" on:keydown={(e) => e.key === 'Escape' && dismissRestartModal()} role="dialog" aria-modal="true" aria-labelledby="lora-restart-title" tabindex="-1">
       <div class="modal-header flex items-center justify-between">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">⚡ Server Restart Required</h3>
+        <h3 id="lora-restart-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">⚡ Server Restart Required</h3>
       </div>
       <div class="modal-body">
         <p class="mb-3 text-sm text-gray-600 dark:text-gray-400">

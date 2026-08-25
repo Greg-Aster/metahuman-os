@@ -4,6 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { saveDecisionRules } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
   const rules = inputs[0];
@@ -16,7 +17,6 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
   }
 
   try {
-    const { saveDecisionRules } = await import('../../identity.js');
     saveDecisionRules(rules);
 
     return {

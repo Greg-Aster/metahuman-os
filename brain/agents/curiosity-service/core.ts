@@ -18,6 +18,8 @@ import {
   withUserContext,
   loadCuriosityConfig,
   loadTrustLevel,
+  curiosityQuestionStore,
+  listFailedNodes,
   runGraph,
   validateSvelteFlowGraph,
   getActiveBackend,
@@ -29,16 +31,22 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 // Types
 // ============================================================================
 
-export interface CuriosityServiceOptions {
-  singleUser?: boolean;
-}
+export type CuriosityQuestionSkipReason = 'disabled' | 'trust' | 'max-open' | 'no-memories';
+
+export type CuriosityQuestionOutcome =
+  | { status: 'generated'; questionId: string; memoriesConsidered: number; openQuestionsBefore: number }
+  | { status: 'skipped'; reason: CuriosityQuestionSkipReason; openQuestionsBefore?: number };
 
 export interface CuriosityServiceResult {
   success: boolean;
   questionsAsked: number;
+  questionsSkipped: number;
   userCount: number;
+  outcome?: CuriosityQuestionOutcome;
   errors: string[];
 }
+
+const TRUST_LEVELS = ['observe', 'suggest', 'supervised_auto', 'bounded_auto', 'adaptive_auto'] as const;
 
 // ============================================================================
 // Helper Functions
@@ -54,6 +62,36 @@ export async function loadCuriosityGraph(): Promise<SvelteFlowGraph> {
   return validateSvelteFlowGraph(parsed);
 }
 
+function requiredNodeId(graph: SvelteFlowGraph, nodeType: string): string {
+  const matching = graph.nodes.filter(node => node.data.nodeType === nodeType);
+  if (matching.length !== 1) {
+    throw new Error(`Curiosity graph must contain exactly one ${nodeType} node; found ${matching.length}`);
+  }
+  return matching[0].id;
+}
+
+export function evaluateQuestionAdmission(input: {
+  maxOpenQuestions: number;
+  openQuestions: number;
+  currentTrust: string;
+  requiredTrust: string;
+}): CuriosityQuestionSkipReason | null {
+  if (!Number.isInteger(input.maxOpenQuestions) || input.maxOpenQuestions < 0) {
+    throw new Error('maxOpenQuestions must be a non-negative integer');
+  }
+  if (!Number.isInteger(input.openQuestions) || input.openQuestions < 0) {
+    throw new Error('openQuestions must be a non-negative integer');
+  }
+  if (input.maxOpenQuestions === 0) return 'disabled';
+  const currentTrustIdx = TRUST_LEVELS.indexOf(input.currentTrust as typeof TRUST_LEVELS[number]);
+  const requiredTrustIdx = TRUST_LEVELS.indexOf(input.requiredTrust as typeof TRUST_LEVELS[number]);
+  if (currentTrustIdx < 0) throw new Error(`Unknown current trust level: ${input.currentTrust}`);
+  if (requiredTrustIdx < 0) throw new Error(`Unknown minimum curiosity trust level: ${input.requiredTrust}`);
+  if (currentTrustIdx < requiredTrustIdx) return 'trust';
+  if (input.openQuestions >= input.maxOpenQuestions) return 'max-open';
+  return null;
+}
+
 // ============================================================================
 // Question Generation
 // ============================================================================
@@ -63,101 +101,93 @@ export async function loadCuriosityGraph(): Promise<SvelteFlowGraph> {
  *
  * SECURITY: All memory access is user-specific via context.userId
  */
-export async function generateUserQuestion(username: string): Promise<boolean> {
+export async function generateUserQuestion(username: string): Promise<CuriosityQuestionOutcome> {
   console.log(`[curiosity-service] Processing user: ${username}`);
 
   const config = loadCuriosityConfig(username);
-  const trust = loadTrustLevel();
-
-  // Check if system is enabled
   if (config.maxOpenQuestions === 0) {
-    console.log(`[curiosity-service] Curiosity disabled (maxOpenQuestions = 0)`);
-    return false;
+    console.log(`[curiosity-service] Skipping ${username}: disabled`);
+    return { status: 'skipped', reason: 'disabled' };
+  }
+  const trust = loadTrustLevel({ strict: true });
+  const openQuestions = await curiosityQuestionStore.countPending(username);
+  const skipReason = evaluateQuestionAdmission({
+    maxOpenQuestions: config.maxOpenQuestions,
+    openQuestions,
+    currentTrust: trust,
+    requiredTrust: config.minTrustLevel,
+  });
+  if (skipReason) {
+    console.log(`[curiosity-service] Skipping ${username}: ${skipReason}`);
+    return { status: 'skipped', reason: skipReason, openQuestionsBefore: openQuestions };
   }
 
-  // Check if user has permission (min trust level)
-  const trustLevels = ['observe', 'suggest', 'trusted', 'supervised_auto', 'bounded_auto', 'adaptive_auto'];
-  const currentTrustIdx = trustLevels.indexOf(trust);
-  const requiredTrustIdx = trustLevels.indexOf(config.minTrustLevel);
-
-  if (currentTrustIdx < requiredTrustIdx) {
-    console.log(`[curiosity-service] Trust level ${trust} below minimum ${config.minTrustLevel}, skipping`);
-    return false;
-  }
-
+  // Log which backend is active (model router handles actual availability)
   try {
-    // Log which backend is active (model router handles actual availability)
-    try {
-      const backend = getActiveBackend();
-      console.log(`[curiosity-service] Using LLM backend: ${backend}`);
-    } catch (e) {
-      console.log('[curiosity-service] Using model router (backend auto-selected)');
-    }
-
-    // Load curiosity cognitive graph
-    const graph = await loadCuriosityGraph();
-
-    // Execute graph with user context
-    // SECURITY: userId is passed explicitly to ensure user-specific path resolution
-    const graphContext = {
-      userId: username,
-      allowMemoryWrites: true,
-      cognitiveMode: 'agent' as const,
-    };
-
-    console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
-    const graphResult = await runGraph({ graph, context: graphContext });
-
-    // Extract results from graph execution (node IDs are strings in Svelte Flow format)
-    const samplerNode = graphResult.nodes.get('2');
-    const questionGeneratorNode = graphResult.nodes.get('3');
-    const saverNode = graphResult.nodes.get('4');
-
-    const memoriesCount = samplerNode?.outputs?.count || 0;
-    const question = questionGeneratorNode?.outputs?.question || '';
-    const questionId = saverNode?.outputs?.questionId;
-    const saved = saverNode?.outputs?.saved;
-
-    if (!saved || !question) {
-      console.log(`[curiosity-service] Failed to generate or save question`);
-      return false;
-    }
-
-    console.log(`[curiosity-service] Asked question (ID: ${questionId}): "${question.substring(0, 60)}..."`);
-    console.log(`[curiosity-service] Based on ${memoriesCount} weighted memories`);
-
-    // Audit successful question generation
-    audit({
-      event: 'curiosity_question_generated',
-      category: 'decision',
-      level: 'info',
-      message: 'Curiosity service generated question',
-      actor: 'curiosity-service',
-      metadata: {
-        questionId,
-        questionPreview: question.substring(0, 100),
-        memoriesConsidered: memoriesCount,
-        trust,
-        autonomy: 'normal',
-        username,
-        usedGraph: true,
-      }
-    });
-
-    return true;
-
-  } catch (error) {
-    console.error(`[curiosity-service] Error generating question for ${username}:`, error);
-    audit({
-      event: 'curiosity_error',
-      category: 'system',
-      level: 'error',
-      message: `Curiosity service error for ${username}: ${(error as Error).message}`,
-      actor: 'curiosity-service',
-      metadata: { error: (error as Error).stack, username }
-    });
-    return false;
+    const backend = getActiveBackend();
+    console.log(`[curiosity-service] Using LLM backend: ${backend}`);
+  } catch {
+    console.log('[curiosity-service] Using model router (backend auto-selected)');
   }
+
+  const graph = await loadCuriosityGraph();
+  const samplerNodeId = requiredNodeId(graph, 'curiosity_weighted_sampler');
+  const saverNodeId = requiredNodeId(graph, 'curiosity_question_saver');
+  const graphContext = {
+    userId: username,
+    username,
+    allowMemoryWrites: true,
+    cognitiveMode: 'agent' as const,
+  };
+
+  console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
+  const graphResult = await runGraph({ graph, context: graphContext });
+  if (graphResult.status === 'failed') {
+    const failures = listFailedNodes(graphResult);
+    const details = failures.map(failure => `${failure.nodeId}: ${failure.error}`).join('; ');
+    throw new Error(`Curiosity graph failed${details ? ` (${details})` : ''}`);
+  }
+
+  const samplerNode = graphResult.nodes.get(samplerNodeId);
+  const saverNode = graphResult.nodes.get(saverNodeId);
+  const memoriesCount = Number(samplerNode?.outputs?.count ?? 0);
+  if (!Number.isInteger(memoriesCount) || memoriesCount < 0) {
+    throw new Error('Curiosity graph returned an invalid sampled-memory count');
+  }
+  if (memoriesCount === 0) {
+    return { status: 'skipped', reason: 'no-memories', openQuestionsBefore: openQuestions };
+  }
+  const question = saverNode?.outputs?.question;
+  const questionId = saverNode?.outputs?.questionId;
+  const saved = saverNode?.outputs?.saved;
+  if (saved !== true || typeof question !== 'string' || !question.trim()
+    || typeof questionId !== 'string' || !questionId.trim()) {
+    throw new Error('Curiosity graph completed without a persisted question');
+  }
+
+  console.log(`[curiosity-service] Asked question ${questionId} from ${memoriesCount} weighted memories`);
+  audit({
+    event: 'curiosity_question_generated',
+    category: 'decision',
+    level: 'info',
+    message: 'Curiosity service generated question',
+    actor: 'curiosity-service',
+    metadata: {
+      questionId,
+      memoriesConsidered: memoriesCount,
+      trust,
+      autonomy: 'normal',
+      username,
+      usedGraph: true,
+    },
+  });
+
+  return {
+    status: 'generated',
+    questionId,
+    memoriesConsidered: memoriesCount,
+    openQuestionsBefore: openQuestions,
+  };
 }
 
 // ============================================================================
@@ -167,12 +197,13 @@ export async function generateUserQuestion(username: string): Promise<boolean> {
 /**
  * Run a full curiosity service cycle (multi-user)
  */
-export async function runCycle(options: CuriosityServiceOptions = {}): Promise<CuriosityServiceResult> {
+export async function runCycle(): Promise<CuriosityServiceResult> {
   console.log('[curiosity-service] Starting cycle...');
 
   const result: CuriosityServiceResult = {
     success: false,
     questionsAsked: 0,
+    questionsSkipped: 0,
     userCount: 0,
     errors: [],
   };
@@ -200,14 +231,16 @@ export async function runCycle(options: CuriosityServiceOptions = {}): Promise<C
 
     try {
       // SECURITY: withUserContext ensures user-specific path resolution
-      const asked = await withUserContext(
+      const outcome = await withUserContext(
         { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
         async () => {
           return await generateUserQuestion(activeUser.username);
         }
       );
 
-      if (asked) result.questionsAsked++;
+      result.outcome = outcome;
+      if (outcome.status === 'generated') result.questionsAsked++;
+      else result.questionsSkipped++;
     } catch (error) {
       const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
       console.error(`[curiosity-service] Failed: ${errorMsg}`);
@@ -232,6 +265,8 @@ export async function runCycle(options: CuriosityServiceOptions = {}): Promise<C
       event: 'curiosity_service_complete',
       details: {
         questionsAsked: result.questionsAsked,
+        questionsSkipped: result.questionsSkipped,
+        outcome: result.outcome?.status,
         username: activeUser.username
       },
       actor: 'curiosity-service'
@@ -256,31 +291,33 @@ export async function runCycle(options: CuriosityServiceOptions = {}): Promise<C
  */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
-
-  const options: CuriosityServiceOptions = {
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-  };
 
   try {
-    // If running for a specific user context, process just that user
-    if (ctx.username && options.singleUser) {
-      const asked = await withUserContext(
+    if ((input.args?.length ?? 0) > 0 || Object.keys(input.options || {}).length > 0) {
+      throw new Error('Curiosity Service does not accept agent arguments or options');
+    }
+    if (ctx.username) {
+      const outcome = await withUserContext(
         { userId: ctx.username, username: ctx.username, role: 'owner' },
         async () => generateUserQuestion(ctx.username)
       );
+      const generated = outcome.status === 'generated';
 
       return {
         success: true,
-        data: { questionsAsked: asked ? 1 : 0, userCount: 1, errors: [] },
+        data: {
+          questionsAsked: generated ? 1 : 0,
+          questionsSkipped: generated ? 0 : 1,
+          userCount: 1,
+          outcome,
+          errors: [],
+        },
         duration: Date.now() - startTime,
-        itemsProcessed: asked ? 1 : 0,
+        itemsProcessed: generated ? 1 : 0,
       };
     }
 
-    // Otherwise run full cycle
-    const result = await runCycle(options);
+    const result = await runCycle();
 
     return {
       success: result.success,

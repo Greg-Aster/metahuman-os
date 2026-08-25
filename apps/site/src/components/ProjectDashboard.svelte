@@ -324,10 +324,10 @@
       {:else}
         <div class="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
           {#each filteredProjects as project}
-            <div
-              class="panel cursor-pointer transition-all hover:border-blue-500 hover:shadow-lg hover:shadow-blue-500/15 dark:hover:border-blue-400"
+            <button
+              type="button"
+              class="panel w-full text-left cursor-pointer transition-all hover:border-blue-500 hover:shadow-lg hover:shadow-blue-500/15 dark:hover:border-blue-400"
               on:click={() => selectProject(project)}
-              on:keypress={() => selectProject(project)}
             >
               <div class="flex justify-between items-start mb-2">
                 <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">{project.title}</h3>
@@ -352,7 +352,7 @@
                   {/each}
                 </div>
               {/if}
-            </div>
+            </button>
           {/each}
         </div>
       {/if}
@@ -463,11 +463,11 @@
 
   <!-- Project Detail Modal -->
   {#if selectedProject}
-    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => selectedProject = null} on:keypress={() => selectedProject = null}>
-      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[560px] max-h-[90vh] overflow-auto" on:click|stopPropagation on:keypress|stopPropagation>
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[560px] max-h-[90vh] overflow-auto" role="dialog" aria-modal="true" aria-labelledby="project-detail-title" tabindex="-1">
         <div class="flex justify-between items-center px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100">{selectedProject.title}</h3>
-          <button class="bg-transparent border-none text-2xl cursor-pointer text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 leading-none" on:click={() => selectedProject = null}>×</button>
+          <h3 id="project-detail-title" class="text-xl font-semibold text-gray-800 dark:text-gray-100">{selectedProject.title}</h3>
+          <button class="bg-transparent border-none text-2xl cursor-pointer text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 leading-none" aria-label="Close project details" on:click={() => selectedProject = null}>×</button>
         </div>
         <div class="p-6">
           {#if selectedProject.description}
@@ -501,11 +501,11 @@
 
   <!-- Create Project Modal -->
   {#if showCreateModal}
-    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showCreateModal = false} on:keypress={() => showCreateModal = false}>
-      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[560px] max-h-[90vh] overflow-auto" on:click|stopPropagation on:keypress|stopPropagation>
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+      <div class="bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[560px] max-h-[90vh] overflow-auto" role="dialog" aria-modal="true" aria-labelledby="create-project-title" tabindex="-1">
         <div class="flex justify-between items-center px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100">Create New Project</h3>
-          <button class="bg-transparent border-none text-2xl cursor-pointer text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 leading-none" on:click={() => showCreateModal = false}>×</button>
+          <h3 id="create-project-title" class="text-xl font-semibold text-gray-800 dark:text-gray-100">Create New Project</h3>
+          <button class="bg-transparent border-none text-2xl cursor-pointer text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 leading-none" aria-label="Close create project dialog" on:click={() => showCreateModal = false}>×</button>
         </div>
         <div class="p-6">
           <div class="mb-4">

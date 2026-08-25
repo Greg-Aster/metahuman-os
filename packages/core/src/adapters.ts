@@ -1,30 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { systemPaths, ROOT } from './path-builder.js';
+import { systemPaths } from './path-builder.js';
 import { storageClient } from './storage-client.js';
-
-export interface AdapterDatasetInfo {
-  date: string;
-  pairCount: number;
-  status: 'pending' | 'approved' | 'trained' | 'evaluated' | 'active';
-  approvedAt?: string;
-  approvedBy?: string;
-  notes?: string;
-  autoApproved?: boolean;
-  qualityScore?: number;
-  evalScore?: number;
-  evalPassed?: boolean;
-  evaluatedAt?: string;
-  adapterPath?: string;
-  modelfilePath?: string;
-  dryRun?: boolean;
-}
 
 export interface ActiveAdapterInfo {
   modelName: string;
   activatedAt: string;
   adapterPath?: string;
-  evalScore?: number;
   dataset?: string;
   modelfilePath?: string;
   status?: string;
@@ -34,29 +16,6 @@ export interface ActiveAdapterInfo {
   ggufAdapterPath?: string;
   baseModel?: string;
   activatedBy?: string;
-  isDualAdapter?: boolean;
-  dual?: boolean;
-  mergedPath?: string;
-  adapters?: {
-    historical?: string;
-    recent?: string;
-  };
-}
-
-export interface AutoApprovalConfig {
-  enabled: boolean;
-  dryRun: boolean;
-  thresholds: {
-    minPairs: number;
-    minHighConfidence: number;
-    minReflectionPct: number;
-    maxLowConfidence: number;
-  };
-  alertEmail?: string | null;
-}
-
-function getAdaptersRoot(): string {
-  return path.join(systemPaths.out, 'adapters');
 }
 
 function safeReadJSON<T>(filePath: string): T | null {
@@ -67,92 +26,6 @@ function safeReadJSON<T>(filePath: string): T | null {
   } catch {
     return null;
   }
-}
-
-function countPairs(datasetDir: string): number {
-  const metadata = safeReadJSON<{ pairCount: number }>(path.join(datasetDir, 'metadata.json'));
-  if (metadata?.pairCount) {
-    return metadata.pairCount;
-  }
-
-  const jsonlPath = path.join(datasetDir, 'instructions.jsonl');
-  if (!fs.existsSync(jsonlPath)) return 0;
-  const content = fs.readFileSync(jsonlPath, 'utf-8');
-  return content.trim() === '' ? 0 : content.trim().split('\n').length;
-}
-
-function resolveStatus(datasetDir: string, activeDataset?: string | null): AdapterDatasetInfo['status'] {
-  if (activeDataset && path.basename(datasetDir) === activeDataset) {
-    return 'active';
-  }
-  if (fs.existsSync(path.join(datasetDir, 'eval.json'))) {
-    return 'evaluated';
-  }
-  if (fs.existsSync(path.join(datasetDir, 'adapter_model.safetensors'))) {
-    return 'trained';
-  }
-  if (fs.existsSync(path.join(datasetDir, 'approved.json'))) {
-    return 'approved';
-  }
-  return 'pending';
-}
-
-export function listAdapterDatasets(): AdapterDatasetInfo[] {
-  const root = getAdaptersRoot();
-  if (!fs.existsSync(root)) return [];
-
-  const active = getActiveAdapter();
-  const activeDataset = active?.dataset || null;
-
-  const entries = fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_'))
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
-
-  const datasets: AdapterDatasetInfo[] = [];
-
-  for (const date of entries) {
-    const datasetDir = path.join(root, date);
-    const pairCount = countPairs(datasetDir);
-
-    const approved = safeReadJSON<{
-      approvedAt?: string;
-      approvedBy?: string;
-      notes?: string;
-      autoApproved?: boolean;
-      qualityScore?: number;
-      dryRun?: boolean;
-    }>(path.join(datasetDir, 'approved.json'));
-
-    const evalData = safeReadJSON<{
-      score?: number;
-      threshold?: number;
-      passed?: boolean;
-      evaluatedAt?: string;
-    }>(path.join(datasetDir, 'eval.json'));
-
-    const activeData = activeDataset === date ? active : null;
-
-    datasets.push({
-      date,
-      pairCount,
-      status: resolveStatus(datasetDir, activeDataset),
-      approvedAt: approved?.approvedAt,
-      approvedBy: approved?.approvedBy,
-      notes: approved?.notes,
-      autoApproved: approved?.autoApproved ?? false,
-      qualityScore: approved?.qualityScore,
-      dryRun: approved?.dryRun,
-      evalScore: evalData?.score,
-      evalPassed: evalData?.passed,
-      evaluatedAt: evalData?.evaluatedAt,
-      adapterPath: activeData?.adapterPath ?? (fs.existsSync(path.join(datasetDir, 'adapter_model.safetensors')) ? path.join(datasetDir, 'adapter_model.safetensors') : undefined),
-      modelfilePath: activeData?.modelfilePath ?? (fs.existsSync(path.join(datasetDir, 'Modelfile')) ? path.join(datasetDir, 'Modelfile') : undefined),
-    });
-  }
-
-  return datasets;
 }
 
 function getModelRegistry(): any {
@@ -187,7 +60,6 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
       modelName: meta.modelName,
       activatedAt: meta.activatedAt || new Date().toISOString(),
       adapterPath: meta.adapterPath,
-      evalScore: meta.evalScore,
       dataset: meta.dataset,
       modelfilePath: meta.modelfilePath,
       status: meta.status || 'loaded',
@@ -197,10 +69,6 @@ export function getActiveAdapter(): ActiveAdapterInfo | null {
       ggufAdapterPath: meta.ggufAdapterPath,
       baseModel: meta.baseModel,
       activatedBy: meta.activatedBy,
-      isDualAdapter: meta.isDualAdapter ?? meta.dual ?? false,
-      dual: meta.dual,
-      mergedPath: meta.mergedPath,
-      adapters: meta.adapters,
     };
   }
 
@@ -278,31 +146,4 @@ export function setActiveAdapter(info: ActiveAdapterInfo | null): void {
   } catch {
     // No user context or file doesn't exist - this is fine
   }
-}
-
-export function readAutoApprovalConfig(): AutoApprovalConfig {
-  const configPath = path.join(systemPaths.etc, 'auto-approval.json');
-  if (!fs.existsSync(configPath)) {
-    const defaultConfig: AutoApprovalConfig = {
-      enabled: true,
-      dryRun: true,
-      thresholds: {
-        minPairs: 30,
-        minHighConfidence: 0.6,
-        minReflectionPct: 0.2,
-        maxLowConfidence: 0.2,
-      },
-      alertEmail: null,
-    };
-    fs.mkdirSync(systemPaths.etc, { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
-    return defaultConfig;
-  }
-  return JSON.parse(fs.readFileSync(configPath, 'utf-8')) as AutoApprovalConfig;
-}
-
-export function writeAutoApprovalConfig(config: AutoApprovalConfig): void {
-  const configPath = path.join(systemPaths.etc, 'auto-approval.json');
-  fs.mkdirSync(systemPaths.etc, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }

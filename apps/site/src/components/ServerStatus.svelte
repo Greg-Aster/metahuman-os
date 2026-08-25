@@ -115,7 +115,6 @@
   const serverConfigs = [
     { name: 'whisper', displayName: 'Whisper STT', endpoint: '/api/whisper-server', port: 9883 },
     { name: 'kokoro', displayName: 'Kokoro TTS', endpoint: '/api/kokoro-server', port: 9882 },
-    { name: 'rvc', displayName: 'RVC Voice', endpoint: '/api/rvc-server', port: 9881 },
     { name: 'sovits', displayName: 'GPT-SoVITS', endpoint: '/api/sovits-server', port: 9880 },
   ];
 

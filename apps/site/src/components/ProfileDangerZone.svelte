@@ -267,8 +267,8 @@
 
 <!-- Delete Confirmation Modal -->
 {#if showDeleteModal && profileToDelete}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={closeDeleteModal}>
-    <div class="bg-white dark:bg-gray-800 dark:text-gray-300 rounded-lg p-6 max-w-[600px] w-[90%] max-h-[80vh] overflow-y-auto" on:click|stopPropagation>
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+    <div class="bg-white dark:bg-gray-800 dark:text-gray-300 rounded-lg p-6 max-w-[600px] w-[90%] max-h-[80vh] overflow-y-auto" role="dialog" aria-modal="true" tabindex="-1">
       <h3 class="m-0 mb-4 text-xl font-semibold text-red-600 dark:text-red-300">⚠️ Delete Profile</h3>
 
       <p class="m-0 mb-4 text-sm">

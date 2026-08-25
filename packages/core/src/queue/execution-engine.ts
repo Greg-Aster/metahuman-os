@@ -30,6 +30,9 @@ import {
   resolveAgentExecutablePath,
   resolveTsx,
 } from '../agent-executable-resolver.js';
+import { getUserByUsername, getUsers } from '../users.js';
+import { withUserContext } from '../context.js';
+import { canWriteMemory } from '../cognitive-mode.js';
 
 const DEFERRED = Symbol('deferred-work-completion');
 
@@ -40,10 +43,6 @@ const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
 );
 
 async function withTaskUserContext<T>(task: QueuedTask, operation: () => Promise<T>): Promise<T> {
-  const [{ getUserByUsername }, { withUserContext }] = await Promise.all([
-    import('../users.js'),
-    import('../context.js'),
-  ]);
   const user = getUserByUsername(task.username);
   if (!user) throw new Error(`Work item user does not exist: ${task.username}`);
   return withUserContext(
@@ -199,7 +198,7 @@ export class ExecutionEngine {
         const config = loadRobotOperatorConfig();
         robotObserver = beginEnvironmentPerceptionCycle(
           observation.metadata.correlationId,
-          typeof task.input.graph === 'string' && task.input.graph !== 'robot-operator'
+          typeof task.input.graph === 'string'
             ? task.input.graph
             : config.environmentGraph,
         );
@@ -220,22 +219,9 @@ export class ExecutionEngine {
         return { recorded: true, sessionId: observation.sessionId, graphExecuted: false };
       }
 
-      const now = Date.now();
-      const recentSessionRuns = this.queueManager.getHistory().filter(candidate =>
-        candidate.type === 'environment_observation'
-        && candidate.input?.observation?.sessionId === observation.sessionId
-        && candidate.completedAt
-        && now - Date.parse(candidate.completedAt) < 60_000).length;
-      if (recentSessionRuns >= 8) {
-        return { recorded: true, sessionId: observation.sessionId, graphExecuted: false, reason: 'automatic_step_limit' };
-      }
-
-      const [{ getUsers }, { loadGraphForMode }, { runGraph }, { withUserContext }, { canWriteMemory }] = await Promise.all([
-        import('../users.js'),
+      const [{ loadGraphForMode }, { runGraph }] = await Promise.all([
         import('../graph-streaming.js'),
         import('../graph-runtime.js'),
-        import('../context.js'),
-        import('../cognitive-mode.js'),
       ]);
       const user = getUsers().find(candidate => candidate.username === task.username);
       if (!user) throw new Error(`Environment bridge user not found: ${task.username}`);
@@ -246,9 +232,7 @@ export class ExecutionEngine {
         ? observation.metadata.originatingInstruction.trim()
         : '';
       const taskInstruction = originatingInstruction || text || (robotObserver
-          ? robotObserver.step === 1
-            ? 'Inspect the current robot camera image and choose one contextually useful high-level intention, or remain still when no response is warranted.'
-            : 'Inspect the returned robot camera image and choose one contextually useful next intention only if it is still warranted.'
+        ? ''
         : observation.visual || observation.visuals?.length
           ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
           : 'Review the returned environment state and choose the next semantic action if one is needed.');
@@ -277,14 +261,11 @@ export class ExecutionEngine {
             environmentActionSource: robotObserver?.triggerSource,
             robotObserver,
             robotOperatorEnvironmentGraph: [
-              robotOperatorConfig.graph,
               robotOperatorConfig.boredomObserverGraph,
               robotOperatorConfig.boredomMovementGraph,
               robotOperatorConfig.boredomReflectionGraph,
             ].includes(graphName)
-              ? graphName === robotOperatorConfig.graph
-                ? robotOperatorConfig.environmentGraph
-                : robotOperatorConfig.autonomyGraph
+              ? robotOperatorConfig.autonomyGraph
               : undefined,
             abortSignal: context.signal,
             ttsGeneration: typeof task.input.ttsGeneration === 'number'

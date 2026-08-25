@@ -4,9 +4,8 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { refineResponseSafely } from '../../cognitive-layers/index.js';
 
-const execute: NodeExecutor = async (inputs, context) => {
+const execute: NodeExecutor = async (inputs) => {
   // Extract response string from various input formats
   // Use named inputs with positional fallback
   const inputData = inputs.response ?? inputs[0];
@@ -32,28 +31,15 @@ const execute: NodeExecutor = async (inputs, context) => {
     return { response };
   }
 
-  try {
-    const refinement = await refineResponseSafely(response, safetyResult, {
-      cognitiveMode: context.cognitiveMode,
-      logToConsole: false,
-      auditChanges: true,
-    });
+  const refinedResponse = typeof safetyResult.sanitized === 'string'
+    ? safetyResult.sanitized
+    : response;
 
-    const finalResponse = refinement.changed ? refinement.refined : response;
-
-    return {
-      response: finalResponse,
-      refined: refinement.changed,
-      changes: refinement.changes || [],
-    };
-  } catch (error) {
-    console.error('[ResponseRefiner] Error:', error);
-    return {
-      response,
-      refined: false,
-      error: (error as Error).message,
-    };
-  }
+  return {
+    response: refinedResponse,
+    refined: refinedResponse !== response,
+    changes: refinedResponse !== response ? safetyResult.issues : [],
+  };
 };
 
 export const ResponseRefinerNode: NodeDefinition = defineNode({

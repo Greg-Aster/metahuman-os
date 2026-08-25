@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/psychoanalyzer.json",
   "version": "1.0.0",
   "description": "Psychoanalyzer agent configuration - reviews memories and updates persona incrementally",
   "enabled": true,

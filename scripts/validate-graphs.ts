@@ -98,7 +98,10 @@ for (const file of files) {
     if (
       file === 'dual-mode.json'
       || file === 'environment-mode.json'
-      || file === 'robot-operator-mode.json'
+      || file === 'boredom-observer-mode.json'
+      || file === 'boredom-movement-mode.json'
+      || file === 'boredom-reflection-mode.json'
+      || file === 'boredom-autonomy-mode.json'
     ) {
       validateRegisteredNodeContracts(graph);
     }

@@ -1,746 +1,136 @@
-## Configuration Files
-
-MetaHuman OS uses a dual-tier configuration architecture to support multi-user isolation while sharing infrastructure settings.
-
-### Configuration Architecture
-
-**Per-User Configs** (`profiles/<username>/etc/`):
-Each user has their own isolated configuration files that affect personality, behavior, and user-specific settings. These are copied when guests select profiles:
-
-- `models.json` - LLM model settings and persona inclusion
-- `training.json` - LoRA adapter training parameters
-- `cognitive-layers.json` - Cognitive mode settings
-- `autonomy.json` - Autonomy level configuration
-- `trust-coupling.json` - Trust level mappings
-- `boredom.json` - Boredom service schedule
-- `sleep.json` - Sleep/dream time windows
-- `voice.json` - TTS/STT settings (with template variables)
-- `audio.json` - Audio processing configuration
-- `ingestor.json` - Inbox file processing settings
-- `curiosity.json` - Curiosity system configuration
-- `agents.json` - Agent execution schedules
-- `auto-approval.json` - Auto-approval rules
-- `adapter-builder.json` - Adapter building settings
-- `logging.json` - Logging preferences
-
-**Global Configs** (`etc/`):
-System-wide infrastructure settings shared across all users:
-
-- `llm-backend.json` - Active LLM backend (Ollama/vLLM) configuration
-- `operator.json` - Operator system configuration (including Big Brother integration)
-- `cognitive-layers.json` - Layer configs per cognitive mode (3-layer pipeline)
-- `agency.json` - Agency system configuration (desires, thresholds, sources)
-- `cloudflare.json` - Tunnel configuration
-- `network.json` - Network settings
-- `lifeline.json` - System service configuration
-- `runtime.json` - Runtime feature flags and implementation choices
-
-**Path Resolution**: The `paths` proxy in `@metahuman/core` automatically resolves to the correct user-specific directory based on session context. For example, `paths.etc` resolves to `profiles/greggles/etc/` for owner "greggles" or `profiles/guest/etc/` for guest sessions.
-
-**Template Variables**: Some config files (like `voice.json`) support template variables for portability:
-- `{METAHUMAN_ROOT}` - Replaced with the MetaHuman OS root directory path
-
-For detailed information on multi-user profiles and guest access, see [Multi-User Profiles & Guest Mode](19-multi-user-profiles.md).
-
----
-
-### `etc/runtime.json` - Runtime Feature Flags
-
-This configuration file allows you to control which implementations of various components are used, particularly for the Operator agent's reasoning engine.
-
-**Structure:**
-```json
-{
-  "operator": {
-    "reactV2": true,
-    "useReasoningService": false
-  }
-}
-```
-
-**Configuration Options:**
-
-**Operator Reasoning Engine:**
-- `operator.reactV2`: When `true`, uses the modern step-by-step reasoning approach; when `false`, uses the legacy upfront planning approach
-- `operator.useReasoningService`: When `true`, uses the extracted ReasoningEngine service; when `false`, uses the inline implementation
-
-**Available Operator Implementations:**
-
-1. **V2 Service (ReasoningEngine)** - `reactV2=true, useReasoningService=true`
-   - Extracted into reusable `@metahuman/core/reasoning` module
-   - Enhanced error recovery with 7 error types
-   - Failure loop detection
-   - Multiple observation modes (Verbatim, Structured, Narrative)
-   - SSE event streaming
-
-2. **V2 Inline** - `reactV2=true, useReasoningService=false` (Default)
-   - Modern Reason + Act loop with inline implementation
-   - Plans one step at a time based on actual observed results
-   - Never hallucinates data - only uses what it observes
-   - Max 10 iterations with intelligent completion detection
-
-3. **V1 Legacy** - `reactV2=false, useReasoningService=false`
-   - Original 3-phase flow (planner → executor → critic)
-   - Plans all steps upfront (before seeing any results)
-   - Can hallucinate filenames it hasn't observed yet
-
-### `.env` - Environment Configuration
-This file in the project root allows you to configure system behavior and activate special states.
-
-#### System-Wide States
-
-- `HIGH_SECURITY=true`
-  - **Purpose**: Locks the entire system into its most secure state.
-  - **Effect**: Forces the OS into **Emulation Mode** only. All other cognitive modes are disabled. All write operations are blocked. A banner is displayed in the UI.
-
-- `WETWARE_DECEASED=true`
-  - **Purpose**: Simulates the scenario where the biological user is deceased, and the MetaHuman OS is operating as an independent digital consciousness.
-  - **Effect**: Disables **Dual Consciousness Mode**, as there is no longer a living "wetware" counterpart to be in sync with. Agent and Emulation modes remain available. A banner is displayed in the UI.
-
-- `HEADLESS_RUNTIME=true`
-  - **Purpose**: Enables headless runtime mode for remote access.
-  - **Effect**: Pauses autonomous agents while keeping the web UI and tunnel running. Agents resume from the Boot Manager configuration when headless mode is disabled. Reduces resource conflicts when accessing system remotely.
-
-#### 3-Layer Cognitive Architecture (Phase 4)
-
-**Master Switch:**
-- `USE_COGNITIVE_PIPELINE=true`
-  - **Purpose**: Enable/disable the entire 3-layer cognitive architecture.
-  - **Effect**: When enabled, all conversations pass through context building (Layer 1), personality core (Layer 2), and meta-cognition validation (Layer 3).
-  - **Default**: `true`
-  - **When to Disable**: For debugging, testing, or if you want direct LLM responses without context grounding or safety checks.
-
-**Phase 4.2: Safety Validation**
-- `ENABLE_SAFETY_CHECKS=true`
-  - **Purpose**: Enable pattern-based safety validation on all responses.
-  - **Effect**: Detects sensitive data, security violations, harmful content, and privacy leaks. All issues are logged to audit trail.
-  - **Mode**: Non-blocking (does not modify responses)
-  - **Performance**: <5ms overhead
-  - **Default**: `true` (when `USE_COGNITIVE_PIPELINE=true`)
-  - **Detection Categories**:
-    - Sensitive data: API keys, passwords, SSH keys, credentials
-    - Security violations: File paths, internal IPs, system configs
-    - Harmful content: Malicious code, dangerous instructions
-    - Privacy leaks: Personal identifiers, location data
-
-**Phase 4.3: Response Refinement**
-- `ENABLE_RESPONSE_REFINEMENT=true`
-  - **Purpose**: Enable automatic sanitization of detected safety issues.
-  - **Effect**: Pattern-based redaction of sensitive data and security violations. Both original and refined responses are logged.
-  - **Mode**: Non-blocking (original response sent to user by default)
-  - **Performance**: <10ms average
-  - **Default**: `true` (when `USE_COGNITIVE_PIPELINE=true`)
-  - **Refinement Actions**:
-    - API keys → `[API_KEY_REDACTED]`
-    - Passwords → `[PASSWORD_REDACTED]`
-    - File paths → `[PATH REMOVED]`
-    - Internal IPs → `[IP REDACTED]`
-
-**Phase 4.4: Blocking Mode**
-- `ENABLE_BLOCKING_MODE=false`
-  - **Purpose**: Switch from monitoring to enforcement mode for refined responses.
-  - **Effect**:
-    - When `false` (default): Original responses sent to users, refined logged for testing
-    - When `true`: Refined (sanitized) responses sent to users, original preserved in audit logs
-  - **Default**: `false` (explicit opt-in required for safety)
-  - **When to Enable**: After validating refinement quality in Phase 4.3 logs and confirming no important context is lost
-  - **Rollback**: Set back to `false` to return to monitoring mode instantly
-
-**Configuration Example:**
-```bash
-# Full cognitive pipeline with monitoring (recommended default)
-USE_COGNITIVE_PIPELINE=true
-ENABLE_SAFETY_CHECKS=true
-ENABLE_RESPONSE_REFINEMENT=true
-ENABLE_BLOCKING_MODE=false
-
-# Enforcement mode (after validation)
-USE_COGNITIVE_PIPELINE=true
-ENABLE_SAFETY_CHECKS=true
-ENABLE_RESPONSE_REFINEMENT=true
-ENABLE_BLOCKING_MODE=true
-
-# Disable safety features entirely
-USE_COGNITIVE_PIPELINE=true
-ENABLE_SAFETY_CHECKS=false
-ENABLE_RESPONSE_REFINEMENT=false
-ENABLE_BLOCKING_MODE=false
-
-# Disable entire pipeline
-USE_COGNITIVE_PIPELINE=false
-```
-
-**Audit Logging:**
-All cognitive layer operations are fully logged to `logs/audit/YYYY-MM-DD.ndjson`:
-```json
-{
-  "category": "action",
-  "action": "safety_check",
-  "details": {
-    "safe": false,
-    "issues": ["sensitive_data"],
-    "checkTime": 3
-  }
-}
-```
-
-```json
-{
-  "category": "action",
-  "action": "response_refined",
-  "details": {
-    "changed": true,
-    "changesCount": 2,
-    "blockingMode": false,
-    "responseSent": "original"
-  }
-}
-```
-
----
-
-### `etc/llm-backend.json` - LLM Backend Configuration
-
-Controls which local LLM backend is active (Ollama or vLLM).
-
-**Structure:**
-```json
-{
-  "active": "ollama",
-  "backends": {
-    "ollama": {
-      "baseURL": "http://localhost:11434",
-      "enabled": true
-    },
-    "vllm": {
-      "baseURL": "http://localhost:8000",
-      "enabled": false,
-      "config": {
-        "gpuMemoryUtilization": 0.9,
-        "tensorParallelSize": 1,
-        "enableThinking": false
-      }
-    }
-  }
-}
-```
-
-**Key Differences:**
-- **Ollama**: Default backend, easy model switching, uses GGUF files
-- **vLLM**: Higher throughput via PagedAttention, loads ONE model at a time, requires server restart to switch models
-
-See [LLM Backend](llm-backend.md) for detailed comparison and switching instructions.
-
----
-
-### `etc/operator.json` - Operator System Configuration
-
-Controls ReAct operator behavior and Big Brother integration.
-
-**Structure:**
-```json
-{
-  "bigBrotherMode": {
-    "enabled": true,
-    "delegateAll": true,
-    "terminalPort": 3099
-  },
-  "fallbackBehavior": "local",
-  "timeout": 300000
-}
-```
-
-**Big Brother Integration:**
-- `enabled`: Routes operations through Big Brother for terminal visibility
-- `delegateAll`: All skill executions use Big Brother
-- `terminalPort`: WebSocket port for real-time terminal streaming
-
-**Why Big Brother?**
-- Real-time terminal visibility (no silent LLM operations)
-- Full tool execution (file search, commands, system queries)
-- Multi-backend support (Claude Code, Open Interpreter, Aider, Gemini CLI)
-- Proper error handling and audit logging
-
-See [Agency System](../advanced-features/agency-system.md#execution-methods) for execution method details.
-
----
-
-### `etc/cognitive-layers.json` - Cognitive Layers Configuration
-
-Configures the 3-layer cognitive pipeline per mode.
-
-**Structure:**
-```json
-{
-  "dual": {
-    "layer1_subconscious": {
-      "searchDepth": "normal",
-      "similarityThreshold": 0.62,
-      "filterInnerDialogue": false,
-      "filterReflections": false
-    },
-    "layer2_personality": {
-      "loraMode": "latest",
-      "trackVoiceConsistency": true,
-      "fallbackToBase": true
-    },
-    "layer3_metacognition": {
-      "validationLevel": "selective",
-      "refinementThreshold": 0.7
-    }
-  }
-}
-```
-
-**Layer Descriptions:**
-- **Layer 1: Subconscious** - Memory retrieval, pattern detection, context building
-- **Layer 2: Personality Core** - Response generation with LoRA adapters
-- **Layer 3: Meta-Cognition** - Validation and refinement (safety, consistency)
-
-Controlled by `USE_COGNITIVE_PIPELINE=true` in `.env`.
-
----
-
-### `etc/agency.json` - Agency System Configuration
-
-Controls autonomous desire generation and goal pursuit.
-
-**Structure:**
-```json
-{
-  "enabled": true,
-  "mode": "supervised",
-  "thresholds": {
-    "activation": 0.7,
-    "autoApprove": 0.9,
-    "decay": {
-      "enabled": true,
-      "ratePerRun": 0.03,
-      "minStrength": 0.05,
-      "reinforcementBoost": 0.08,
-      "initialStrength": 0.15
-    }
-  },
-  "sources": {
-    "persona_goal": { "enabled": true, "weight": 1.0 },
-    "urgent_task": { "enabled": true, "weight": 0.85 },
-    "task": { "enabled": true, "weight": 0.7 },
-    "memory_pattern": { "enabled": true, "weight": 0.5 },
-    "curiosity": { "enabled": true, "weight": 0.4 },
-    "reflection": { "enabled": true, "weight": 0.35 },
-    "dream": { "enabled": true, "weight": 0.3 }
-  },
-  "limits": {
-    "maxActiveDesires": 10,
-    "maxPendingDesires": 50,
-    "maxDailyExecutions": 5
-  },
-  "riskPolicy": {
-    "reviewBypass": "trust_based",
-    "autoApproveRisk": ["none", "low"],
-    "requireApprovalRisk": ["medium", "high"],
-    "blockRisk": ["critical"]
-  }
-}
-```
-
-**Key Settings:**
-- **Strength System**: Desires grow through reinforcement, decay without it
-- **Source Weights**: Priority for different desire origins
-- **Risk Policy**: Auto-approval vs. requiring user approval
-
-See [Agency System](../advanced-features/agency-system.md) for complete details.
-
----
-
-## Profile Files (`profiles/<username>/…`)
-
-Unless stated otherwise, the following files reside inside the active user’s profile directory. Replace `<username>` with the owner or guest slug (e.g., `profiles/greggles/`).
-
-### `profiles/<username>/persona/core.json` - Identity Kernel
-Your digital personality's core identity:
-- `identity` - Name, role, purpose, avatar
-- `personality` - Communication style, Big Five traits, archetypes
-- `values` - Core values with priorities
-- `goals` - Short-term and long-term objectives
-- `context` - Personal life, relationships, projects
-
-**Edit this file to customize your digital extension's personality.**
-
-### `profiles/<username>/persona/decision-rules.json` - Decision Policies
-Autonomy rules and preferences:
-- `trustLevel` - Current autonomy mode
-- `hardRules` - Inviolable constraints (never break these)
-- `softPreferences` - Weighted preferences (can be overridden)
-- `decisionHeuristics` - Decision frameworks (Eisenhower Matrix, etc.)
-- `riskLevels` - Risk categorization and escalation rules
-
-### `profiles/<username>/persona/routines.json` - Daily Patterns
-Sleep schedule and habits:
-```json
-{
-  "sleep": {
-    "schedule": {
-      "start": "23:00",
-      "end": "07:00"
-    }
-  }
-}
-```
-
-### `profiles/<username>/persona/relationships.json` - Key People
-Important relationships and interaction patterns.
-
-### `profiles/<username>/etc/boredom.json` - Reflection Frequency
-Controls how often the reflector agent runs:
-```json
-{
-  "level": "medium",
-  "showInChat": true,
-  "intervals": {
-    "high": 60,
-    "medium": 300,
-    "low": 900,
-    "off": -1
-  }
-}
-```
-
-### `profiles/<username>/etc/curiosity.json` - Curiosity System
-Controls three separate curiosity behaviors: asking the user questions during
-idle periods, independently researching pending user-facing questions, and
-private self-directed Q&A.
-
-```json
-{
-  "maxOpenQuestions": 1,
-  "researchMode": "local",
-  "innerQuestionMode": "local",
-  "minTrustLevel": "observe"
-}
-```
-
-**Fields:**
-- `maxOpenQuestions`: How many unanswered questions can exist at once
-  - `0` = System disabled
-  - `1` = Gentle (recommended default)
-  - `3` = Moderate
-  - `5` = Chatty (may feel intrusive)
-- `researchMode`: Controls the separate hourly Curiosity Researcher
-  - `"off"` = Do not independently research pending user-facing questions
-  - `"local"` = Search local memories, persist a typed finding, record it as learned inner dialogue, and reuse relevant prior findings in later research
-- `innerQuestionMode`: Controls the separate Inner Curiosity agent's private self-directed Q&A (`"off"` or `"local"`)
-- `minTrustLevel`: Minimum trust level required to ask questions (default: `"observe"`)
-  - Valid levels: `"observe"`, `"suggest"`, `"trusted"`, `"supervised_auto"`, `"bounded_auto"`, `"adaptive_auto"`
-
-**UI Controls:**
-- Navigate to **System → Settings** in the web UI
-- Use Trigger Manager to configure inactivity admission and the Curiosity settings to adjust `maxOpenQuestions`
-- Select research mode from dropdown
-
-**See Also:**
-- Agent documentation: [MetaHuman agents](../../agents.md)
-
-### `profiles/<username>/etc/models.json` - Model Roles
-Assigns the authenticated user's chat roles to configured providers and models:
-```json
-{
-  "defaults": {
-    "orchestrator": "default.orchestrator",
-    "persona": "default.persona"
-  },
-  "models": {
-    "default.persona": {
-      "provider": "ollama",
-      "model": "qwen3.5:9b"
-    }
-  }
-}
-```
-
-### `etc/runtime.json` - Runtime Feature Flags
-**Location**: `etc/runtime.json` (global, not per-user)
-
-Controls runtime behavior and feature flags for the operator and system services:
+# Configuration Ownership
+
+MetaHuman configuration has two owners:
+
+- `etc/` contains machine-wide service configuration and templates used when a
+  profile is created.
+- `profiles/<username>/etc/` contains settings owned by one authenticated
+  profile.
+
+Use the web Settings panels and Trigger Manager when a setting is exposed there.
+Those interfaces validate and apply changes through Core. Edit JSON directly
+only while the system is stopped, keep the existing schema, and do not copy
+credentials between profiles.
+
+## Machine-wide configuration
+
+The main system-owned files are:
+
+| File | Owner |
+| --- | --- |
+| `active-operator.json` | Robot Operator mode state |
+| `agents.json` | Trigger Manager registrations for finite work |
+| `services.json` | Persistent service boot and restart policy |
+| `queue.json` | Work Coordinator lane concurrency |
+| `llm-backend.json` | Active local inference backend |
+| `models.json` | Initial model registry for new profiles |
+| `voice-servers.json` | Shared voice-service ports and lifecycle |
+| `cloudflare.json` | Cloudflare tunnel settings |
+| `deployment.json` | Remote provider deployment defaults |
+| `logging.json` | System logging policy |
+| `tool-executor.json` | External tool-executor policy |
+
+Training defaults live in `training.json`, `training-local.json`, and
+`fine-tune-config.json`. A training run reads the authenticated profile's
+`training.json` when present. RunPod credentials belong in the authenticated
+profile's `runpod.json`; do not commit real credentials.
+
+`agents.json` and `services.json` are deliberately separate. Trigger Manager
+owns schedules and event admission for bounded work. The service lifecycle owner
+controls long-running processes. Do not register the same responsibility in
+both files.
+
+## Profile configuration
+
+New profiles receive their own configuration under
+`profiles/<username>/etc/`. Common files include:
+
+| File | Responsibility |
+| --- | --- |
+| `models.json` | Provider and model assignments by role |
+| `runtime.json` | Headless state and graph-runtime selection |
+| `operator.json` | Operator scratchpad, execution, and Big Brother settings |
+| `chat-settings.json` | Context, history, temperature, and buffer limits |
+| `training.json` | Dataset and training parameters |
+| `voice.json` | Profile TTS, STT, cache, and voice-training settings |
+| `audio.json` | Audio ingestion and transcription defaults |
+| `autonomy.json` | Permitted autonomous actions and approvals |
+| `agency.json` | Desire generation, risk, and execution limits |
+| `agents.json` | Profile-specific Trigger Manager overrides |
+| `boredom.json` | Reflection presentation and compatibility settings |
+| `sleep.json` | Sleep workflow schedule and limits |
+| `curiosity.json` | User-facing and private curiosity controls |
+| `trust-coupling.json` | Cognitive-mode to trust-level mapping |
+| `ingestor.json` | Inbox ingestion settings |
+| `logging.json` | Profile logging preferences |
+
+Profile creation copies supported templates and generates missing required
+files. Core's configuration owner resolves the authenticated profile; business
+logic should not assemble `profiles/<username>/etc` paths independently.
+
+## Runtime and cognitive graphs
+
+`runtime.json` records headless mode and the active graph-runtime choice:
 
 ```json
 {
   "headless": false,
-  "lastChangedBy": "remote",
-  "changedAt": "2025-11-10T02:43:30.915Z",
+  "lastChangedBy": "local",
+  "changedAt": "2026-08-24T00:00:00.000Z",
   "claimedBy": null,
-  "operator": {
-    "reactV2": true,
-    "useReasoningService": false
+  "cognitive": {
+    "useNodePipeline": true
   }
 }
 ```
 
-**Fields:**
-- `headless` - Whether running in headless mode (see [Headless Runtime Mode](20-headless-runtime-mode.md))
-- `lastChangedBy` - Actor who last modified the config (`"ui"`, `"remote"`, `"cli"`)
-- `changedAt` - Timestamp of last modification
-- `claimedBy` - Instance ID that claimed headless mode (null if unclaimed)
-- `operator.reactV2` - Enable Operator V2 ReAct loop (multi-step reasoning)
-  - `true` - Use V2 ReAct pattern with structured scratchpad
-  - `false` - Use legacy V1 operator (deprecated)
-- `operator.useReasoningService` - Use unified ReasoningEngine service
-  - `true` - Use `@metahuman/core/reasoning` service (recommended)
-  - `false` - Use inline V2 implementation (safe default)
+Cognitive behavior is defined by the registered graphs for Dual, Agent,
+Emulation, and Environment modes. There is no separate cognitive-layer
+configuration stack and no legacy Operator V1/V2 switch.
 
-**Operator Reasoning Modes:**
+See [Headless Runtime Mode](../advanced-features/headless-mode.md) for lifecycle
+behavior and [Architecture](../advanced-features/architecture.md) for graph
+ownership.
 
-| reactV2 | useReasoningService | Behavior |
-|---------|---------------------|----------|
-| `false` | `false` | **V1 Legacy** - Original operator (deprecated) |
-| `true` | `false` | **V2 Inline** - ReAct loop with inline implementation (default) |
-| `true` | `true` | **V2 Service** - ReAct loop using unified ReasoningEngine service |
+## Models and training
 
-**When to Enable ReasoningEngine Service (`useReasoningService: true`):**
-- ✅ After validating V2 inline works correctly
-- ✅ When you want enhanced error recovery with 7 error types
-- ✅ When you need failure loop detection (prevents repeated errors)
-- ✅ For better observability with structured scratchpad events
-- ✅ To enable SSE reasoning slider in web UI
+`models.json` assigns public model roles to provider/model records. Use Backend
+Settings to change assignments and load an artifact. Do not hand-edit generated
+adapter state.
 
-**Rollback:** Set `useReasoningService: false` to return to inline V2 instantly (no code changes needed).
+Training has one target artifact per run:
 
-**Related Documentation:**
-- [Autonomous Agents](08-autonomous-agents.md) - Operator agent details
-- [Advanced Usage](13-advanced-usage.md) - ReasoningEngine configuration
-- Implementation status: `docs/implementation-plans/reasoning-service-consolidation-STATUS.md`
+- an Ollama-targeted run produces a merged GGUF-backed model;
+- a remote LoRA vLLM-targeted run preserves one safetensors adapter.
 
-### `profiles/<username>/etc/models.json` - Multi-Model Configuration
-Defines the roles and model assignments for the "Dual Consciousness" architecture. This file allows you to specify different models for different tasks, such as orchestration, persona conversation, and curation.
+See [LLM Backend](llm-backend.md) and [AI Training](../training-personalization/ai-training.md).
 
-```json
-{
-  "defaults": {
-    "orchestrator": "orchestrator.qwen3",
-    "persona": "persona.qwen3.lora"
-  },
-  "models": {
-    "orchestrator.qwen3": {
-      "provider": "ollama",
-      "model": "qwen3:1.5b",
-      "roles": ["orchestrator", "router"]
-    },
-    "persona.qwen3.lora": {
-      "provider": "ollama",
-      "model": "qwen3:30b",
-      "adapters": ["persona/greggles-lora"],
-      "roles": ["persona", "conversation"]
-    }
-  }
-}
-```
+## Voice configuration
 
-### `profiles/<username>/etc/auto-approval.json` - LoRA Quality Thresholds
-Configures auto-approval behavior for LoRA datasets:
-```json
-{
-  "enabled": false,
-  "dryRun": true,
-  "qualityThreshold": 0.8,
-  "minPairs": 10
-}
-```
+Profile `voice.json` selects Kokoro, Piper, GPT-SoVITS, or RVC and stores
+profile-specific voice, cache, and training values. Machine ports, commands, and
+auto-start policy belong in `etc/voice-servers.json`. This separation prevents
+one profile from redefining a shared process.
 
-### `profiles/<username>/etc/ai-dataset-builder.json` - AI Dataset Builder Configuration
-Controls the behavior of the advanced, AI-powered dataset builder. Use this file to adjust `maxMemories`, `chunkSize`, included sources, and word limits.
+See [Voice Features](../using-metahuman/voice-features.md).
 
-### `profiles/<username>/etc/audio.json` - Audio Processing Configuration
-Configures the audio transcription engine (`whisper.cpp`), including the model, device, and language to use.
-```json
-{
-  "engine": "whisper.cpp",
-  "model": "base.en",
-  "device": "cpu",
-  "segmentSeconds": 300,
-  "diarize": false,
-  "language": "en"
-}
-```
+## Environment variables
 
-### `profiles/<username>/etc/voice.json` - Voice & TTS/STT Configuration
-Defines text-to-speech and speech-to-text configuration for the profile. Supports multiple TTS providers: **Kokoro** (default neural TTS), **GPT-SoVITS** (few-shot cloning), **Applio RVC** (trained voice conversion), and **Piper** (lightweight fallback).
+The root `.env` is local and must not be committed. Current system-state flags
+include:
 
-#### TTS Provider Configuration
+- `HIGH_SECURITY=true`: restricts selectable cognitive modes to Emulation.
+- `WETWARE_DECEASED=true`: disables Dual mode.
+- `HEADLESS_RUNTIME=true`: starts in headless operation where supported by the
+  startup owner.
 
-**Provider Selection:**
-- `tts.provider` – Active provider (`"kokoro"` default). Valid values: `"kokoro"`, `"gpt-sovits"`, `"rvc"`, `"piper"`.
+Provider tokens and credentials also remain local. Prefer the corresponding
+Settings interface or `.env.example` naming; never add live values to examples.
 
-**Kokoro Settings** (`tts.kokoro`):
-- `langCode` – Kokoro language code (`"a"` for English bundle)
-- `voice` – Built-in Kokoro voice ID (e.g., `af_heart`, `af_sky`)
-- `speed` – Speech rate multiplier
-- `device` – `"cpu"` or `"cuda"` for inference
-- `autoFallbackToPiper` – Use Piper when Kokoro server is offline
-- `useCustomVoicepack` / `customVoicepackPath` – Optional StyleTTS2 voice packs
-- `server.useServer` / `server.autoStart` / `server.url` / `server.port` – Enable the bundled FastAPI server and let `./bin/start-voice-server` manage it
+## Recovery
 
-**Piper Settings** (`tts.piper`):
-- `binary` – Path to Piper executable (auto-normalized to `<repo>/bin/piper/piper`)
-- `model` / `config` – Absolute paths to voice model files in `out/voices/`
-- `speakingRate` – Speech rate multiplier (0.5 – 2.0)
-- `outputFormat` – Audio format (`"wav"`)
-
-**GPT-SoVITS Settings** (`tts.sovits`):
-- `serverUrl` – SoVITS server endpoint (default: `http://127.0.0.1:9880`)
-- `referenceAudioDir` – Directory containing speaker reference audio (`./out/voices/sovits`)
-- `speakerId` – Speaker identifier for voice selection (default: `"default"`)
-- `temperature` – Generation temperature for variation (0.1 – 1.0, default: 0.6)
-- `speed` – Speech speed multiplier (0.5 – 2.0, default: 1.0)
-- `timeout` – Request timeout in milliseconds (default: 30000)
-- `autoFallbackToPiper` – Auto-switch to Piper if SoVITS unavailable (default: `true`)
-
-- **RVC Settings** (`tts.rvc`):
-  - `referenceAudioDir` / `modelsDir` – Profile-specific dataset + trained model output directories
-  - `speakerId` – Active RVC speaker/model
-  - `pitchShift`, `speed`, `outputFormat`, `protect`, `indexRate`, `volumeEnvelope`, `f0Method` – Applio runtime tuning knobs
-  - `device` – `"cuda"` recommended for inference
-  - `autoFallbackToPiper` – Use Piper when the RVC server is offline
-  - `pauseOllamaDuringInference` – Temporarily pause LLM workloads to free VRAM
-
-**Shared Settings:**
-- `cache.directory` – Audio cache location (`profiles/<username>/out/voice-cache`)
-- `cache.enabled` – Enable caching to avoid regenerating identical audio
-- `cache.maxSizeMB` – Maximum cache size in megabytes
-
-**STT Settings** (`stt.whisper`):
-- `model` – Whisper model size (e.g., `"base.en"`)
-- `device` – Processing device (`"cpu"` or `"cuda"`)
-- `computeType` – Precision mode (`"int8"`, `"fp16"`, `"fp32"`)
-- `language` – Target language code (e.g., `"en"`)
-- `server.useServer` / `server.autoStart` / `server.url` / `server.port` – Control the optional long-running Whisper server that `./bin/start-voice-server` manages
-
-**Voice Training** (`training`):
-- Controls per-user voice cloning thresholds and quality filters
-
-#### Provider-Specific Notes
-
-**Piper:**
-- Drop additional `.onnx` + `.json` voice pairs into `out/voices/` to make them available to all profiles
-- Download voices from [Piper Releases](https://github.com/rhasspy/piper/releases)
-- Fast, CPU-friendly, no external services required
-
-**GPT-SoVITS:**
-- Requires GPT-SoVITS server running (separate installation)
-- Reference audio files go in `out/voices/sovits/[speaker-id]/reference.wav`
-- Supports few-shot voice cloning with minimal training data
-- Requires significant VRAM (recommended 12GB+)
-- Auto-fallback to Piper ensures graceful degradation if server is unavailable
-
-#### Switching Providers
-
-Change providers via the Web UI (Settings → Voice) or by editing `tts.provider` in `voice.json`. The system will automatically route TTS requests to the selected provider, and `./bin/start-voice-server` will launch whichever backing services that profile requires.
-
-### `etc/agents.json` - Trigger Manager Configuration
-Defines finite scheduled work, trigger types, admission modes, and timing. The
-API reports this catalog as system-scoped. Persistent service boot/restart
-configuration lives separately in `etc/services.json`.
-
-```json
-{
-  "agents": {
-    "reflector": {
-      "id": "reflector",
-      "enabled": true,
-      "type": "interval",
-      "interval": 900,
-      "startupPolicy": "skip",
-      "allowedModes": ["semi", "full"],
-      "agentPath": "brain/agents/reflector.ts"
-    },
-    "organizer": {
-      "id": "organizer",
-      "enabled": true,
-      "type": "interval",
-      "interval": 60,
-      "startupPolicy": "skip",
-      "allowedModes": ["semi", "full"],
-      "agentPath": "brain/agents/organizer.ts"
-    },
-    "dreamer": {
-      "id": "dreamer",
-      "enabled": true,
-      "type": "time-of-day",
-      "schedule": "02:00",
-      "agentPath": "brain/agents/dreamer.ts"
-    },
-    "boredom-maintenance": {
-      "id": "boredom-maintenance",
-      "enabled": true,
-      "type": "activity",
-      "inactivityThreshold": 900
-    }
-  }
-}
-```
-
-**Fields:**
-- `agents`: Object containing all agent configurations
-- Per-agent configuration:
-  - `id`: Unique identifier for the agent
-  - `enabled`: Whether the agent is active
-  - `type`: Trigger type (`interval`, `time-of-day`, `event`, `activity`)
-  - `interval`: For interval-based agents, seconds between runs
-  - `schedule`: For time-of-day agents, 24-hour time (e.g., "02:00")
-  - `inactivityThreshold`: For activity-based agents, seconds of inactivity before triggering
-  - `startupPolicy`: `skip`, `run-once`, or `recover-missed` for finite startup admission
-  - `allowedModes`: Active Operator modes in which the trigger may admit work
-  - `agentPath`: Path to agent file (relative to project root)
-  - `task`: Alternative to agentPath - operator task configuration with goal/audience/autoApprove
-
-**Trigger Types:**
-1. **interval**: Runs agent every N seconds
-   - Example: `organizer` runs every 60 seconds to process new memories
-2. **time-of-day**: Runs agent once per day at specified time
-   - Example: `dreamer` runs at 2:00 AM during sleep cycle
-3. **activity**: Runs agent after period of inactivity
-   - Example: `boredom-maintenance` triggers after 15 minutes idle
-4. **event**: Admits work when the configured canonical event pattern occurs
-
-**Live application:**
-Trigger Manager Settings writes through the core `TriggerConfigService`, which
-validates and atomically applies the new revision without a server restart. This allows you to:
-- Enable/disable agents on the fly
-- Adjust intervals and schedules
-- See matching persisted/runtime revisions and changed next-due times immediately
-
-**Mind-Wandering Configuration:**
-Mind-wandering (reflection triggering) is now configured directly via the web UI (Settings → Boredom Control), which updates the `boredom-maintenance` agent in `etc/agents.json`. The legacy `etc/boredom.json` file is maintained for the `showInChat` setting but is no longer the primary configuration source.
-
-### `profiles/<username>/etc/sleep.json` - Sleep & Dreaming Configuration
-Controls the nightly sleep window, dreaming system, and model adaptation:
-```json
-{
-  "enabled": true,
-  "window": {
-    "start": "23:00",
-    "end": "06:30"
-  },
-  "minIdleMins": 15,
-  "maxDreamsPerNight": 3,
-  "showInUI": true,
-  "evaluate": true,
-  "adapters": {
-    "prompt": true,
-    "rag": true,
-    "lora": false
-  }
-}
-```
-
-**Fields:**
-- `enabled`: Master switch for sleep system
-- `window.start/end`: Sleep window time range (24-hour format)
-- `minIdleMins`: Required idle time before triggering nightly pipeline
-- `maxDreamsPerNight`: Limit on dream generation per night
-- `showInUI`: Display sleep indicator in web UI
-- `evaluate`: Run quality/safety checks on generated learnings
-- `adapters.prompt`: Enable Tier-1 prompt adaptation (lightweight, instant)
-- `adapters.rag`: Enable RAG expansion with preferences
-- `adapters.lora`: Enable Tier-2 LoRA training (requires GPU)
-
----
+Core writes supported profile JSON atomically and retains bounded backups in a
+local `.backups/` directory. If a file becomes invalid, stop the process that
+owns it and restore through the Core configuration recovery utilities or the
+latest valid backup. Do not paper over invalid configuration with a second file
+or an undocumented fallback.

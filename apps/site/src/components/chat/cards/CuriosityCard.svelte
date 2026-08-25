@@ -28,6 +28,7 @@
   let hasResponded = false;
   let wasSkipped = false;
   let isSkipping = false;
+  let skipError = '';
 
   // Check if this question was already answered or skipped (from meta)
   $: if (message.meta?.answered) {
@@ -44,23 +45,23 @@
 
   /**
    * Skip this curiosity question without responding
-   * Clears the pause manager state and marks the question as skipped
+   * Resolves the canonical pending question as skipped.
    */
   async function handleSkip() {
     if (isSkipping || hasResponded) return;
 
     isSkipping = true;
+    skipError = '';
 
     try {
-      // Clear the pause manager's curiosity awaiting state
-      await apiFetch('/api/pause-state', {
+      const response = await apiFetch('/api/curiosity/questions/skip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'clearCuriosity',
-          reason: 'skipped',
+          questionId,
         }),
       });
+      if (!response.ok) throw new Error(`Could not skip curiosity question (${response.status})`);
 
       hasResponded = true;
       wasSkipped = true;
@@ -73,6 +74,7 @@
       });
     } catch (error) {
       console.error('[CuriosityCard] Error skipping question:', error);
+      skipError = error instanceof Error ? error.message : 'Could not skip this question';
     } finally {
       isSkipping = false;
     }
@@ -146,6 +148,9 @@
           {/if}
         </button>
       </div>
+      {#if skipError}
+        <p class="skip-error" role="alert">{skipError}</p>
+      {/if}
     {/if}
   </svelte:fragment>
 </BaseMessageCard>
@@ -199,6 +204,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+  }
+
+  .skip-error {
+    margin: 0.5rem 0 0;
+    color: #fca5a5;
+    font-size: 0.75rem;
   }
 
   /* Selection hint (not selected) */

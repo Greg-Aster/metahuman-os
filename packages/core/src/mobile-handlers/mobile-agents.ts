@@ -4,8 +4,6 @@ import path from 'node:path';
 import { ensureQueueSystemStarted, getQueueSystem } from '../queue/queue-system.js';
 import { claimWorkCoordinatorOwnership } from '../queue/work-submission.js';
 
-export type MobileAgentPriority = 'low' | 'normal' | 'high';
-
 export interface MobileAgentContext {
   username?: string;
   profileRoot: string;
@@ -16,13 +14,11 @@ export interface MobileAgentContext {
 export interface MobileAgentRegistration {
   id: string;
   name: string;
+  handler?: string;
   run: (context: MobileAgentContext) => Promise<void>;
-  usesLLM?: boolean;
-  priority?: MobileAgentPriority;
-  intervalSeconds?: number;
 }
 
-const registeredAgentIds = new Set<string>();
+const registeredHandlerIds = new Set<string>();
 
 export async function initializeMobileAgents(
   dataDir: string,
@@ -32,7 +28,7 @@ export async function initializeMobileAgents(
   claimWorkCoordinatorOwnership();
   const system = await ensureQueueSystemStarted();
   for (const agent of agents) {
-    const handlerId = `agent.${agent.id}`;
+    const handlerId = agent.handler || `agent.${agent.id}`;
     system.engine.registerHandler(handlerId, async (task, context) => {
       await agent.run({
         username: task.username || username,
@@ -42,24 +38,14 @@ export async function initializeMobileAgents(
       });
       return { agentId: agent.id };
     });
-    system.triggers.registerTrigger({
-      id: agent.id,
-      enabled: true,
-      type: agent.intervalSeconds ? 'interval' : 'manual',
-      priority: agent.priority ?? 'normal',
-      usesLLM: agent.usesLLM ?? true,
-      interval: agent.intervalSeconds,
-      maxRetries: 1,
-    });
-    registeredAgentIds.add(agent.id);
+    registeredHandlerIds.add(handlerId);
   }
 }
 
 export function stopMobileAgents(): void {
   const system = getQueueSystem();
-  for (const agentId of registeredAgentIds) {
-    system.engine.unregisterHandler(`agent.${agentId}`);
-    system.triggers.unregisterTrigger(agentId);
+  for (const handlerId of registeredHandlerIds) {
+    system.engine.unregisterHandler(handlerId);
   }
-  registeredAgentIds.clear();
+  registeredHandlerIds.clear();
 }

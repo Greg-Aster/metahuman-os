@@ -198,8 +198,9 @@
     <!-- Filters -->
     <div class="flex gap-3 flex-wrap">
       <div>
-        <label class="text-xs uppercase muted">Category</label>
+        <label for="audit-category" class="text-xs uppercase muted">Category</label>
         <select
+          id="audit-category"
           bind:value={selectedCategory}
           class="block mt-1 px-3 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
         >
@@ -213,8 +214,9 @@
       </div>
 
       <div>
-        <label class="text-xs uppercase muted">Level</label>
+        <label for="audit-level" class="text-xs uppercase muted">Level</label>
         <select
+          id="audit-level"
           bind:value={selectedLevel}
           class="block mt-1 px-3 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
         >

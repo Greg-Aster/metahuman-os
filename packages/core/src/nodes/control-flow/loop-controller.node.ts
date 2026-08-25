@@ -5,6 +5,11 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
+import { ReActPlannerNode } from '../operator/react-planner.node.js';
+import { SkillExecutorNode } from '../operator/skill-executor.node.js';
+import { ObservationFormatterNode } from '../operator/observation-formatter.node.js';
+import { CompletionCheckerNode } from '../operator/completion-checker.node.js';
+import { StuckDetectorNode } from '../operator/stuck-detector.node.js';
 
 export const LoopControllerNode: NodeDefinition = defineNode({
   id: 'loop_controller',
@@ -61,6 +66,11 @@ export const LoopControllerNode: NodeDefinition = defineNode({
     let iteration = 0;
     let finalResponse = '';
     let stuckReason: string | null = null;
+    const reactPlannerExecutor = ReActPlannerNode.execute!;
+    const skillExecutorExecutor = SkillExecutorNode.execute!;
+    const observationFormatterExecutor = ObservationFormatterNode.execute!;
+    const completionCheckerExecutor = CompletionCheckerNode.execute!;
+    const stuckDetectorExecutor = StuckDetectorNode.execute!;
 
     console.log(`[LoopController] Starting ReAct loop for: "${userMessage.substring(0, 80)}..."`);
 
@@ -69,14 +79,6 @@ export const LoopControllerNode: NodeDefinition = defineNode({
       console.log(`[LoopController] === Iteration ${iteration}/${maxIterations} ===`);
 
       try {
-        // Import executors dynamically via the unified node registry
-        const { getNodeExecutor } = await import('../index.js');
-        const reactPlannerExecutor = getNodeExecutor('react_planner')!;
-        const skillExecutorExecutor = getNodeExecutor('skill_executor')!;
-        const observationFormatterExecutor = getNodeExecutor('observation_formatter')!;
-        const completionCheckerExecutor = getNodeExecutor('completion_checker')!;
-        const stuckDetectorExecutor = getNodeExecutor('stuck_detector')!;
-
         // STEP 1: Plan
         const planResult = await reactPlannerExecutor(
           { userMessage, scratchpad },

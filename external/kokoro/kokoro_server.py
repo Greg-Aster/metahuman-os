@@ -466,18 +466,6 @@ async def synthesize_stream_default(request: DefaultStreamSynthesizeRequest):
     )
 
 
-@app.get("/voices")
-async def list_voices():
-    """List available voices"""
-    # Parse VOICES.md if available
-    voices_file = Path(__file__).parent / "VOICES.md"
-    if voices_file.exists():
-        # TODO: Parse VOICES.md and return structured data
-        return {"voices": ["af_heart", "af_bella", "af_sarah"]}
-
-    return {"voices": []}
-
-
 if __name__ == "__main__":
     import uvicorn
     import sys

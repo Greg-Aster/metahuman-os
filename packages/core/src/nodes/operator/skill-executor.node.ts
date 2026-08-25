@@ -12,6 +12,7 @@ import type { CognitiveModeId } from '../../cognitive-mode.js';
 
 // Import error recovery executor for retry logic
 import { ErrorRecoveryNode } from './error-recovery.node.js';
+import { loadDecisionRules } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
   console.log('[SkillExecutor] ========== SKILL EXECUTOR ENTRY ==========');
@@ -91,7 +92,6 @@ const execute: NodeExecutor = async (inputs, context) => {
   let errorRecoveryAnalysis: any = null;
 
   try {
-    const { loadDecisionRules } = await import('../../identity.js');
     const rules = loadDecisionRules();
     const trustLevel: TrustLevel = rules.trustLevel as TrustLevel;
 

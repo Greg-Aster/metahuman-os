@@ -14,9 +14,7 @@
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
   import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type ReasoningStage } from '../lib/client/composables/useMessages';
-  // Offline inference remains transient; canonical buffer persistence is server graph-owned.
   import { forceHealthCheck } from '../lib/client/server-health';
-  import { unifiedChat, type ChatResponse } from '../lib/client/unified-chat';
   import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import {
     buildConversationParams,
@@ -766,53 +764,6 @@
     }
   });
 
-  /**
-   * Send message in offline mode using UnifiedChat with tier selection
-   * Routes to: offline LLM → server → cloud based on availability
-   */
-  async function sendMessageOffline() {
-    const userMessage = input.trim();
-    if (!userMessage) return;
-    const requestComposeTarget = composeTarget;
-
-    input = '';
-    messagesApi.clearSelection();
-
-    // Offline output is intentionally transient. Canonical persistence is
-    // admitted only by server-side graph nodes.
-    pushComposedInput(userMessage, requestComposeTarget);
-
-    loading = true;
-    thinkingTraceApi.start();
-    thinkingTraceApi.setStatusLabel('🔄 Selecting best tier...');
-
-    try {
-      console.log('[sendMessage-offline] Using UnifiedChat for offline/tiered routing');
-
-      // Use unified chat which handles tier selection and fallbacks
-      const result: ChatResponse = await unifiedChat.sendMessage(userMessage);
-
-      console.log(`[sendMessage-offline] Response from tier: ${result.tier} (${result.model})`);
-
-      // Add the transient generated response to the UI.
-      pushGeneratedResponse(result.response, requestComposeTarget, {
-        tier: result.tier,
-        model: result.model,
-        latencyMs: result.latencyMs,
-      });
-
-      thinkingTraceApi.stop();
-    } catch (err) {
-      console.error('[sendMessage-offline] Error:', err);
-      const errorMsg = err instanceof Error ? err.message : 'Failed to get response';
-      messagesApi.pushMessage('system', `⚠️ ${errorMsg}`);
-      thinkingTraceApi.stop();
-    } finally {
-      loading = false;
-      restorePassiveChatStreams();
-    }
-  }
-
   async function enqueueUserMessageTask(input: Record<string, any>) {
     const res = await apiFetch('/api/unified-queue', {
       method: 'POST',
@@ -1351,24 +1302,6 @@
       }
       thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ RESPONSE PIPELINE COMPLETE (${elapsed}ms)`, 10);
 
-      // Clear curiosity awaiting state if this was a curiosity response
-      if (cardType === 'curiosity_response' && cardData.questionId) {
-        try {
-          await apiFetch('/api/pause-state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'clearCuriosity',
-              reason: 'responded_via_pipeline',
-            }),
-          });
-          console.log('[response-pipeline] Cleared curiosity awaiting state');
-        } catch (e) {
-          // Non-critical, continue
-          console.warn('[response-pipeline] Failed to clear curiosity state:', e);
-        }
-      }
-
       thinkingTraceApi.stop();
     } catch (err) {
       const elapsed = Date.now() - startTime;
@@ -1430,10 +1363,11 @@
     const healthResult = await forceHealthCheck();
     const connected = healthResult.connected;
 
-    // If offline, use UnifiedChat with tier selection
+    // Chat execution is server-owned. Keep the draft intact when disconnected.
     if (!connected) {
-      sendInProgress = false; // Reset guard before delegating
-      await sendMessageOffline();
+      sendInProgress = false;
+      restorePassiveChatStreams();
+      messagesApi.pushMessage('system', '⚠️ MetaHuman server is unavailable. Reconnect before sending this message.');
       return;
     }
 
@@ -2708,22 +2642,20 @@
     <!-- Terminal split panel (system terminal, not Claude CLI) -->
     {#if terminalVisible}
       <!-- Resize handle -->
-      <div
+      <button
+        type="button"
         class="terminal-resize-handle"
         class:resizing={isResizing}
         on:mousedown={startResize}
         on:touchstart={startResize}
-        role="separator"
-        aria-orientation="horizontal"
         aria-label="Resize terminal panel"
-        tabindex="0"
         on:keydown={(e) => {
           if (e.key === 'ArrowUp') { terminalHeight = Math.min(window.innerHeight * 0.7, terminalHeight + 20); }
           if (e.key === 'ArrowDown') { terminalHeight = Math.max(100, terminalHeight - 20); }
         }}
       >
-        <div class="resize-handle-grip"></div>
-      </div>
+        <span class="resize-handle-grip"></span>
+      </button>
 
       <div
         class="terminal-split-panel"

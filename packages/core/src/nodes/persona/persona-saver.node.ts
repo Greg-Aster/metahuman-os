@@ -4,6 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { savePersonaCore } from '../../identity.js';
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
   const persona = inputs[0];
@@ -16,7 +17,6 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
   }
 
   try {
-    const { savePersonaCore } = await import('../../identity.js');
     savePersonaCore(persona);
 
     return {

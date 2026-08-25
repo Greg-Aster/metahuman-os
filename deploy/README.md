@@ -241,5 +241,5 @@ mkdir -p /runpod-volume/metahuman/{profiles,etc,brain,logs}
 ## Next Steps
 
 1. [RunPod Setup Guide](runpod/gpu-instance-plan.md)
-2. [Multi-User Configuration](../docs/multi-user.md)
-3. [API Reference](../docs/api.md)
+2. [Multi-User Profiles](../docs/user-guide/advanced-features/multi-user-profiles.md)
+3. [Architecture](../docs/technical/ARCHITECTURE.md)

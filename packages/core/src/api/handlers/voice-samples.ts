@@ -7,27 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-// Lazy-load storage client for desktop
-function getStorageClient() {
-  try {
-    const externalStorage = require('../../external-storage.js');
-    return externalStorage.storageClient;
-  } catch {
-    return null;
-  }
-}
-
-// Stub storage client for mobile compatibility
-const storageClient = {
-  resolvePath: (options: { category: string; subcategory?: string }) => {
-    const client = getStorageClient();
-    if (client?.resolvePath) {
-      return client.resolvePath(options);
-    }
-    // Mobile fallback - voice training not supported
-    return { success: false, path: null, error: 'Voice training not available on mobile' };
-  },
-};
+import { storageClient } from '../../storage-client.js';
 
 /**
  * GET /api/voice-samples/:sampleId
@@ -37,7 +17,7 @@ const storageClient = {
 export async function handleGetVoiceSample(req: UnifiedRequest): Promise<UnifiedResponse> {
   const sampleId = req.params?.sampleId;
 
-  if (!sampleId) {
+  if (!sampleId || !/^[A-Za-z0-9_-]{1,128}$/.test(sampleId)) {
     return {
       status: 400,
       error: 'Sample ID required',
@@ -45,7 +25,11 @@ export async function handleGetVoiceSample(req: UnifiedRequest): Promise<Unified
   }
 
   // Look for the audio file in the voice training directory
-  const trainingResult = storageClient.resolvePath({ category: 'voice', subcategory: 'training' });
+  const trainingResult = storageClient.resolvePath({
+    username: req.user.username,
+    category: 'voice',
+    subcategory: 'training',
+  });
   if (!trainingResult.success || !trainingResult.path) {
     return {
       status: 500,

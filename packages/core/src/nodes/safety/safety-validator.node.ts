@@ -4,7 +4,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { checkResponseSafety } from '../../cognitive-layers/index.js';
+import { checkResponseSafety } from './response-safety.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Extract response string from various input formats

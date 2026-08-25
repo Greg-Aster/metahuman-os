@@ -121,17 +121,11 @@ export class AgentCatalogService {
     const discovered = new Map<string, DiscoveredSource>();
     if (!fs.existsSync(this.agentsDir)) return discovered;
     for (const entry of fs.readdirSync(this.agentsDir, { withFileTypes: true })) {
-      let executable: string | undefined;
-      let sourceId: string | undefined;
-      if (entry.isFile() && entry.name.endsWith('.ts')) {
-        sourceId = entry.name.slice(0, -3);
-        executable = path.join(this.agentsDir, entry.name);
-      } else if (entry.isDirectory()) {
-        sourceId = entry.name;
-        executable = ['cli.ts', 'index.ts']
-          .map(filename => path.join(this.agentsDir, entry.name, filename))
-          .find(candidate => fs.existsSync(candidate));
-      }
+      if (!entry.isDirectory()) continue;
+      const sourceId = entry.name;
+      const executable = ['cli.ts', 'index.ts']
+        .map(filename => path.join(this.agentsDir, entry.name, filename))
+        .find(candidate => fs.existsSync(candidate));
       if (!sourceId || !executable || !validAgentId(sourceId)) continue;
       const canonicalId = canonicalAgentIdForSource(sourceId);
       discovered.set(canonicalId, { canonicalId, sourceId, path: executable });

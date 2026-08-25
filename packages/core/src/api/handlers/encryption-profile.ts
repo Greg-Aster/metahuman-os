@@ -7,35 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { audit } from '../../audit.js';
-
-// Stub functions for mobile compatibility
-async function lockProfile(userId: string): Promise<{ success: boolean; error?: string }> {
-  // On mobile, encryption is not supported
-  if (process.env.METAHUMAN_MOBILE) {
-    return { success: false, error: 'Encryption not supported on mobile' };
-  }
-  // Try to load real implementation
-  try {
-    const enc = await import('../../encryption-manager.js');
-    return enc.lockProfile?.(userId) || { success: false, error: 'Lock function not available' };
-  } catch {
-    return { success: false, error: 'Encryption module not available' };
-  }
-}
-
-async function unlockProfile(userId: string, password: string): Promise<{ success: boolean; error?: string }> {
-  // On mobile, encryption is not supported
-  if (process.env.METAHUMAN_MOBILE) {
-    return { success: false, error: 'Encryption not supported on mobile' };
-  }
-  // Try to load real implementation
-  try {
-    const enc = await import('../../encryption-manager.js');
-    return enc.unlockProfile?.(userId, password) || { success: false, error: 'Unlock function not available' };
-  } catch {
-    return { success: false, error: 'Encryption module not available' };
-  }
-}
+import { lockProfile, unlockProfile } from '../../encryption-manager.js';
 
 /**
  * POST /api/encryption/lock

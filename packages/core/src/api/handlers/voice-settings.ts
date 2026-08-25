@@ -2,13 +2,12 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { errorResponse, successResponse } from '../types.js';
 import { systemPaths, getProfilePaths } from '../../path-builder.js';
 import { storageClient } from '../../storage-client.js';
-import { stopServer } from '../../tts/server-manager.js';
 import {
   ensureVoiceServiceRunning,
   getVoiceServiceConfig,
   getVoiceServiceStatus,
 } from '../../voice-service-manager.js';
-import { spawn, execSync } from 'node:child_process';
+import { startSovitsServer, stopSovitsServer } from '../../tts/server-manager.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -196,7 +195,6 @@ type VoiceConfig = {
       f0Method?: string;
       device?: 'cuda' | 'cpu';
       outputFormat?: string;
-      pauseOllamaDuringInference?: boolean;
     };
     kokoro?: {
       langCode: string;
@@ -260,7 +258,6 @@ function buildDefaultVoiceConfig(
         protect: 0.15,
         f0Method: 'rmvpe',
         device: 'cuda',
-        pauseOllamaDuringInference: true,
       },
       kokoro: {
         langCode: 'a',
@@ -407,7 +404,6 @@ function ensureVoiceConfig(
       protect: 0.15,
       f0Method: 'rmvpe',
       device: 'cuda',
-      pauseOllamaDuringInference: true,
     };
     needsWrite = true;
   }
@@ -427,7 +423,6 @@ function ensureVoiceConfig(
     config.tts.rvc.outputFormat = 'wav';
     needsWrite = true;
   }
-  config.tts.rvc.pauseOllamaDuringInference = config.tts.rvc.pauseOllamaDuringInference ?? true;
   if (!config.tts.rvc.speakerId) {
     config.tts.rvc.speakerId = 'default';
     needsWrite = true;
@@ -728,7 +723,6 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
     const previousProvider = config.tts.provider;
-    const previousRvcDevice = config.tts.rvc?.device;
 
     console.log('[voice-settings POST] Previous provider:', previousProvider, '→ New provider:', provider);
 
@@ -894,9 +888,7 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
 
     // Handle provider switching and service orchestration
     try {
-      await syncTTSBackends(previousProvider, config.tts.provider, config, {
-        previousRvcDevice,
-      });
+      await syncTTSBackends(previousProvider, config.tts.provider, config);
 
       const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
       return successResponse({
@@ -928,23 +920,15 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
 async function syncTTSBackends(
   previousProvider: string,
   nextProvider: string,
-  config: VoiceConfig,
-  previousDeviceSettings?: {
-    previousRvcDevice?: 'cuda' | 'cpu';
-  }
+  config: VoiceConfig
 ): Promise<void> {
   const normalize = (provider: string) => provider === 'sovits' || provider === 'gpt-sovits' ? 'gpt-sovits' : provider;
   const prev = normalize(previousProvider);
   const next = normalize(nextProvider);
 
-  // Check for device changes within the same provider
-  const rvcDeviceChanged = previousDeviceSettings?.previousRvcDevice &&
-    config.tts.rvc?.device &&
-    previousDeviceSettings.previousRvcDevice !== config.tts.rvc.device;
-
   // Kokoro device selection is system service configuration, not a user
   // profile preference, so a profile save must never restart that process.
-  if (prev === next && !rvcDeviceChanged) {
+  if (prev === next) {
     return;
   }
 
@@ -952,38 +936,14 @@ async function syncTTSBackends(
     console.log(`[voice-settings] Provider switch: ${previousProvider} → ${nextProvider}`);
   }
 
-  if (rvcDeviceChanged) {
-    console.log(`[voice-settings] RVC device changed: ${previousDeviceSettings?.previousRvcDevice} → ${config.tts.rvc?.device}`);
-  }
-
-  // Handle device changes for active providers (restart servers)
-  if (rvcDeviceChanged && next === 'rvc') {
-    try {
-      console.log('[voice-settings] Restarting RVC server with new device...');
-      await stopServer('rvc');
-      // The RVC server will auto-start with new device settings on next TTS request
-      // via the server-manager in createTTSService()
-      console.log('[voice-settings] RVC server stopped. Will restart with new device on next use.');
-    } catch (error) {
-      console.error('[voice-settings] Failed to restart RVC server:', error);
-    }
-  }
-
   // Stop previous provider's services (only if provider actually changed)
   if (prev !== next) {
     if (prev === 'gpt-sovits') {
       try {
         console.log('[voice-settings] Stopping SoVITS server...');
-        await stopSovitsServer(systemPaths.root);
+        await stopSovitsServer();
       } catch (error) {
         console.error('[voice-settings] Failed to stop SoVITS server:', error);
-      }
-    } else if (prev === 'rvc') {
-      try {
-        console.log('[voice-settings] Stopping RVC server...');
-        await stopServer('rvc');
-      } catch (error) {
-        console.error('[voice-settings] Failed to stop RVC server:', error);
       }
     }
 
@@ -992,7 +952,7 @@ async function syncTTSBackends(
       const port = extractSovitsPort(config);
       try {
         console.log(`[voice-settings] Starting SoVITS server on port ${port}...`);
-        const result = await startSovitsServer(systemPaths.root, port);
+        const result = await startSovitsServer(port);
         if (!result.success) {
           console.error('[voice-settings] Failed to start SoVITS server:', result.error);
           throw new Error(result.error || 'Failed to start SoVITS server');
@@ -1010,175 +970,6 @@ async function syncTTSBackends(
     } else if (next === 'piper') {
       console.log('[voice-settings] Switched to Piper (no background service needed)');
     }
-  }
-}
-
-interface SovitsActionResult {
-  success: boolean;
-  message?: string;
-  error?: string;
-  pid?: number;
-  port?: number;
-}
-
-async function getSovitsServerStatus(rootDir: string): Promise<{
-  running: boolean;
-  installed: boolean;
-  pid?: number;
-  port?: number;
-}> {
-  const sovitsDir = path.join(rootDir, 'external', 'gpt-sovits');
-  const pidFile = path.join(rootDir, 'logs', 'run', 'sovits.pid');
-  const installed = fs.existsSync(sovitsDir);
-
-  if (!installed) {
-    return { running: false, installed };
-  }
-
-  if (!fs.existsSync(pidFile)) {
-    return { running: false, installed };
-  }
-
-  try {
-    const pidData = JSON.parse(fs.readFileSync(pidFile, 'utf-8'));
-    const pid = Number(pidData.pid);
-    const port = Number(pidData.port || 9880);
-
-    if (!Number.isFinite(pid)) {
-      fs.unlinkSync(pidFile);
-      return { running: false, installed };
-    }
-
-    process.kill(pid, 0);
-    return { running: true, installed, pid, port };
-  } catch {
-    try {
-      fs.unlinkSync(pidFile);
-    } catch {
-      // Ignore stale PID cleanup failures.
-    }
-    return { running: false, installed };
-  }
-}
-
-async function startSovitsServer(rootDir: string, port = 9880): Promise<SovitsActionResult> {
-  const sovitsDir = path.join(rootDir, 'external', 'gpt-sovits');
-  const pidFile = path.join(rootDir, 'logs', 'run', 'sovits.pid');
-  const logFile = path.join(rootDir, 'logs', 'run', 'sovits.log');
-  const status = await getSovitsServerStatus(rootDir);
-
-  if (status.running) {
-    return {
-      success: false,
-      error: `Server already running on port ${status.port} (PID: ${status.pid})`,
-    };
-  }
-
-  if (!status.installed) {
-    return {
-      success: false,
-      error: 'GPT-SoVITS not installed. Please install it from the Addons tab first.',
-    };
-  }
-
-  const venvPython = path.join(sovitsDir, 'venv', 'bin', 'python3');
-  let pythonBin = 'python3';
-
-  if (fs.existsSync(venvPython)) {
-    pythonBin = venvPython;
-  } else {
-    for (const cmd of ['python3.11', 'python3.10', 'python3.9', 'python3', 'python']) {
-      try {
-        execSync(`command -v ${cmd}`, { encoding: 'utf-8', stdio: 'pipe' });
-        pythonBin = cmd;
-        break;
-      } catch {
-        // Try the next candidate.
-      }
-    }
-  }
-
-  const serverScript = path.join(sovitsDir, 'api.py');
-  if (!fs.existsSync(serverScript)) {
-    return {
-      success: false,
-      error: 'GPT-SoVITS server script not found. Installation may be incomplete.',
-    };
-  }
-
-  try {
-    fs.mkdirSync(path.dirname(logFile), { recursive: true });
-    const logFd = fs.openSync(logFile, 'a');
-    const child = spawn(pythonBin, [serverScript, '--port', String(port)], {
-      cwd: sovitsDir,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-    });
-
-    fs.close(logFd, (error) => {
-      if (error) console.error('[voice-settings] Error closing SoVITS log fd:', error);
-    });
-    child.unref();
-
-    fs.writeFileSync(pidFile, JSON.stringify({
-      pid: child.pid,
-      port,
-      startTime: new Date().toISOString(),
-    }));
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    const nextStatus = await getSovitsServerStatus(rootDir);
-    if (nextStatus.running) {
-      return {
-        success: true,
-        message: `GPT-SoVITS server started successfully on port ${port}`,
-        pid: child.pid,
-        port,
-      };
-    }
-
-    return {
-      success: false,
-      error: 'Server process started but is not responding. Check logs for details.',
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: `Failed to start server: ${String(error)}`,
-    };
-  }
-}
-
-async function stopSovitsServer(rootDir: string): Promise<SovitsActionResult> {
-  const pidFile = path.join(rootDir, 'logs', 'run', 'sovits.pid');
-  const status = await getSovitsServerStatus(rootDir);
-
-  if (!status.running) {
-    if (fs.existsSync(pidFile)) {
-      fs.unlinkSync(pidFile);
-    }
-    return { success: true, message: 'Server is not running' };
-  }
-
-  try {
-    process.kill(status.pid!, 'SIGTERM');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    try {
-      process.kill(status.pid!, 0);
-      process.kill(status.pid!, 'SIGKILL');
-    } catch {
-      // Already stopped.
-    }
-
-    if (fs.existsSync(pidFile)) {
-      fs.unlinkSync(pidFile);
-    }
-
-    return { success: true, message: 'GPT-SoVITS server stopped' };
-  } catch (error) {
-    return { success: false, error: `Failed to stop server: ${String(error)}` };
   }
 }
 

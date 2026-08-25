@@ -73,24 +73,39 @@ try {
     timestamp: '2026-07-18T01:00:00.000Z',
   }]);
 
-  const questionPath = path.join(stateRoot, 'curiosity', 'questions', 'pending', 'question.json');
+  const questionPath = path.join(stateRoot, 'curiosity', 'questions', 'pending', 'cur-q-1.json');
   writeJson(questionPath, {
     id: 'cur-q-1',
     question: 'What did you notice?',
     askedAt: '2026-07-18T02:00:00.000Z',
     status: 'pending',
+    username: 'test-user',
   });
-  const persistedQuestions = listCuriosityQuestions(profileRoot, stateRoot);
+  const persistedQuestions = await listCuriosityQuestions(profileRoot, stateRoot, 'test-user');
   assert.deepEqual(persistedQuestions, [{
     id: 'cur-q-1',
     question: 'What did you notice?',
     askedAt: '2026-07-18T02:00:00.000Z',
     status: 'pending',
-    relPath: 'profile:state/curiosity/questions/pending/question.json',
-    seedMemories: undefined,
-    answeredAt: undefined,
+    relPath: 'profile:state/curiosity/questions/pending/cur-q-1.json',
+    seedMemories: [],
   }]);
   assert.equal(mergeCuriosityQuestions(persistedQuestions, inventory.curiosity).length, 1);
+
+  const skippedPath = path.join(stateRoot, 'curiosity', 'questions', 'answered', 'cur-q-skipped.json');
+  writeJson(skippedPath, {
+    id: 'cur-q-skipped',
+    question: 'Should this be skipped?',
+    askedAt: '2026-07-18T03:00:00.000Z',
+    status: 'skipped',
+    resolvedAt: '2026-07-18T03:05:00.000Z',
+    skippedAt: '2026-07-18T03:05:00.000Z',
+    username: 'test-user',
+  });
+  const skippedQuestion = (await listCuriosityQuestions(profileRoot, stateRoot, 'test-user'))
+    .find(question => question.id === 'cur-q-skipped');
+  assert.equal(skippedQuestion?.status, 'skipped');
+  assert.equal(skippedQuestion?.skippedAt, '2026-07-18T03:05:00.000Z');
 
   console.log('memories-all.spec.ts passed');
 } finally {

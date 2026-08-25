@@ -1,5 +1,4 @@
 {
-  "$schema": "https://metahuman.dev/schemas/deployment.json",
   "version": "1.2.0",
   "description": "Deployment configuration for MetaHuman OS. Set mode to 'server' for cloud deployment.",
 

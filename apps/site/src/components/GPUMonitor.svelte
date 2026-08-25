@@ -285,8 +285,8 @@ For more information, see the Voice System documentation.
 
 <!-- VRAM Configuration Modal -->
 {#if showConfigModal}
-  <div class="modal-overlay" on:click={closeConfigModal}>
-    <div class="modal-content max-w-[600px]" on:click|stopPropagation>
+  <div class="modal-overlay">
+    <div class="modal-content max-w-[600px]" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">⚙️ Configure Ollama VRAM Limits</h3>
         <button class="w-8 h-8 flex items-center justify-center rounded text-xl text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors" on:click={closeConfigModal}>×</button>

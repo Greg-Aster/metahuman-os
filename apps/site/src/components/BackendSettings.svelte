@@ -223,11 +223,6 @@
   let bigBrotherProvider: string = 'claude-code';
   let savingBigBrother = false;
 
-  let embeddingEnabled = true;
-  let embeddingModel = 'nomic-embed-text';
-  let embeddingCpuOnly = true;
-  let embeddingSaving = false;
-
   onMount(() => {
     void loadBackendSettings().then(() => {
       void refreshVllmMemoryPlan();
@@ -235,7 +230,6 @@
     });
     loadInterpreterStatus();
     loadBigBrotherConfig();
-    loadEmbeddingConfig();
     loadVllmLoras();
   });
 
@@ -827,47 +821,6 @@
       error = 'Failed to stop Open Interpreter';
     } finally {
       interpreterStopping = false;
-    }
-  }
-
-  async function loadEmbeddingConfig() {
-    try {
-      const res = await apiFetch('/api/embeddings-control');
-      if (res.ok) {
-        const data = await res.json();
-        embeddingEnabled = data.enabled ?? true;
-        embeddingModel = data.model ?? 'nomic-embed-text';
-        embeddingCpuOnly = data.cpuOnly ?? true;
-      }
-    } catch (err) {
-      console.error('[BackendSettings] Error loading embedding config:', err);
-    }
-  }
-
-  async function saveEmbeddingConfig() {
-    embeddingSaving = true;
-    clearMessages();
-
-    try {
-      const res = await apiFetch('/api/embeddings-control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: embeddingEnabled,
-          cpuOnly: embeddingCpuOnly,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        error = data.error || 'Failed to save embedding config';
-      } else {
-        await loadEmbeddingConfig();
-      }
-    } catch (err) {
-      error = 'Failed to save embedding config';
-    } finally {
-      embeddingSaving = false;
     }
   }
 
@@ -1819,23 +1772,6 @@
           </div>
         </div>
       {/if}
-    </section>
-
-    <section class="panel p-4 mb-6 bg-green-50/50 dark:bg-green-900/10 border-green-200 dark:border-green-800">
-      <h4 class="text-base font-semibold mb-2 text-green-800 dark:text-green-300">Semantic Memory Search</h4>
-      <p class="text-sm text-green-700 dark:text-green-400 mb-3">
-        Uses {embeddingModel} for vector search. This can run separately from the default chat backend.
-      </p>
-
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer mb-3">
-        <input type="checkbox" bind:checked={embeddingEnabled} on:change={saveEmbeddingConfig} disabled={embeddingSaving} class="w-4 h-4 accent-violet-600" />
-        <span>Enable Semantic Search</span>
-      </label>
-
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
-        <input type="checkbox" bind:checked={embeddingCpuOnly} on:change={saveEmbeddingConfig} disabled={embeddingSaving || !embeddingEnabled} class="w-4 h-4 accent-violet-600" />
-        <span>CPU-Only Mode</span>
-      </label>
     </section>
 
     <section class="panel p-4 bg-fuchsia-50/50 dark:bg-fuchsia-900/10 border-fuchsia-200 dark:border-fuchsia-800">

@@ -440,8 +440,8 @@
 
   <!-- Create Profile Modal -->
   {#if showCreateModal}
-    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" on:click={() => showCreateModal = false}>
-      <div class="bg-white dark:bg-gray-800 rounded-xl p-6 w-[90%] max-w-[400px]" on:click|stopPropagation>
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
+      <div class="bg-white dark:bg-gray-800 rounded-xl p-6 w-[90%] max-w-[400px]" role="dialog" aria-modal="true" tabindex="-1">
         <h3 class="m-0 mb-3 text-base text-gray-700 dark:text-gray-300">Create New Profile</h3>
         <p class="text-gray-500 dark:text-gray-400 text-sm">Create a local profile that works completely offline.</p>
 
@@ -477,4 +477,3 @@
     </div>
   {/if}
 </div>
-

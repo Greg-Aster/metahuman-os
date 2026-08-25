@@ -2,7 +2,7 @@
  * Agent Loader
  *
  * Dynamically discovers and loads agents from the brain/agents directory.
- * Supports both new (directory with index.ts) and legacy (single .ts file) agent formats.
+ * Agents are modular directories with an index.ts contract.
  */
 
 import fs from 'node:fs';
@@ -11,7 +11,7 @@ import { registerAgent, hasAgent } from './registry.js';
 import type { AgentModule, AgentMeta } from './types.js';
 
 /**
- * Check if a path is a new-style agent directory (has index.ts)
+ * Check whether a path is an agent directory with an index.ts contract.
  */
 function isAgentDirectory(agentPath: string): boolean {
   if (!fs.statSync(agentPath).isDirectory()) {
@@ -48,7 +48,7 @@ async function loadAgentFromDirectory(agentDir: string): Promise<AgentModule | n
 }
 
 /**
- * Discover all new-style agent directories
+ * Discover all agent directories.
  */
 export function discoverAgentDirectories(agentsDir: string): string[] {
   if (!fs.existsSync(agentsDir)) {

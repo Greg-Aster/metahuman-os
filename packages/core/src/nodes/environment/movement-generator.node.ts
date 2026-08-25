@@ -3,6 +3,7 @@ import { callLLM } from '../../model-router.js';
 import {
   ENVIRONMENT_MOTION_PLAN_JOINTS,
   ENVIRONMENT_MOTION_PLAN_LIMITS,
+  ENVIRONMENT_MOTION_PLAN_END_POSES,
   assertBoundedMotionPlanEncoding,
   normalizeEnvironmentMotionPlanFields,
   type EnvironmentAction,
@@ -15,6 +16,41 @@ import type { EnvironmentMovementRequest } from './helpers.js';
 const ACTION_KEYS = ['type', 'frames', 'endPose'] as const;
 const RESULT_KEYS = ['action', 'summary'] as const;
 const COMPACT_RESULT_KEYS = ['summary', 'frames', 'endPose'] as const;
+
+const MOTION_FRAME_JSON_SCHEMA = {
+  type: 'array',
+  minItems: ENVIRONMENT_MOTION_PLAN_JOINTS.length + 1,
+  maxItems: ENVIRONMENT_MOTION_PLAN_JOINTS.length + 1,
+  prefixItems: [
+    {
+      type: 'integer',
+      minimum: ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs,
+      maximum: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs,
+    },
+    ...ENVIRONMENT_MOTION_PLAN_JOINTS.map(() => ({
+      type: 'number',
+      minimum: ENVIRONMENT_MOTION_PLAN_LIMITS.minDegrees,
+      maximum: ENVIRONMENT_MOTION_PLAN_LIMITS.maxDegrees,
+    })),
+  ],
+  items: false,
+} as const;
+
+export const MOVEMENT_GENERATOR_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'frames', 'endPose'],
+  properties: {
+    summary: { type: 'string', minLength: 1, maxLength: 160 },
+    frames: {
+      type: 'array',
+      minItems: ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames,
+      maxItems: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames,
+      items: MOTION_FRAME_JSON_SCHEMA,
+    },
+    endPose: { type: 'string', enum: [...ENVIRONMENT_MOTION_PLAN_END_POSES] },
+  },
+} as const;
 
 function exactKeys(
   value: Record<string, unknown>,
@@ -334,6 +370,7 @@ export const movementGeneratorNode = defineNode({
           temperature: properties?.temperature ?? 0.2,
           repeatPenalty: 1.1,
           format: 'json',
+          jsonSchema: MOVEMENT_GENERATOR_JSON_SCHEMA,
         },
         onProgress: context.emitProgress,
       });

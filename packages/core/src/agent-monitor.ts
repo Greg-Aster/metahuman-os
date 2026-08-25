@@ -268,8 +268,7 @@ function hasRunnableAgentSource(id: string): boolean {
   const servicePath = path.join(systemPaths.brain, 'services', `${id}.ts`);
   const modularCli = path.join(systemPaths.agents, id, 'cli.ts');
   const modularIndex = path.join(systemPaths.agents, id, 'index.ts');
-  const legacyPath = path.join(systemPaths.agents, `${id}.ts`);
-  return [servicePath, modularCli, modularIndex, legacyPath].some(candidate => fs.existsSync(candidate));
+  return [servicePath, modularCli, modularIndex].some(candidate => fs.existsSync(candidate));
 }
 
 function isTrackableAgent(id: string): boolean {
@@ -298,7 +297,7 @@ function configuredAgent(config: AgentMonitorConfig, id: string): AgentCatalogEn
 
 /**
  * Get list of available agents
- * Supports both legacy single-file agents (*.ts) and modular agents (directories with index.ts)
+ * Lists modular agent directories with an index.ts contract.
  */
 export function listAvailableAgents(): string[] {
 
@@ -312,11 +311,7 @@ export function listAvailableAgents(): string[] {
   const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.ts')) {
-      // Legacy single-file agent (e.g., reflector.ts)
-      agents.push(entry.name.replace('.ts', ''));
-    } else if (entry.isDirectory()) {
-      // Check for modular agent (directory with index.ts)
+    if (entry.isDirectory()) {
       const indexPath = path.join(agentsDir, entry.name, 'index.ts');
       if (fs.existsSync(indexPath)) {
         agents.push(entry.name);
@@ -324,8 +319,7 @@ export function listAvailableAgents(): string[] {
     }
   }
 
-  // Remove duplicates (if both legacy file and directory exist)
-  return [...new Set(agents)];
+  return agents;
 }
 
 /**

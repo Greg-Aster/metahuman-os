@@ -3,12 +3,74 @@
  * Provides commands for model management, chat, and status
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
+import { systemPaths } from './path-builder.js';
 import {
   parseProviderImageDataUrl,
   type ProviderImagePolicy,
   type ProviderMessage,
 } from './providers/types.js';
+
+const directServicePidFile = path.join(systemPaths.run, 'ollama-direct.pid');
+
+function readOwnedDirectServicePid(): number | null {
+  if (!fs.existsSync(directServicePidFile)) return null;
+
+  const pid = Number.parseInt(fs.readFileSync(directServicePidFile, 'utf8').trim(), 10);
+  if (!Number.isInteger(pid) || pid <= 1) {
+    fs.rmSync(directServicePidFile, { force: true });
+    return null;
+  }
+
+  try {
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+    if (path.basename(argv[0] || '') !== 'ollama' || argv[1] !== 'serve') {
+      fs.rmSync(directServicePidFile, { force: true });
+      return null;
+    }
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    fs.rmSync(directServicePidFile, { force: true });
+    return null;
+  }
+}
+
+async function stopOwnedDirectService(pid: number): Promise<boolean> {
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      fs.rmSync(directServicePidFile, { force: true });
+      return true;
+    }
+  }
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch {
+      fs.rmSync(directServicePidFile, { force: true });
+      return true;
+    }
+  }
+
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
+  }
+  fs.rmSync(directServicePidFile, { force: true });
+  return false;
+}
 
 export interface OllamaModel {
   name: string;
@@ -539,10 +601,7 @@ export class OllamaClient {
     return { unloaded, errors };
   }
 
-  /**
-   * Stop the Ollama service
-   * Falls back to pkill if systemctl requires sudo password
-   */
+  /** Stop the system service or the exact direct process started by this owner. */
   async stopService(): Promise<{ success: boolean; error?: string }> {
     const { execSync } = await import('node:child_process');
 
@@ -560,6 +619,7 @@ export class OllamaClient {
       execSync('systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
       await new Promise(r => setTimeout(r, 1000));
       console.log('[ollama] Service stopped via systemctl');
+      fs.rmSync(directServicePidFile, { force: true });
       eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'systemctl' });
       return { success: true };
     } catch {
@@ -568,48 +628,34 @@ export class OllamaClient {
         execSync('sudo -n systemctl stop ollama', { stdio: 'pipe', timeout: 5000 });
         await new Promise(r => setTimeout(r, 1000));
         console.log('[ollama] Service stopped via sudo systemctl');
+        fs.rmSync(directServicePidFile, { force: true });
         eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'sudo-systemctl' });
         return { success: true };
       } catch {
-        console.log('[ollama] systemctl failed, using pkill fallback...');
+        console.log('[ollama] systemctl did not stop Ollama; checking direct-process ownership...');
       }
     }
 
-    // Fallback: kill ollama processes directly
-    try {
-      // Try SIGTERM first for graceful shutdown
-      try {
-        execSync('pkill -f "ollama serve"', { stdio: 'pipe' });
-      } catch { /* No process found */ }
-
-      await new Promise(r => setTimeout(r, 1000));
-
-      // Force kill if still running
-      try {
-        execSync('pkill -9 -f "ollama serve"', { stdio: 'pipe' });
-      } catch { /* No process found */ }
-
-      // Also kill any remaining ollama processes
-      try {
-        execSync('pkill -9 -f "^ollama"', { stdio: 'pipe' });
-      } catch { /* No process found */ }
-
-      await new Promise(r => setTimeout(r, 500));
-
-      // Verify it's stopped
-      const stillRunning = await this.isRunning();
-      if (stillRunning) {
-        return { success: false, error: 'Ollama still running after pkill' };
-      }
-
-      console.log('[ollama] Service stopped via pkill');
-      eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, { method: 'pkill' });
-      return { success: true };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      console.error('[ollama] Failed to stop service:', error);
-      return { success: false, error };
+    const ownedPid = readOwnedDirectServicePid();
+    if (!ownedPid) {
+      return {
+        success: false,
+        error: 'Ollama is not owned by MetaHuman. Stop it with its service manager.',
+      };
     }
+
+    const stoppedGracefully = await stopOwnedDirectService(ownedPid);
+    const stillRunning = await this.isRunning();
+    if (stillRunning) {
+      return { success: false, error: 'The owned Ollama process stopped, but another Ollama service is still running.' };
+    }
+
+    console.log('[ollama] Direct service stopped');
+    eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STOPPED, {
+      method: stoppedGracefully ? 'direct-sigterm' : 'direct-sigkill',
+      pid: ownedPid,
+    });
+    return { success: true };
   }
 
   /**
@@ -618,6 +664,10 @@ export class OllamaClient {
    */
   async startService(): Promise<{ success: boolean; error?: string }> {
     const { execSync, spawn } = await import('node:child_process');
+
+    if (await this.isRunning()) {
+      return { success: true };
+    }
 
     // Try systemctl without sudo first (works on many systems)
     console.log('[ollama] Attempting to start Ollama service...');
@@ -637,12 +687,14 @@ export class OllamaClient {
     };
 
     if (await trySystemctl('systemctl start ollama')) {
+      fs.rmSync(directServicePidFile, { force: true });
       console.log('[ollama] Service started via systemctl');
       eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STARTED, { method: 'systemctl' });
       return { success: true };
     }
 
     if (await trySystemctl('sudo -n systemctl start ollama')) {
+      fs.rmSync(directServicePidFile, { force: true });
       console.log('[ollama] Service started via sudo systemctl');
       eventBus.emit('ollama', EventTypes.OLLAMA_SERVICE_STARTED, { method: 'sudo-systemctl' });
       return { success: true };
@@ -653,21 +705,14 @@ export class OllamaClient {
     // Fallback: start ollama serve directly
     try {
       // Check if ollama binary exists
-      let ollamaPath = 'ollama';
+      let ollamaPath: string | null = null;
       try {
-        execSync('which ollama', { stdio: 'pipe' });
+        ollamaPath = execSync('command -v ollama', { encoding: 'utf8', stdio: 'pipe' }).trim();
       } catch {
-        // Try common install locations
-        const paths = ['/usr/local/bin/ollama', '/usr/bin/ollama'];
-        for (const p of paths) {
-          try {
-            const fs = await import('node:fs');
-            if (fs.existsSync(p)) {
-              ollamaPath = p;
-              break;
-            }
-          } catch { }
-        }
+        ollamaPath = ['/usr/local/bin/ollama', '/usr/bin/ollama'].find(candidate => fs.existsSync(candidate)) || null;
+      }
+      if (!ollamaPath) {
+        throw new Error('Ollama executable not found');
       }
 
       // Spawn ollama serve in background
@@ -675,6 +720,11 @@ export class OllamaClient {
         detached: true,
         stdio: 'ignore',
       });
+      if (!child.pid) {
+        throw new Error('Ollama did not return a process identifier');
+      }
+      fs.mkdirSync(path.dirname(directServicePidFile), { recursive: true });
+      fs.writeFileSync(directServicePidFile, String(child.pid), 'utf8');
       child.unref();
 
       // Wait for it to start
@@ -689,6 +739,7 @@ export class OllamaClient {
         await new Promise(r => setTimeout(r, 500));
       }
 
+      await stopOwnedDirectService(child.pid);
       return { success: false, error: 'Timeout waiting for ollama serve to start' };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

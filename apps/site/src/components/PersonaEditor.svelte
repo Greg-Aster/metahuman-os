@@ -1059,11 +1059,11 @@
         {/if}
 
         {#if viewingArchive && selectedArchive}
-          <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]" on:click={closeArchiveViewer} on:keydown={(e) => e.key === 'Escape' && closeArchiveViewer()} role="button" tabindex="-1">
-            <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-4xl max-h-[85vh] flex flex-col shadow-2xl" on:click|stopPropagation role="dialog" aria-modal="true">
+          <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
+            <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-4xl max-h-[85vh] flex flex-col shadow-2xl" on:keydown={(e) => e.key === 'Escape' && closeArchiveViewer()} role="dialog" aria-modal="true" aria-labelledby="archive-viewer-title" tabindex="-1">
               <div class="flex justify-between items-center p-5 border-b border-gray-200 dark:border-gray-700">
-                <h3 class="m-0 text-xl font-semibold">Archive Viewer</h3>
-                <button class="w-8 h-8 flex items-center justify-center rounded text-2xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all" on:click={closeArchiveViewer}>×</button>
+                <h3 id="archive-viewer-title" class="m-0 text-xl font-semibold">Archive Viewer</h3>
+                <button class="w-8 h-8 flex items-center justify-center rounded text-2xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all" aria-label="Close archive viewer" on:click={closeArchiveViewer}>×</button>
               </div>
               <div class="flex-1 overflow-y-auto p-6">
                 <pre class="m-0 p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-sm overflow-x-auto">{JSON.stringify(selectedArchive, null, 2)}</pre>

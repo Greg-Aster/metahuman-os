@@ -1,9 +1,8 @@
 /**
  * Transcription Module
  * Provides flexible audio transcription with multiple backends:
- * - Mock (for testing without Whisper)
  * - whisper.cpp (local, fast)
- * - OpenAI Whisper API (cloud fallback)
+ * - OpenAI Whisper API (explicit cloud provider)
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,7 +10,7 @@ import path from 'node:path';
 import { ROOT } from './path-builder.js';
 
 export interface TranscriptionConfig {
-  provider: 'mock' | 'whisper.cpp' | 'openai';
+  provider: 'whisper.cpp' | 'openai';
   whisperCppPath?: string; // Path to whisper.cpp executable
   modelPath?: string; // Path to whisper model file
   openaiApiKey?: string;
@@ -28,21 +27,6 @@ export interface TranscriptionResult {
     end: number;
     text: string;
   }>;
-}
-
-/**
- * Mock transcription for testing
- */
-async function transcribeMock(audioPath: string): Promise<TranscriptionResult> {
-  const filename = path.basename(audioPath);
-  const stats = fs.statSync(audioPath);
-  const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
-
-  return {
-    text: `[Mock Transcription]\n\nThis is a placeholder transcription for: ${filename}\nFile size: ${sizeMB}MB\n\nIn production, this would contain the actual transcribed text from the audio file. To enable real transcription, install whisper.cpp or configure OpenAI API key.`,
-    language: 'en',
-    duration: 0,
-  };
 }
 
 /**
@@ -65,7 +49,7 @@ function resolveWhisperBinary(customPath?: string): string | null {
   return null;
 }
 
-function resolveWhisperModel(customModelPath?: string): string {
+function resolveWhisperModel(customModelPath?: string): string | null {
   const candidates = [
     customModelPath,
     process.env.WHISPER_MODEL,
@@ -82,8 +66,7 @@ function resolveWhisperModel(customModelPath?: string): string {
       return p;
     } catch {}
   }
-  // Final fallback: let whisper.cpp attempt relative path (may fail)
-  return 'models/ggml-base.en.bin';
+  return null;
 }
 
 async function transcribeWhisperCpp(
@@ -91,11 +74,10 @@ async function transcribeWhisperCpp(
   config: TranscriptionConfig
 ): Promise<TranscriptionResult> {
   return new Promise((resolve, reject) => {
-    const whisperPath = resolveWhisperBinary(config.whisperCppPath || undefined) || 'whisper';
+    const whisperPath = resolveWhisperBinary(config.whisperCppPath || undefined);
     const modelPath = resolveWhisperModel(config.modelPath || undefined);
-    if (modelPath.includes('for-tests')) {
-      return reject(new Error('whisper.cpp model is a placeholder (for-tests). Download a real model (e.g., ggml-base.en.bin).'));
-    }
+    if (!whisperPath) return reject(new Error('whisper.cpp executable not found'));
+    if (!modelPath) return reject(new Error('A real whisper.cpp model was not found'));
 
     // Ensure input is WAV for whisper.cpp; transcode WEBM/MP3 if needed
     let inputPath = audioPath;
@@ -242,10 +224,9 @@ async function transcribeOpenAI(
     throw new Error('OpenAI API key not configured');
   }
 
-  // Use the runtime's global FormData implementation and append the file stream.
-  const formData = new (globalThis as any).FormData();
-  const fileStream = fs.createReadStream(audioPath);
-  formData.append('file', fileStream as any, path.basename(audioPath));
+  const formData = new FormData();
+  const audio = new Blob([fs.readFileSync(audioPath)]);
+  formData.append('file', audio, path.basename(audioPath));
   formData.append('model', 'whisper-1');
 
   if (config.language) {
@@ -301,7 +282,7 @@ export async function transcribe(
   config?: Partial<TranscriptionConfig>
 ): Promise<TranscriptionResult> {
   const fullConfig: TranscriptionConfig = {
-    provider: config?.provider || 'mock',
+    provider: config?.provider || (isWhisperCppAvailable(config?.whisperCppPath) ? 'whisper.cpp' : 'openai'),
     language: config?.language || 'en',
     temperature: config?.temperature ?? 0.0,
     whisperCppPath: config?.whisperCppPath,
@@ -309,31 +290,12 @@ export async function transcribe(
     openaiApiKey: config?.openaiApiKey,
   };
 
-  // Auto-detect provider if set to mock but whisper.cpp is available
-  if (fullConfig.provider === 'mock' && isWhisperCppAvailable(fullConfig.whisperCppPath)) {
-    fullConfig.provider = 'whisper.cpp';
-  }
-
   switch (fullConfig.provider) {
     case 'whisper.cpp':
-      try {
-        return await transcribeWhisperCpp(audioPath, fullConfig);
-      } catch (e) {
-        console.warn(`[transcription] whisper.cpp failed, falling back to mock: ${(e as Error).message}`)
-        return transcribeMock(audioPath);
-      }
+      return transcribeWhisperCpp(audioPath, fullConfig);
 
     case 'openai':
-      try {
-        return await transcribeOpenAI(audioPath, fullConfig);
-      } catch (e) {
-        console.warn(`[transcription] openai failed, falling back to mock: ${(e as Error).message}`)
-        return transcribeMock(audioPath);
-      }
-
-    case 'mock':
-    default:
-      return transcribeMock(audioPath);
+      return transcribeOpenAI(audioPath, fullConfig);
   }
 }
 
@@ -347,5 +309,5 @@ export function getRecommendedProvider(config?: Partial<TranscriptionConfig>): s
   if (config?.openaiApiKey) {
     return 'openai (cloud, requires API key)';
   }
-  return 'mock (placeholder only)';
+  return 'unavailable';
 }
