@@ -119,7 +119,7 @@ export type EnvironmentTaskPhase =
  * The one persisted lifecycle record for an Environment objective.
  *
  * It intentionally stores semantic state and frame references only. Image data
- * remains in the bounded in-process frame cache owned by the task-state node.
+ * remains in the bounded in-process frame cache owned by Environment Image Input.
  */
 export interface EnvironmentTaskState {
   version: 1;
@@ -155,12 +155,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function environmentInputSource(
-  context: { environmentActionSource?: unknown; userMessage?: unknown },
+  source: unknown,
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): 'user' | 'autonomy' {
-  if (context.environmentActionSource === 'autonomy') return 'autonomy';
-  if (context.environmentActionSource === 'user') return 'user';
-  if (typeof context.userMessage === 'string' && context.userMessage.trim()) return 'user';
+  if (source === 'autonomy') return 'autonomy';
+  if (source === 'user') return 'user';
   const robotObserver = isRecord(observation?.metadata?.robotObserver)
     ? observation.metadata.robotObserver
     : null;
@@ -238,29 +237,6 @@ export function environmentTaskContractFromRouting(
 export function environmentTaskContractFromObservation(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): EnvironmentTaskContract | null {
-  const command = isRecord(observation?.metadata?.taskValidatorCommand)
-    ? observation.metadata.taskValidatorCommand
-    : null;
-  const objective = typeof command?.objective === 'string'
-    ? command.objective.trim().slice(0, 1_000)
-    : '';
-  const currentInstruction = typeof command?.instruction === 'string'
-    ? command.instruction.trim().slice(0, 500)
-    : '';
-  const commandContract = environmentTaskContractFromRouting({
-    actionParams: {
-      continuationPolicy: command?.continuationPolicy,
-      requiredCompletionBasis: command?.requiredCompletionBasis,
-      motionClass: command?.motionClass,
-      actionPurpose: command?.actionPurpose,
-    },
-  }, objective);
-  if (commandContract) {
-    return {
-      ...commandContract,
-      ...(currentInstruction ? { currentInstruction } : {}),
-    };
-  }
   const taskState = parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
   if (taskState) {
     return {
@@ -455,29 +431,7 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
 export function environmentTaskStateFromObservation(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): EnvironmentTaskState | null {
-  const serialized = parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
-  if (serialized) return serialized;
-
-  // Backward-compatible adoption of an action already queued by the retired
-  // validator workflow. The new reducer becomes its sole lifecycle owner.
-  const command = isRecord(observation?.metadata?.taskValidatorCommand)
-    ? observation.metadata.taskValidatorCommand
-    : null;
-  if (!command) return null;
-  const contract = environmentTaskContractFromObservation(observation);
-  if (!contract || contract.requiredCompletionBasis === 'none') return null;
-  const step = Number.isInteger(command?.step) ? Math.max(0, Number(command?.step)) : 1;
-  return {
-    version: 1,
-    objective: contract.objective,
-    phase: 'awaiting_action',
-    step,
-    continuationPolicy: contract.continuationPolicy,
-    requiredCompletionBasis: contract.requiredCompletionBasis,
-    ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
-    ...(contract.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
-    ...(contract.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
-  };
+  return parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
 }
 
 export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContract): string {

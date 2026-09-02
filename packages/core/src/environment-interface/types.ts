@@ -354,6 +354,36 @@ export interface EnvironmentActionQueueOptions {
   originatingInstruction?: string;
 }
 
+/** Trusted Work Coordinator context for one Environment action. */
+export interface EnvironmentActionContext {
+  actionId: string;
+  status: string;
+  requested: {
+    type?: EnvironmentActionType;
+    command?: string;
+    direction?: EnvironmentAction['direction'];
+    units?: number;
+    target?: string;
+  };
+  correlationId?: string;
+  queuedAt: string;
+  completedAt?: string;
+  result?: {
+    type?: string;
+    message?: string;
+  };
+  taskInstruction?: string;
+  robotObserver?: Record<string, unknown>;
+  actionTiming?: EnvironmentActionTiming;
+}
+
+/** Robot Operator handoff kept separate from the adapter observation. */
+export interface RobotOperatorContext {
+  robotObserver: Record<string, unknown>;
+  plannerDecision?: Record<string, unknown>;
+  memories?: string[];
+}
+
 export interface EnvironmentSessionState {
   sessionId: string;
   environmentId: string;

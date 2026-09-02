@@ -745,6 +745,34 @@ function parseEpisodicRecord(username: string, fullPath: string, relativePath: s
 }
 
 /**
+ * Re-read a capture result through the canonical profile and encryption owner.
+ * Retryable producers use this to return the already-durable event rather than
+ * a newly regenerated value when an idempotent capture is replayed.
+ */
+export function readCapturedEpisodicEvent(username: string, filePath: string): EpisodicEvent {
+  const normalizedUsername = username.trim();
+  if (!normalizedUsername) throw new Error('Captured episodic memory read requires a username');
+  if (!filePath.trim() || !path.isAbsolute(filePath)) {
+    throw new Error('Captured episodic memory read requires an absolute capture path');
+  }
+
+  const root = episodicRootFor(normalizedUsername);
+  const relativePath = path.relative(root, path.resolve(filePath));
+  const fullPath = resolveEpisodicRecordPath(root, relativePath);
+  const realRoot = fs.realpathSync(root);
+  const realPath = fs.realpathSync(fullPath);
+  if (!realPath.startsWith(`${realRoot}${path.sep}`)) {
+    throw new Error(`Captured episodic memory path escapes its profile root: ${relativePath}`);
+  }
+  const stats = fs.statSync(realPath);
+  if (!stats.isFile()) throw new Error(`Captured episodic memory is not a file: ${relativePath}`);
+  if (stats.size > DEFAULT_MAX_EPISODIC_RECORD_BYTES) {
+    throw new Error(`Captured episodic memory exceeds ${DEFAULT_MAX_EPISODIC_RECORD_BYTES} bytes`);
+  }
+  return parseEpisodicRecord(normalizedUsername, realPath, relativePath);
+}
+
+/**
  * Enumerate existing episodic records through the canonical profile and
  * encryption owners. Per-file failures are explicit so finite maintenance work
  * cannot turn malformed, locked, or oversized records into an empty success.

@@ -479,8 +479,9 @@ test('a bounded feedback pass must return completion or one next action', async 
       needsEnvironment: true,
       needsVision: true,
     },
+    userInstruction: '',
+    inputSource: 'user',
   }, {
-    environmentActionSource: 'user',
     username: 'greggles',
   }, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
 

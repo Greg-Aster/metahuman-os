@@ -4,10 +4,11 @@ import type {
   EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import { validEnvironmentJpegDataUrl } from '../../environment-interface/index.js';
-import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
-  environmentInputSource,
-  environmentTaskContractFromObservation,
+  parseRobotObserverCycle,
+  type RobotObserverCycleMetadata,
+} from '../../robot-operator.js';
+import {
   environmentTaskContractFromRouting,
   normalizedEnvironmentMotionClass,
   validateEnvironmentSelectorOutput,
@@ -69,6 +70,7 @@ function visualFeedbackCapabilityAvailable(
 function activeViewTargetIsCurrent(
   action: Partial<EnvironmentAction>,
   observation: EnvironmentObservation | undefined,
+  robotObserver: RobotObserverCycleMetadata | null,
 ): boolean {
   if (action.type !== 'inspect' && action.type !== 'visualApproach') return true;
   const target = action.type === 'inspect' ? action.inspectionTarget : action.visualTarget;
@@ -79,7 +81,6 @@ function activeViewTargetIsCurrent(
   const maxFrameAgeMs = action.type === 'inspect'
     ? observation.capabilities.activeView?.maxFrameAgeMs
     : observation.capabilities.visualApproach?.maxFrameAgeMs;
-  const cycle = readRobotObserverCycle(observation);
   return [observation.visual, ...(observation.visuals ?? [])].some(frame => {
     if (!frame || frame.id !== target.frameId) return false;
     const frameTimestamp = Date.parse(frame.timestamp);
@@ -92,9 +93,9 @@ function activeViewTargetIsCurrent(
       const frameAgeMs = observationTimestamp - frameTimestamp;
       if (frameAgeMs < -5_000 || frameAgeMs > maxFrameAgeMs) return false;
     }
-    return !cycle || (
-      observation.metadata?.correlationId === cycle.cycleId
-      && frame.metadata?.correlationId === cycle.cycleId
+    return !robotObserver || (
+      observation.metadata?.correlationId === robotObserver.cycleId
+      && frame.metadata?.correlationId === robotObserver.cycleId
     );
   });
 }
@@ -126,33 +127,32 @@ export const environmentActionParserNode = defineNode({
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Advisory context selection and fallback task-contract fields' },
+    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Prepared lifecycle contract fields' },
+    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
   ],
   outputs: [
     { name: 'actions', type: 'array', description: 'Parsed environment actions' },
     { name: 'firstAction', type: 'object', description: 'First parsed action' },
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
-    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for the task-state reducer' },
+    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for Environment Task Reducer' },
     { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
-    { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for the Environment Task State owner' },
+    { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for Environment Task Reducer' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
   description: 'Separates a structured model response into conversational text and validated semantic actions.',
-  async execute(inputs, context) {
+  async execute(inputs, _context) {
     try {
       const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
       const observation = inputs.observation && typeof inputs.observation === 'object'
         ? inputs.observation as EnvironmentObservation
         : undefined;
       const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
-      const autonomous = environmentInputSource(context, observation) === 'autonomy';
-      const directUserTurn = !autonomous
-        && context.environmentActionSource === undefined
-        && typeof context.userMessage === 'string'
-        && Boolean(context.userMessage.trim());
+      const autonomous = inputs.inputSource === 'autonomy';
+      const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
       const validation = validateEnvironmentSelectorOutput(
         inputs.response,
         sessionId,
@@ -179,14 +179,10 @@ export const environmentActionParserNode = defineNode({
             taskDecisionError: validation.errors.join('; '),
           };
       const routedContract = environmentTaskContractFromRouting(routingAnalysis);
-      const persistedContract = directUserTurn
-        ? null
-        : environmentTaskContractFromObservation(observation);
       const routedMotionClass = isRecord(routingAnalysis?.actionParams)
         ? normalizedEnvironmentMotionClass(routingAnalysis.actionParams.motionClass)
         : null;
       const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
-        ?? persistedContract?.motionClass
         ?? routedContract?.motionClass
         ?? routedMotionClass
         ?? (parsed.movementRequest ? 'body_local' : null);
@@ -211,7 +207,7 @@ export const environmentActionParserNode = defineNode({
       ));
       const targetFrameAvailable = supportedParsedActions.some(action => (
         (action.type === 'inspect' || action.type === 'visualApproach')
-          && activeViewTargetIsCurrent(action, observation)
+          && activeViewTargetIsCurrent(action, observation, robotObserver)
       ));
       let admissionBlockedReason = '';
       if (targetFeedbackActionSelected && !hasNonMotionAlternative) {

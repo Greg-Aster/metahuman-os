@@ -1,22 +1,31 @@
 /**
  * Curiosity Question Saver Node
- * Saves generated question to audit log and pending questions directory
+ * Persists one stable pending question and builds its conversation entry.
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { audit } from '../../audit.js';
 import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
-  const question = typeof inputs.question === 'string' ? inputs.question.trim() : '';
+  const generatedQuestion = typeof inputs.question === 'string' ? inputs.question.trim() : '';
   const memories = Array.isArray(inputs.memories) ? inputs.memories : [];
   const username = context.userId;
+  const stableQuestionId = typeof context.curiosityQuestionId === 'string'
+    ? context.curiosityQuestionId.trim()
+    : '';
 
   if (!username) {
     throw new Error('Curiosity Question Saver requires a username in graph context');
   }
 
-  if (!question) {
+  const existing = stableQuestionId
+    ? await curiosityQuestionStore.get(username, stableQuestionId)
+    : null;
+  if (existing && existing.status !== 'pending') {
+    throw new Error(`Curiosity question ${existing.id} is already ${existing.status}`);
+  }
+
+  if (!generatedQuestion && !existing) {
     if (memories.length === 0) {
       return {
         questionId: null,
@@ -33,39 +42,19 @@ const execute: NodeExecutor = async (inputs, context) => {
     const id = (memory as Record<string, unknown>).__memoryId;
     return typeof id === 'string' && id.trim() ? [id.trim()] : [];
   }))];
-  const record = await curiosityQuestionStore.create(username, {
-    question,
-    seedMemories,
-  });
-  const questionText = `💭 ${question}`;
-
-  audit({
-    category: 'action',
-    level: 'info',
-    event: 'chat_assistant',
-    details: {
-      mode: 'conversation',
-      content: questionText,
-      cognitiveMode: 'dual',
-      usedOperator: false,
-      curiosityQuestionId: record.id,
-      curiosityData: {
-        questionId: record.id,
-        questionText,
-        rawQuestion: question,
-        topic: 'general',
+  const stored = existing
+    ? { created: false, record: existing }
+    : await curiosityQuestionStore.createOrGet(username, {
+        ...(stableQuestionId ? { id: stableQuestionId } : {}),
+        question: generatedQuestion,
         seedMemories,
-        askedAt: record.askedAt,
-        isCuriosityQuestion: true,
-      },
-    },
-    actor: 'curiosity-service',
-    metadata: {
-      questionId: record.id,
-      autonomy: 'normal',
-      username,
-    },
-  });
+      });
+  if (stored.record.status !== 'pending') {
+    throw new Error(`Curiosity question ${stored.record.id} is already ${stored.record.status}`);
+  }
+  const record = stored.record;
+  const question = record.question;
+  const questionText = `💭 ${question}`;
 
   const entry = {
     role: 'assistant',
@@ -74,7 +63,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       type: 'curiosity',
       questionId: record.id,
       isCuriosityQuestion: true,
-      seedMemories,
+      seedMemories: record.seedMemories,
       askedAt: record.askedAt,
     },
   } as const;
@@ -83,6 +72,8 @@ const execute: NodeExecutor = async (inputs, context) => {
     questionId: record.id,
     question,
     saved: true,
+    created: stored.created,
+    resumed: !stored.created,
     entry,
     username,
     askedAt: record.askedAt,
@@ -95,16 +86,20 @@ export const CuriosityQuestionSaverNode: NodeDefinition = defineNode({
   category: 'curiosity',
   inputs: [
     { name: 'question', type: 'string', description: 'Generated question' },
-    { name: 'memories', type: 'array', description: 'Sampled seed memories' },
+    { name: 'memories', type: 'array', optional: true, description: 'Sampled seed memories' },
   ],
   outputs: [
     { name: 'questionId', type: 'string' },
     { name: 'question', type: 'string', description: 'Persisted question text' },
     { name: 'saved', type: 'boolean' },
+    { name: 'created', type: 'boolean' },
+    { name: 'resumed', type: 'boolean' },
     { name: 'entry', type: 'message', description: 'Typed user-facing conversation entry' },
+    { name: 'username', type: 'string' },
+    { name: 'askedAt', type: 'string' },
   ],
   properties: {},
   propertySchemas: {},
-  description: 'Saves generated question to audit log and pending directory',
+  description: 'Persists one stable pending curiosity question and builds its typed conversation entry',
   execute,
 });

@@ -6,7 +6,12 @@
 import { createHash } from 'node:crypto';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { audit } from '../../audit.js';
-import { captureEventWithDetails, type CaptureResult } from '../../memory.js';
+import {
+  captureEventWithDetails,
+  readCapturedEpisodicEvent,
+  type CaptureEventOptions,
+  type CaptureResult,
+} from '../../memory.js';
 
 interface Memory {
   id: string;
@@ -62,7 +67,7 @@ function idempotencyKey(role: BufferEntry['role'], content: string): string {
   return `dreamer:${createHash('sha256').update(`${role}\0${content}`).digest('hex')}`;
 }
 
-function reasoningEntry(content: string, dialogueSource: string): BufferEntry {
+function reasoningEntry(content: string, dialogueSource: string, stableKey?: string): BufferEntry {
   return {
     role: 'reasoning',
     content,
@@ -71,7 +76,7 @@ function reasoningEntry(content: string, dialogueSource: string): BufferEntry {
       source: 'agent',
       dialogueSource,
       displayColor: '#8b5cf6',
-      idempotencyKey: idempotencyKey('reasoning', content),
+      idempotencyKey: stableKey || idempotencyKey('reasoning', content),
     },
   };
 }
@@ -81,6 +86,7 @@ function dreamEntry(
   content: string,
   eventId?: string,
   continuationIndex?: number,
+  stableKey?: string,
 ): BufferEntry {
   return {
     role,
@@ -91,9 +97,48 @@ function dreamEntry(
       dialogueSource: continuationIndex ? 'dreamer-continuation' : role === 'daydream' ? 'daydreamer' : 'dreamer',
       ...(eventId && eventId !== 'duplicate' ? { memoryEventId: eventId } : {}),
       ...(continuationIndex ? { continuation: true, continuationIndex } : {}),
-      idempotencyKey: idempotencyKey(role, content),
+      idempotencyKey: stableKey || idempotencyKey(role, content),
     },
   };
+}
+
+interface StableCaptureIdentity {
+  key: string;
+  timestamp: string;
+}
+
+function stableCaptureIdentity(context: Record<string, any>): StableCaptureIdentity | undefined {
+  const key = typeof context.idempotencyKey === 'string' ? context.idempotencyKey.trim() : '';
+  const timestampInput = context.memoryTimestamp;
+  if (!key && timestampInput === undefined) return undefined;
+  if (!key) throw new Error('Dream persistence memoryTimestamp requires an idempotencyKey');
+  if (typeof timestampInput !== 'string' || Number.isNaN(Date.parse(timestampInput))) {
+    throw new Error('Idempotent dream persistence requires a valid memoryTimestamp');
+  }
+  return { key, timestamp: new Date(timestampInput).toISOString() };
+}
+
+function captureOptions(
+  identity: StableCaptureIdentity | undefined,
+  suffix: string,
+  options: CaptureEventOptions,
+): CaptureEventOptions {
+  return identity
+    ? { ...options, idempotencyKey: `${identity.key}:memory:${suffix}`, timestamp: identity.timestamp }
+    : options;
+}
+
+function durableCapture(
+  username: string,
+  content: string,
+  result: CaptureResult,
+): { content: string; sourceIds: string[] } {
+  if (!result.filePath) return { content, sourceIds: [] };
+  const event = readCapturedEpisodicEvent(username, result.filePath);
+  const sources = Array.isArray(event.metadata?.sources)
+    ? event.metadata.sources.filter((source): source is string => typeof source === 'string')
+    : [];
+  return { content: event.content, sourceIds: sources };
 }
 
 function auditCapture(
@@ -150,25 +195,45 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   try {
-    const captureResult = captureEventWithDetails(dream, {
+    const stableIdentity = stableCaptureIdentity(context);
+    const captureResult = captureEventWithDetails(dream, captureOptions(stableIdentity, `${type}:0`, {
       type,
       metadata: {
         sources: sourceIds,
         confidence: 0.7,
       },
-    });
-    auditCapture(type, dream, captureResult, sourceIds.length, username);
+    }));
+    const durableInitial = durableCapture(username, dream, captureResult);
+    const durableInitialSourceIds = durableInitial.sourceIds.length > 0
+      ? durableInitial.sourceIds
+      : sourceIds;
+    auditCapture(type, durableInitial.content, captureResult, durableInitialSourceIds.length, username);
 
     const eventIds = [captureResult.eventId];
-    const dreams = [dream];
+    const dreams = [durableInitial.content];
     const bufferEntries: BufferEntry[] = [];
-    if (initialThinking) bufferEntries.push(reasoningEntry(initialThinking, 'dreamer'));
-    bufferEntries.push(dreamEntry(type, dream, captureResult.eventId));
+    if (initialThinking) {
+      bufferEntries.push(reasoningEntry(
+        initialThinking,
+        'dreamer',
+        stableIdentity ? `${stableIdentity.key}:buffer:reasoning:0` : undefined,
+      ));
+    }
+    bufferEntries.push(dreamEntry(
+      type,
+      durableInitial.content,
+      captureResult.eventId,
+      undefined,
+      stableIdentity ? `${stableIdentity.key}:buffer:${type}:0` : undefined,
+    ));
 
     let parentEventId = captureResult.eventId === 'duplicate' ? undefined : captureResult.eventId;
     let deduplicatedCount = captureResult.deduplicated === true ? 1 : 0;
     for (const continuation of continuations) {
-      const continuationResult = captureEventWithDetails(continuation.dream, {
+      const continuationResult = captureEventWithDetails(continuation.dream, captureOptions(
+        stableIdentity,
+        `dream:${continuation.index}`,
+        {
         type: 'dream',
         metadata: {
           continuation: true,
@@ -177,20 +242,35 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
           confidence: 0.6,
           sources: sourceIds,
         },
-      });
+        },
+      ));
+      const durableContinuation = durableCapture(username, continuation.dream, continuationResult);
+      const durableContinuationSourceIds = durableContinuation.sourceIds.length > 0
+        ? durableContinuation.sourceIds
+        : sourceIds;
       auditCapture(
         'dream',
-        continuation.dream,
+        durableContinuation.content,
         continuationResult,
-        sourceIds.length,
+        durableContinuationSourceIds.length,
         username,
         continuation.index,
       );
       if (continuation.thinking) {
-        bufferEntries.push(reasoningEntry(continuation.thinking, 'dreamer-continuation'));
+        bufferEntries.push(reasoningEntry(
+          continuation.thinking,
+          'dreamer-continuation',
+          stableIdentity ? `${stableIdentity.key}:buffer:reasoning:${continuation.index}` : undefined,
+        ));
       }
-      bufferEntries.push(dreamEntry('dream', continuation.dream, continuationResult.eventId, continuation.index));
-      dreams.push(continuation.dream);
+      bufferEntries.push(dreamEntry(
+        'dream',
+        durableContinuation.content,
+        continuationResult.eventId,
+        continuation.index,
+        stableIdentity ? `${stableIdentity.key}:buffer:dream:${continuation.index}` : undefined,
+      ));
+      dreams.push(durableContinuation.content);
       eventIds.push(continuationResult.eventId);
       if (continuationResult.deduplicated === true) deduplicatedCount++;
       if (continuationResult.eventId !== 'duplicate') parentEventId = continuationResult.eventId;
@@ -200,11 +280,11 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       saved: true,
       eventId: captureResult.eventId,
       eventIds,
-      dream,
+      dream: durableInitial.content,
       dreams,
       savedCount: dreams.length,
       bufferEntries,
-      sourceCount: sourceIds.length,
+      sourceCount: durableInitialSourceIds.length,
       deduplicated: captureResult.deduplicated === true,
       deduplicatedCount,
       username,

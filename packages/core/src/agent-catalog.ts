@@ -294,11 +294,12 @@ export class AgentCatalogService {
         ? current.sourcePath.slice('agents/'.length)
         : current.sourcePath,
       usesLLM: definition?.usesLLM ?? true,
-      allowedModes: defaultTrigger.type === 'manual' || defaultTrigger.type === 'event'
-        ? ['reactive', 'semi', 'full']
-        : ['semi', 'full'],
-      startupPolicy: 'skip',
-      maxRetries: 1,
+      allowedModes: defaultTrigger.allowedModes
+        ?? (defaultTrigger.type === 'manual' || defaultTrigger.type === 'event'
+          ? ['reactive', 'semi', 'full']
+          : ['semi', 'full']),
+      startupPolicy: defaultTrigger.startupPolicy ?? 'skip',
+      maxRetries: defaultTrigger.maxRetries ?? 1,
       comment: `Registered from Agent Catalog by ${actor}.`,
     };
     if (defaultTrigger.interval !== undefined) config.interval = defaultTrigger.interval;
@@ -308,6 +309,8 @@ export class AgentCatalogService {
     if (defaultTrigger.eventCountThreshold !== undefined) config.eventCountThreshold = defaultTrigger.eventCountThreshold;
     if (defaultTrigger.eventCountField !== undefined) config.eventCountField = defaultTrigger.eventCountField;
     if (defaultTrigger.idleResetSeconds !== undefined) config.idleResetSeconds = defaultTrigger.idleResetSeconds;
+    if (defaultTrigger.probability !== undefined) config.probability = defaultTrigger.probability;
+    if (defaultTrigger.jitterMs !== undefined) config.jitterMs = defaultTrigger.jitterMs;
     this.triggerConfig.registerAgent(agentId, config, actor);
     return this.getSnapshot();
   }

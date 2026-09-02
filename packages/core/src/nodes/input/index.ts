@@ -8,3 +8,4 @@ export { TextInputNode } from './text-input.node.js';
 export { MicInputNode } from './mic-input.node.js';
 export { SpeechToTextNode } from './speech-to-text.node.js';
 export { UserInputNode } from './user-input.node.js';
+export { instructionResolverNode } from './instruction-resolver.node.js';

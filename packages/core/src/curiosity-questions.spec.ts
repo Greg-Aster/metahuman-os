@@ -42,6 +42,47 @@ test('creates an atomic profile-isolated pending record and counts it', async ()
   assert.equal(fs.readdirSync(pending).some(name => name.endsWith('.tmp')), false);
 });
 
+test('stable creation reuses the first durable question across retries', async () => {
+  const { store } = temporaryStore();
+  const first = await store.createOrGet('alice', {
+    id: 'cur-q-task-one',
+    question: 'What should we explore first?',
+    askedAt: '2026-08-25T12:00:00.000Z',
+    seedMemories: ['evt-one'],
+  });
+  const retry = await store.createOrGet('alice', {
+    id: 'cur-q-task-one',
+    question: 'A retry must not replace the first question.',
+    askedAt: '2026-08-25T12:01:00.000Z',
+    seedMemories: ['evt-two'],
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(retry.created, false);
+  assert.deepEqual(retry.record, first.record);
+  assert.equal(await store.countPending('alice'), 1);
+});
+
+test('concurrent stable creation publishes exactly one durable question', async () => {
+  const { store } = temporaryStore();
+  const results = await Promise.all([
+    store.createOrGet('alice', {
+      id: 'cur-q-task-concurrent',
+      question: 'Which question wins the race?',
+      seedMemories: ['evt-one'],
+    }),
+    store.createOrGet('alice', {
+      id: 'cur-q-task-concurrent',
+      question: 'This competing question must not overwrite the winner.',
+      seedMemories: ['evt-two'],
+    }),
+  ]);
+
+  assert.deepEqual(results.map(result => result.created).sort(), [false, true]);
+  assert.deepEqual(results[0].record, results[1].record);
+  assert.equal(await store.countPending('alice'), 1);
+});
+
 test('answer resolution is durable, removes the pending record, and is idempotent', async () => {
   const { root, store } = temporaryStore();
   await store.create('alice', {

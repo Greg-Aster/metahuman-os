@@ -7,41 +7,33 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { getActiveFacet, loadPersonaWithFacet } from '../../identity.js';
 
 const execute: NodeExecutor = async (_inputs, _context, _properties) => {
-  try {
-    const persona = loadPersonaWithFacet();
-    const activeFacet = getActiveFacet();
+  const persona = loadPersonaWithFacet();
+  const activeFacet = getActiveFacet();
 
-    // Inactive persona: return null/empty values for LoRA-only mode
-    if (persona === null) {
-      return {
-        success: true,
-        persona: null,
-        identity: null,
-        personality: null,
-        values: null,
-        goals: null,
-        activeFacet,
-        inactive: true,
-      };
-    }
-
+  // Inactive persona is an explicit operating mode, not a load failure.
+  if (persona === null) {
     return {
       success: true,
-      persona,
-      identity: persona.identity,
-      personality: persona.personality,
-      values: persona.values,
-      goals: persona.goals,
+      persona: null,
+      identity: null,
+      personality: null,
+      values: null,
+      goals: null,
       activeFacet,
-      inactive: false,
-    };
-  } catch (error) {
-    console.error('[PersonaLoader] Error:', error);
-    return {
-      success: false,
-      error: (error as Error).message,
+      inactive: true,
     };
   }
+
+  return {
+    success: true,
+    persona,
+    identity: persona.identity,
+    personality: persona.personality,
+    values: persona.values,
+    goals: persona.goals,
+    activeFacet,
+    inactive: false,
+  };
 };
 
 export const PersonaLoaderNode: NodeDefinition = defineNode({
@@ -57,6 +49,7 @@ export const PersonaLoaderNode: NodeDefinition = defineNode({
     { name: 'goals', type: 'object', description: 'Goals' },
     { name: 'activeFacet', type: 'string', description: 'Active facet' },
     { name: 'inactive', type: 'boolean', description: 'True if persona is inactive (LoRA-only mode)' },
+    { name: 'success', type: 'boolean', description: 'Whether persona loading completed' },
   ],
   properties: {},
   propertySchemas: {},

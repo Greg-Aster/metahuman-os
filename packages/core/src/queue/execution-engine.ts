@@ -22,7 +22,7 @@ import { wakeSleepSession } from '../sleep-runtime.js';
 import {
   beginEnvironmentPerceptionCycle,
   loadRobotOperatorConfig,
-  readRobotObserverCycle,
+  parseRobotObserverCycle,
 } from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
 import {
@@ -35,6 +35,10 @@ import { withUserContext } from '../context.js';
 import { canWriteMemory } from '../cognitive-mode.js';
 
 const DEFERRED = Symbol('deferred-work-completion');
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
   Object.values(AGENT_CATALOG_DEFINITIONS)
@@ -226,8 +230,16 @@ export class ExecutionEngine {
       return executeDesireOutcomeReviewWork(task, context);
     });
     this.registerHandler('environment.observation', async (task, context) => {
-      let observation = task.input.observation ?? task.input;
-      let robotObserver = readRobotObserverCycle(observation);
+      const observation = task.input.observation ?? task.input;
+      const actionContext = isRecord(task.input.actionContext)
+        ? task.input.actionContext
+        : null;
+      const suppliedRobotOperatorContext = isRecord(task.input.robotOperatorContext)
+        ? task.input.robotOperatorContext
+        : null;
+      let robotObserver = parseRobotObserverCycle(
+        suppliedRobotOperatorContext?.robotObserver ?? actionContext?.robotObserver,
+      );
       if (
         !robotObserver
         && observation?.metadata?.perceptionEvent === 'audio_utterance'
@@ -240,15 +252,6 @@ export class ExecutionEngine {
             ? task.input.graph
             : config.environmentGraph,
         );
-        if (robotObserver) {
-          observation = {
-            ...observation,
-            metadata: {
-              ...observation.metadata,
-              robotObserver,
-            },
-          };
-        }
       }
       // Autonomous stimulus agents carry the shared Robot Operator graph owner
       // and their runtime instruction with the returned observation.
@@ -265,22 +268,11 @@ export class ExecutionEngine {
       if (!user) throw new Error(`Environment bridge user not found: ${task.username}`);
       const loaded = await loadGraphForMode(graphName, user.username);
       if (!loaded) throw new Error(`Environment graph not found: ${graphName}`);
-      const text = (observation.text ?? []).map((event: any) => event.text).filter(Boolean).join('\n');
-      const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
-        ? observation.metadata.originatingInstruction.trim()
-        : '';
-      const conversationInput = originatingInstruction
-        ? ''
-        : (observation.text ?? [])
-            .filter((event: any) => event?.source === 'player')
-            .map((event: any) => typeof event?.text === 'string' ? event.text.trim() : '')
-            .filter(Boolean)
-            .join('\n');
-      const taskInstruction = originatingInstruction || text || (robotObserver
-        ? ''
-        : observation.visual || observation.visuals?.length
-          ? 'Review the returned environment image and state, then choose the next semantic action if one is needed.'
-          : 'Review the returned environment state and choose the next semantic action if one is needed.');
+      const conversationInput = (observation.text ?? [])
+        .filter((event: any) => event?.source === 'player')
+        .map((event: any) => typeof event?.text === 'string' ? event.text.trim() : '')
+        .filter(Boolean)
+        .join('\n');
       const robotOperatorConfig = loadRobotOperatorConfig();
       const graphState = await withUserContext(
         { userId: user.id, username: user.username, role: user.role },
@@ -289,11 +281,7 @@ export class ExecutionEngine {
           signal: context.signal,
           context: {
             sessionId: observation.sessionId,
-            userMessage: text,
-            // Only fresh player-authored text is a Conversation Buffer input.
-            // Task continuations still receive their instruction for reasoning,
-            // but leave the graph's user-message handle empty.
-            conversationInput,
+            userMessage: conversationInput,
             userId: user.id,
             username: user.username,
             cognitiveMode: 'environment',
@@ -302,9 +290,13 @@ export class ExecutionEngine {
             allowMemoryWrites: canWriteMemory('environment'),
             environment: 'server',
             environmentObservation: observation,
-            environmentTaskInstruction: taskInstruction,
-            environmentActionSource: robotObserver?.triggerSource,
-            robotObserver,
+            environmentActionContext: actionContext,
+            robotOperatorContext: robotObserver
+              ? {
+                  ...(suppliedRobotOperatorContext ?? {}),
+                  robotObserver,
+                }
+              : null,
             robotOperatorEnvironmentGraph: [
               robotOperatorConfig.boredomObserverGraph,
               robotOperatorConfig.boredomMovementGraph,

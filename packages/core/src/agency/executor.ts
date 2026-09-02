@@ -7,7 +7,8 @@
 
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict } from './types.js';
 import type { SvelteFlowGraph } from '../cognitive-graph-schema.js';
-import type { ExecutionEventHandler } from '../graph-executor.js';
+import { getUserContext } from '../context.js';
+import type { ExecutionEventHandler, GraphExecutionState } from '../graph-executor.js';
 import {
   cognitiveGraphPath,
   loadGraphFile,
@@ -92,6 +93,60 @@ export interface ExecuteDesireResult {
   error?: string;
 }
 
+export function buildDesireExecutionGraphContext(
+  desire: Desire,
+  username: string,
+  onProgress?: DesireProgressCallback,
+  signal?: AbortSignal,
+): Record<string, unknown> {
+  const activeUser = getUserContext();
+  if (!activeUser) throw new Error('Desire execution requires an authenticated user context');
+  if (activeUser.username !== username && activeUser.activeProfile !== username) {
+    throw new Error(`Desire execution context does not own profile ${username}`);
+  }
+  return {
+    userId: activeUser.userId,
+    username,
+    allowMemoryWrites: true,
+    recordPersonaMemory: true,
+    cognitiveMode: 'agent' as const,
+    desire,
+    onDesireProgress: onProgress,
+    abortSignal: signal,
+  };
+}
+
+export function evaluateDesireExecutionGraph(graphResult: GraphExecutionState): ExecuteDesireResult {
+  const executorOutputs = requireGraphNodeOutput(graphResult, 'desire_executor');
+  const execution = executorOutputs.execution as DesireExecution | undefined;
+  const success = executorOutputs.success;
+  const error = executorOutputs.error as string | undefined;
+  if (!execution || typeof success !== 'boolean') {
+    throw new Error('Desire Executor did not produce a typed execution result');
+  }
+
+  const innerOutputs = requireGraphNodeOutput(graphResult, 'inner_dialogue_buffer');
+  if (innerOutputs.saved !== true || innerOutputs.persisted !== true) {
+    throw new Error(
+      `Execution inner-dialogue persistence failed: ${innerOutputs.error || innerOutputs.reason || 'not saved'}`,
+    );
+  }
+  const admittedCount = Number(innerOutputs.savedCount);
+  if (!Number.isInteger(admittedCount) || admittedCount < 1) {
+    throw new Error('Execution inner-dialogue buffer did not confirm an admitted summary');
+  }
+
+  const memoryOutputs = requireGraphNodeOutput(graphResult, 'inner_dialogue_saver');
+  if (memoryOutputs.saved !== true || memoryOutputs.success !== true
+      || memoryOutputs.savedCount !== admittedCount) {
+    throw new Error(
+      `Execution Persona Memory persistence failed: expected ${admittedCount} saved entry or entries, received ${Number(memoryOutputs.savedCount) || 0}`,
+    );
+  }
+
+  return { success, graphCompleted: true, execution, error };
+}
+
 /**
  * Execute a single desire via the graph pipeline.
  * This handles: execution → inner dialogue → TTS output
@@ -119,25 +174,13 @@ export async function executeDesireViaGraph(
       data: { desireId: desire.id, title: desire.title },
     });
 
-    // Execute graph with context
-    // The desire_loader node checks for context.desire and uses it directly
-    // This allows the graph to work with the desire we pass in
-    const graphContext = {
-      userId: username,
-      username, // Some nodes check context.username
-      allowMemoryWrites: true,
-      cognitiveMode: 'dual' as const,
-      // Pass desire in context - desire_loader checks context.desire
-      desire,
-      // Pass progress callback for nodes to emit progress
-      onDesireProgress: onProgress,
-      abortSignal: signal,
-    };
+    const graphContext = buildDesireExecutionGraphContext(desire, username, onProgress, signal);
 
-    const executorGraphNode = graph.nodes.find(node => node.data.nodeType === 'desire_executor');
-    if (!executorGraphNode) {
-      throw new Error('Desire executor graph has no desire_executor node');
+    const executorGraphNodes = graph.nodes.filter(node => node.data.nodeType === 'desire_executor');
+    if (executorGraphNodes.length !== 1) {
+      throw new Error(`Desire executor graph requires exactly one desire_executor node; found ${executorGraphNodes.length}`);
     }
+    const [executorGraphNode] = executorGraphNodes;
     let graphError: string | undefined;
 
     // Create event handler that forwards graph events to progress callback
@@ -166,63 +209,24 @@ export async function executeDesireViaGraph(
       };
     }
 
-    // Extract results from the graph's declared desire_executor owner.
-    const executorNode = graphResult.nodes.get(executorGraphNode.id);
-    if (!executorNode?.outputs) {
-      return {
-        success: false,
-        graphCompleted: false,
-        error: 'Graph execution failed - no executor output',
-      };
-    }
-
-    const execution = executorNode.outputs.execution as DesireExecution | undefined;
-    const success = executorNode.outputs.success as boolean;
-    const error = executorNode.outputs.error as string | undefined;
-
-    const auditGraphNode = graph.nodes.find(node => node.data.nodeType === 'audit_logger');
-    const auditOutputs = auditGraphNode ? graphResult.nodes.get(auditGraphNode.id)?.outputs : undefined;
-    if (auditGraphNode && auditOutputs?.success !== true) {
-      return {
-        success: false,
-        graphCompleted: false,
-        execution,
-        error: typeof auditOutputs?.error === 'string'
-          ? `Execution audit failed: ${auditOutputs.error}`
-          : 'Execution audit was not durably recorded',
-      };
-    }
-
-    const innerGraphNode = graph.nodes.find(node => node.data.nodeType === 'inner_dialogue_buffer');
-    const innerOutputs = innerGraphNode ? graphResult.nodes.get(innerGraphNode.id)?.outputs : undefined;
-    if (innerGraphNode && innerOutputs?.saved !== true) {
-      return {
-        success: false,
-        graphCompleted: false,
-        execution,
-        error: typeof innerOutputs?.error === 'string'
-          ? `Execution inner-dialogue persistence failed: ${innerOutputs.error}`
-          : `Execution inner-dialogue persistence failed: ${innerOutputs?.reason || 'not saved'}`,
-      };
-    }
+    const evaluated = evaluateDesireExecutionGraph(graphResult);
 
     // Emit completion event
     onProgress?.({
-      type: success ? 'execution_complete' : 'execution_error',
+      type: evaluated.success ? 'execution_complete' : 'execution_error',
       totalSteps: desire.plan?.steps?.length || 0,
-      message: success
-        ? `Completed "${desire.title}" (${execution?.stepsCompleted || 0}/${desire.plan?.steps?.length || 0} steps)`
-        : `Failed: ${error || 'Unknown error'}`,
+      message: evaluated.success
+        ? `Completed "${desire.title}" (${evaluated.execution?.stepsCompleted || 0}/${desire.plan?.steps?.length || 0} steps)`
+        : `Failed: ${evaluated.error || 'Unknown error'}`,
       timestamp: Date.now(),
-      data: { success, stepsCompleted: execution?.stepsCompleted, error },
+      data: {
+        success: evaluated.success,
+        stepsCompleted: evaluated.execution?.stepsCompleted,
+        error: evaluated.error,
+      },
     });
 
-    return {
-      success,
-      graphCompleted: true,
-      execution,
-      error,
-    };
+    return evaluated;
   } catch (graphError) {
     const errorMsg = (graphError as Error).message;
     console.error(`${LOG_PREFIX} Graph execution failed:`, errorMsg);

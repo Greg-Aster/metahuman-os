@@ -232,7 +232,7 @@ export async function transcribeAudioUtterance(
     },
     text: [{
       id: `ainekio-audio-${utterance.metadata.utteranceId}`,
-      source: 'environment',
+      source: 'player',
       text: transcript,
       timestamp,
       senderId: utterance.metadata.robotId,

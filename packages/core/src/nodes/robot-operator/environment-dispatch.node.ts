@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { getOperatorMode } from '../../active-operator/mode-controller.js';
-import type { EnvironmentObservation } from '../../environment-interface/index.js';
+import {
+  sanitizeEnvironmentBridgeObservation,
+  type EnvironmentObservation,
+} from '../../environment-interface/index.js';
 import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
 import {
-  readRobotObserverCycle,
+  parseRobotObserverCycle,
   type RobotObserverCycleMetadata,
   type RobotObserverTriggerSource,
 } from '../../robot-operator.js';
@@ -46,19 +49,19 @@ function currentMode(context: Record<string, unknown>): AutonomyMode {
     : getOperatorMode();
 }
 
-function triggerSource(observation: EnvironmentObservation): RobotObserverTriggerSource {
-  return readRobotObserverCycle(observation)?.triggerSource ?? 'autonomy';
+function triggerSource(robotObserver: RobotObserverCycleMetadata | null): RobotObserverTriggerSource {
+  return robotObserver?.triggerSource ?? 'autonomy';
 }
 
 function delegatedCycle(
   observation: EnvironmentObservation,
+  robotObserver: RobotObserverCycleMetadata | null,
   source: RobotObserverTriggerSource,
   graph: string,
 ): RobotObserverCycleMetadata {
-  const existing = readRobotObserverCycle(observation);
-  if (existing) {
+  if (robotObserver) {
     return {
-      ...existing,
+      ...robotObserver,
       graph,
     };
   }
@@ -80,6 +83,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     { name: 'decision', type: 'object', description: 'Validated boredom-planner decision' },
     { name: 'memories', type: 'array', optional: true, description: 'Sampled historical inspiration delegated once to Environment Mode' },
     { name: 'observation', type: 'object', description: 'Original correlated robot observation' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle supplied by Robot Operator Input' },
   ],
   outputs: [
     { name: 'queued', type: 'boolean', description: 'Whether one Environment Mode execution was admitted' },
@@ -107,6 +111,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
+    const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
     const reject = (status: string, instruction = '') => ({
       queued: false,
       taskId: '',
@@ -123,7 +128,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     }
     if (!observation?.sessionId) return reject('missing_observation_session', instruction);
 
-    const source = triggerSource(observation);
+    const source = triggerSource(robotObserver);
     const mode = currentMode(context);
     const username = cleanText(context.username, 100);
     if (!username || username === 'system') return reject('missing_user_owner', instruction);
@@ -131,36 +136,21 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       context.robotOperatorEnvironmentGraph,
       validGraph(properties?.graph, 'boredom-autonomy'),
     );
-    if (graph === readRobotObserverCycle(observation)?.graph) {
+    if (graph === robotObserver?.graph) {
       return reject('recursive_graph', instruction);
     }
-    const cycle = delegatedCycle(observation, source, graph);
+    const cycle = delegatedCycle(observation, robotObserver, source, graph);
     const timestamp = new Date().toISOString();
     const delegatedMemories = sampledMemoryContent(inputs.memories);
-    const nextObservation: EnvironmentObservation = {
+    const nextObservation: EnvironmentObservation = sanitizeEnvironmentBridgeObservation({
       ...observation,
       timestamp,
       text: [],
       feedback: observation.feedback ?? [],
-      metadata: {
-        ...(observation.metadata ?? {}),
-        originatingInstruction: instruction,
-        correlationId: cycle.cycleId,
-        robotObserver: cycle,
-        robotOperatorDecision: {
-          observed,
-          instruction,
-          reason,
-          decidedAt: timestamp,
-        },
-        ...(delegatedMemories.length > 0
-          ? { robotOperatorMemories: delegatedMemories }
-          : {}),
-      },
-    };
+      metadata: { ...(observation.metadata ?? {}), correlationId: cycle.cycleId },
+    });
     delete nextObservation.metadata?.actionId;
     delete nextObservation.metadata?.feedbackId;
-    delete nextObservation.metadata?.taskValidatorCommand;
 
     const hash = createHash('sha256').update(instruction).digest('hex').slice(0, 16);
     const taskInput: TaskInput = {
@@ -169,7 +159,20 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       resource: 'local-llm',
       source,
       priority: source === 'user' ? 'high' : 'background',
-      input: { observation: nextObservation, graph },
+      input: {
+        observation: nextObservation,
+        graph,
+        robotOperatorContext: {
+          robotObserver: cycle,
+          plannerDecision: {
+            observed,
+            instruction,
+            reason,
+            decidedAt: timestamp,
+          },
+          ...(delegatedMemories.length > 0 ? { memories: delegatedMemories } : {}),
+        },
+      },
       username,
       cognitiveMode: 'environment',
       correlationId: cycle.cycleId,

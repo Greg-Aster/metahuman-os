@@ -4,7 +4,7 @@
   "name": "Desire Plan Reviewer",
   "description": "LLM self-review of generated plans for alignment and safety",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "1",
@@ -265,11 +265,11 @@
   ],
   "edges": [
     {
-      "id": "e-2-persona-3-personaData",
+      "id": "e-2-persona-3-persona",
       "source": "2",
       "target": "3",
       "sourceHandle": "persona",
-      "targetHandle": "personaData",
+      "targetHandle": "persona",
       "data": {
         "type": "object",
         "comment": "Persona → Formatter"

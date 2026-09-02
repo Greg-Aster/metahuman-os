@@ -116,3 +116,79 @@ test('one saver and one buffer owner persist an ordered dream sequence idempoten
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('coordinator retry identity replays the first durable daydream exactly', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-daydreamer-retry-'))
+  const username = `daydreamer-retry-${Date.now()}`
+  const originalRunPath = systemPaths.run
+  const originalFetch = globalThis.fetch
+  registerProfileStorageConfigGetter(candidate => candidate === username
+    ? { path: root, type: 'internal' }
+    : undefined)
+  systemPaths.run = path.join(root, 'run')
+  fs.mkdirSync(path.join(root, 'etc'), { recursive: true })
+  fs.copyFileSync(
+    path.join(systemPaths.root, 'etc', 'chat-settings.json'),
+    path.join(root, 'etc', 'chat-settings.json'),
+  )
+  setAuditEnabled(false)
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ task: { id: 'daydreamer-retry-index-test' } }),
+  }) as Response
+
+  const context = {
+    userId: username,
+    username,
+    allowMemoryWrites: true,
+    idempotencyKey: `daydreamer:${username}:task-stable`,
+    memoryTimestamp: '2026-09-02T12:34:56.000Z',
+  }
+
+  try {
+    await withUserContext({ userId: username, username, role: 'owner' }, async () => {
+      const first = await DreamerDreamSaverNode.execute!({
+        dreamData: 'The first durable daydream watches clouds gather into a quiet library.',
+        sourceIds: ['source-first'],
+      }, context, { type: 'daydream' })
+      const retry = await DreamerDreamSaverNode.execute!({
+        dreamData: 'A regenerated retry produced different words that must not replace the first result.',
+        sourceIds: ['source-retry'],
+      }, context, { type: 'daydream' })
+
+      assert.equal(first.saved, true)
+      assert.equal(retry.saved, true)
+      assert.equal(retry.deduplicated, true)
+      assert.equal(retry.eventId, first.eventId)
+      assert.equal(retry.dream, first.dream)
+      assert.deepEqual(retry.dreams, first.dreams)
+      assert.equal(retry.sourceCount, 1)
+      assert.equal(retry.bufferEntries[0].content, first.dream)
+      assert.equal(retry.bufferEntries[0].meta.idempotencyKey, first.bufferEntries[0].meta.idempotencyKey)
+
+      const firstAdmission = await InnerDialogueBufferNode.execute!({
+        entries: first.bufferEntries,
+        passthrough: first.dream,
+      }, context, {})
+      const retryAdmission = await InnerDialogueBufferNode.execute!({
+        entries: retry.bufferEntries,
+        passthrough: retry.dream,
+      }, context, {})
+      assert.equal(firstAdmission.text, first.dream)
+      assert.equal(retryAdmission.text, first.dream)
+      assert.equal(loadBufferForUser(username, 'inner').messages.length, 1)
+
+      const events = jsonFiles(path.join(root, 'memory', 'episodic'))
+        .map(file => JSON.parse(fs.readFileSync(file, 'utf8')))
+        .filter(event => event.type === 'daydream')
+      assert.equal(events.length, 1)
+      assert.equal(events[0].content, first.dream)
+      assert.deepEqual(events[0].metadata.sources, ['source-first'])
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    systemPaths.run = originalRunPath
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

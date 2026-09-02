@@ -35,7 +35,7 @@ export const TextInputNode: NodeDefinition = defineNode({
       default: '',
       label: 'Runtime Input Key',
       description: 'Optional execution-context field to read before the editable fallback message.',
-      placeholder: 'For example: environmentTaskInstruction',
+      placeholder: 'For example: seedMemory',
     },
   },
   description: 'Outputs a named runtime text value, an editable fallback message, or the current user message.',

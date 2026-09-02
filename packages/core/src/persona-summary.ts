@@ -26,6 +26,21 @@ export function getPersonaValueNames(persona: PersonaCore): string[] {
     .filter((value): value is string => Boolean(value));
 }
 
+export function getPersonaValueDescriptions(persona: PersonaCore): string[] {
+  const values = persona.values?.core;
+  if (!Array.isArray(values)) return [];
+
+  return values
+    .map(value => {
+      if (typeof value === 'string') return nonEmptyString(value);
+      const name = nonEmptyString(value?.value);
+      if (!name) return null;
+      const description = nonEmptyString(value?.description);
+      return description ? `${name}: ${description}` : name;
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
 export function getActivePersonaGoals(persona: PersonaCore): string[] {
   const tiers = [
     persona.goals?.shortTerm,

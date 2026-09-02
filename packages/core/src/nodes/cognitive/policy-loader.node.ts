@@ -43,12 +43,9 @@ const execute: NodeExecutor = async (_inputs, _context, properties) => {
       preferenceCount: rules.softPreferences?.length ?? 0,
     };
   } catch (error) {
-    console.error('[PolicyLoader] Error:', error);
-    return {
-      formatted: '',
-      rules: null,
-      error: (error as Error).message,
-    };
+    throw new Error(`Policy Loader could not load decision rules: ${(error as Error).message}`, {
+      cause: error,
+    });
   }
 };
 

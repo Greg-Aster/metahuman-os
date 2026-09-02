@@ -4,7 +4,7 @@
   "name": "Dreamer Agent Workflow",
   "description": "Generates and durably admits bounded surreal dreams from weighted lifetime memory sampling",
   "cognitiveMode": "agent",
-  "last_modified": "2026-08-27",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "1",
@@ -153,11 +153,11 @@
       "data": { "type": "array", "comment": "Curated memories -> Dream Generator" }
     },
     {
-      "id": "e-8-persona-9-personaData",
+      "id": "e-8-persona-9-persona",
       "source": "8",
       "target": "9",
       "sourceHandle": "persona",
-      "targetHandle": "personaData",
+      "targetHandle": "persona",
       "data": { "type": "object", "comment": "Persona data -> Persona Formatter" }
     },
     {

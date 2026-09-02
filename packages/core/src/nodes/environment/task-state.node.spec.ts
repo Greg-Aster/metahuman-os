@@ -388,7 +388,6 @@ test('autonomy revises its objective inside canonical Environment Task State', a
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.equal(result.taskState.objective, 'Understand the unfamiliar object beside the charging station.');
@@ -442,7 +441,6 @@ test('action-required autonomy records the missing action without suppressing th
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.deepEqual(reduced.actions, []);
@@ -494,7 +492,6 @@ test('Task State exposes one rejected movement generation instead of hiding it a
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.deepEqual(reduced.actions, []);
@@ -529,7 +526,6 @@ test('Boredom Movement requires an initial physical consequence and then yields 
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'prepare' });
 
   assert.equal(initial.taskState.phase, 'new');
@@ -554,7 +550,6 @@ test('Boredom Movement requires an initial physical consequence and then yields 
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.equal(queued.actions.length, 1);
@@ -608,7 +603,6 @@ test('Boredom Movement requires an initial physical consequence and then yields 
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.equal(reacted.complete, true);
@@ -975,7 +969,6 @@ test('any autonomous information-gain action preserves a visual contract through
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'prepare' });
   const queued = await environmentTaskStateNode.execute({
     observation: autonomousObservation,
@@ -996,7 +989,6 @@ test('any autonomous information-gain action preserves a visual contract through
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.equal(queued.actions.length, 1);
@@ -1549,7 +1541,7 @@ test('autonomous physical work does not require explanatory action-purpose metad
   const initial = await environmentTaskStateNode.execute({
     observation: autonomousObservation,
     instruction: 'Consider one action.',
-  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'prepare' });
+  }, { userMessage: '', username: 'greggles' }, { phase: 'prepare' });
   const result = await environmentTaskStateNode.execute({
     observation: autonomousObservation,
     instruction: 'Consider one action.',
@@ -1563,7 +1555,7 @@ test('autonomous physical work does not require explanatory action-purpose metad
       requiredCompletionBasis: 'action_result',
       motionClass: 'body_local',
     },
-  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
+  }, { userMessage: '', username: 'greggles' }, { phase: 'reduce' });
 
   assert.equal(result.actions[0]?.command, 'wave');
   assert.equal(result.taskState.actionPurpose, undefined);
@@ -1589,7 +1581,7 @@ test('an autonomous observation can remain physically still while producing a me
   const initial = await environmentTaskStateNode.execute({
     observation: autonomousObservation,
     instruction: 'Review the current image and form one meaningful persona-grounded response.',
-  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'prepare' });
+  }, { userMessage: '', username: 'greggles' }, { phase: 'prepare' });
   const result = await environmentTaskStateNode.execute({
     observation: autonomousObservation,
     instruction: 'Review the current image and form one meaningful persona-grounded response.',
@@ -1606,7 +1598,7 @@ test('an autonomous observation can remain physically still while producing a me
       observationSummary: 'A quiet corner is softly lit in the current frame.',
       completionEvidence: 'Frame quiet-current-view shows the softly lit quiet corner described in the response.',
     },
-  }, { userMessage: '', username: 'greggles', environmentActionSource: 'autonomy' }, { phase: 'reduce' });
+  }, { userMessage: '', username: 'greggles' }, { phase: 'reduce' });
 
   assert.equal(result.complete, true);
   assert.deepEqual(result.actions, []);
@@ -1647,7 +1639,6 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'prepare' });
   const result = await environmentTaskStateNode.execute({
     observation: captureObservation,
@@ -1666,7 +1657,6 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
   }, {
     userMessage: '',
     username: 'greggles',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.equal(result.complete, true);

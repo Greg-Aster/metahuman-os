@@ -38,7 +38,6 @@ export interface AgentTriggerConfig {
   maxRetries?: number;
   probability?: number;
   jitterMs?: number;
-  pauseCategory?: 'interactive' | 'background';
   conditions?: { requiresSleepMode?: boolean; [key: string]: any };
   comment?: string;
   [key: string]: unknown;
@@ -97,7 +96,6 @@ const AGENT_PATCH_FIELDS = new Set([
   'maxRetries',
   'probability',
   'jitterMs',
-  'pauseCategory',
   'conditions',
   'comment',
 ]);

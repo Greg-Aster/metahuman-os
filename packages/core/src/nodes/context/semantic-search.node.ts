@@ -45,7 +45,10 @@ export const SemanticSearchNode: NodeDefinition = defineNode({
   description: 'Searches episodic memory for relevant context',
 
   execute: async (inputs, context, properties) => {
-    const query = inputs[0] || context.userMessage || '';
+    if (typeof inputs.query !== 'string' || !inputs.query.trim()) {
+      throw new Error('Semantic Search requires a non-empty query input');
+    }
+    const query = inputs.query.trim();
     const topK = properties?.topK || properties?.limit || 8;
     const threshold = properties?.threshold || 0.6;
 

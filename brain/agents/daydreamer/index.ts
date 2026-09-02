@@ -48,7 +48,11 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   try {
     const stats = await withUserContext(
       { userId: user.id, username: user.username, role: user.role },
-      () => generateUserDaydream(user.username, ctx.signal),
+      () => generateUserDaydream(user.username, {
+        signal: ctx.signal,
+        executionId: process.env.MH_TASK_ID,
+        executionTimestamp: process.env.MH_TASK_CREATED_AT,
+      }),
     );
     return {
       success: true,
@@ -74,6 +78,7 @@ export {
   loadDaydreamerGraph,
   normalizeTriggerProfile,
   runCycle,
+  type DaydreamerExecutionOptions,
   type DaydreamerGraphEvaluation,
   type DaydreamerResult,
   type UserDaydreamerStats,

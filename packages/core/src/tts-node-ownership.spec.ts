@@ -183,8 +183,8 @@ assert.match(
 );
 assert.match(
   environmentBridgeHandler,
-  /environmentObservationStartsUserTurn[\s\S]*?audio_utterance[\s\S]*?beginTTSUserTurn/,
-  'Environment Bridge microphone input must use the same core interruption contract',
+  /environmentObservationStartsUserTurn[\s\S]*?event\.source === 'player'[\s\S]*?beginTTSUserTurn/,
+  'Environment Bridge player input must use the same core interruption contract',
 );
 
 const ttsNode = read('packages/core/src/nodes/output/tts.node.ts');

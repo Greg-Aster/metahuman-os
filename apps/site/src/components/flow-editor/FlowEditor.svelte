@@ -9,18 +9,20 @@
     type Edge,
     type Connection,
     type NodeTypes,
+    type Viewport,
     BackgroundVariant,
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
 
   import BaseNode from './BaseNode.svelte';
-  import NoteNode from './NoteNode.svelte';
   import {
     loadSchemas,
     convertLiteGraphToSvelteFlow,
     convertSvelteFlowToExecutor,
     type SvelteFlowGraph,
   } from '../../lib/client/flow-editor/template-converter';
+  import { provideFlowEditorActions } from '../../lib/client/flow-editor/flow-editor-context';
+  import { withUpdatedNodeProperty } from '../../lib/client/flow-editor/node-property-state';
   import { apiFetch } from '../../lib/client/api-config';
 
   // Props
@@ -39,6 +41,9 @@
   // State - use regular $state for two-way binding with Svelte Flow
   let nodes = $state<Node[]>([]);
   let edges = $state<Edge[]>([]);
+  let viewport = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
+  let hasStoredViewport = $state(false);
+  let flowInstanceKey = $state(0);
   let graphName = $state('Untitled Graph');
   let graphDescription = $state('');
   let isLoading = $state(true);
@@ -63,7 +68,7 @@
     curatorNode: BaseNode,
     safetyNode: BaseNode,
     agencyNode: BaseNode,
-    noteNode: NoteNode, // Special node for documentation
+    noteNode: BaseNode, // Preserved persisted type; uses the shared schema renderer
   };
 
   // Load template when cognitive mode changes
@@ -106,6 +111,7 @@
 
       nodes = sfGraph.nodes;
       edges = sfGraph.edges;
+      restoreGraphViewport(sfGraph.viewport);
       graphName = sfGraph.name;
       graphDescription = sfGraph.description;
 
@@ -185,6 +191,23 @@
     }
   }
 
+  function restoreGraphViewport(nextViewport: SvelteFlowGraph['viewport']) {
+    hasStoredViewport = Boolean(nextViewport);
+    viewport = nextViewport
+      ? { ...nextViewport }
+      : { x: 0, y: 0, zoom: 1 };
+    flowInstanceKey += 1;
+  }
+
+  function handleViewportMove(_event: MouseEvent | TouchEvent | null, nextViewport: Viewport) {
+    viewport = { ...nextViewport };
+  }
+
+  function handleViewportMoveEnd(event: MouseEvent | TouchEvent | null, nextViewport: Viewport) {
+    handleViewportMove(event, nextViewport);
+    onGraphChange?.(getCurrentGraph());
+  }
+
   /**
    * Notify parent of graph changes
    */
@@ -228,6 +251,7 @@
       cognitiveMode: cognitiveMode as 'dual' | 'agent' | 'emulation' | 'environment' | undefined,
       nodes,
       edges,
+      viewport: { ...viewport },
     };
   }
 
@@ -244,6 +268,7 @@
   export function loadGraph(graph: SvelteFlowGraph) {
     nodes = graph.nodes;
     edges = graph.edges;
+    restoreGraphViewport(graph.viewport);
     graphName = graph.name;
     graphDescription = graph.description;
   }
@@ -254,6 +279,7 @@
   export function clearGraph() {
     nodes = [];
     edges = [];
+    restoreGraphViewport(undefined);
     graphName = 'Untitled Graph';
     graphDescription = '';
   }
@@ -274,6 +300,35 @@
       n.id === nodeId
         ? { ...n, data: { ...n.data, ...data } }
         : n
+    );
+    notifyGraphChange();
+  }
+
+  /**
+   * Atomically update one schema-backed property from either editor surface.
+   * Reading the latest node inside this owner prevents rapid sibling edits from
+   * replacing one another with a stale properties object.
+   */
+  export function updateNodeProperty(nodeId: string, propertyKey: string, value: unknown) {
+    nodes = nodes.map((node) =>
+      node.id === nodeId
+        ? {
+            ...node,
+            data: withUpdatedNodeProperty(node.data, propertyKey, value),
+          }
+        : node
+    );
+    notifyGraphChange();
+  }
+
+  /** Persist the user-controlled horizontal size in the canonical node state. */
+  export function updateNodeWidth(nodeId: string, width: number) {
+    if (!Number.isFinite(width)) return;
+
+    nodes = nodes.map((node) =>
+      node.id === nodeId
+        ? { ...node, width: Math.round(width) }
+        : node
     );
     notifyGraphChange();
   }
@@ -312,7 +367,7 @@
   export function resetExecutionStates() {
     nodes = nodes.map((n) => ({
       ...n,
-      data: { ...n.data, executionState: 'idle' },
+      data: { ...n.data, executionState: 'idle', executionOutput: undefined },
     }));
   }
 
@@ -399,6 +454,22 @@
     console.log(`[FlowEditor] Updated display nodes with output (${response.length} chars)`);
   }
 
+  /** Attach output only where a schema declares a compact runtime summary. */
+  export function updateNodeOutputs(nodeOutputs: Record<string, unknown>) {
+    nodes = nodes.map((node) => {
+      const statusFields = node.data?.schema?.presentation?.statusFields;
+      if (!statusFields?.length || !(node.id in nodeOutputs)) return node;
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          executionOutput: nodeOutputs[node.id],
+        },
+      };
+    });
+  }
+
   /**
    * Update unconnected status for all nodes
    * Nodes with no incoming AND no outgoing edges are marked as unconnected (yellow)
@@ -477,6 +548,8 @@
       return node;
     });
   }
+
+  provideFlowEditorActions({ updateNodeProperty, updateNodeWidth, selectNode });
 </script>
 
 <div class="flow-editor-container">
@@ -494,32 +567,37 @@
       </button>
     </div>
   {:else}
-    <SvelteFlow
-      bind:nodes
-      bind:edges
-      {nodeTypes}
-      fitView
-      snapToGrid
-      snapGrid={[15, 15]}
-      minZoom={0.1}
-      maxZoom={2}
-      deleteKeyCode={['Delete', 'Backspace']}
-      selectionKeyCode="Shift"
-      multiSelectionKeyCode="Shift"
-      onconnect={handleConnect}
-      onedgesdelete={handleEdgesDelete}
-      onnodesdelete={handleNodesDelete}
-      onselectionchange={handleSelectionChange}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={20} color="#333" />
-      <Controls />
-      <!-- MiniMap disabled - was causing 100% CPU with large graphs (26+ nodes)
-      <MiniMap
-        nodeColor={(node) => node.data?.schema?.bgColor || '#475569'}
-        maskColor="rgba(0, 0, 0, 0.8)"
-      />
-      -->
-    </SvelteFlow>
+    {#key flowInstanceKey}
+      <SvelteFlow
+        bind:nodes
+        bind:edges
+        {nodeTypes}
+        fitView={!hasStoredViewport}
+        initialViewport={hasStoredViewport ? viewport : undefined}
+        snapToGrid
+        snapGrid={[15, 15]}
+        minZoom={0.1}
+        maxZoom={2}
+        deleteKeyCode={['Delete', 'Backspace']}
+        selectionKeyCode="Shift"
+        multiSelectionKeyCode="Shift"
+        onconnect={handleConnect}
+        onedgesdelete={handleEdgesDelete}
+        onnodesdelete={handleNodesDelete}
+        onselectionchange={handleSelectionChange}
+        onmove={handleViewportMove}
+        onmoveend={handleViewportMoveEnd}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={20} color="#333" />
+        <Controls />
+        <!-- MiniMap disabled - was causing 100% CPU with large graphs (26+ nodes)
+        <MiniMap
+          nodeColor={(node) => node.data?.schema?.bgColor || '#475569'}
+          maskColor="rgba(0, 0, 0, 0.8)"
+        />
+        -->
+      </SvelteFlow>
+    {/key}
   {/if}
 </div>
 

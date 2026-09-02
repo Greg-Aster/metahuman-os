@@ -4,7 +4,7 @@
   "name": "Boredom Reflection Mode",
   "description": "Uses a sampled memory with persona, recent narrative, current state, and verified action history to author one consequential intention for Boredom Autonomy.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-25",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "observation",
@@ -12,8 +12,9 @@
       "position": { "x": 40, "y": 260 },
       "data": {
         "label": "Current Robot State and Capabilities",
-        "nodeType": "environment_observation",
-        "properties": {}
+        "nodeType": "environment_bridge_input",
+        "properties": {},
+        "comment": "Supplies current bridge state and capabilities as read-only context for reflection. It has no prompt and produces no direct effect."
       }
     },
     {

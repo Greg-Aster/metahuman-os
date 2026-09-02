@@ -4,7 +4,7 @@
   "name": "Boredom Observer Mode",
   "description": "Acquires one correlated camera frame, then uses it with persona, recent narrative, and verified action history to author an intention for Boredom Autonomy.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-25",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "observation",
@@ -12,8 +12,9 @@
       "position": { "x": 40, "y": 260 },
       "data": {
         "label": "Current Robot Stimulus",
-        "nodeType": "environment_observation",
-        "properties": {}
+        "nodeType": "environment_bridge_input",
+        "properties": {},
+        "comment": "Supplies the observation that triggered this observer cycle, including selected images and state. It does not capture a new image or control the robot."
       }
     },
     {

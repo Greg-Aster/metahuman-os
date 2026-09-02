@@ -1,44 +1,46 @@
 import { defineNode } from '../types.js';
-import { getEnvironmentFeedback } from '../../environment-interface/index.js';
+import type { EnvironmentFeedback } from '../../environment-interface/index.js';
+
+const TERMINAL_TYPES = new Set<EnvironmentFeedback['type']>([
+  'completed',
+  'rejected',
+  'cancelled',
+  'expired',
+  'failed',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 export const environmentFeedbackNode = defineNode({
   id: 'environment_feedback',
-  name: 'Environment Feedback',
+  name: 'Environment Feedback Correlator',
   category: 'environment',
   inputs: [
-    { name: 'actionId', type: 'string', optional: true, description: 'Optional action ID to filter feedback' },
+    { name: 'feedback', type: 'array', description: 'Feedback events from Environment Bridge Input' },
+    { name: 'actionId', type: 'string', description: 'Verified action ID from Environment Action Context Input' },
+    { name: 'taskRestored', type: 'boolean', description: 'Whether the action has a restorable Environment task' },
   ],
   outputs: [
-    { name: 'feedback', type: 'array', description: 'Recent environment feedback events' },
-    { name: 'latestFeedback', type: 'object', description: 'Most recent feedback event' },
-    { name: 'count', type: 'number', description: 'Number of feedback events returned' },
-    { name: 'hasFeedback', type: 'boolean', description: 'Whether feedback is available' },
+    { name: 'terminalFeedback', type: 'object', description: 'Latest terminal feedback matching the verified action ID' },
+    { name: 'matched', type: 'boolean', description: 'Whether matching terminal feedback is present' },
   ],
-  properties: {
-    limit: 20,
-  },
-  propertySchemas: {
-    limit: {
-      type: 'number',
-      default: 20,
-      label: 'Feedback Limit',
-      min: 1,
-      max: 200,
-      step: 1,
-    },
-  },
-  description: 'Reads recent environment feedback from adapter action results.',
-  async execute(inputs, _context, properties) {
-    const feedback = getEnvironmentFeedback({
-      actionId: typeof inputs.actionId === 'string' && inputs.actionId.trim() ? inputs.actionId.trim() : undefined,
-      limit: typeof properties?.limit === 'number' ? properties.limit : 20,
-    });
-
+  description: 'Matches bridge-supplied terminal feedback to one verified Work Coordinator action ID.',
+  async execute(inputs) {
+    const actionId = typeof inputs.actionId === 'string' ? inputs.actionId.trim() : '';
+    const feedback = Array.isArray(inputs.feedback)
+      ? inputs.feedback.filter(isRecord) as unknown as EnvironmentFeedback[]
+      : [];
+    const terminalFeedback = inputs.taskRestored === true && actionId
+      ? [...feedback].reverse().find(candidate => (
+          TERMINAL_TYPES.has(candidate.type)
+          && candidate.actionId === actionId
+        )) ?? null
+      : null;
     return {
-      feedback,
-      latestFeedback: feedback[feedback.length - 1] ?? null,
-      count: feedback.length,
-      hasFeedback: feedback.length > 0,
+      terminalFeedback,
+      matched: Boolean(terminalFeedback),
     };
   },
 });

@@ -27,7 +27,6 @@ import { validateEnvironmentSelectorOutput } from '../nodes/environment/helpers.
 import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
 import { environmentContextBuilderNode } from '../nodes/environment/context-builder.node.js';
 import { environmentImageInputNode } from '../nodes/environment/image-input.node.js';
-import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
 import { environmentSendActionNode } from '../nodes/environment/send-action.node.js';
 import { TextInputNode } from '../nodes/input/text-input.node.js';
 import { JSONParserNode } from '../nodes/utility/json-parser.node.js';
@@ -352,6 +351,20 @@ try {
     metadata: {
       actionId: resultAction.id,
       originatingInstruction: 'untrusted adapter instruction',
+      robotObserver: {
+        cycleId: 'untrusted-cycle',
+        step: 1,
+        triggerSource: 'autonomy',
+        graph: 'environment',
+        requestedBy: 'environment-perception',
+      },
+      robotOperatorDecision: {
+        observed: 'untrusted adapter observation',
+        instruction: 'untrusted adapter autonomy instruction',
+        reason: 'untrusted adapter reason',
+      },
+      robotOperatorMemories: ['untrusted adapter memory'],
+      autonomousStimulus: 'boredom-observer',
     },
   });
   assert.equal(
@@ -359,6 +372,36 @@ try {
     'Wave, then use the returned view to tell me what changed.',
     'action context must be recovered from MetaHuman work rather than trusted from the adapter',
   );
+  assert.equal(contextualResult.metadata?.robotObserver, undefined);
+  assert.equal(contextualResult.metadata?.robotOperatorDecision, undefined);
+  assert.equal(contextualResult.metadata?.robotOperatorMemories, undefined);
+  assert.equal(contextualResult.metadata?.autonomousStimulus, undefined);
+  const uncorrelatedObservation = attachEnvironmentActionContext({
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], visual: true },
+    visual: {
+      id: 'camera-frame-uncorrelated',
+      timestamp: new Date().toISOString(),
+      mimeType: 'image/jpeg',
+    },
+    metadata: {
+      sensorReading: 'preserved',
+      robotObserver: { cycleId: 'untrusted-cycle' },
+      robotOperatorDecision: { instruction: 'untrusted planner instruction' },
+      robotOperatorMemories: ['untrusted memory'],
+      autonomousStimulus: 'untrusted stimulus',
+    },
+  });
+  assert.equal(uncorrelatedObservation.metadata?.sensorReading, 'preserved');
+  assert.equal(uncorrelatedObservation.visual?.id, 'camera-frame-uncorrelated');
+  assert.equal(uncorrelatedObservation.capabilities.visual, true);
+  assert.equal(uncorrelatedObservation.metadata?.robotObserver, undefined);
+  assert.equal(uncorrelatedObservation.metadata?.robotOperatorDecision, undefined);
+  assert.equal(uncorrelatedObservation.metadata?.robotOperatorMemories, undefined);
+  assert.equal(uncorrelatedObservation.metadata?.autonomousStimulus, undefined);
   assert.deepEqual(
     contextualResult.metadata?.actionContext,
     {
@@ -528,12 +571,12 @@ try {
     metadata: { perceptionEvent: 'audio_utterance' },
     text: [{
       id: 'robot-microphone-user-turn',
-      source: 'environment',
+      source: 'player',
       text: 'Please stop and listen to this instead.',
       timestamp: new Date().toISOString(),
       channel: 'microphone',
     }],
-  }), true, 'robot microphone transcripts must start a new interrupting user turn');
+  }), true, 'human speech transcribed from the robot microphone must start a new interrupting user turn');
   assert.equal(environmentObservationNeedsCognition({
     ...connectionObservation,
     timestamp: new Date().toISOString(),
@@ -627,13 +670,13 @@ try {
     response: 'A new shape is visible.',
     familiarityQuery: 'An unfamiliar rounded shape is visible near the robot.',
     sessionId: 'robot-1',
+    inputSource: 'autonomy',
+    observation: {
+      metadata: { autonomousStimulus: 'boredom-observer' },
+    },
   }, {
     username: 'bridge-spec',
     sessionId: 'autonomy-1',
-    environmentActionSource: 'autonomy',
-    environmentObservation: {
-      metadata: { autonomousStimulus: 'boredom-observer' },
-    },
   } as never, {});
   assert.equal(autonomousResponse.conversationResponse, 'A new shape is visible.');
   assert.equal(autonomousResponse.responseMetadata.dialogueSource, 'boredom-observer');
@@ -648,10 +691,10 @@ try {
     actions: [],
     response: 'I found something you may want to see.',
     sessionId: 'robot-1',
+    inputSource: 'autonomy',
   }, {
     username: 'bridge-spec',
     sessionId: 'autonomy-2',
-    environmentActionSource: 'autonomy',
   } as never, {});
   assert.equal(autonomousConversation.conversationResponse, 'I found something you may want to see.');
 
@@ -716,10 +759,13 @@ try {
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     response: 'Walking.',
     sessionId: 'robot-1',
+    instruction: 'Walk once, then use the returned observation to tell me what changed.',
+    userInstruction: 'Walk once, then use the returned observation to tell me what changed.',
+    inputSource: 'user',
+    observation: bodyOnlineState.sessions['robot-1']!.latestObservation,
   }, {
     username: 'bridge-spec',
     sessionId: 'chat-online',
-    userMessage: 'Walk once, then use the returned observation to tell me what changed.',
   } as never, {});
   unsubscribeOnline();
   assert.equal(bodyQueued.status, 'coordinated_for_adapter');
@@ -772,17 +818,22 @@ try {
     sessionId: 'robot-1',
     response: 'I captured and understood the image.',
     taskInstruction: 'Interpret the returned image as one autonomous observation.',
+    inputSource: 'autonomy',
+    observation: {
+      ...observerCaptureState.sessions['robot-1']!.latestObservation!,
+      metadata: {
+        robotObserver: {
+          cycleId: 'observer-cycle-1',
+          step: 1,
+          triggerSource: 'autonomy',
+          graph: 'boredom-observer',
+          requestedBy: 'boredom-observer',
+        },
+      },
+    },
   }, {
     username: 'bridge-spec',
     sessionId: 'observer-capture',
-    environmentActionSource: 'autonomy',
-    robotObserver: {
-      cycleId: 'observer-cycle-1',
-      step: 1,
-      triggerSource: 'autonomy',
-      graph: 'boredom-observer',
-      requestedBy: 'boredom-observer',
-    },
   } as never, {
     allowedActions: ['captureImage'],
     feedbackGraph: 'environment',
@@ -798,68 +849,30 @@ try {
     'Interpret the returned image as one autonomous observation.',
   );
 
-  const feedbackInstruction = await environmentInstructionInterpreterNode.execute({
-    observation: {
-      environmentId: 'ainekio',
-      adapter: 'ainekio-gateway',
-      sessionId: 'robot-1',
+  const continuationObservation = {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'robot-1',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], robotCommands: ['wave'] },
+    feedback: [{
+      id: 'completed-result-1',
       timestamp: new Date().toISOString(),
-      capabilities: { actions: ['sendText'] },
-      feedback: [{
-        id: 'rejected-result-1',
-        timestamp: new Date().toISOString(),
-        type: 'rejected',
-        message: 'requested robot is not connected',
-        actionId: 'walk-1',
-      }],
-    },
-  }, { userMessage: '' });
-  assert.match(String(feedbackInstruction.instruction), /Robot action rejected/);
-  assert.match(String(feedbackInstruction.instruction), /exact terminal result/);
-
-  const contextualInstruction = await environmentInstructionInterpreterNode.execute({
-    observation: contextualResult,
-  }, { userMessage: '' });
-  assert.equal(
-    contextualInstruction.instruction,
-    [
-      'Robot action completed: done. This exact terminal result is evidence for the original objective.',
-      'Original user objective (still authoritative): Wave, then use the returned view to tell me what changed.',
-    ].join('\n'),
-  );
-  assert.match(
-    String((contextualInstruction.text as Array<{ text?: string }>)[0]?.text),
-    /Robot action completed/,
-  );
-
-  const continuationInstruction = await environmentInstructionInterpreterNode.execute({
-    observation: {
-      environmentId: 'ainekio',
-      adapter: 'ainekio-gateway',
-      sessionId: 'robot-1',
-      timestamp: new Date().toISOString(),
-      capabilities: { actions: ['robotCommand'], robotCommands: ['wave'] },
-      feedback: [{
-        id: 'completed-result-1',
-        timestamp: new Date().toISOString(),
-        type: 'completed',
-        message: 'done',
-        actionId: 'walk-1',
-        data: { command: 'walk' },
-      }],
-      metadata: {
-        robotObserver: {
-          cycleId: 'utterance-1',
-          step: 2,
-          triggerSource: 'user',
-          graph: 'environment',
-          requestedBy: 'environment-perception',
-        },
+      type: 'completed' as const,
+      message: 'done',
+      actionId: 'walk-1',
+      data: { command: 'walk' },
+    }],
+    metadata: {
+      robotObserver: {
+        cycleId: 'utterance-1',
+        step: 2,
+        triggerSource: 'user',
+        graph: 'environment',
+        requestedBy: 'environment-perception',
       },
     },
-  }, { userMessage: '' });
-  assert.match(String(continuationInstruction.instruction), /exact terminal result/);
-  assert.match(String(continuationInstruction.instruction), /original objective/);
+  };
 
   const parsedTerminalFeedback = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -876,8 +889,10 @@ try {
         actionPurpose: 'expression',
       },
     }),
-    instruction: continuationInstruction.instruction,
-    observation: continuationInstruction.observation,
+    instruction: 'Continue the original objective using this exact terminal result.',
+    userInstruction: '',
+    inputSource: 'user',
+    observation: continuationObservation,
     sessionId: 'robot-1',
     routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
   }, {});
@@ -915,17 +930,23 @@ try {
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     response: 'Continuing the remaining task.',
     sessionId: 'robot-1',
+    instruction: 'Continue the remaining task.',
+    inputSource: 'user',
+    observation: {
+      ...continuationState.sessions['robot-1']!.latestObservation!,
+      metadata: {
+        robotObserver: {
+          cycleId: 'continuation-cycle-1',
+          step: 1,
+          triggerSource: 'user',
+          graph: 'environment',
+          requestedBy: 'environment-perception',
+        },
+      },
+    },
   }, {
     username: 'bridge-spec',
     sessionId: 'chat-continuation',
-    userMessage: '',
-    robotObserver: {
-      cycleId: 'continuation-cycle-1',
-      step: 1,
-      triggerSource: 'user',
-      graph: 'environment',
-      requestedBy: 'environment-perception',
-    },
   } as never, {});
   unsubscribeContinuation();
   assert.equal(queuedContinuation.status, 'coordinated_for_adapter');
@@ -1019,24 +1040,6 @@ try {
       originatingInstruction: captureGoal,
     },
   };
-  const satisfiedCaptureInstruction = await environmentInstructionInterpreterNode.execute({
-    observation: satisfiedCaptureObservation,
-  }, { userMessage: '' });
-  assert.match(String(satisfiedCaptureInstruction.instruction), /fresh correlated robot image has returned/i);
-  assert.match(String(satisfiedCaptureInstruction.instruction), /do not request another image/i);
-  assert.match(
-    String(satisfiedCaptureInstruction.instruction),
-    /Current objective: Can you take a picture/,
-  );
-  assert.doesNotMatch(
-    String(satisfiedCaptureInstruction.instruction),
-    /^Can you take a picture\? What can you see\?$/,
-  );
-  const normalizedCaptureObservation = satisfiedCaptureInstruction.observation as {
-    capabilities: { actions: string[] };
-  };
-  assert.equal(normalizedCaptureObservation.capabilities.actions.includes('captureImage'), false);
-
   const parsedSatisfiedCapture = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I see a blue object and several lights.',
@@ -1051,8 +1054,10 @@ try {
         actionPurpose: 'information_gain',
       },
     }),
-    instruction: satisfiedCaptureInstruction.instruction,
-    observation: satisfiedCaptureInstruction.observation,
+    instruction: captureGoal,
+    userInstruction: '',
+    inputSource: 'user',
+    observation: satisfiedCaptureObservation,
     sessionId: 'robot-1',
     routingAnalysis: { needsAction: true, actionType: 'environment_action' },
   }, {});

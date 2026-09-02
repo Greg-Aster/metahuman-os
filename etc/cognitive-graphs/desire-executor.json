@@ -13,7 +13,7 @@
       "data": {
         "label": "Load Approved Desire",
         "nodeType": "desire_loader",
-        "properties": { "filterStatus": "approved" }
+        "properties": {}
       },
       "width": 200,
       "height": 80
@@ -31,21 +31,6 @@
       "height": 120
     },
     {
-      "id": "6",
-      "type": "outputNode",
-      "position": { "x": 700, "y": 120 },
-      "data": {
-        "label": "Audit Log",
-        "nodeType": "audit_logger",
-        "properties": {
-          "category": "agent",
-          "event": "desire_executed"
-        }
-      },
-      "width": 180,
-      "height": 60
-    },
-    {
       "id": "7",
       "type": "outputNode",
       "position": { "x": 700, "y": 260 },
@@ -54,7 +39,8 @@
         "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": ["agency", "execution", "inner"],
-          "dialogueSource": "desire-executor"
+          "dialogueSource": "desire-executor",
+          "role": "reflection"
         }
       },
       "width": 200,
@@ -87,20 +73,12 @@
   ],
   "edges": [
     {
-      "id": "e-1-slot_0-3-slot_0",
+      "id": "e-1-desire-3-desire",
       "source": "1",
       "target": "3",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
+      "sourceHandle": "desire",
+      "targetHandle": "desire",
       "data": { "type": "object", "comment": "Approved Desire to Executor" }
-    },
-    {
-      "id": "e-3-execution-6-data",
-      "source": "3",
-      "target": "6",
-      "sourceHandle": "execution",
-      "targetHandle": "data",
-      "data": { "type": "object", "comment": "Durable Execution to Audit" }
     },
     {
       "id": "e-3-summary-7-text",

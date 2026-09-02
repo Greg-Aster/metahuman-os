@@ -586,7 +586,7 @@ Trace:
 
 1. Manual Robot Observer cycle `c03b9aab-243e-46d2-9c56-67a3c9ceb3b9` queued `captureImage` command `task-1785882411894-e1bea2d5` at 22:26:51 UTC. It expired before dispatch at 22:26:59 with `action_expired_before_dispatch`.
 2. That expiration was published as the latest observation for session `ainekio-01` and processed as its own Environment turn.
-3. The user submitted the separate typed objective `tell me what you see right now` at 22:27:17. Environment Observation correctly read the latest session snapshot. Instruction Interpreter correctly selected the typed message as the authoritative instruction, but it also preserved the prior observation's terminal feedback.
+3. The user submitted the separate typed objective `tell me what you see right now` at 22:27:17. The then-current combined observation/interpreter path selected the typed message as authoritative but also preserved the prior observation's terminal feedback. That path was retired on 2026-09-02 in favor of explicit User Input, Environment Bridge Input, and Instruction Resolver nodes.
 4. Action Parser treats any terminal feedback in the effective observation as belonging to the current pass. It therefore suppressed the new capture action. Task Validator interpreted the unrelated expiration as the current objective's failed prior attempt, opened refinement, and emitted the misleading visible response `My previous attempt ... expired`.
 5. The refined lifecycle `environment-validator-b7e4f52d-6e61-4b0d-b241-8642e07c98b0` then issued exactly one new `captureImage`, command `task-1785882458471-aa956e8a`, at 22:27:38. The bridge completed it normally at 22:27:42 and returned exact correlated frame `ainekio-camera-10`.
 6. The final pass verified the visual evidence and produced the grounded scene description at 22:28:04.
@@ -605,7 +605,7 @@ Confirmed repair boundary:
 - Do not increase the image-acquisition deadline; the capture for this objective completed in approximately 4.5 seconds inside its existing 10-second deadline.
 - Preserve the latest raw environment state and sensory data, but admit terminal feedback to action parsing and task validation only when its action/cycle lineage belongs to the current persisted objective.
 - A new typed objective must not inherit an unrelated terminal result merely because that result is present in the session's latest observation.
-- Keep this correction in the existing Environment Observation -> Instruction Interpreter -> Action Parser -> Task Validator lifecycle. Do not add a second feedback store, a prompt phrase branch, or a camera-specific retry shortcut.
+- Keep this correction on the current explicit edges: User Input and the bridge planner-intention output feed Instruction Resolver; the raw Environment Bridge observation feeds Environment Task State directly; Task State then grounds Context Builder and Action Parser. Do not add a second feedback store, a prompt phrase branch, or a camera-specific retry shortcut.
 
 Disposition: the operator chose not to pursue this repair during the current performance pass. The defect and its remaining acceptance retest are deferred; they do not block classifier corpus work.
 

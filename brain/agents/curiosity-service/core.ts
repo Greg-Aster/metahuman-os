@@ -11,6 +11,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   ROOT,
   audit,
@@ -62,6 +63,30 @@ export async function loadCuriosityGraph(): Promise<SvelteFlowGraph> {
   return validateSvelteFlowGraph(parsed);
 }
 
+export function curiosityQuestionIdForExecution(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const digest = createHash('sha256').update(value.trim()).digest('hex').slice(0, 32);
+  return `cur-q-task-${digest}`;
+}
+
+export function requireCuriosityDelivery(
+  questionId: string,
+  conversationOutputs: Record<string, any> | undefined,
+  memoryOutputs: Record<string, any> | undefined,
+): any[] {
+  const bufferedEntries = Array.isArray(conversationOutputs?.entries)
+    ? conversationOutputs.entries
+    : [];
+  if (conversationOutputs?.persisted !== true
+    || !bufferedEntries.some(entry => entry?.meta?.questionId === questionId)) {
+    throw new Error(`Curiosity question ${questionId} was not retained by the Conversation Buffer`);
+  }
+  if (memoryOutputs?.saved !== true || memoryOutputs.savedCount !== bufferedEntries.length) {
+    throw new Error(`Curiosity question ${questionId} was not saved to Persona Memory`);
+  }
+  return bufferedEntries;
+}
+
 function requiredNodeId(graph: SvelteFlowGraph, nodeType: string): string {
   const matching = graph.nodes.filter(node => node.data.nodeType === nodeType);
   if (matching.length !== 1) {
@@ -103,11 +128,23 @@ export function evaluateQuestionAdmission(input: {
  */
 export async function generateUserQuestion(
   username: string,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; idempotencyKey?: string } = {},
 ): Promise<CuriosityQuestionOutcome> {
   console.log(`[curiosity-service] Processing user: ${username}`);
 
   const config = loadCuriosityConfig(username);
+  const stableQuestionId = curiosityQuestionIdForExecution(options.idempotencyKey);
+  const existingQuestion = stableQuestionId
+    ? await curiosityQuestionStore.get(username, stableQuestionId)
+    : null;
+  if (existingQuestion && existingQuestion.status !== 'pending') {
+    return {
+      status: 'generated',
+      questionId: existingQuestion.id,
+      memoriesConsidered: existingQuestion.seedMemories.length,
+      openQuestionsBefore: await curiosityQuestionStore.countPending(username),
+    };
+  }
   if (config.maxOpenQuestions === 0) {
     console.log(`[curiosity-service] Skipping ${username}: disabled`);
     return { status: 'skipped', reason: 'disabled' };
@@ -116,7 +153,9 @@ export async function generateUserQuestion(
   const openQuestions = await curiosityQuestionStore.countPending(username);
   const skipReason = evaluateQuestionAdmission({
     maxOpenQuestions: config.maxOpenQuestions,
-    openQuestions,
+    openQuestions: existingQuestion?.status === 'pending'
+      ? Math.max(0, openQuestions - 1)
+      : openQuestions,
     currentTrust: trust,
     requiredTrust: config.minTrustLevel,
   });
@@ -136,11 +175,17 @@ export async function generateUserQuestion(
   const graph = await loadCuriosityGraph();
   const samplerNodeId = requiredNodeId(graph, 'curiosity_weighted_sampler');
   const saverNodeId = requiredNodeId(graph, 'curiosity_question_saver');
+  const conversationBufferNodeId = requiredNodeId(graph, 'conversation_buffer');
+  const memoryCaptureNodeId = requiredNodeId(graph, 'memory_capture');
   const graphContext = {
     userId: username,
     username,
     allowMemoryWrites: true,
     cognitiveMode: 'agent' as const,
+    ...(stableQuestionId ? {
+      curiosityQuestionId: stableQuestionId,
+      idempotencyKey: `curiosity:${stableQuestionId}`,
+    } : {}),
   };
 
   console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
@@ -153,22 +198,30 @@ export async function generateUserQuestion(
 
   const samplerNode = graphResult.nodes.get(samplerNodeId);
   const saverNode = graphResult.nodes.get(saverNodeId);
+  const conversationBufferNode = graphResult.nodes.get(conversationBufferNodeId);
+  const memoryCaptureNode = graphResult.nodes.get(memoryCaptureNodeId);
   const memoriesCount = Number(samplerNode?.outputs?.count ?? 0);
   if (!Number.isInteger(memoriesCount) || memoriesCount < 0) {
     throw new Error('Curiosity graph returned an invalid sampled-memory count');
   }
-  if (memoriesCount === 0) {
-    return { status: 'skipped', reason: 'no-memories', openQuestionsBefore: openQuestions };
-  }
   const question = saverNode?.outputs?.question;
   const questionId = saverNode?.outputs?.questionId;
   const saved = saverNode?.outputs?.saved;
+  if (memoriesCount === 0 && saved !== true) {
+    return { status: 'skipped', reason: 'no-memories', openQuestionsBefore: openQuestions };
+  }
   if (saved !== true || typeof question !== 'string' || !question.trim()
     || typeof questionId !== 'string' || !questionId.trim()) {
     throw new Error('Curiosity graph completed without a persisted question');
   }
+  requireCuriosityDelivery(questionId, conversationBufferNode?.outputs, memoryCaptureNode?.outputs);
 
-  console.log(`[curiosity-service] Asked question ${questionId} from ${memoriesCount} weighted memories`);
+  const memoriesConsidered = Math.max(
+    memoriesCount,
+    existingQuestion?.seedMemories.length ?? 0,
+  );
+
+  console.log(`[curiosity-service] Asked question ${questionId} from ${memoriesConsidered} weighted memories`);
   audit({
     event: 'curiosity_question_generated',
     category: 'decision',
@@ -177,7 +230,7 @@ export async function generateUserQuestion(
     actor: 'curiosity-service',
     metadata: {
       questionId,
-      memoriesConsidered: memoriesCount,
+      memoriesConsidered,
       trust,
       autonomy: 'normal',
       username,
@@ -188,7 +241,7 @@ export async function generateUserQuestion(
   return {
     status: 'generated',
     questionId,
-    memoriesConsidered: memoriesCount,
+    memoriesConsidered,
     openQuestionsBefore: openQuestions,
   };
 }
@@ -237,7 +290,9 @@ export async function runCycle(): Promise<CuriosityServiceResult> {
       const outcome = await withUserContext(
         { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
         async () => {
-          return await generateUserQuestion(activeUser.username);
+          return await generateUserQuestion(activeUser.username, {
+            idempotencyKey: process.env.MH_TASK_ID,
+          });
         }
       );
 
@@ -305,7 +360,10 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     }
     const outcome = await withUserContext(
       targetUser,
-      async () => generateUserQuestion(targetUser.username, { signal: ctx.signal })
+      async () => generateUserQuestion(targetUser.username, {
+        signal: ctx.signal,
+        idempotencyKey: process.env.MH_TASK_ID,
+      })
     );
     const generated = outcome.status === 'generated';
 

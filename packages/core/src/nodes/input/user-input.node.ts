@@ -18,6 +18,7 @@ export const UserInputNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'message', type: 'string', description: 'Final user message' },
     { name: 'inputSource', type: 'string', description: 'Source of input: text, speech, or chat' },
+    { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
     { name: 'sessionId', type: 'string', description: 'Current session ID' },
     { name: 'userId', type: 'string', description: 'Current user ID' },
     { name: 'timestamp', type: 'string', description: 'Input timestamp' },
@@ -100,6 +101,7 @@ export const UserInputNode: NodeDefinition = defineNode({
     return {
       message,
       inputSource,
+      instructionSource: 'user',
       sessionId: context.sessionId || `session-${Date.now()}`,
       userId: context.userId || 'anonymous',
       timestamp: new Date().toISOString(),

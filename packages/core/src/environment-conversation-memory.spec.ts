@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ROOT } from './paths.js';
 import { canWriteMemory } from './memory-policy.js';
 import { environmentContextBuilderNode } from './nodes/environment/context-builder.node.js';
+import { UserInputNode } from './nodes/input/user-input.node.js';
 import { MemoryCaptureNode } from './nodes/output/memory-capture.node.js';
 import { ConversationBufferNode } from './nodes/output/conversation-buffer.node.js';
 import { createRobotBufferMessage, RobotBufferNode } from './nodes/output/robot-buffer.node.js';
@@ -20,6 +21,10 @@ const conversationBufferSource = fs.readFileSync(
 );
 const robotBufferSource = fs.readFileSync(
   path.join(ROOT, 'packages/core/src/nodes/output/robot-buffer.node.ts'),
+  'utf8',
+);
+const executionEngineSource = fs.readFileSync(
+  path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'),
   'utf8',
 );
 
@@ -50,7 +55,8 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
   );
 
 const historyId = nodeId('conversation_history');
-const instructionInterpreterId = nodeId('environment_instruction_interpreter');
+const userInputId = nodeId('user_input');
+const bridgeInputId = nodeId('environment_bridge_input');
 const memoryRouterId = nodeId('memory_router');
 const contextId = nodeId('environment_context_builder');
 const personaLoaderId = nodeId('persona_loader');
@@ -77,8 +83,39 @@ assert.ok(hasEdge(personaFormatterId, 'formatted', contextId, 'personaText'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', contextId, 'routingAnalysis'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', actionParserId, 'routingAnalysis'));
 assert.ok(hasEdge(bridgeId, 'conversationResponse', bufferId, 'response'));
-assert.ok(hasEdge(instructionInterpreterId, 'conversationInput', bufferId, 'userMessage'));
-assert.equal(hasEdge(instructionInterpreterId, 'instruction', bufferId, 'userMessage'), false);
+assert.equal(
+  graph.nodes.some(node => node.data?.nodeType === 'instruction_resolver'),
+  false,
+  'Interactive Environment Mode must not retain the autonomous instruction adapter',
+);
+assert.ok(hasEdge(bridgeInputId, 'observation', prepareId, 'observation'));
+assert.ok(hasEdge(userInputId, 'message', prepareId, 'instruction'));
+assert.ok(hasEdge(userInputId, 'message', prepareId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'instructionSource', prepareId, 'inputSource'));
+assert.ok(hasEdge(userInputId, 'message', contextId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'instructionSource', contextId, 'inputSource'));
+assert.ok(hasEdge(userInputId, 'message', actionParserId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'instructionSource', actionParserId, 'inputSource'));
+assert.ok(hasEdge(userInputId, 'message', reducerId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'instructionSource', reducerId, 'inputSource'));
+assert.ok(hasEdge(userInputId, 'message', bridgeId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'instructionSource', bridgeId, 'inputSource'));
+assert.ok(hasEdge(userInputId, 'message', bufferId, 'userMessage'));
+assert.ok(hasEdge(bridgeInputId, 'observation', contextId, 'observation'));
+assert.equal(
+  graph.nodes.some(node => [
+    'environment_observation',
+    'environment_instruction_interpreter',
+    'environment_prompt',
+  ].includes(node.data?.nodeType || '')),
+  false,
+  'Environment Mode must expose independent inputs instead of a multifunction observation/interpreter path',
+);
+assert.doesNotMatch(
+  executionEngineSource,
+  /environmentTaskInstruction|environmentActionSource/,
+  'The queue owner must not inject hidden instruction or provenance channels around graph edges',
+);
 assert.ok(hasEdge(actionParserId, 'actions', reducerId, 'actions'));
 assert.equal(hasEdge(reducerId, 'decision', bufferId, 'taskLifecycle'), false);
 assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
@@ -130,6 +167,12 @@ assert.equal(robotLifecycleMessage.meta.idempotencyKey, 'environment-feedback:fe
 assert.equal(canWriteMemory('environment', 'conversation'), true);
 assert.equal(canWriteMemory('environment', 'tool_invocation'), false);
 assert.equal(canWriteMemory('agent', 'conversation'), false);
+
+const humanInput = await UserInputNode.execute({}, {
+  userMessage: 'Current human instruction.',
+}, {});
+assert.equal(humanInput.message, 'Current human instruction.');
+assert.equal(humanInput.instructionSource, 'user');
 
 const context = await environmentContextBuilderNode.execute({
   observation: {
@@ -225,6 +268,7 @@ assert.deepEqual(selfContainedContext.context.contextAdmission, {
   environment: true,
   vision: false,
   actionContracts: true,
+  selector: true,
 });
 
 const followUpInstruction = 'What did you mean by that?';
@@ -300,6 +344,7 @@ assert.deepEqual(currentStateContext.context.contextAdmission, {
   environment: true,
   vision: false,
   actionContracts: true,
+  selector: true,
 });
 
 const emptyCapture = await MemoryCaptureNode.execute({

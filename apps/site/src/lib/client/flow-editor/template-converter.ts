@@ -179,7 +179,6 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
       type: getNodeComponentType(category, nodeType),
       position,
       width: sfNode.width || sfNode.size?.[0],
-      height: sfNode.height || sfNode.size?.[1],
       data: {
         nodeType: nodeType,
         schema: schema || createFallbackSchema(nodeType),
@@ -209,7 +208,7 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
     cognitiveMode: sfGraph.cognitiveMode,
     nodes,
     edges,
-    viewport: { x: 0, y: 0, zoom: 1 },
+    viewport: sfGraph.viewport,
   };
 }
 
@@ -233,7 +232,6 @@ export function serializeGraphForPersistence(sfGraph: SvelteFlowGraph): SvelteFl
         type: node.type,
         position: node.position,
         width: node.width,
-        height: node.height,
         data: {
           label: title,
           nodeType,

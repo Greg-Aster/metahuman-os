@@ -7,6 +7,8 @@
  *
  * Environment:
  *   MH_TRIGGER_USERNAME - Target profile supplied by the Work Coordinator
+ *   MH_TASK_ID - Stable Work Coordinator execution identity for retries
+ *   MH_TASK_CREATED_AT - Stable Work Coordinator timestamp for retries
  */
 
 import { runCycle } from './core.js';

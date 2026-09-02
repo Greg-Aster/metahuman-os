@@ -5,11 +5,13 @@ import {
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
   type EnvironmentActionType,
+  type EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import {
   beginEnvironmentPerceptionCycle,
   loadRobotOperatorConfig,
   nextRobotObserverCycle,
+  parseRobotObserverCycle,
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 import { getQueueManager } from '../../queue/unified-queue-manager.js';
@@ -30,13 +32,8 @@ function configuredGraph(value: unknown): string | null {
 }
 
 function robotOperatorSource(
-  context: Record<string, any>,
   cycle: RobotObserverCycleMetadata | null,
 ): string {
-  const observationSource = context.environmentObservation?.metadata?.autonomousStimulus;
-  if (typeof observationSource === 'string' && ROBOT_OPERATOR_SOURCES.has(observationSource)) {
-    return observationSource;
-  }
   return cycle && ROBOT_OPERATOR_SOURCES.has(cycle.requestedBy)
     ? cycle.requestedBy
     : 'environment-mode';
@@ -66,6 +63,11 @@ export const environmentSendActionNode = defineNode({
     { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
     { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
     { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
+    { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
+    { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
+    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
+    { name: 'observation', type: 'object', optional: true, description: 'Current Environment Bridge observation' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input or Environment Action Context Input' },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -134,25 +136,24 @@ export const environmentSendActionNode = defineNode({
       ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
-    const existingCycle = context.robotObserver && typeof context.robotObserver === 'object'
-      ? context.robotObserver as RobotObserverCycleMetadata
+    const observation = inputs.observation && typeof inputs.observation === 'object'
+      ? inputs.observation as EnvironmentObservation
       : null;
+    const existingCycle = parseRobotObserverCycle(inputs.robotObserver);
     const hasStop = requestedActions.some(action => action && typeof action === 'object' && action.type === 'stop');
     const rawActions = hasStop
       ? requestedActions.filter(action => action && typeof action === 'object' && action.type === 'stop')
       : requestedActions;
-    const currentUserInstruction = typeof context.userMessage === 'string'
-      ? context.userMessage.trim()
+    const currentUserInstruction = typeof inputs.userInstruction === 'string'
+      ? inputs.userInstruction.trim()
       : '';
     const validatedTaskInstruction = typeof inputs.taskInstruction === 'string'
       ? inputs.taskInstruction.trim()
       : '';
-    const originatingInstruction = (
-      validatedTaskInstruction
-      || (typeof context.environmentTaskInstruction === 'string'
-        ? context.environmentTaskInstruction.trim()
-        : '')
-    ) || currentUserInstruction;
+    const currentInstruction = typeof inputs.instruction === 'string'
+      ? inputs.instruction.trim()
+      : '';
+    const originatingInstruction = validatedTaskInstruction || currentInstruction;
     const shouldStartCycle = (
       !existingCycle
       && currentUserInstruction
@@ -177,9 +178,9 @@ export const environmentSendActionNode = defineNode({
       : continuedCycle;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
-    const autonomous = existingCycle?.triggerSource === 'autonomy'
-      || context.environmentActionSource === 'autonomy';
-    const dialogueSource = robotOperatorSource(context, existingCycle);
+    const autonomous = inputs.inputSource === 'autonomy'
+      || existingCycle?.triggerSource === 'autonomy';
+    const dialogueSource = robotOperatorSource(existingCycle);
     const responseMetadata = autonomous
       ? {
           dialogueSource,

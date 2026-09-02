@@ -6,7 +6,8 @@
  *
  * Inputs:
  *   - desire: Desire object with approved plan
- *   - userContext: { userId, cognitiveMode }
+ *
+ * Authenticated account and profile identity arrive through graph context.
  *
  * Outputs:
  *   - execution: DesireExecution object with step results
@@ -171,7 +172,7 @@ async function executeStep(
     timestamp: Date.now(),
   });
 
-  // Write to inner dialogue buffer
+  // Publish bounded live progress through the canonical System Buffer workflow.
   if (username) {
     await submitExecutionProgress(username, workingMsg, {
       desireId: desire.id,
@@ -226,24 +227,10 @@ async function executeStep(
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs from graph - graph executor maps by handle name (string keys)
-  // Edge uses slot_0/slot_1 handles, so we access by those keys
-  // Also check context.desire for direct injection from executeDesireViaGraph
-  const slot0 = (inputs['slot_0'] || inputs[0]) as { desire?: Desire } | Desire | undefined;
-  const slot1 = (inputs['slot_1'] || inputs[1]) as { userId?: string; cognitiveMode?: string } | undefined;
+  const desire = inputs.desire as Desire | undefined;
   const taskPromptTemplate = properties?.taskPromptTemplate ?? DEFAULT_TASK_PROMPT_TEMPLATE;
   const signal = context.abortSignal as AbortSignal | undefined;
-
-  // Handle both wrapped { desire } format and direct Desire object
-  // Also check context.desire for cases where desire is injected directly
-  let desire: Desire | undefined;
-  if (context.desire) {
-    desire = context.desire as Desire;
-  } else if (slot0) {
-    desire = (slot0 as { desire?: Desire }).desire || (slot0 as Desire);
-  }
-  // Use userId from slot1 or context
-  const username = slot1?.userId || (context.userId as string | undefined);
+  const username = typeof context.username === 'string' ? context.username.trim() : '';
 
   if (!desire) {
     return {
@@ -251,6 +238,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       success: false,
       error: 'No desire provided',
     };
+  }
+
+  if (!username) {
+    throw new Error('Desire execution requires an authenticated profile username');
   }
 
   if (!desire.plan || !desire.plan.steps || desire.plan.steps.length === 0) {
@@ -302,7 +293,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       data: { expectedOutcome: step.expectedOutcome, risk: step.risk },
     });
 
-    // Write to inner dialogue buffer for real-time visibility
+    // Publish bounded live progress through the canonical System Buffer workflow.
     if (username) {
       await submitExecutionProgress(username, `🎯 ${stepStartMsg}`, {
         desireId: desire.id,
@@ -341,7 +332,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
           data: { result: result.result },
         });
 
-        // Write completion to inner dialogue buffer
+        // Publish completion progress through the canonical System Buffer workflow.
         if (username) {
           await submitExecutionProgress(username, stepCompleteMsg, {
             desireId: desire.id,
@@ -368,7 +359,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
           data: { error: result.error },
         });
 
-        // Write error to inner dialogue buffer
+        // Publish failure progress through the canonical System Buffer workflow.
         if (username) {
           await submitExecutionProgress(username, stepErrorMsg, {
             desireId: desire.id,
@@ -399,7 +390,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         data: { error: (error as Error).message },
       });
 
-      // Write exception to inner dialogue buffer
+      // Publish exception progress through the canonical System Buffer workflow.
       if (username) {
         await submitExecutionProgress(username, exceptionMsg, {
           desireId: desire.id,
@@ -515,7 +506,6 @@ export const DesireExecutorNode: NodeDefinition = defineNode({
 
   inputs: [
     { name: 'desire', type: 'object', description: 'Desire with approved plan to execute' },
-    { name: 'userContext', type: 'object', description: 'User context (userId, cognitiveMode)' },
   ],
 
   outputs: [

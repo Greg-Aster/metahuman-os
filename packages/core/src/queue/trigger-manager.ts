@@ -54,6 +54,9 @@ export interface TriggerState {
   lastOutcome?: string;
   lastSuppressionReason?: TriggerSuppressionReason;
   lastSuppressionKey?: string;
+  lastProbabilityKey?: string;
+  lastProbabilityPassed?: boolean;
+  jitterDueKey?: string;
   runCount: number;
   errorCount: number;
   suppressionCount: number;
@@ -243,6 +246,8 @@ export class TriggerManager extends EventEmitter {
         lastOutcome: prior?.lastOutcome,
         lastSuppressionReason: prior?.lastSuppressionReason,
         lastSuppressionKey: prior?.lastSuppressionKey,
+        lastProbabilityKey: prior?.lastProbabilityKey,
+        lastProbabilityPassed: prior?.lastProbabilityPassed,
         runCount: prior?.runCount ?? 0,
         errorCount: prior?.errorCount ?? 0,
         suppressionCount: prior?.suppressionCount ?? 0,
@@ -278,6 +283,8 @@ export class TriggerManager extends EventEmitter {
       errorCount: existing?.errorCount ?? 0,
       suppressionCount: existing?.suppressionCount ?? 0,
       eventCounts: existing?.eventCounts ?? new Map(),
+      lastProbabilityKey: existing?.lastProbabilityKey,
+      lastProbabilityPassed: existing?.lastProbabilityPassed,
       lastEventAt: existing?.lastEventAt ?? (config.type === 'event' ? new Date() : undefined),
       lastEventUsername: existing?.lastEventUsername,
     });
@@ -351,6 +358,7 @@ export class TriggerManager extends EventEmitter {
     if (state.jitterTimerId) clearTimeout(state.jitterTimerId);
     state.timerId = undefined;
     state.jitterTimerId = undefined;
+    state.jitterDueKey = undefined;
   }
 
   private schedule(agentId: string): void {
@@ -525,17 +533,28 @@ export class TriggerManager extends EventEmitter {
       return this.suppress(agentId, state, 'quiet-hours', dueKey);
     }
     if (triggerType !== 'manual' && !fireContext.idleReset && !this.checkConditions(state.config)) return this.suppress(agentId, state, 'condition', dueKey);
-    if (triggerType !== 'manual' && !fireContext.idleReset && Math.random() > (state.config.probability ?? 1)) {
-      return this.suppress(agentId, state, 'probability', dueKey);
+    if (triggerType !== 'manual' && !fireContext.idleReset) {
+      const probability = state.config.probability ?? 1;
+      const probabilityKey = `${dueKey}:${probability}`;
+      if (state.lastProbabilityKey !== probabilityKey) {
+        state.lastProbabilityKey = probabilityKey;
+        state.lastProbabilityPassed = Math.random() <= probability;
+      }
+      if (!state.lastProbabilityPassed) {
+        return this.suppress(agentId, state, 'probability', dueKey);
+      }
     }
     const handlerHealth = this.inspectHandler(state.config);
     if (!handlerHealth.registered) return this.suppress(agentId, state, 'invalid-handler', dueKey);
     if (!handlerHealth.sourceResolvable) return this.suppress(agentId, state, 'unresolved-source', dueKey);
     if (!jitterApplied && triggerType !== 'manual' && !fireContext.idleReset && (state.config.jitterMs || 0) > 0) {
+      if (state.jitterTimerId && state.jitterDueKey === dueKey) return null;
       if (state.jitterTimerId) clearTimeout(state.jitterTimerId);
       state.lastOutcome = 'waiting-jitter';
+      state.jitterDueKey = dueKey;
       state.jitterTimerId = setTimeout(() => {
         state.jitterTimerId = undefined;
+        state.jitterDueKey = undefined;
         this.fireTrigger(agentId, triggerType, true, args, fireContext);
       }, Math.floor(Math.random() * state.config.jitterMs!));
       state.jitterTimerId.unref?.();

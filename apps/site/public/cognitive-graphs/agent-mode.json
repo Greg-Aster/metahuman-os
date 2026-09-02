@@ -4,7 +4,7 @@
   "name": "Agent Mode",
   "description": "Heuristic-based routing: simple queries use chat path, action requests use operator pipeline. Thinking blocks preserved for UI, stripped for memory.",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "1",
@@ -590,11 +590,11 @@
       }
     },
     {
-      "id": "e-29-persona-30-personaData",
+      "id": "e-29-persona-30-persona",
       "source": "29",
       "target": "30",
       "sourceHandle": "persona",
-      "targetHandle": "personaData",
+      "targetHandle": "persona",
       "data": {
         "type": "object",
         "comment": "Persona data → Persona Formatter"

@@ -273,6 +273,7 @@
                 if (data.nodeOutputs) {
                   nodeOutputs = data.nodeOutputs;
                   lastNodeOutputs = data.nodeOutputs;
+                  flowEditorRef.updateNodeOutputs(data.nodeOutputs);
                 }
                 lastRunDurationMs = typeof data.durationMs === 'number' ? data.durationMs : null;
               }
@@ -393,6 +394,10 @@
     if (flowEditorRef) {
       flowEditorRef.updateNodeData(nodeId, data);
     }
+  }
+
+  function handleUpdateNodeProperty(nodeId: string, propertyKey: string, value: unknown) {
+    flowEditorRef?.updateNodeProperty(nodeId, propertyKey, value);
   }
 
   function handleSelectNode(nodeId: string) {
@@ -559,6 +564,7 @@
           lastOutput={selectedNode ? lastNodeOutputs[selectedNode.id] : undefined}
           {lastRunDurationMs}
           onUpdateNodeData={handleUpdateNodeData}
+          onUpdateNodeProperty={handleUpdateNodeProperty}
           onSelectNode={handleSelectNode}
         />
       </div>

@@ -40,6 +40,8 @@ test('a direct user turn overrides stale autonomous observation provenance', asy
   const prepared = await environmentTaskStateNode.execute({
     observation: staleAutonomyObservation,
     instruction: userContext.userMessage,
+    userInstruction: userContext.userMessage,
+    inputSource: 'user',
   }, userContext, { phase: 'prepare' });
 
   const context = await environmentContextBuilderNode.execute({
@@ -47,6 +49,8 @@ test('a direct user turn overrides stale autonomous observation provenance', asy
     instruction: prepared.instruction,
     taskState: prepared.taskState,
     routingAnalysis: prepared.routingAnalysis,
+    userInstruction: userContext.userMessage,
+    inputSource: 'user',
   }, userContext, { systemPrompt: 'Return strict Environment JSON.', recentHistoryLimit: 4 });
   const selectorEnvelope = JSON.parse(String(context.message));
   const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required;
@@ -72,6 +76,8 @@ test('a direct user turn overrides stale autonomous observation provenance', asy
     observation: staleAutonomyObservation,
     sessionId: staleAutonomyObservation.sessionId,
     routingAnalysis: prepared.routingAnalysis,
+    userInstruction: userContext.userMessage,
+    inputSource: 'user',
   }, userContext, {});
 
   assert.equal(parsed.taskDecisionError, '');
@@ -86,6 +92,8 @@ test('a direct user turn overrides stale autonomous observation provenance', asy
     taskDecisionError: parsed.taskDecisionError,
     response: parsed.response,
     actionAdmission: parsed.actionAdmission,
+    userInstruction: userContext.userMessage,
+    inputSource: 'user',
   }, userContext, { phase: 'reduce' });
 
   assert.equal(reduced.actions[0]?.type, 'captureImage');
@@ -102,9 +110,10 @@ test('an explicit autonomous turn still requires an authored objective', async (
       needsMemory: false,
       isFollowUp: false,
     },
+    userInstruction: '',
+    inputSource: 'autonomy',
   }, {
     userMessage: 'Autonomous stimulus text.',
-    environmentActionSource: 'autonomy',
   }, { systemPrompt: 'Return strict Environment JSON.', recentHistoryLimit: 4 });
   const selectorEnvelope = JSON.parse(String(context.message));
   const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required;

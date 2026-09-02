@@ -275,6 +275,80 @@ try {
   assert.equal(manager.triggerManual('broken', 'owner'), null);
   assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'broken')?.lastSuppressionReason, 'invalid-handler');
   manager.dispose();
+
+  const probabilityConfig = (jitterMs: number): TriggerManagerConfig => ({
+    version: '1.0.0',
+    revision: 1,
+    globalSettings: {
+      pauseAll: false,
+      timezone: 'UTC',
+      quietHours: { enabled: false, start: '22:00', end: '08:00' },
+    },
+    agents: {
+      daydreamer: {
+        id: 'daydreamer',
+        enabled: true,
+        type: 'activity',
+        lifecycle: 'scheduled-work',
+        handler: 'agent.daydreamer',
+        priority: 'low',
+        allowedModes: ['semi'],
+        startupPolicy: 'skip',
+        inactivityThreshold: 1,
+        probability: 0.15,
+        jitterMs,
+        maxRetries: 1,
+      },
+    },
+  });
+  const originalRandom = Math.random;
+  try {
+    const suppressedQueue = new UnifiedQueueManager();
+    const suppressedManager = new TriggerManager(suppressedQueue, probabilityConfig(0));
+    let suppressedRolls = 0;
+    Math.random = () => {
+      suppressedRolls += 1;
+      return 0.9;
+    };
+    suppressedManager.start();
+    suppressedManager.setAutonomyMode('semi');
+    const dueNow = Date.now() + 60_000;
+    assert.deepEqual(suppressedManager.evaluateActivityTriggers(dueNow), []);
+    assert.deepEqual(suppressedManager.evaluateActivityTriggers(dueNow + 500), []);
+    assert.equal(suppressedRolls, 1, 'one idle period must make one probability decision');
+    assert.equal(
+      suppressedManager.getSnapshot().triggers[0].lastSuppressionReason,
+      'probability',
+    );
+    suppressedManager.dispose();
+
+    const admittedQueue = new UnifiedQueueManager();
+    const admittedManager = new TriggerManager(admittedQueue, probabilityConfig(50));
+    let admittedRandomCalls = 0;
+    Math.random = () => {
+      admittedRandomCalls += 1;
+      return 0;
+    };
+    admittedManager.start();
+    admittedManager.setAutonomyMode('semi');
+    assert.deepEqual(admittedManager.evaluateActivityTriggers(dueNow), []);
+    assert.deepEqual(
+      admittedManager.evaluateActivityTriggers(dueNow + 500),
+      [],
+      're-evaluation while jitter is pending must preserve the existing timer',
+    );
+    assert.equal(admittedRandomCalls, 2, 'probability and jitter each consume one random value');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(
+      admittedQueue.getAllTasks().filter(task => task.metadata?.triggerId === 'daydreamer').length,
+      1,
+      'jitter completion must admit exactly one daydreamer task without rerolling probability',
+    );
+    assert.equal(admittedRandomCalls, 2);
+    admittedManager.dispose();
+  } finally {
+    Math.random = originalRandom;
+  }
 } finally {
   setAuditEnabled(true);
   fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -4,9 +4,12 @@ import type {
 } from '../../environment-interface/index.js';
 import { defineNode } from '../types.js';
 import {
+  parseRobotObserverCycle,
+  type RobotObserverCycleMetadata,
+} from '../../robot-operator.js';
+import {
   buildEnvironmentSelectorJsonSchema,
   projectRobotCommandDescriptions,
-  robotOperatorActionRequirement,
 } from '../environment/helpers.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
 
@@ -20,13 +23,12 @@ function cleanText(value: unknown, maxLength: number): string {
     : '';
 }
 
-function correlationId(observation: EnvironmentObservation): string {
-  const direct = cleanText(observation.metadata?.correlationId, 200);
-  if (direct) return direct;
-  const cycle = isRecord(observation.metadata?.robotObserver)
-    ? observation.metadata.robotObserver
-    : null;
-  return cleanText(cycle?.cycleId, 200);
+function correlationId(
+  observation: EnvironmentObservation,
+  robotObserver: RobotObserverCycleMetadata | null,
+): string {
+  return cleanText(robotObserver?.cycleId, 200)
+    || cleanText(observation.metadata?.correlationId, 200);
 }
 
 function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
@@ -129,12 +131,11 @@ function boundedObject(value: unknown, maxLength = 8_000): unknown {
 }
 
 function selectedImageParts(
-  observation: EnvironmentObservation,
+  expectedCorrelationId: string,
   images: unknown,
   frames: unknown,
 ): Array<Record<string, unknown>> {
   if (!Array.isArray(images) || !Array.isArray(frames)) return [];
-  const expectedCorrelationId = correlationId(observation);
   if (!expectedCorrelationId) return [];
   const frameList = frames.filter(isRecord) as unknown as EnvironmentVisualFrame[];
   const index = frameList.findIndex(frame => (
@@ -144,28 +145,28 @@ function selectedImageParts(
   return [images[index]];
 }
 
-function robotTrigger(observation: EnvironmentObservation): Record<string, unknown> {
+function robotTrigger(
+  observation: EnvironmentObservation,
+  robotObserver: RobotObserverCycleMetadata | null,
+): Record<string, unknown> {
   const metadata = isRecord(observation.metadata) ? observation.metadata : null;
-  const observer = isRecord(metadata?.robotObserver) ? metadata.robotObserver : null;
   const perceptionEvent = cleanText(metadata?.perceptionEvent, 100);
-  const triggerSource = cleanText(observer?.triggerSource, 40);
-  const requestedBy = cleanText(observer?.requestedBy, 100);
+  const triggerSource = cleanText(robotObserver?.triggerSource, 40);
+  const requestedBy = cleanText(robotObserver?.requestedBy, 100);
   return {
-    type: perceptionEvent || (observer ? 'robot_observer' : 'environment_observation'),
+    type: perceptionEvent || (robotObserver ? 'robot_observer' : 'environment_observation'),
     source: triggerSource || null,
     requestedBy: requestedBy || null,
-    correlationId: correlationId(observation) || null,
-    cycleId: cleanText(observer?.cycleId, 200) || null,
-    step: typeof observer?.step === 'number' ? observer.step : null,
+    correlationId: correlationId(observation, robotObserver) || null,
+    cycleId: cleanText(robotObserver?.cycleId, 200) || null,
+    step: typeof robotObserver?.step === 'number' ? robotObserver.step : null,
   };
 }
 
 function delegatedPlannerDecision(
-  observation: EnvironmentObservation,
+  input: unknown,
 ): Record<string, unknown> | null {
-  const value = isRecord(observation.metadata?.robotOperatorDecision)
-    ? observation.metadata.robotOperatorDecision
-    : null;
+  const value = isRecord(input) ? input : null;
   if (!value) return null;
   const observed = cleanText(value.observed, 500);
   const instruction = cleanText(value.instruction, 1_000);
@@ -207,6 +208,7 @@ function compactAction(value: unknown): Record<string, unknown> | null {
 function autonomySelectorSchema(
   observation: EnvironmentObservation,
   taskState: unknown,
+  robotObserver: RobotObserverCycleMetadata | null,
 ): Record<string, unknown> {
   const step = isRecord(taskState) && typeof taskState.step === 'number'
     ? taskState.step
@@ -214,7 +216,7 @@ function autonomySelectorSchema(
   return buildEnvironmentSelectorJsonSchema({
     actions: observation.capabilities.actions,
     robotCommands: observation.capabilities.robotCommands,
-    requireAction: step === 0 && robotOperatorActionRequirement(observation) === true,
+    requireAction: step === 0 && robotObserver?.requestedBy === 'boredom-movement',
     requireObjective: true,
     requireProgress: true,
     requireAutonomousConsequence: true,
@@ -295,6 +297,10 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'taskState', type: 'object', optional: true, description: 'Canonical Environment Task State for the current autonomy objective' },
     { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized off-script request ready for Movement Generator' },
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input' },
+    { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner decision from Robot Operator Input' },
+    { name: 'delegatedMemories', type: 'array', optional: true, description: 'Planner-delegated memories from Robot Operator Input' },
+    { name: 'actionContext', type: 'object', optional: true, description: 'Trusted current action context from Environment Action Context Input' },
   ],
   outputs: [
     { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
@@ -321,6 +327,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       : null;
     const instruction = cleanText(inputs.instruction, 8_000);
     const stimulusInstruction = cleanText(inputs.stimulusInstruction, 4_000);
+    const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
     const invalid = (error: string) => ({
       messages: [],
       jsonSchema: null,
@@ -347,8 +354,8 @@ export const robotOperatorContextBuilderNode = defineNode({
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
     const suppliedMemories = Array.isArray(inputs.memoryContext) ? inputs.memoryContext : [];
-    const delegatedMemories = Array.isArray(observation.metadata?.robotOperatorMemories)
-      ? observation.metadata.robotOperatorMemories
+    const delegatedMemories = Array.isArray(inputs.delegatedMemories)
+      ? inputs.delegatedMemories
       : [];
     const seenMemories = new Set<string>();
     const memoryContext = [...suppliedMemories, ...delegatedMemories].flatMap(memory => {
@@ -362,15 +369,16 @@ export const robotOperatorContextBuilderNode = defineNode({
       seenMemories.add(key);
       return [bounded];
     }).slice(0, 5);
-    const images = selectedImageParts(observation, inputs.images, inputs.frames);
-    const frames = [observation.visual, ...(observation.visuals ?? [])]
-      .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
+    const expectedCorrelationId = correlationId(observation, robotObserver);
+    const images = selectedImageParts(expectedCorrelationId, inputs.images, inputs.frames);
+    const frames = (Array.isArray(inputs.frames) ? inputs.frames : [])
+      .filter((frame): frame is EnvironmentVisualFrame => isRecord(frame))
       .map(frameSummary);
-    const trigger = robotTrigger(observation);
-    const plannerDecision = delegatedPlannerDecision(observation);
+    const trigger = robotTrigger(observation, robotObserver);
+    const plannerDecision = delegatedPlannerDecision(inputs.plannerDecision);
     const cycleId = cleanText(trigger.cycleId, 200);
-    const latestActionContext = isRecord(observation.metadata?.actionContext)
-      ? observation.metadata.actionContext
+    const latestActionContext = isRecord(inputs.actionContext)
+      ? inputs.actionContext
       : null;
     const latestActionCorrelationId = cleanText(latestActionContext?.correlationId, 200);
     const currentActionContext = latestActionContext
@@ -403,8 +411,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
     ));
     const backgroundNarrative = recentContext.filter(entry => !taskNarrative.includes(entry));
-    const reflectionTrigger = trigger.requestedBy === 'boredom-reflection'
-      || cleanText(observation.metadata?.autonomousStimulus, 100) === 'boredom-reflection';
+    const reflectionTrigger = trigger.requestedBy === 'boredom-reflection';
     const feedback = compactFeedback(observation);
     const stimulusReady = images.length > 0 || feedback.length > 0;
     const robotCommandDescriptions = properties?.outputContract === 'delegation'
@@ -524,7 +531,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         ? null
         : properties?.outputContract === 'delegation'
           ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
-          : autonomySelectorSchema(observation, inputs.taskState),
+          : autonomySelectorSchema(observation, inputs.taskState, robotObserver),
       context: {
         instruction,
         stimulusInstruction,

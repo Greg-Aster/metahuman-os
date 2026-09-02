@@ -16,36 +16,36 @@ import {
   loadDesireFromFolder,
   listDesiresFromFolders,
 } from '../../agency/storage.js';
-import type { DesireStatus } from '../../agency/types.js';
+import type { Desire, DesireStatus } from '../../agency/types.js';
+
+function buildDesireSearchQuery(desire: Desire | null | undefined): string {
+  if (!desire) return '';
+  return [desire.title, desire.description, desire.reason]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join('\n');
+}
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // Check if desire is already provided in context (e.g., from planner passing to reviewer)
   // This allows the reviewer graph to receive the desire WITH the plan attached
   // before it's persisted to storage
   if (context.desire) {
+    const desire = context.desire as Desire;
     return {
-      desire: context.desire,
+      desire,
+      plan: desire.plan,
+      query: buildDesireSearchQuery(desire),
       found: true,
     };
   }
 
-  // Extract inputs from slot 0 or direct properties
-  const slot0 = inputs[0] as { desireId?: string; status?: DesireStatus } | string | undefined;
-
-  let desireId: string | undefined;
-  let filterStatus: DesireStatus | undefined;
-
-  if (typeof slot0 === 'string') {
-    desireId = slot0;
-  } else if (slot0?.desireId) {
-    desireId = slot0.desireId;
-  } else {
-    desireId = context.desireId as string | undefined;
-  }
+  const desireId = typeof inputs.desireId === 'string'
+    ? inputs.desireId
+    : context.desireId as string | undefined;
 
   // Check for status filter (load desires by status)
-  filterStatus = (properties?.filterStatus as DesireStatus) ||
-    (typeof slot0 !== 'string' ? slot0?.status : undefined);
+  const filterStatus = (properties?.filterStatus as DesireStatus)
+    || (inputs.status as DesireStatus | undefined);
 
   const username = context.username as string | undefined;
 
@@ -57,8 +57,11 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const allDesires = await listDesiresFromFolders(username);
     const desires = allDesires.filter(d => d.status === filterStatus);
 
+    const desire = desires[0] || null;
     return {
-      desire: desires[0] || null,
+      desire,
+      plan: desire?.plan,
+      query: buildDesireSearchQuery(desire),
       desires,
       found: desires.length > 0,
       count: desires.length,
@@ -81,6 +84,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   return {
     desire,
+    plan: desire?.plan,
+    query: buildDesireSearchQuery(desire),
     found: desire !== null,
   };
 };
@@ -96,6 +101,8 @@ export const DesireLoaderNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'desire', type: 'object', description: 'The loaded Desire object (first if filtered)' },
+    { name: 'plan', type: 'object', optional: true, description: 'The desire execution plan, when present' },
+    { name: 'query', type: 'string', description: 'Stable title, description, and reason query for contextual search' },
     { name: 'desires', type: 'array', optional: true, description: 'List of desires if filtered by status' },
     { name: 'found', type: 'boolean', description: 'Whether desire(s) were found' },
     { name: 'count', type: 'number', optional: true, description: 'Count of desires found' },

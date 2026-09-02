@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { ROOT } from '../../path-builder.js';
+import { getNode } from '../index.js';
 import { buildDaydreamerMessages } from './daydreamer-generator.node.js';
 import { resolveDreamSourceIds } from './dreamer-dream-saver.node.js';
 import { isGeneratedInnerMemory } from './dreamer-memory-curator.node.js';
@@ -60,9 +61,27 @@ test('daydreamer graph orders persona, citations, persistence, buffer admission,
   );
   const sourceType = (edge: any) => nodeTypeById.get(edge?.source);
 
+  for (const node of graph.nodes) {
+    const definition = getNode(node.data.nodeType);
+    assert.ok(definition, `registered node ${node.data.nodeType}`);
+    for (const property of Object.keys(node.data.properties || {})) {
+      assert.ok(definition!.propertySchemas?.[property], `${node.data.nodeType}.${property} property`);
+    }
+  }
+  for (const edge of graph.edges) {
+    const source = graph.nodes.find((node: any) => node.id === edge.source);
+    const target = graph.nodes.find((node: any) => node.id === edge.target);
+    const sourceDefinition = getNode(source.data.nodeType)!;
+    const targetDefinition = getNode(target.data.nodeType)!;
+    assert.ok(sourceDefinition.outputs.some(output => output.name === edge.sourceHandle), edge.id);
+    assert.ok(targetDefinition.inputs.some(input => input.name === edge.targetHandle), edge.id);
+  }
+
   assert.equal(sourceType(edgeTo('daydreamer_generator', 'personaPrompt')), 'persona_formatter');
+  assert.equal(sourceType(edgeTo('dreamer_dream_saver', 'dreamData')), 'daydreamer_generator');
   assert.equal(sourceType(edgeTo('dreamer_dream_saver', 'sourceIds')), 'daydreamer_generator');
   assert.equal(sourceType(edgeTo('inner_dialogue_buffer', 'entries')), 'dreamer_dream_saver');
   assert.equal(sourceType(edgeTo('tts', 'innerDialogue')), 'inner_dialogue_buffer');
   assert.equal(graph.nodes.some((node: any) => node.data.nodeType === 'audit_logger'), false);
+  assert.equal(graph.nodes.some((node: any) => node.data.nodeType === 'thinking_stripper'), false);
 });

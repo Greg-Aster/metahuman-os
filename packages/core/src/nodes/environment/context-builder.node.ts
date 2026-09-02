@@ -5,13 +5,11 @@ import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
-import { readRobotObserverCycle } from '../../robot-operator.js';
+import { parseRobotObserverCycle } from '../../robot-operator.js';
 import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
-  environmentInputSource,
-  environmentTaskContractFromObservation,
   type EnvironmentTaskState,
 } from './helpers.js';
 
@@ -90,6 +88,8 @@ export const environmentContextBuilderNode = defineNode({
   inputs: [
     { name: 'observation', type: 'object', description: 'Environment observation' },
     { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
+    { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
+    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
     { name: 'location', type: 'object', optional: true, description: 'Optional graph-supplied location data' },
     { name: 'map', type: 'object', optional: true, description: 'Optional graph-supplied map data' },
     { name: 'visual', type: 'object', optional: true, description: 'Optional graph-supplied visual frame' },
@@ -102,6 +102,7 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'taskState', type: 'object', optional: true, description: 'Single typed Environment objective lifecycle state' },
     { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized off-script request ready for Movement Generator' },
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
@@ -172,10 +173,7 @@ export const environmentContextBuilderNode = defineNode({
     const conversationalInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
       : '';
-    const taskFallback = typeof context.environmentTaskInstruction === 'string'
-      ? context.environmentTaskInstruction.trim()
-      : '';
-    const rawInstruction = conversationalInstruction || taskFallback;
+    const rawInstruction = conversationalInstruction;
     const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : {};
     const taskState = isRecord(inputs.taskState)
       ? inputs.taskState as unknown as EnvironmentTaskState
@@ -185,27 +183,21 @@ export const environmentContextBuilderNode = defineNode({
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
     const robotStatus = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
-    const inputSource = environmentInputSource(context, effectiveObservation);
+    const inputSource = inputs.inputSource === 'autonomy' ? 'autonomy' : 'user';
     const autonomous = inputSource === 'autonomy';
-    const directUserTurn = inputSource === 'user'
-      && context.environmentActionSource === undefined
-      && typeof context.userMessage === 'string'
-      && Boolean(context.userMessage.trim());
+    const userInstruction = typeof inputs.userInstruction === 'string'
+      ? inputs.userInstruction.trim()
+      : '';
+    const directUserTurn = inputSource === 'user' && Boolean(userInstruction);
     const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
       ? context.replyToContent.trim().slice(0, 500)
       : '';
-    const validatorCommand = !directUserTurn && isRecord(observation.metadata?.taskValidatorCommand)
-      ? observation.metadata.taskValidatorCommand
-      : null;
-    const queuedContinuation = Boolean(validatorCommand || taskState?.phase === 'evaluating_evidence' || taskState?.phase === 'awaiting_action');
+    const queuedContinuation = Boolean(taskState?.phase === 'evaluating_evidence' || taskState?.phase === 'awaiting_action');
     const boundedContinuation = queuedContinuation
       && taskState?.continuationPolicy === 'bounded';
     // Context routing may select history, memory, and vision, but it never owns
     // semantic action authority. The Environment LLM must always see the
     // adapter-advertised action contract so it can decide whether and how to act.
-    const taskContract = directUserTurn
-      ? null
-      : environmentTaskContractFromObservation(effectiveObservation);
     const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
       && typeof routingAnalysis.needsEnvironment === 'boolean'
       && typeof routingAnalysis.needsVision === 'boolean';
@@ -222,7 +214,7 @@ export const environmentContextBuilderNode = defineNode({
     const correlatedVisual = visualFrames.some(frame => (
       typeof frame.metadata?.correlationId === 'string'
     )) || typeof effectiveObservation.metadata?.correlationId === 'string';
-    const robotObserver = readRobotObserverCycle(effectiveObservation);
+    const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
     const includeRecentHistory = requestedRecentHistory && !autonomous;
     // environment-perception metadata is attached to ordinary correlated audio
     // so later work can retain lifecycle identity. It is not, by itself, a request
@@ -230,8 +222,7 @@ export const environmentContextBuilderNode = defineNode({
     // vision admission; ordinary audio remains owned by needsVision.
     const observerVisualEvidence = !directUserTurn
       && robotObserver?.requestedBy === 'boredom-observer';
-    const visualRequiredByTask = taskState?.requiredCompletionBasis === 'visual_observation'
-      || taskContract?.requiredCompletionBasis === 'visual_observation';
+    const visualRequiredByTask = taskState?.requiredCompletionBasis === 'visual_observation';
     const visualContinuation = queuedContinuation && visualRequiredByTask;
     const useImages = correlatedVisual && (
       !hasTypedContextAdmission
@@ -268,7 +259,6 @@ export const environmentContextBuilderNode = defineNode({
     );
     const routedMemories = includeSemanticMemory ? inputs.memories : [];
     const memoryItems = [...new Set([
-      ...(autonomous ? relevantMemoryItems(observation.metadata?.robotOperatorMemories) : []),
       ...relevantMemoryItems(routedMemories),
     ])].slice(0, 3);
     const selectorContext = buildEnvironmentSelectorSystemPrompt({

@@ -353,7 +353,10 @@ export function robotObserverSourceAllowed(
 export function readRobotObserverCycle(
   observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
 ): RobotObserverCycleMetadata | null {
-  const value = observation?.metadata?.robotObserver
+  return parseRobotObserverCycle(observation?.metadata?.robotObserver)
+}
+
+export function parseRobotObserverCycle(value: unknown): RobotObserverCycleMetadata | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   const cycleId = typeof record.cycleId === 'string' ? record.cycleId.trim() : ''

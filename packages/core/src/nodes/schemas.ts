@@ -7,7 +7,12 @@
  * Usage: import { nodeSchemas, getNodeSchema } from '@metahuman/core/nodes/schemas'
  */
 
-import type { NodeCategory, PropertySchema, SlotType } from './types.js';
+import type {
+  NodeCategory,
+  NodePresentation,
+  NodeSlot,
+  PropertySchema,
+} from './types.js';
 
 // Re-export types for convenience
 export type { NodeCategory, PropertySchema, SlotType } from './types.js';
@@ -18,11 +23,12 @@ export interface NodeSchema {
   category: NodeCategory;
   color: string;
   bgColor: string;
-  inputs: { name: string; type: SlotType; optional?: boolean; description?: string }[];
-  outputs: { name: string; type: SlotType; optional?: boolean; description?: string }[];
+  inputs: NodeSlot[];
+  outputs: NodeSlot[];
   properties?: Record<string, any>;
   propertySchemas?: Record<string, PropertySchema>;
   description: string;
+  presentation?: NodePresentation;
   size?: [number, number];
 }
 
@@ -123,10 +129,27 @@ export const nodeSchemas: NodeSchema[] = [
     outputs: [
       { name: 'message', type: 'string', description: 'User message' },
       { name: 'inputSource', type: 'string', description: 'Input source: text, speech, or chat' },
+      { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
       { name: 'sessionId', type: 'string', description: 'Session identifier' },
     ],
     properties: { message: '', prioritizeChatInterface: true },
     description: 'Unified input node for text and speech',
+  }),
+  defineSchema({
+    id: 'instruction_resolver',
+    name: 'Instruction Resolver',
+    category: 'input',
+    inputs: [
+      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction' },
+      { name: 'autonomyInstruction', type: 'string', optional: true, description: 'Current planner-authored autonomy instruction' },
+      { name: 'bridgeSource', type: 'string', optional: true, description: 'Provenance supplied by Environment Bridge Input' },
+    ],
+    outputs: [
+      { name: 'instruction', type: 'string', description: 'Current instruction for the workflow' },
+      { name: 'userInstruction', type: 'string', description: 'Human-authored instruction, or an empty string' },
+      { name: 'inputSource', type: 'string', description: 'Instruction provenance: user or autonomy' },
+    ],
+    description: 'Resolves explicit human and autonomy inputs into one provenance-bearing instruction without interpreting intent.',
   }),
 
   // ENVIRONMENT INTERFACE NODES
@@ -145,46 +168,182 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Reads current environment bridge status without creating observations or actions.',
   }),
   defineSchema({
-    id: 'environment_observation',
-    name: 'Environment Observation',
+    id: 'environment_bridge_input',
+    name: 'Environment Bridge Input',
     category: 'environment',
     inputs: [
-      { name: 'sessionId', type: 'string', optional: true, description: 'Specific environment session to read' },
+      { name: 'sessionId', type: 'string', optional: true, description: 'Specific environment session for a direct user turn' },
     ],
     outputs: [
-      { name: 'observation', type: 'object', description: 'Latest environment observation' },
-      { name: 'text', type: 'array', description: 'Recent environment text events' },
-      { name: 'state', type: 'object', description: 'Structured environment state' },
-      { name: 'location', type: 'object', description: 'Structured location or coordinate data' },
-      { name: 'map', type: 'object', description: 'Optional environment map data' },
-      { name: 'visual', type: 'object', description: 'Optional visual frame metadata' },
-      { name: 'visuals', type: 'array', description: 'Optional visual frame list' },
-      { name: 'feedback', type: 'array', description: 'Feedback events included in the observation' },
-      { name: 'capabilities', type: 'object', description: 'Available environment actions and inputs' },
-      { name: 'sessionId', type: 'string', description: 'Environment session identifier' },
-      { name: 'connected', type: 'boolean', description: 'Whether an observation is available' },
+      { name: 'observation', type: 'object', description: 'Current filtered Environment Bridge observation', group: 'Core', primary: true },
+      { name: 'environmentId', type: 'string', description: 'Environment identifier from the observation envelope', group: 'Identity' },
+      { name: 'adapter', type: 'string', description: 'Adapter that supplied the observation', group: 'Identity' },
+      { name: 'timestamp', type: 'string', description: 'Observation timestamp', group: 'Identity' },
+      {
+        name: 'capabilities',
+        type: 'object',
+        description: 'Advertised actions, robot commands, descriptions, and perception support',
+        group: 'State and capabilities',
+        enabledBy: { property: 'observationFields', includes: 'capabilities' },
+      },
+      {
+        name: 'text',
+        type: 'array',
+        description: 'Environment text events selected for output',
+        group: 'Perception',
+        enabledBy: { property: 'observationFields', includes: 'text' },
+      },
+      {
+        name: 'state',
+        type: 'object',
+        description: 'Current adapter and robot state selected for output',
+        group: 'State and capabilities',
+        enabledBy: { property: 'observationFields', includes: 'state' },
+      },
+      {
+        name: 'location',
+        type: 'object',
+        description: 'Current location data selected for output',
+        group: 'Perception',
+        enabledBy: { property: 'observationFields', includes: 'location' },
+      },
+      {
+        name: 'map',
+        type: 'object',
+        description: 'Current map data selected for output',
+        group: 'Perception',
+        enabledBy: { property: 'observationFields', includes: 'map' },
+      },
+      {
+        name: 'visual',
+        type: 'object',
+        description: 'Current visual frame, when present',
+        group: 'Perception',
+        enabledBy: { property: 'observationFields', includes: 'visual' },
+      },
+      {
+        name: 'visuals',
+        type: 'array',
+        description: 'Current visual frame list',
+        group: 'Perception',
+        enabledBy: { property: 'observationFields', includes: 'visuals' },
+      },
+      {
+        name: 'feedback',
+        type: 'array',
+        description: 'Current action lifecycle feedback selected for output',
+        group: 'Lifecycle and provenance',
+        enabledBy: { property: 'observationFields', includes: 'feedback' },
+      },
+      {
+        name: 'metadata',
+        type: 'object',
+        description: 'Current trusted correlation, timing, and task metadata selected for output',
+        group: 'Lifecycle and provenance',
+        enabledBy: { property: 'observationFields', includes: 'metadata' },
+      },
+      {
+        name: 'plannerInstruction',
+        type: 'string',
+        description: 'Explicit instruction authored by the boredom planner',
+        group: 'Lifecycle and provenance',
+        enabledBy: {
+          property: 'observationFields',
+          includes: 'metadata',
+          warning: 'Planner Instruction is connected, but Observation Data excludes metadata, so no planner instruction will be emitted.',
+        },
+      },
+      {
+        name: 'inputSource',
+        type: 'string',
+        description: 'Bridge invocation provenance: user or autonomy',
+        group: 'Lifecycle and provenance',
+        enabledBy: {
+          property: 'observationFields',
+          includes: 'metadata',
+          warning: 'Input Source is connected, but Observation Data excludes metadata, so autonomy provenance cannot be recovered.',
+        },
+      },
+      { name: 'sessionId', type: 'string', description: 'Environment Bridge session identifier', group: 'Core', primary: true },
+      {
+        name: 'connected',
+        label: 'observation available',
+        type: 'boolean',
+        description: 'Whether a bridge observation is available; this is not a live connection-health check',
+        group: 'Core',
+        primary: true,
+      },
     ],
-    description: 'Reads the latest observation from an environment bridge session.',
-  }),
-  defineSchema({
-    id: 'environment_instruction_interpreter',
-    name: 'Environment Instruction Interpreter',
-    category: 'environment',
-    inputs: [
-      { name: 'observation', type: 'object', optional: true, description: 'Raw environment observation, when an adapter is connected' },
-    ],
-    outputs: [
-      { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
-      { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
-      { name: 'routingRequest', type: 'string', description: 'Compact state-aware envelope for Environment context and task-contract routing' },
-      { name: 'persistedRoutingAnalysis', type: 'object', description: 'Strict deterministic route for a persisted continuation, or null for a new instruction' },
-      { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
-      { name: 'state', type: 'object', description: 'Environment state payload' },
-      { name: 'location', type: 'object', description: 'Environment location payload' },
-      { name: 'sessionId', type: 'string', description: 'Target environment bridge session' },
-      { name: 'valid', type: 'boolean', description: 'Whether usable environment input exists' },
-    ],
-    description: 'Normalizes adapter observations and typed environment chat into one instruction surface.',
+    properties: {
+      sessionId: '',
+      observationFields: [
+        'capabilities',
+        'text',
+        'state',
+        'location',
+        'map',
+        'visual',
+        'visuals',
+        'feedback',
+        'metadata',
+      ],
+    },
+    propertySchemas: {
+      sessionId: {
+        type: 'string',
+        default: '',
+        label: 'Observation Session',
+        description: 'Use the triggering observation when it matches. Otherwise read this saved session; leave blank to use the latest connected session.',
+        placeholder: 'Triggering / latest connected',
+        emptyLabel: 'Triggering / latest connected',
+        suggestions: 'environment-sessions',
+      },
+      observationFields: {
+        type: 'multiselect',
+        default: [
+          'capabilities',
+          'text',
+          'state',
+          'location',
+          'map',
+          'visual',
+          'visuals',
+          'feedback',
+          'metadata',
+        ],
+        label: 'Observation Data',
+        description: 'Data categories included in the aggregate observation and their typed outputs. Identity, adapter, session, and timestamp remain available.',
+        emptyLabel: 'No optional observation data',
+        options: [
+          { value: 'capabilities', label: 'Capabilities and commands' },
+          { value: 'text', label: 'Text events' },
+          { value: 'state', label: 'Robot and adapter state' },
+          { value: 'location', label: 'Location' },
+          { value: 'map', label: 'Map' },
+          { value: 'visual', label: 'Current image' },
+          { value: 'visuals', label: 'Image history' },
+          { value: 'feedback', label: 'Action feedback' },
+          { value: 'metadata', label: 'Correlation and task metadata' },
+        ],
+      },
+    },
+    description: 'Read-only source: uses the triggering observation or a selected/latest connected session, then exposes the chosen data. It has no prompt and sends no robot actions.',
+    presentation: {
+      defaultExpanded: true,
+      badges: [
+        { label: 'Read only', tone: 'info' },
+        { label: 'No prompt', tone: 'neutral' },
+        { label: 'No direct effects', tone: 'neutral' },
+      ],
+      statusTitle: 'Last observation',
+      statusFields: [
+        { output: 'connected', label: 'Observation', format: 'availability' },
+        { output: 'sessionId', label: 'Session', hideWhenEmpty: true },
+        { output: 'adapter', label: 'Adapter', hideWhenEmpty: true },
+        { output: 'timestamp', label: 'Observed', format: 'relative-time', hideWhenEmpty: true },
+        { output: 'inputSource', label: 'Source', hideWhenEmpty: true },
+      ],
+    },
   }),
   defineSchema({
     id: 'environment_feedback',
@@ -276,6 +435,8 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'observation', type: 'object', description: 'Environment observation' },
       { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
+      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
+      { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
       { name: 'location', type: 'object', optional: true, description: 'Optional graph-supplied location data' },
       { name: 'map', type: 'object', optional: true, description: 'Optional graph-supplied map data' },
       { name: 'visual', type: 'object', optional: true, description: 'Optional graph-supplied visual frame' },
@@ -283,11 +444,16 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
       { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
+      { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
+      { name: 'routingAnalysis', type: 'object', optional: true, description: 'Task-state context admission for the current instruction' },
+      { name: 'taskState', type: 'object', optional: true, description: 'Single typed Environment objective lifecycle state' },
       { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized request ready for Movement Generator' },
+      { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
     ],
     outputs: [
       { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
       { name: 'messages', type: 'array', description: 'Model-router message array' },
+      { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
       { name: 'context', type: 'object', description: 'Structured environment context package' },
       { name: 'location', type: 'object', description: 'Resolved location data' },
       { name: 'map', type: 'object', description: 'Resolved map data' },
@@ -296,6 +462,7 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     properties: {
       systemPrompt: '',
+      recentHistoryLimit: 4,
     },
     propertySchemas: {
       systemPrompt: {
@@ -304,35 +471,17 @@ export const nodeSchemas: NodeSchema[] = [
         label: 'System Prompt',
         rows: 5,
       },
-    },
-    description: 'Converts text, state, and visual bridge data into a prompt-ready context message.',
-  }),
-  defineSchema({
-    id: 'environment_prompt',
-    name: 'Environment Prompt',
-    category: 'environment',
-    inputs: [
-      { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
-      { name: 'context', type: 'object', optional: true, description: 'Structured environment context' },
-      { name: 'availableActions', type: 'array', optional: true, description: 'Allowed action vocabulary' },
-    ],
-    outputs: [
-      { name: 'message', type: 'string', description: 'Activated environment prompt' },
-      { name: 'context', type: 'object', description: 'Environment context package' },
-      { name: 'orchestrator', type: 'object', description: 'Instructions for downstream LLM nodes' },
-    ],
-    properties: {
-      responseContract: '',
-    },
-    propertySchemas: {
-      responseContract: {
-        type: 'text_multiline',
-        default: '',
-        label: 'Response Contract',
-        rows: 3,
+      recentHistoryLimit: {
+        type: 'slider',
+        default: 4,
+        label: 'Recent History Limit',
+        description: 'Maximum dialogue messages included when Task State marks the instruction as a follow-up.',
+        min: 0,
+        max: 12,
+        step: 1,
       },
     },
-    description: 'Activates an environment prompt as the current graph user message for downstream LLM nodes.',
+    description: 'Builds one prompt-ready context package from explicit graph inputs.',
   }),
   defineSchema({
     id: 'environment_action_parser',
@@ -343,6 +492,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
       { name: 'routingAnalysis', type: 'object', optional: true, description: 'Current-turn broad action authorization from the Environment Context Router' },
+      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
+      { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
     ],
     outputs: [
       { name: 'actions', type: 'array', description: 'Parsed environment actions' },
@@ -398,6 +549,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
       { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
       { name: 'taskInstruction', type: 'string', optional: true, description: 'Task contract persisted with action feedback' },
+      { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
+      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
+      { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
+      { name: 'observation', type: 'object', optional: true, description: 'Current Environment Bridge observation' },
     ],
     outputs: [
       { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -1638,8 +1793,11 @@ export const nodeSchemas: NodeSchema[] = [
     outputs: [
       { name: 'persona', type: 'object' },
       { name: 'identity', type: 'object' },
+      { name: 'personality', type: 'object' },
       { name: 'values', type: 'object' },
       { name: 'goals', type: 'object' },
+      { name: 'activeFacet', type: 'string' },
+      { name: 'inactive', type: 'boolean' },
       { name: 'success', type: 'boolean' },
     ],
     description: 'Loads persona core configuration',
@@ -1648,8 +1806,12 @@ export const nodeSchemas: NodeSchema[] = [
     id: 'persona_formatter',
     name: 'Persona Formatter',
     category: 'persona',
-    inputs: [{ name: 'personaData', type: 'object' }],
-    outputs: [{ name: 'formatted', type: 'object', description: 'Formatted persona text' }],
+    inputs: [{ name: 'persona', type: 'object' }],
+    outputs: [
+      { name: 'formatted', type: 'string', description: 'Formatted persona text' },
+      { name: 'sectionCount', type: 'number' },
+      { name: 'inactive', type: 'boolean' },
+    ],
     properties: { includePersonality: true, includeValues: true, includeGoals: true },
     description: 'Formats persona data into system prompt text',
   }),
@@ -1842,10 +2004,22 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'avgAgeDays', type: 'number' },
       { name: 'oldestAgeDays', type: 'number' },
       { name: 'invalidMemoryCount', type: 'number' },
-      { name: 'username', type: 'string' },
+      { name: 'candidateCount', type: 'number' },
+      { name: 'filesConsidered', type: 'number' },
+      { name: 'failedCount', type: 'number' },
+      { name: 'failures', type: 'array' },
+      { name: 'excludedCount', type: 'number' },
+      { name: 'truncatedMemoryCount', type: 'number' },
+      { name: 'error', type: 'string', optional: true },
     ],
-    properties: { sampleSize: 15, decayDays: 227 },
-    description: 'Curates weighted sample of memories for dreams',
+    properties: {
+      sampleSize: 15,
+      decayDays: 227,
+      maxCandidateFiles: 2000,
+      maxFileSizeBytes: 2097152,
+      maxMemoryChars: 4000,
+    },
+    description: 'Curates a bounded, encryption-aware weighted sample of episodic memories',
   }),
   defineSchema({
     id: 'dreamer_dream_generator',
@@ -1943,12 +2117,15 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     outputs: [
       { name: 'questionId', type: 'string' },
+      { name: 'question', type: 'string' },
       { name: 'saved', type: 'boolean' },
+      { name: 'created', type: 'boolean' },
+      { name: 'resumed', type: 'boolean' },
       { name: 'entry', type: 'message' },
       { name: 'username', type: 'string' },
       { name: 'askedAt', type: 'string' },
     ],
-    description: 'Saves question to audit log',
+    description: 'Persists one stable pending curiosity question and builds its typed conversation entry',
   }),
   // CURATOR NODES
   defineSchema({

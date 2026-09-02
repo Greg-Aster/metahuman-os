@@ -12,7 +12,6 @@ import {
 import {
   dispatchEnvironmentActions,
   attachEnvironmentObservationTiming,
-  attachEnvironmentActionContext,
   getEnvironmentBridgeDiagnosticMedia,
   getEnvironmentBridgeDiagnosticsSnapshot,
   publishEnvironmentObservation,
@@ -22,12 +21,14 @@ import {
   recordEnvironmentRobotStatus,
   recordEnvironmentBridgeTelemetry,
   recordEnvironmentActionResult,
+  sanitizeEnvironmentBridgeObservation,
   setEnvironmentBridgeEnabled,
   summarizeEnvironmentBridgeState,
   storeEnvironmentBridgeDiagnosticAudio,
   subscribeEnvironmentActions,
   touchEnvironmentSession,
   type EnvironmentBridgeDiagnosticEvent,
+  type EnvironmentBridgeSummary,
   type EnvironmentFeedback,
   type EnvironmentObservation,
   mergeEnvironmentActionTiming,
@@ -112,13 +113,7 @@ export function environmentObservationStartsUserTurn(
 ): boolean {
   return observation.text?.some(event => (
     event.text.trim().length > 0
-    && (
-      event.source === 'player'
-      || (
-        observation.metadata?.perceptionEvent === 'audio_utterance'
-        && event.channel === 'microphone'
-      )
-    )
+    && event.source === 'player'
   )) === true;
 }
 
@@ -141,8 +136,28 @@ function buildFeedback(value: Record<string, unknown>): EnvironmentFeedback | nu
   };
 }
 
-export async function handleEnvironmentBridgeStatus(_req: UnifiedRequest): Promise<UnifiedResponse> {
-  return successResponse(summarizeEnvironmentBridgeState());
+export function environmentBridgeSessionOptions(summary: EnvironmentBridgeSummary) {
+  return {
+    enabled: summary.enabled,
+    updatedAt: summary.updatedAt,
+    sessionCount: summary.sessionCount,
+    sessions: summary.sessions.map(session => ({
+      sessionId: session.sessionId,
+      environmentId: session.environmentId,
+      adapter: session.adapter,
+      status: session.status,
+      lastSeenAt: session.lastSeenAt,
+    })),
+  };
+}
+
+export async function handleEnvironmentBridgeStatus(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const summary = summarizeEnvironmentBridgeState();
+  return successResponse(
+    req.query?.view === 'session-options'
+      ? environmentBridgeSessionOptions(summary)
+      : summary,
+  );
 }
 
 export type EnvironmentObservationUserResolver = () => string | null;
@@ -170,7 +185,7 @@ export async function handleEnvironmentBridgeObservation(
       body as unknown as EnvironmentObservation,
       { coreObservationReceivedAt: receivedAt },
     );
-    const observation = attachEnvironmentActionContext(timedObservation);
+    const observation = sanitizeEnvironmentBridgeObservation(timedObservation);
     recordEnvironmentBridgeDiagnosticObservation(observation);
     const username = resolveUsername()?.trim() ?? '';
     const graph = requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';

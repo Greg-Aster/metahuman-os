@@ -1,4 +1,4 @@
-import type { TaskType } from './queue/types.js';
+import type { AutonomyMode, TaskType } from './queue/types.js';
 
 export type AgentCatalogLifecycle = 'scheduled-work' | 'workflow' | 'service';
 export type AgentCatalogRisk = 'standard' | 'privileged' | 'destructive';
@@ -15,6 +15,11 @@ export interface AgentCatalogDefaultTrigger {
   eventCountThreshold?: number;
   eventCountField?: string;
   idleResetSeconds?: number;
+  probability?: number;
+  jitterMs?: number;
+  allowedModes?: AutonomyMode[];
+  startupPolicy?: 'skip' | 'run-once' | 'recover-missed';
+  maxRetries?: number;
 }
 
 export interface AgentCatalogDefinition {
@@ -104,7 +109,15 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     usesLLM: true,
     priority: 'low',
     risk: 'standard',
-    defaultTrigger: { type: 'activity', inactivityThreshold: 300 },
+    defaultTrigger: {
+      type: 'activity',
+      inactivityThreshold: 300,
+      probability: 0.15,
+      jitterMs: 30_000,
+      allowedModes: ['semi'],
+      startupPolicy: 'skip',
+      maxRetries: 1,
+    },
     tags: ['dream', 'inner-dialogue'],
   },
   dreamer: {

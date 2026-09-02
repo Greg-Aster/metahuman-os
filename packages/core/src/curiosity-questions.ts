@@ -31,6 +31,11 @@ export interface ResolveCuriosityQuestionResult {
   record: CuriosityQuestionRecord;
 }
 
+export interface CreateOrGetCuriosityQuestionResult {
+  created: boolean;
+  record: CuriosityQuestionRecord;
+}
+
 type StateRootResolver = (username: string) => string;
 
 export class CuriosityQuestionNotFoundError extends Error {
@@ -225,6 +230,28 @@ export class CuriosityQuestionStore {
       throw error;
     }
     return record;
+  }
+
+  /**
+   * Publish one stable question for a coordinator execution. Concurrent or
+   * retried calls with the same explicit ID reuse the durable first result.
+   */
+  async createOrGet(
+    username: string,
+    input: CreateCuriosityQuestionInput,
+  ): Promise<CreateOrGetCuriosityQuestionResult> {
+    if (!input.id) return { created: true, record: await this.create(username, input) };
+    const id = questionId(input.id);
+    const existing = await this.get(username, id);
+    if (existing) return { created: false, record: existing };
+
+    try {
+      return { created: true, record: await this.create(username, { ...input, id }) };
+    } catch (error) {
+      const raced = await this.get(username, id);
+      if (raced) return { created: false, record: raced };
+      throw error;
+    }
   }
 
   async listPending(username: string): Promise<CuriosityQuestionRecord[]> {

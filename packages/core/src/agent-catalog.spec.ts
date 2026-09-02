@@ -47,12 +47,14 @@ const etcDir = path.join(root, 'etc');
 fs.mkdirSync(path.join(agentsDir, 'organizer'), { recursive: true });
 fs.mkdirSync(path.join(agentsDir, 'curiosity-researcher'), { recursive: true });
 fs.mkdirSync(path.join(agentsDir, 'curiosity-service'), { recursive: true });
+fs.mkdirSync(path.join(agentsDir, 'daydreamer'), { recursive: true });
 fs.mkdirSync(path.join(brainDir, 'services'), { recursive: true });
 fs.mkdirSync(etcDir, { recursive: true });
 for (const file of [
   path.join(agentsDir, 'organizer', 'index.ts'),
   path.join(agentsDir, 'curiosity-researcher', 'index.ts'),
   path.join(agentsDir, 'curiosity-service', 'index.ts'),
+  path.join(agentsDir, 'daydreamer', 'index.ts'),
   path.join(brainDir, 'services', 'maintenance-service.ts'),
 ]) fs.writeFileSync(file, 'export {};\n');
 
@@ -107,7 +109,19 @@ const unregistered = catalog.unregister('curiosity-researcher', 'catalog-spec');
 assert.equal(unregistered.revision, 6);
 assert.equal(unregistered.agents.find(agent => agent.id === 'curiosity-researcher')?.canRegister, true, 'unregistering must preserve installed source');
 assert.equal(triggerConfig.load(false).config.agents['curiosity-researcher'], undefined);
-assert.equal(revisions, 2, 'register and unregister must each live-notify configuration subscribers');
+const daydreamerRegistered = catalog.register('daydreamer', 'catalog-spec');
+assert.equal(daydreamerRegistered.revision, 7);
+const daydreamerTrigger = triggerConfig.load(false).config.agents.daydreamer;
+assert.equal(daydreamerTrigger.type, 'activity');
+assert.equal(daydreamerTrigger.inactivityThreshold, 300);
+assert.equal(daydreamerTrigger.probability, 0.15);
+assert.equal(daydreamerTrigger.jitterMs, 30_000);
+assert.deepEqual(daydreamerTrigger.allowedModes, ['semi']);
+assert.equal(daydreamerTrigger.maxRetries, 1);
+const daydreamerUnregistered = catalog.unregister('daydreamer', 'catalog-spec');
+assert.equal(daydreamerUnregistered.revision, 8);
+assert.equal(triggerConfig.load(false).config.agents.daydreamer, undefined);
+assert.equal(revisions, 4, 'register and unregister must each live-notify configuration subscribers');
 assert.throws(() => catalog.register('maintenance-service', 'catalog-spec'), /persistent service/);
 assert.throws(() => catalog.register('../escape', 'catalog-spec'), /lowercase kebab-case/);
 

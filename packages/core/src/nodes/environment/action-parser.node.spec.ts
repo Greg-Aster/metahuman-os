@@ -365,10 +365,10 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
   const prepared = await environmentTaskStateNode.execute({
     observation: autonomyObservation,
     instruction: 'Express curiosity about the newly observed spiky object.',
+    inputSource: 'autonomy',
   }, {
     userMessage: '',
     username: 'test-user',
-    environmentActionSource: 'autonomy',
   }, { phase: 'prepare' });
   const reduced = await environmentTaskStateNode.execute({
     observation: autonomyObservation,
@@ -379,10 +379,10 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
     response: proseOnly.response,
     taskDecision: proseOnly.taskDecision,
     taskDecisionError: proseOnly.taskDecisionError,
+    inputSource: 'autonomy',
   }, {
     userMessage: '',
     username: 'test-user',
-    environmentActionSource: 'autonomy',
   }, { phase: 'reduce' });
 
   assert.deepEqual(reduced.actions, []);

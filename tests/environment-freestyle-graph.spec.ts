@@ -61,7 +61,8 @@ test('Environment Mode sends one action selector directly to parser and one task
   const memoryRouter = graph.nodes.find(node => node.data.nodeType === 'memory_router')!;
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
   const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
-  const instruction = graph.nodes.find(node => node.data.nodeType === 'environment_instruction_interpreter')!;
+  const userInput = graph.nodes.find(node => node.data.nodeType === 'user_input')!;
+  const bridgeInput = graph.nodes.find(node => node.data.nodeType === 'environment_bridge_input')!;
   const history = graph.nodes.find(node => node.data.nodeType === 'conversation_history')!;
   const taskNodes = graph.nodes.filter(node => node.data.nodeType === 'environment_task_state');
   const prepare = taskNodes.find(node => node.data.properties?.phase === 'prepare')!;
@@ -77,16 +78,23 @@ test('Environment Mode sends one action selector directly to parser and one task
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /terminal action result proves execution/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /visual observation proves only visible facts/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /neither invent extra steps nor impose a fixed action count/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /response is optional and is never execution/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /response is optional, never execution/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /one or two concise sentences/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /Preserve taskState/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /Make one semantic routing decision/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Capabilities are options/i);
+  assert.match(
+    String(contextBuilder.data.properties?.systemPrompt),
+    /currentEnvironment contains current physical state and capabilities/i,
+  );
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /choose an advertised action when its description performs the current step/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /Use movementRequest only when the current movement itself is uncovered/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are mutually exclusive/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
 
-  assert.equal(hasEdge(instruction.id, 'observation', prepare.id, 'observation'), true);
+  assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
+  assert.equal(hasEdge(bridgeInput.id, 'observation', prepare.id, 'observation'), true);
+  assert.equal(hasEdge(userInput.id, 'message', prepare.id, 'instruction'), true);
+  assert.equal(hasEdge(userInput.id, 'message', prepare.id, 'userInstruction'), true);
+  assert.equal(hasEdge(userInput.id, 'instructionSource', prepare.id, 'inputSource'), true);
   assert.equal(hasEdge(prepare.id, 'memoryHints', memoryRouter.id, 'orchestratorHints'), true);
   assert.equal(hasEdge(memoryRouter.id, 'memories', contextBuilder.id, 'memories'), true);
   assert.equal(hasEdge(history.id, 'history', contextBuilder.id, 'conversationHistory'), true);
@@ -102,6 +110,9 @@ test('Environment Mode sends one action selector directly to parser and one task
     'search_interpreter',
     'environment_task_refiner',
     'environment_selection_gate',
+    'environment_observation',
+    'environment_instruction_interpreter',
+    'environment_prompt',
   ]) {
     assert.equal(graph.nodes.some(node => node.data.nodeType === retired), false);
   }

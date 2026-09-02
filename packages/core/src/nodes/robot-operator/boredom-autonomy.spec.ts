@@ -80,7 +80,6 @@ test('configured Inner Buffer history does not fall back to conversation context
 
 test('Robot Operator policy input uses the editable graph message', async () => {
   const result = await TextInputNode.execute({}, {
-    environmentTaskInstruction: 'hidden runtime fallback',
     userMessage: 'unrelated user fallback',
   }, {
     message: 'editable graph fallback',
@@ -821,7 +820,8 @@ test('three boredom planners feed one editable iterative executor with reusable 
   ));
   const autonomyTypes = autonomy.nodes.map((node: any) => node.data?.nodeType);
   for (const required of [
-    'environment_observation',
+    'environment_bridge_input',
+    'instruction_resolver',
     'environment_image_input',
     'robot_status',
     'conversation_history',
@@ -844,6 +844,12 @@ test('three boredom planners feed one editable iterative executor with reusable 
   assert.equal(autonomyTypes.includes('robot_operator_decision_parser'), false);
   assert.equal(autonomyTypes.includes('robot_operator_environment_dispatch'), false);
   assert.equal(autonomyTypes.includes('thinking_stripper'), false);
+  assert.ok(autonomy.edges.some((edge: any) => (
+    edge.source === 'observation'
+    && edge.sourceHandle === 'plannerInstruction'
+    && edge.target === 'trigger-instruction'
+    && edge.targetHandle === 'autonomyInstruction'
+  )), 'Boredom Autonomy must receive the planner-authored instruction');
   const historyModes = autonomy.nodes
     .filter((node: any) => node.data?.nodeType === 'conversation_history')
     .map((node: any) => node.data?.properties?.mode)

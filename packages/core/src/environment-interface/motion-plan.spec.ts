@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { EnvironmentObservation } from './types.js';
 import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
-import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
+import { instructionResolverNode } from '../nodes/input/instruction-resolver.node.js';
 import {
   AINEKIO_FREESTYLE_BODY_MODEL,
   MOVEMENT_GENERATOR_JSON_SCHEMA,
@@ -881,26 +881,16 @@ test('Movement Generator does not block body-local motion because a camera frame
   assert.equal('controlResult' in result, false);
 });
 
-test('current task text cannot be replaced by stale adapter transcript text', async () => {
-  const interpreted = await environmentInstructionInterpreterNode.execute({
-    observation: {
-      environmentId: 'ainekio',
-      adapter: 'ainekio-gateway',
-      sessionId: 'ainekio-sim-1',
-      timestamp: new Date().toISOString(),
-      capabilities: { actions: ['robotMotionPlan'] },
-      text: [{
-        id: 'stale-transcript',
-        source: 'environment',
-        text: 'wave repeatedly',
-        timestamp: new Date().toISOString(),
-      }],
-    },
-  }, { userMessage: 'Crouch and lift the front-right leg.' });
+test('explicit user input remains authoritative over an autonomy instruction', async () => {
+  const resolved = await instructionResolverNode.execute({
+    userInstruction: 'Crouch and lift the front-right leg.',
+    autonomyInstruction: 'wave repeatedly',
+    bridgeSource: 'autonomy',
+  }, {});
 
-  assert.equal(interpreted.instruction, 'Crouch and lift the front-right leg.');
-  assert.equal(interpreted.text.length, 1);
-  assert.equal(interpreted.text[0]?.text, 'Crouch and lift the front-right leg.');
+  assert.equal(resolved.instruction, 'Crouch and lift the front-right leg.');
+  assert.equal(resolved.userInstruction, 'Crouch and lift the front-right leg.');
+  assert.equal(resolved.inputSource, 'user');
 });
 
 test('capability absence rejects the generation branch without calling a model', async () => {

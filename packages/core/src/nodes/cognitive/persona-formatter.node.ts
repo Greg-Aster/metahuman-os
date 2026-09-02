@@ -4,95 +4,76 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import type { PersonaCore } from '../../identity.js';
+import {
+  getActivePersonaGoals,
+  getPersonaTraitDescriptions,
+  getPersonaValueDescriptions,
+} from '../../persona-summary.js';
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const persona = inputs.persona ?? inputs[0];
+  const rawPersona = Object.prototype.hasOwnProperty.call(inputs, 'persona')
+    ? inputs.persona
+    : inputs[0];
   const includeValues = properties?.includeValues ?? true;
   const includeGoals = properties?.includeGoals ?? true;
   const includePersonality = properties?.includePersonality ?? true;
 
   // Null persona means inactive/LoRA-only mode - return empty string (no error)
-  if (!persona) {
+  if (rawPersona === null) {
     return {
       formatted: '',
       sectionCount: 0,
       inactive: true,
     };
   }
+  if (!rawPersona || typeof rawPersona !== 'object' || Array.isArray(rawPersona)) {
+    throw new Error('Persona Formatter requires the canonical persona object');
+  }
+  const persona = rawPersona as PersonaCore;
+  const name = nonEmptyString(persona.identity?.name);
+  if (!name) throw new Error('Persona Formatter requires persona.identity.name');
 
   const sections: string[] = [];
 
   // Format identity
-  if (persona.identity) {
-    const id = persona.identity;
-    sections.push(`## Identity\n- Name: ${id.name || 'Unknown'}\n- Role: ${id.role || 'AI Assistant'}`);
-  }
+  const role = nonEmptyString(persona.identity?.role);
+  const purpose = nonEmptyString(persona.identity?.purpose);
+  sections.push(`## Identity\n- Name: ${name}${role ? `\n- Role: ${role}` : ''}${purpose ? `\n- Purpose: ${purpose}` : ''}`);
 
   // Format personality
-  if (includePersonality && persona.personality) {
-    const traits = persona.personality.traits;
-    if (traits && Object.keys(traits).length > 0) {
-      const traitList = Object.entries(traits)
-        .map(([trait, value]) => `- ${trait}: ${value}`)
-        .join('\n');
-      sections.push(`## Personality Traits\n${traitList}`);
-    }
+  if (includePersonality) {
+    const traits = getPersonaTraitDescriptions(persona);
+    if (traits.length > 0) sections.push(`## Personality Traits\n${traits.map(trait => `- ${trait}`).join('\n')}`);
   }
 
   // Format values
-  if (includeValues && persona.values) {
-    const core = persona.values.core;
-    if (Array.isArray(core) && core.length > 0) {
-      const valueList = core.map((v: { name?: string; description?: string }) =>
-        `- ${v.name || 'Value'}: ${v.description || ''}`
-      ).join('\n');
-      sections.push(`## Core Values\n${valueList}`);
-    }
+  if (includeValues) {
+    const values = getPersonaValueDescriptions(persona);
+    if (values.length > 0) sections.push(`## Core Values\n${values.map(value => `- ${value}`).join('\n')}`);
   }
 
   // Format goals
-  if (includeGoals && persona.goals) {
-    const allGoals: string[] = [];
-
-    if (persona.goals.shortTerm?.length > 0) {
-      const short = persona.goals.shortTerm
-        .filter((g: { status?: string }) => g.status === 'active')
-        .map((g: { goal?: string }) => `- [short] ${g.goal || 'Unknown goal'}`)
-        .slice(0, 3);
-      allGoals.push(...short);
-    }
-
-    if (persona.goals.midTerm?.length > 0) {
-      const mid = persona.goals.midTerm
-        .filter((g: { status?: string }) => g.status === 'active')
-        .map((g: { goal?: string }) => `- [mid] ${g.goal || 'Unknown goal'}`)
-        .slice(0, 2);
-      allGoals.push(...mid);
-    }
-
-    if (persona.goals.longTerm?.length > 0) {
-      const long = persona.goals.longTerm
-        .filter((g: { status?: string }) => g.status === 'active')
-        .map((g: { goal?: string }) => `- [long] ${g.goal || 'Unknown goal'}`)
-        .slice(0, 2);
-      allGoals.push(...long);
-    }
-
-    if (allGoals.length > 0) {
-      sections.push(`## Active Goals\n${allGoals.join('\n')}`);
-    }
+  if (includeGoals) {
+    const goals = getActivePersonaGoals(persona).slice(0, 7);
+    if (goals.length > 0) sections.push(`## Active Goals\n${goals.map(goal => `- ${goal}`).join('\n')}`);
   }
 
   return {
     formatted: sections.join('\n\n'),
     sectionCount: sections.length,
+    inactive: false,
   };
 };
 
 export const PersonaFormatterNode: NodeDefinition = defineNode({
   id: 'persona_formatter',
   name: 'Persona Formatter',
-  category: 'cognitive',
+  category: 'persona',
   inputs: [
     { name: 'persona', type: 'object', description: 'Persona object to format' },
   ],

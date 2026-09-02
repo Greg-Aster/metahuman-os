@@ -6,6 +6,7 @@ import type { QueuedTask } from '../queue/types.js';
 import type {
   EnvironmentAction,
   EnvironmentActionQueueOptions,
+  EnvironmentActionContext,
   EnvironmentActionType,
   EnvironmentBridgeState,
   EnvironmentBridgeSummary,
@@ -246,100 +247,96 @@ export function setEnvironmentBridgeEnabled(enabled: boolean): EnvironmentBridge
   return next;
 }
 
-export function attachEnvironmentActionContext(
+function bridgeObservationActionId(observation: EnvironmentObservation): string {
+  const metadataActionId = typeof observation.metadata?.actionId === 'string'
+    ? observation.metadata.actionId.trim()
+    : '';
+  return metadataActionId
+    || observation.feedback?.find(item => item.actionId)?.actionId?.trim()
+    || '';
+}
+
+function environmentBridgeObservation(
   observation: EnvironmentObservation,
 ): EnvironmentObservation {
   const metadata = { ...(observation.metadata ?? {}) };
-  // The adapter may identify the completed action, but it cannot supply a
-  // conversational instruction. Recover that only from MetaHuman's own work.
+  // These fields are authored by Core owners, never by the adapter. Keep them
+  // out of the Environment Bridge observation instead of mixing owner data.
   delete metadata.originatingInstruction;
-  const actionId = typeof metadata.actionId === 'string'
-    ? metadata.actionId
-    : observation.feedback?.find(item => item.actionId)?.actionId;
-  if (!actionId) {
-    return observation.metadata?.originatingInstruction === undefined
-      ? observation
-      : { ...observation, metadata };
-  }
+  delete metadata.robotObserver;
+  delete metadata.robotOperatorDecision;
+  delete metadata.robotOperatorMemories;
+  delete metadata.autonomousStimulus;
+  delete metadata.actionContext;
+  delete metadata.taskValidatorCommand;
+  return { ...observation, metadata };
+}
+
+export function getEnvironmentActionContext(
+  observation: EnvironmentObservation,
+): EnvironmentActionContext | null {
+  const actionId = bridgeObservationActionId(observation);
+  if (!actionId) return null;
   const task = getQueueManager().getTask(actionId);
-  const taskInputMetadata = isRecord(task?.input?.metadata)
+  if (!task || task.type !== 'environment_command') return null;
+  const requested = task.input as Partial<EnvironmentAction>;
+  const taskInputMetadata = isRecord(task.input?.metadata)
     ? task.input.metadata
     : null;
-  if (task?.type === 'environment_command') {
-    const requested = task.input as Partial<EnvironmentAction>;
-    const resultFeedback = isRecord(task.result?.feedback) ? task.result.feedback : null;
-    metadata.actionContext = {
-      actionId: task.id,
-      status: typeof resultFeedback?.type === 'string'
-        ? resultFeedback.type
-        : commandStatus(task),
-      requested: {
-        type: requested.type,
-        ...(requested.command ? { command: requested.command } : {}),
-        ...(requested.direction ? { direction: requested.direction } : {}),
-        ...(typeof requested.units === 'number' ? { units: requested.units } : {}),
-        ...(requested.target ? { target: requested.target } : {}),
-      },
-      ...(task.correlationId ? { correlationId: task.correlationId } : {}),
-      queuedAt: task.createdAt,
-      ...(task.completedAt ? { completedAt: task.completedAt } : {}),
-      ...(resultFeedback
-        ? {
-            result: {
-              type: resultFeedback.type,
-              message: resultFeedback.message,
-            },
-          }
-        : {}),
-    };
-  }
-  if (!isRecord(metadata.robotObserver) && isRecord(taskInputMetadata?.robotObserver)) {
-    metadata.robotObserver = taskInputMetadata.robotObserver;
-  }
-  if (typeof metadata.correlationId !== 'string' && task?.correlationId) {
-    metadata.correlationId = task.correlationId;
-  }
-  if (typeof metadata.actionId !== 'string') metadata.actionId = actionId;
-  const taskFeedback = isRecord(task?.result?.feedback)
-    ? task.result.feedback
-    : null;
-  const taskFeedbackData = isRecord(taskFeedback?.data)
-    ? taskFeedback.data
-    : null;
+  const resultFeedback = isRecord(task.result?.feedback) ? task.result.feedback : null;
+  const taskFeedbackData = isRecord(resultFeedback?.data) ? resultFeedback.data : null;
   const observationFeedbackData = observation.feedback
     ?.filter(item => item.actionId === actionId)
     .map(item => item.data)
     .filter(isRecord);
   const actionTiming = mergeEnvironmentActionTiming(
-    task?.input?.timing,
-    { queueEnteredAt: task?.createdAt, leaseGrantedAt: task?.startedAt },
+    task.input?.timing,
+    { queueEnteredAt: task.createdAt, leaseGrantedAt: task.startedAt },
     taskFeedbackData?.actionTiming,
     ...(observationFeedbackData?.map(data => data.actionTiming) ?? []),
-    metadata.actionTiming,
   );
-  const contextualObservation = attachEnvironmentObservationTiming({
-    ...observation,
-    metadata,
-  }, actionTiming);
-  const originatingInstruction = boundedOriginatingInstruction(
-    task?.metadata?.originatingInstruction,
-  );
-  if (!originatingInstruction) {
-    return contextualObservation;
-  }
+  const taskInstruction = boundedOriginatingInstruction(task.metadata?.originatingInstruction);
   return {
-    ...contextualObservation,
-    metadata: {
-      ...contextualObservation.metadata,
-      originatingInstruction,
+    actionId: task.id,
+    status: typeof resultFeedback?.type === 'string'
+      ? resultFeedback.type
+      : commandStatus(task),
+    requested: {
+      type: requested.type,
+      ...(requested.command ? { command: requested.command } : {}),
+      ...(requested.direction ? { direction: requested.direction } : {}),
+      ...(typeof requested.units === 'number' ? { units: requested.units } : {}),
+      ...(requested.target ? { target: requested.target } : {}),
     },
+    ...(task.correlationId ? { correlationId: task.correlationId } : {}),
+    queuedAt: task.createdAt,
+    ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+    ...(resultFeedback
+      ? {
+          result: {
+            type: typeof resultFeedback.type === 'string' ? resultFeedback.type : undefined,
+            message: typeof resultFeedback.message === 'string' ? resultFeedback.message : undefined,
+          },
+        }
+      : {}),
+    ...(taskInstruction ? { taskInstruction } : {}),
+    ...(isRecord(taskInputMetadata?.robotObserver)
+      ? { robotObserver: taskInputMetadata.robotObserver }
+      : {}),
+    actionTiming,
   };
+}
+
+export function sanitizeEnvironmentBridgeObservation(
+  observation: EnvironmentObservation,
+): EnvironmentObservation {
+  return environmentBridgeObservation(observation);
 }
 
 function persistEnvironmentObservation(
   observation: EnvironmentObservation,
 ): { summary: EnvironmentBridgeSummary; observation: EnvironmentObservation } {
-  const contextualObservation = attachEnvironmentActionContext(observation);
+  const contextualObservation = environmentBridgeObservation(observation);
   const state = readEnvironmentBridgeState();
   const existing = state.sessions[contextualObservation.sessionId];
   const poseAwareObservation = carryCommandedPose(
@@ -451,7 +448,8 @@ export function publishEnvironmentObservation(
   options: { username: string; graph?: string; ttsGeneration?: number },
 ): { summary: EnvironmentBridgeSummary; workId: string } {
   const recorded = persistEnvironmentObservation(observation);
-  const contextualObservation = recorded.observation;
+  const bridgeObservation = recorded.observation;
+  const actionContext = getEnvironmentActionContext(bridgeObservation);
   const work = getQueueManager().enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
@@ -459,21 +457,22 @@ export function publishEnvironmentObservation(
     source: 'environment',
     priority: 'high',
     input: {
-      observation: contextualObservation,
+      observation: bridgeObservation,
+      actionContext,
       graph: options.graph,
       ttsGeneration: options.ttsGeneration,
     },
     username: options.username,
     cognitiveMode: 'environment',
-    correlationId: typeof contextualObservation.metadata?.correlationId === 'string'
-      ? contextualObservation.metadata.correlationId
-      : contextualObservation.feedback?.find(item => item.actionId)?.actionId,
-    idempotencyKey: `environment-observation:${contextualObservation.sessionId}:${contextualObservation.timestamp}`,
+    correlationId: actionContext?.correlationId
+      ?? (typeof bridgeObservation.metadata?.correlationId === 'string'
+        ? bridgeObservation.metadata.correlationId
+        : bridgeObservation.feedback?.find(item => item.actionId)?.actionId),
+    idempotencyKey: `environment-observation:${bridgeObservation.sessionId}:${bridgeObservation.timestamp}`,
     maxAttempts: 1,
     metadata: {
       producer: 'environment-bridge',
-      sessionId: contextualObservation.sessionId,
-      robotObserver: contextualObservation.metadata?.robotObserver,
+      sessionId: bridgeObservation.sessionId,
     },
   });
   return { summary: recorded.summary, workId: work.id };

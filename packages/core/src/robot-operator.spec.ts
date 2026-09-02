@@ -216,9 +216,9 @@ test('each boredom child keeps its specialized policy in the editable workflow',
   assert.doesNotMatch(movement, /exactly one safe robotCommand/i)
 
   const executive = message('boredom-autonomy', 'executive-policy')
-  assert.match(executive, /use your judgment to choose a response, exact action, or body-local movementRequest/i)
-  assert.match(executive, /physical or sensing intention requires an action or movementRequest/i)
-  assert.match(executive, /use movementRequest when none fits/i)
+  assert.match(executive, /choose a response, exact action, or body-local movementRequest/i)
+  assert.match(executive, /physical or sensing intent requires an action or movementRequest/i)
+  assert.match(executive, /use movementRequest only when that movement is uncovered/i)
   assert.match(executive, /contextual fit comes first/i)
   assert.match(executive, /do not impose a fixed action count or deterministic stop/i)
 
@@ -410,17 +410,21 @@ test('structured captureImage remains available and capability gated', async () 
 test('Boredom Autonomy response keeps cycle correlation in canonical buffer metadata', async () => {
   const result = await environmentSendActionNode.execute({
     response: 'The changed view gave me a new detail worth sharing.',
+    inputSource: 'autonomy',
+    observation: {
+      metadata: {
+        autonomousStimulus: 'boredom-observer',
+        robotObserver: {
+          cycleId: 'episode-response',
+          step: 3,
+          triggerSource: 'autonomy',
+          graph: 'boredom-autonomy',
+          requestedBy: 'boredom-observer',
+        },
+      },
+    },
   }, {
     username: 'owner',
-    environmentActionSource: 'autonomy',
-    environmentObservation: { metadata: { autonomousStimulus: 'boredom-observer' } },
-    robotObserver: {
-      cycleId: 'episode-response',
-      step: 3,
-      triggerSource: 'autonomy',
-      graph: 'boredom-autonomy',
-      requestedBy: 'boredom-observer',
-    },
   }, {})
   assert.equal(result.status, 'no_actions')
   assert.equal(result.conversationResponse, 'The changed view gave me a new detail worth sharing.')

@@ -4,7 +4,7 @@
   "name": "Boredom Movement Mode",
   "description": "Uses current robot state, persona, recent narrative, and verified action history to author one embodied intention for Boredom Autonomy to execute.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-01",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "observation",
@@ -12,8 +12,9 @@
       "position": { "x": 40, "y": 260 },
       "data": {
         "label": "Current Robot State and Capabilities",
-        "nodeType": "environment_observation",
-        "properties": {}
+        "nodeType": "environment_bridge_input",
+        "properties": {},
+        "comment": "Supplies the current bridge observation and advertised robot capabilities to the movement planner. It is read-only and sends no command."
       }
     },
     {

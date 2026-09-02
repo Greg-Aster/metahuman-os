@@ -62,6 +62,18 @@ export interface NodeSlot {
   type: SlotType;
   optional?: boolean;
   description?: string;
+  /** Human-readable label; the stable handle ID remains `name`. */
+  label?: string;
+  /** Optional visual group for large port contracts. */
+  group?: string;
+  /** Keep this port visible when a schema-driven node is collapsed. */
+  primary?: boolean;
+  /** Describe the property selection required for this output to contain data. */
+  enabledBy?: {
+    property: string;
+    includes: string;
+    warning?: string;
+  };
 }
 
 // ============================================================================
@@ -87,8 +99,17 @@ export interface PropertySchema {
   default: any;
   label?: string;
   description?: string;
-  /** Render this setting in the inspector's collapsible advanced section. */
+  /** Render this setting in the canvas and inspector advanced sections. */
   advanced?: boolean;
+  /**
+   * Optional canvas placement override. Prompt-like multiline fields are
+   * primary by default; other non-advanced fields appear when the node expands.
+   */
+  canvas?: 'primary' | 'expanded';
+  /** Semantic text shown when an empty value has useful behavior. */
+  emptyLabel?: string;
+  /** Optional editor-owned suggestion provider for string settings. */
+  suggestions?: 'environment-sessions';
   min?: number;
   max?: number;
   step?: number;
@@ -97,6 +118,28 @@ export interface PropertySchema {
   placeholder?: string;
   rows?: number;
   validation?: (value: any) => boolean | string;
+}
+
+export type NodePresentationBadgeTone = 'neutral' | 'info' | 'success' | 'warning';
+
+export interface NodePresentationBadge {
+  label: string;
+  tone?: NodePresentationBadgeTone;
+}
+
+export interface NodePresentationStatusField {
+  output: string;
+  label: string;
+  format?: 'text' | 'availability' | 'relative-time';
+  hideWhenEmpty?: boolean;
+}
+
+/** Serializable hints consumed by the shared graph-node renderer. */
+export interface NodePresentation {
+  defaultExpanded?: boolean;
+  badges?: NodePresentationBadge[];
+  statusTitle?: string;
+  statusFields?: NodePresentationStatusField[];
 }
 
 // ============================================================================
@@ -179,6 +222,8 @@ export interface NodeDefinition {
   propertySchemas?: Record<string, PropertySchema>;
   /** Help text / documentation */
   description: string;
+  /** Declarative visual-editor behavior; never changes runtime execution. */
+  presentation?: NodePresentation;
 
   // ---- Executor ----
   /** Runtime execution function */
@@ -326,6 +371,7 @@ export interface NodeSchema {
   properties?: Record<string, any>;
   propertySchemas?: Record<string, PropertySchema>;
   description: string;
+  presentation?: NodePresentation;
   size?: [number, number];
   aliases?: string[];
 }
@@ -345,6 +391,7 @@ export function extractSchema(node: NodeDefinition): NodeSchema {
     properties: materializeNodeProperties(node),
     propertySchemas: node.propertySchemas,
     description: node.description,
+    presentation: node.presentation,
     size: node.size,
     aliases: node.aliases,
   };

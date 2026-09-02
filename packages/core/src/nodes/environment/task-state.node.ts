@@ -335,6 +335,8 @@ export const environmentTaskStateNode = defineNode({
   inputs: [
     { name: 'observation', type: 'object', optional: true, description: 'Current correlated environment observation' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current user instruction or feedback envelope' },
+    { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when this is a new user turn' },
+    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
     { name: 'taskState', type: 'object', optional: true, description: 'Prepared task state for the reduce phase' },
     { name: 'actions', type: 'array', optional: true, description: 'Capability-validated semantic actions' },
     { name: 'movementRequest', type: 'object', optional: true, description: 'Body-local movement request' },
@@ -372,14 +374,14 @@ export const environmentTaskStateNode = defineNode({
     },
   },
   description: 'Owns task preparation, exact terminal closure, evidence requirements, bounded continuation, and final action admission.',
-  async execute(inputs, context, properties) {
+  async execute(inputs, _context, properties) {
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const instruction = cleanText(inputs.instruction, 4_000);
-    const currentUserInstruction = cleanText(context.userMessage, 4_000);
+    const currentUserInstruction = cleanText(inputs.userInstruction, 4_000);
     const observedFrames = framesFromObservation(observation);
-    const autonomous = environmentInputSource(context, observation) === 'autonomy';
+    const autonomous = environmentInputSource(inputs.inputSource, observation) === 'autonomy';
     rememberFrames(observedFrames);
 
     if (properties?.phase !== 'reduce') {
@@ -727,7 +729,7 @@ export const environmentTaskStateNode = defineNode({
           : requiredCompletionBasis === 'environment_state'
             ? Boolean(observation?.state && Object.keys(observation.state).length > 0)
             : requiredCompletionBasis === 'user_input'
-              ? Boolean(cleanText(context.userMessage, 4_000))
+              ? Boolean(currentUserInstruction)
               : false;
     const complete = Boolean(
       claimedComplete
@@ -753,7 +755,7 @@ export const environmentTaskStateNode = defineNode({
             : requiredCompletionBasis === 'environment_state'
               ? 'Current environment state was available to the selector.'
               : requiredCompletionBasis === 'user_input'
-                ? cleanText(context.userMessage, 500)
+                ? currentUserInstruction.slice(0, 500)
                 : ''
       : '';
     const fallbackResponse = complete

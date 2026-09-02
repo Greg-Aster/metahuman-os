@@ -1638,6 +1638,24 @@ Validation:
   real effects. Mid-provider cancellation remains dependent on the selected
   escalation backend; cancellation before and between plan steps is source-validated.
 
+### Desire Executor graph contract follow-up - 2026-09-02
+
+- Replaced the invalid legacy `slot_0` Loader-to-Executor edge with the declared
+  `desire` contract. The Executor no longer bypasses graph wiring through
+  `context.desire`, numeric inputs, or a fabricated username-as-user-ID value.
+- Removed the unused approved-status property and the redundant Audit Logger
+  branch. The canonical Agency manifest, execution-attempt record, and
+  scratchpad remain the durable execution owners; provider response content is
+  no longer copied wholesale into the best-effort audit log.
+- Desire execution now preserves the authenticated account ID and profile
+  username, runs in the graph's declared Agent mode, and explicitly requires
+  both rolling Inner Dialogue and long-term Persona Memory receipts. TTS remains
+  optional and downstream of confirmed memory text.
+- Added strict registered-node validation for the graph plus focused identity,
+  graph-wiring, and persistence-receipt coverage. Desire Executor and Brain
+  adapter tests, Core and Brain typechecks, node defaults, all 27 cognitive
+  graphs, and the architecture guardrail pass. No live desire was executed.
+
 ## Desire Explorer Retirement Follow-Up - 2026-08-25
 
 Scope and surviving owner:

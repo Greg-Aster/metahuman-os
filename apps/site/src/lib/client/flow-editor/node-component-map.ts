@@ -7,12 +7,6 @@
 
 import type { NodeCategory } from '@metahuman/core/nodes/types';
 
-// Special node ID to component mapping (for nodes that need custom rendering)
-const nodeIdToComponent: Record<string, string> = {
-  graph_note: 'noteNode',
-  'cognitive/graph_note': 'noteNode',
-};
-
 // Category to component name mapping
 const categoryToComponent: Record<NodeCategory, string> = {
   input: 'inputNode',
@@ -43,20 +37,10 @@ const categoryToComponent: Record<NodeCategory, string> = {
 
 /**
  * Get the Svelte Flow component type for a node
- * First checks for special node ID mapping, then falls back to category
+ * All schema-backed nodes use the category's shared BaseNode registration.
+ * FlowEditor retains aliases for persisted component type names.
  */
-export function getNodeComponentType(category: NodeCategory, nodeType?: string): string {
-  // Check for special node ID mapping first
-  if (nodeType) {
-    const stripped = nodeType.replace(/^cognitive\//, '');
-    if (nodeIdToComponent[stripped]) {
-      return nodeIdToComponent[stripped];
-    }
-    if (nodeIdToComponent[nodeType]) {
-      return nodeIdToComponent[nodeType];
-    }
-  }
-  // Fall back to category mapping
+export function getNodeComponentType(category: NodeCategory, _nodeType?: string): string {
   return categoryToComponent[category] || 'genericNode';
 }
 

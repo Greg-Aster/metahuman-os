@@ -4,7 +4,7 @@
   "name": "Curiosity Service Workflow",
   "description": "Generates curiosity questions from weighted memory sampling with user privacy isolation",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "2",
@@ -55,21 +55,6 @@
       },
       "width": 220,
       "height": 100
-    },
-    {
-      "id": "5",
-      "type": "outputNode",
-      "position": {
-        "x": 1300,
-        "y": 100
-      },
-      "data": {
-        "label": "Audit Completion",
-        "nodeType": "audit_logger",
-        "properties": {}
-      },
-      "width": 180,
-      "height": 60
     },
     {
       "id": "8",
@@ -190,22 +175,11 @@
       }
     },
     {
-      "id": "e-4-questionId-5-eventType",
-      "source": "4",
-      "target": "5",
-      "sourceHandle": "questionId",
-      "targetHandle": "eventType",
-      "data": {
-        "type": "object",
-        "comment": "Save result → Audit Logger"
-      }
-    },
-    {
-      "id": "e-6-persona-7-personaData",
+      "id": "e-6-persona-7-persona",
       "source": "6",
       "target": "7",
       "sourceHandle": "persona",
-      "targetHandle": "personaData",
+      "targetHandle": "persona",
       "data": {
         "type": "object",
         "comment": "Persona data → Persona Formatter"

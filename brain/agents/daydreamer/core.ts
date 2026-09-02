@@ -11,6 +11,7 @@
  * Triggered probabilistically during idle periods (see trigger-manager.ts).
  */
 
+import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -43,6 +44,12 @@ export interface UserDaydreamerStats {
   memoriesCurated: number;
 }
 
+export interface DaydreamerExecutionOptions {
+  signal?: AbortSignal;
+  executionId?: string;
+  executionTimestamp?: string;
+}
+
 export interface DaydreamerGraphEvaluation extends UserDaydreamerStats {
   avgAgeDays: number;
   skippedReason?: 'insufficient_memories';
@@ -53,6 +60,7 @@ export interface DaydreamerGraphEvaluation extends UserDaydreamerStats {
 // ============================================================================
 
 const LOG_PREFIX = '[daydreamer]';
+const MAX_EXECUTION_ID_CHARS = 400;
 
 // ============================================================================
 // Helper Functions
@@ -73,6 +81,22 @@ function getNodeOutputs(
 export function normalizeTriggerProfile(value: string | undefined): string | null {
   const profile = value?.trim();
   return profile && profile.toLowerCase() !== 'system' ? profile : null;
+}
+
+function resolveExecutionIdentity(options: DaydreamerExecutionOptions): {
+  executionId: string;
+  executionTimestamp: string;
+} {
+  const executionId = (options.executionId || randomUUID()).trim();
+  if (!executionId) throw new Error('Daydreamer executionId must not be empty');
+  if (executionId.length > MAX_EXECUTION_ID_CHARS) {
+    throw new Error(`Daydreamer executionId must not exceed ${MAX_EXECUTION_ID_CHARS} characters`);
+  }
+  const timestampInput = options.executionTimestamp || new Date().toISOString();
+  if (Number.isNaN(Date.parse(timestampInput))) {
+    throw new Error('Daydreamer executionTimestamp must be a valid date');
+  }
+  return { executionId, executionTimestamp: new Date(timestampInput).toISOString() };
 }
 
 export function evaluateDaydreamerGraph(
@@ -146,11 +170,12 @@ export async function loadDaydreamerGraph(): Promise<SvelteFlowGraph> {
  */
 export async function generateUserDaydream(
   username: string,
-  signal?: AbortSignal,
+  options: DaydreamerExecutionOptions = {},
 ): Promise<UserDaydreamerStats> {
   console.log(`${LOG_PREFIX} Processing user: ${username}`);
 
   try {
+    const identity = resolveExecutionIdentity(options);
     // Log which backend is active (model router handles actual availability)
     try {
       const backend = getActiveBackend();
@@ -169,10 +194,13 @@ export async function generateUserDaydream(
       username,
       allowMemoryWrites: true,
       cognitiveMode: 'agent' as const,
+      idempotencyKey: `daydreamer:${username}:${identity.executionId}`,
+      memoryTimestamp: identity.executionTimestamp,
+      abortSignal: options.signal,
     };
 
     console.log(`${LOG_PREFIX} Executing daydreamer workflow for user: ${username}`);
-    const graphResult = await runGraph({ graph, context: graphContext, signal });
+    const graphResult = await runGraph({ graph, context: graphContext, signal: options.signal });
     const evaluation = evaluateDaydreamerGraph(graph, graphResult);
 
     if (evaluation.skippedReason === 'insufficient_memories') {
@@ -283,7 +311,10 @@ export async function runCycle(): Promise<DaydreamerResult> {
     try {
       const stats = await withUserContext(
         { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
-        async () => generateUserDaydream(activeUser.username)
+        async () => generateUserDaydream(activeUser.username, {
+          executionId: process.env.MH_TASK_ID,
+          executionTimestamp: process.env.MH_TASK_CREATED_AT,
+        }),
       );
 
       result.daydreamsGenerated += stats.daydreamsGenerated;
